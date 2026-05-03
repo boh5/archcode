@@ -1,0 +1,30 @@
+{
+  "name": "specra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A long-running coding CLI agent that coordinates a virtual software company of AI roles — PM, backend, frontend, QA, PR review — all orchestrated from your terminal.",
+  "type": "module",
+  "bin": {
+    "specra": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.58",
+    "ai": "^6.0.174",
+    "ink": "^7.0.1",
+    "react": "^19.2.5",
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
