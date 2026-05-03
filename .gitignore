@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.tsbuildinfo
 bun.lockb
+.specra.json
