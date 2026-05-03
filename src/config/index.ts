@@ -1,0 +1,32 @@
+export { specraConfigSchema, type SpecraConfig } from "./schema.js";
+export {
+  ConfigLoadError,
+  ConfigParseError,
+  ConfigValidationError,
+  loadConfig,
+  parseConfig,
+} from "./load.js";
+export {
+  OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
+  type ModelConfig,
+  type ModelLimit,
+  type ModelModalities,
+  type ModelModality,
+  type ProviderConfig,
+  type ProviderOptions,
+  type ProvidersConfig,
+  UnsupportedProviderPackageError,
+  UnknownModelError,
+  UnknownProviderError,
+  createLanguageModel,
+  createProviderInstance,
+  getModelConfig,
+  getProviderConfig,
+  modelConfigSchema,
+  modelLimitSchema,
+  modelModalitiesSchema,
+  modelModalitySchema,
+  providerConfigSchema,
+  providerOptionsSchema,
+  providersConfigSchema,
+} from "./provider.js";
