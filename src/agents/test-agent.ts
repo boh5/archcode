@@ -4,11 +4,12 @@ import type { SpecraConfig } from "../config/index";
 import { createRegistry } from "../provider/registry";
 import type { ModelInfo } from "../provider/model";
 import { createSessionStore } from "../store/store";
-import type { SessionTranscriptState } from "../store/types";
+import { BusyError } from "../store/types";
+import type { SessionStoreState } from "../store/types";
 import { runQueryLoop } from "./query/loop";
 
 export interface Agent {
-  readonly store: StoreApi<SessionTranscriptState>;
+  readonly store: StoreApi<SessionStoreState>;
   run(userMessage: string): Promise<AgentResult>;
 }
 
@@ -34,7 +35,7 @@ export class AgentRunningError extends Error {
 }
 
 export class TestAgent implements Agent {
-  readonly store: StoreApi<SessionTranscriptState>;
+  readonly store: StoreApi<SessionStoreState>;
   private registry: ReturnType<typeof createRegistry>;
   private modelInfo: ModelInfo;
   private running = false;
@@ -70,13 +71,14 @@ export class TestAgent implements Agent {
       );
       return { text: result.text, steps: result.steps };
     } catch (error) {
-      this.store.getState().append({
-        type: "loop-error",
-        id: randomUUID(),
-        timestamp: Date.now(),
-        step: -1,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // Don't pollute an active session's store with loop-error on BusyError
+      if (!(error instanceof BusyError)) {
+        this.store.getState().append({
+          type: "loop-error",
+          step: -1,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     } finally {
       this.running = false;

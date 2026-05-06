@@ -1,13 +1,9 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { describe, expect, test, mock, afterEach } from "bun:test";
 import type { SpecraConfig } from "../config/index";
-import type { SessionTranscriptState } from "../store/types";
-import type { StoreApi } from "zustand";
 import { TestAgent } from "./test-agent";
 import { AgentRunningError, NoModelsConfiguredError } from "./test-agent";
 import type { Agent, AgentResult } from "./test-agent";
-import { createSessionStore } from "../store/store";
 import { __setStreamTextForTest } from "./query/loop";
-import { randomUUID } from "node:crypto";
 
 function makeMockConfig(): SpecraConfig {
   return {
@@ -55,14 +51,10 @@ function setupMockStreamText(text: string, finishReason = "stop") {
       fullStream: (async function* () {
         yield { type: "text-delta", text };
       })(),
-      response: Promise.resolve({
-        messages: [
-          { role: "assistant", content: [{ type: "text", text }] },
-        ],
-      }),
-      finishReason,
-      text,
-      toolCalls: [],
+      finishReason: Promise.resolve(finishReason),
+      text: Promise.resolve(text),
+      toolCalls: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
     };
   });
 
@@ -96,7 +88,7 @@ describe("TestAgent", () => {
 
       expect(agent.store).toBeDefined();
       expect(agent.store.getState().sessionId).toBeDefined();
-      expect(agent.store.getState().events).toEqual([]);
+      expect(agent.store.getState().messages).toEqual([]);
     });
 
     test("throws NoModelsConfiguredError when config has no models", () => {
@@ -123,22 +115,26 @@ describe("TestAgent", () => {
       expect(result.steps).toBe(0);
     });
 
-    test("appends user-message and text-delta events to store", async () => {
+    test("appends user and assistant messages to store", async () => {
       setupMockStreamText("Hello");
 
       const agent = new TestAgent(makeMockConfig());
       await agent.run("My question");
 
-      const events = agent.store.getState().events;
+      const messages = agent.store.getState().messages;
 
-      const userMsg = events.find((e) => e.type === "user-message");
+      const userMsg = messages.find((m) => m.role === "user");
       expect(userMsg).toBeDefined();
-      if (userMsg && userMsg.type === "user-message") {
-        expect(userMsg.content).toBe("My question");
-      }
+      expect(userMsg!.parts.length).toBeGreaterThan(0);
+      const userTextPart = userMsg!.parts.find((p) => p.type === "text");
+      expect(userTextPart).toBeDefined();
+      expect(userTextPart!.text).toBe("My question");
 
-      const textDelta = events.find((e) => e.type === "text-delta");
-      expect(textDelta).toBeDefined();
+      const assistantMsg = messages.find((m) => m.role === "assistant");
+      expect(assistantMsg).toBeDefined();
+      const assistantTextPart = assistantMsg!.parts.find((p) => p.type === "text");
+      expect(assistantTextPart).toBeDefined();
+      expect(assistantTextPart!.text).toBe("Hello");
     });
 
     test("does NOT duplicate user-message (runQueryLoop handles it)", async () => {
@@ -147,8 +143,8 @@ describe("TestAgent", () => {
       const agent = new TestAgent(makeMockConfig());
       await agent.run("test");
 
-      const events = agent.store.getState().events;
-      const userMessages = events.filter((e) => e.type === "user-message");
+      const messages = agent.store.getState().messages;
+      const userMessages = messages.filter((m) => m.role === "user");
       expect(userMessages.length).toBe(1);
     });
 
@@ -168,14 +164,27 @@ describe("TestAgent", () => {
       setupFailingStreamText("model unavailable");
 
       const agent = new TestAgent(makeMockConfig());
-      const result = await agent.run("test");
+      await agent.run("test");
 
-      const events = agent.store.getState().events;
-      const loopError = events.find((e) => e.type === "loop-error");
-      expect(loopError).toBeDefined();
-      if (loopError && loopError.type === "loop-error") {
-        expect(loopError.error).toContain("model unavailable");
-      }
+      // Agent catch + runQueryLoop internal catch both record errors
+      const steps = agent.store.getState().steps;
+      const errorStep = steps.find((s) => s.error !== undefined);
+      expect(errorStep).toBeDefined();
+      expect(errorStep!.error).toContain("model unavailable");
+    });
+
+    test("preserves memory across multiple runs", async () => {
+      setupMockStreamText("response");
+
+      const agent = new TestAgent(makeMockConfig());
+
+      await agent.run("first");
+      const firstRunMessages = agent.store.getState().messages;
+      expect(firstRunMessages.length).toBeGreaterThan(0);
+
+      await agent.run("second");
+      const secondRunMessages = agent.store.getState().messages;
+      expect(secondRunMessages.length).toBeGreaterThan(firstRunMessages.length);
     });
   });
 
@@ -192,14 +201,10 @@ describe("TestAgent", () => {
         })();
         return {
           fullStream,
-          response: slowPromise.then(() => ({
-            messages: [
-              { role: "assistant", content: [{ type: "text", text: "slow response" }] },
-            ],
-          })),
           finishReason: slowPromise.then(() => "stop"),
           text: slowPromise.then(() => "slow response"),
           toolCalls: slowPromise.then(() => []),
+          usage: slowPromise.then(() => ({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })),
         };
       });
 

@@ -3,8 +3,11 @@ export type { InputState, InputAction, UserInputProps } from "./UserInput";
 export { UserInput, inputReducer } from "./UserInput";
 export {
   TranscriptView,
+  buildRenderBlocks,
   formatUserMessage,
-  formatTextDeltas,
+  formatTextPart,
+  formatStreamingText,
+  formatReasoningPart,
   formatToolCall,
   formatToolResult,
   formatLoopError,

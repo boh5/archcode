@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { ModelMessage } from "ai";
 import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
@@ -23,24 +22,16 @@ function setupMockStreamText(rounds: MockRound[]) {
       chunks.push({ type: "text-delta", text: round.text });
     }
 
-    const responseMessages: ModelMessage[] = [];
-    if (round.text) {
-      responseMessages.push({
-        role: "assistant",
-        content: [{ type: "text", text: round.text }],
-      });
-    }
-
     return {
       fullStream: (async function* () {
         for (const chunk of chunks) {
           yield chunk;
         }
       })(),
-      response: Promise.resolve({ messages: responseMessages }),
       finishReason: Promise.resolve(round.finishReason),
       text: Promise.resolve(round.text ?? ""),
       toolCalls: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
     };
   });
 
@@ -64,7 +55,7 @@ describe("App orchestration", () => {
     expect(shouldSubmit("hello")).toBe(true);
   });
 
-  test("wires store through runQueryLoop so events are appended", async () => {
+  test("wires store through runQueryLoop so messages are appended", async () => {
     const streamFn = setupMockStreamText([
       { finishReason: "stop", text: "Hello from App smoke test" },
     ]);
@@ -81,25 +72,22 @@ describe("App orchestration", () => {
     );
 
     expect(streamFn).toHaveBeenCalledTimes(1);
-    expect(store.getState().events.map((event) => event.type)).toEqual([
-      "user-message",
-      "text-delta",
-    ]);
 
-    const userMessage = store.getState().events.find((event) => event.type === "user-message");
-    const textDelta = store.getState().events.find((event) => event.type === "text-delta");
+    const messages = store.getState().messages;
+    const userMsg = messages.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    const userTextPart = userMsg!.parts.find((p) => p.type === "text");
+    expect(userTextPart).toBeDefined();
+    expect(userTextPart!.text).toBe("Hi App");
 
-    expect(userMessage).toBeDefined();
-    expect(textDelta).toBeDefined();
-    if (userMessage?.type === "user-message") {
-      expect(userMessage.content).toBe("Hi App");
-    }
-    if (textDelta?.type === "text-delta") {
-      expect(textDelta.text).toBe("Hello from App smoke test");
-    }
+    const assistantMsg = messages.find((m) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    const assistantTextPart = assistantMsg!.parts.find((p) => p.type === "text");
+    expect(assistantTextPart).toBeDefined();
+    expect(assistantTextPart!.text).toBe("Hello from App smoke test");
   });
 
-  test("runQueryLoop throwing appends loop-error to store", async () => {
+  test("runQueryLoop throwing records error in store steps", async () => {
     const streamFn = mock((_opts: Record<string, unknown>) => {
       throw new Error("stream exploded");
     });
@@ -117,10 +105,9 @@ describe("App orchestration", () => {
       "trigger error",
     );
 
-    const errorEvent = store.getState().events.find((e) => e.type === "loop-error");
-    expect(errorEvent).toBeDefined();
-    if (errorEvent?.type === "loop-error") {
-      expect(errorEvent.error).toBe("Error: stream exploded");
-    }
+    const steps = store.getState().steps;
+    const errorStep = steps.find((s) => s.error !== undefined);
+    expect(errorStep).toBeDefined();
+    expect(errorStep!.error).toContain("stream exploded");
   });
 });

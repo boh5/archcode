@@ -1,175 +1,610 @@
-import { describe, expect, test, afterAll } from "bun:test";
-import { join } from "node:path";
-import { mkdir, rm } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { BusyError, type ReasoningPart, type StepInfo, type StoredMessage, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, getSessionStore } from "./store";
-import { getAssistantText, saveSessionTranscript, loadSessionTranscript } from "./helpers";
-import type { TranscriptEvent, SessionTranscriptState } from "./types";
-import type { StoreApi } from "zustand";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+function uniqueSessionId(label: string): string {
+  return `${label}-${randomUUID()}`;
+}
 
-afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
-});
+function createFreshStore(label: string) {
+  return createSessionStore(uniqueSessionId(label));
+}
 
-function makeEvent(overrides: Partial<TranscriptEvent> & { type: TranscriptEvent["type"] }): TranscriptEvent {
-  return {
-    id: randomUUID(),
-    timestamp: Date.now(),
-    step: 0,
-    ...overrides,
-  } as TranscriptEvent;
+function onlyMessage(messages: StoredMessage[]): StoredMessage {
+  expect(messages).toHaveLength(1);
+  return messages[0]!;
+}
+
+function textPart(message: StoredMessage, index = 0): TextPart {
+  const part = message.parts[index];
+  expect(part?.type).toBe("text");
+  if (!part || part.type !== "text") throw new Error("Expected text part");
+  return part;
+}
+
+function reasoningPart(message: StoredMessage, index = 0): ReasoningPart {
+  const part = message.parts[index];
+  expect(part?.type).toBe("reasoning");
+  if (!part || part.type !== "reasoning") throw new Error("Expected reasoning part");
+  return part;
+}
+
+function toolPart(message: StoredMessage, index = 0): ToolPart {
+  const part = message.parts[index];
+  expect(part?.type).toBe("tool");
+  if (!part || part.type !== "tool") throw new Error("Expected tool part");
+  return part;
+}
+
+function onlyStep(steps: StepInfo[]): StepInfo {
+  expect(steps).toHaveLength(1);
+  return steps[0]!;
 }
 
 describe("createSessionStore", () => {
-  test("creates a store with the given session id", () => {
-    const id = randomUUID();
-    const store = createSessionStore(id);
+  test("creates initialized session state without events array", () => {
+    const sessionId = uniqueSessionId("creation");
+    const store = createSessionStore(sessionId);
     const state = store.getState();
-    expect(state.sessionId).toBe(id);
-    expect(state.events).toEqual([]);
+
+    expect(state.sessionId).toBe(sessionId);
+    expect(state.messages).toEqual([]);
+    expect(state.steps).toEqual([]);
     expect(state.createdAt).toBeGreaterThan(0);
+    expect(state.isRunning).toBe(false);
+    expect(state.isStreamingModel).toBe(false);
+    expect(state.streamingTools).toEqual({});
+    expect("events" in state).toBe(false);
   });
 
   test("returns the same store for the same session id", () => {
-    const id = randomUUID();
-    const store1 = createSessionStore(id);
-    const store2 = createSessionStore(id);
-    expect(store1).toBe(store2);
+    const sessionId = uniqueSessionId("same-store");
+    expect(createSessionStore(sessionId)).toBe(createSessionStore(sessionId));
   });
 
-  test("append adds an event to the events array", () => {
-    const store = createSessionStore(randomUUID());
-    const event = makeEvent({ type: "text-delta", text: "hello" });
-    store.getState().append(event);
-    expect(store.getState().events).toEqual([event]);
-  });
-
-  test("append preserves previous events (immutable)", () => {
-    const store = createSessionStore(randomUUID());
-    const event1 = makeEvent({ type: "text-delta", text: "a" });
-    const event2 = makeEvent({ type: "text-delta", text: "b" });
-    store.getState().append(event1);
-    store.getState().append(event2);
-    expect(store.getState().events).toEqual([event1, event2]);
+  test("getSessionStore returns undefined for unknown sessions and existing stores after creation", () => {
+    const sessionId = uniqueSessionId("registry");
+    expect(getSessionStore(sessionId)).toBeUndefined();
+    const store = createSessionStore(sessionId);
+    expect(getSessionStore(sessionId)).toBe(store);
   });
 });
 
-describe("getSessionStore", () => {
-  test("returns undefined for unknown session id", () => {
-    expect(getSessionStore("nonexistent")).toBeUndefined();
+describe("run lifecycle", () => {
+  test("run-start sets running state and generated currentRunId", () => {
+    const store = createFreshStore("run-start");
+    store.getState().append({ type: "run-start" });
+
+    const state = store.getState();
+    expect(state.isRunning).toBe(true);
+    expect(state.currentRunId).toBeString();
+    expect(state.currentAssistantMessageId).toBeUndefined();
+    expect(state.isStreamingModel).toBe(false);
+    expect(state.streamingText).toBeUndefined();
+    expect(state.streamingReasoning).toBeUndefined();
+    expect(state.streamingTools).toEqual({});
   });
 
-  test("returns the store after creation", () => {
-    const id = randomUUID();
-    const store = createSessionStore(id);
-    expect(getSessionStore(id)).toBe(store);
+  test("run-start uses a provided runId", () => {
+    const store = createFreshStore("provided-run-id");
+    store.getState().append({ type: "run-start", runId: "run-123" });
+    expect(store.getState().currentRunId).toBe("run-123");
+  });
+
+  test("run-start while running throws BusyError without mutating state", () => {
+    const store = createFreshStore("busy");
+    store.getState().append({ type: "run-start", runId: "first" });
+    const before = store.getState();
+
+    expect(() => store.getState().append({ type: "run-start", runId: "second" })).toThrow(BusyError);
+    const after = store.getState();
+    expect(after.currentRunId).toBe("first");
+    expect(after.isRunning).toBe(true);
+    expect(after.messages).toBe(before.messages);
+    expect(after.steps).toBe(before.steps);
+  });
+
+  test("run-end completed clears all temporary state and completes assistant message", () => {
+    const store = createFreshStore("run-end-success");
+    store.getState().append({ type: "run-start", runId: "run" });
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "hello" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "reasoning-start" });
+    store.getState().append({ type: "tool-input-start", toolCallId: "tool", toolName: "read" });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    const state = store.getState();
+    expect(state.isRunning).toBe(false);
+    expect(state.isStreamingModel).toBe(false);
+    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentAssistantMessageId).toBeUndefined();
+    expect(state.streamingText).toBeUndefined();
+    expect(state.streamingReasoning).toBeUndefined();
+    expect(state.streamingTools).toEqual({});
+    expect(onlyMessage(state.messages).completedAt).toBeGreaterThan(0);
+  });
+
+  test("run-end failed performs the same cleanup and preserves messages", () => {
+    const store = createFreshStore("run-end-failure");
+    store.getState().append({ type: "run-start", runId: "run" });
+    store.getState().append({ type: "user-message", content: "keep me" });
+    const messages = store.getState().messages;
+    store.getState().append({ type: "run-end", status: "failed", error: "boom" });
+
+    const state = store.getState();
+    expect(state.isRunning).toBe(false);
+    expect(state.isStreamingModel).toBe(false);
+    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentAssistantMessageId).toBeUndefined();
+    expect(state.streamingTools).toEqual({});
+    expect(state.messages).toEqual(messages);
   });
 });
 
-describe("getAssistantText", () => {
-  test("returns empty string for no events", () => {
-    expect(getAssistantText([])).toBe("");
+describe("user messages", () => {
+  test("user-message creates a completed user message with a completed text part and runId", () => {
+    const store = createFreshStore("user-message");
+    store.getState().append({ type: "run-start", runId: "run-user" });
+    store.getState().append({ type: "user-message", content: "hello" });
+
+    const message = onlyMessage(store.getState().messages);
+    expect(message.role).toBe("user");
+    expect(message.runId).toBe("run-user");
+    expect(message.completedAt).toBeGreaterThan(0);
+    const part = textPart(message);
+    expect(part.text).toBe("hello");
+    expect(part.completedAt).toBeGreaterThan(0);
   });
 
-  test("concatenates text-delta events only", () => {
-    const events: TranscriptEvent[] = [
-      makeEvent({ type: "user-message", content: "hi" }),
-      makeEvent({ type: "text-delta", text: "Hello" }),
-      makeEvent({ type: "text-delta", text: " world" }),
-      makeEvent({ type: "tool-call", toolName: "read", toolCallId: "tc1", input: {} }),
-    ];
-    expect(getAssistantText(events)).toBe("Hello world");
+  test("multiple user-messages are appended in order", () => {
+    const store = createFreshStore("multi-user");
+    store.getState().append({ type: "user-message", content: "first" });
+    store.getState().append({ type: "user-message", content: "second" });
+
+    expect(store.getState().messages.map((message) => textPart(message).text)).toEqual(["first", "second"]);
   });
 });
 
-describe("saveSessionTranscript + loadSessionTranscript", () => {
-  test("roundtrips transcript data correctly", async () => {
-    const sessionId = randomUUID();
-    const createdAt = Date.now();
+describe("text streaming", () => {
+  test("text-start creates an assistant message, text part, and streamingText", () => {
+    const store = createFreshStore("text-start");
+    store.getState().append({ type: "text-start" });
 
-    const events: TranscriptEvent[] = [
-      makeEvent({ type: "user-message", step: 0, content: "write a function" }),
-      makeEvent({ type: "text-delta", step: 0, text: "Sure," }),
-      makeEvent({ type: "text-delta", step: 0, text: " I can help." }),
-      makeEvent({ type: "tool-call", step: 0, toolName: "readFile", toolCallId: "tc1", input: { path: "src/index.ts" } }),
-      makeEvent({ type: "tool-result", step: 0, toolName: "readFile", toolCallId: "tc1", output: "file contents", isError: false }),
-    ];
-
-    await saveSessionTranscript({ sessionId, createdAt, events }, TMP_DIR);
-
-    const loadedStore = await loadSessionTranscript(sessionId, TMP_DIR);
-    const loadedState = loadedStore.getState();
-
-    expect(loadedState.sessionId).toBe(sessionId);
-    expect(loadedState.createdAt).toBe(createdAt);
-    expect(loadedState.events).toEqual(events);
+    const state = store.getState();
+    const message = onlyMessage(state.messages);
+    const part = textPart(message);
+    expect(message.role).toBe("assistant");
+    expect(state.currentAssistantMessageId).toBe(message.id);
+    expect(part.text).toBe("");
+    expect(part.completedAt).toBeUndefined();
+    expect(state.streamingText).toEqual({ messageId: message.id, partId: part.id, text: "" });
   });
 
-  test("persists all event types including errors", async () => {
-    const sessionId = randomUUID();
+  test("text-delta appends to streamingText only", () => {
+    const store = createFreshStore("text-delta");
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "hel" });
+    store.getState().append({ type: "text-delta", text: "lo" });
 
-    const events: TranscriptEvent[] = [
-      makeEvent({ type: "tool-result", step: 1, toolName: "bash", toolCallId: "tc2", output: "command failed", isError: true }),
-      makeEvent({ type: "loop-error", step: 2, error: "max steps reached" }),
-    ];
-
-    await saveSessionTranscript({ sessionId, createdAt: Date.now(), events }, TMP_DIR);
-
-    const loadedStore = await loadSessionTranscript(sessionId, TMP_DIR);
-    expect(loadedStore.getState().events).toEqual(events);
+    const state = store.getState();
+    expect(state.streamingText?.text).toBe("hello");
+    expect(textPart(onlyMessage(state.messages)).text).toBe("");
   });
 
-  test("uses atomic write (no .tmp file remains)", async () => {
-    const sessionId = randomUUID();
-    const events: TranscriptEvent[] = [
-      makeEvent({ type: "user-message", content: "test" }),
-    ];
+  test("text-end persists buffered text, completes the part, and clears streamingText", () => {
+    const store = createFreshStore("text-end");
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "done" });
+    store.getState().append({ type: "text-end" });
 
-    await saveSessionTranscript({ sessionId, createdAt: Date.now(), events }, TMP_DIR);
-
-    const { readdir } = await import("node:fs/promises");
-    const files = await readdir(TMP_DIR);
-    const sessionFiles = files.filter((f) => f.includes(sessionId));
-    expect(sessionFiles).toEqual([`${sessionId}.json`]);
+    const state = store.getState();
+    const part = textPart(onlyMessage(state.messages));
+    expect(part.text).toBe("done");
+    expect(part.completedAt).toBeGreaterThan(0);
+    expect(state.streamingText).toBeUndefined();
   });
 
-  test("load rejects on corrupted JSON", async () => {
-    const sessionId = randomUUID();
-    await mkdir(TMP_DIR, { recursive: true });
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(join(TMP_DIR, `${sessionId}.json`), "not json", "utf-8");
+  test("text-delta without text-start implicitly starts text streaming", () => {
+    const store = createFreshStore("implicit-text");
+    store.getState().append({ type: "text-delta", text: "implicit" });
 
-    expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    const state = store.getState();
+    const message = onlyMessage(state.messages);
+    const part = textPart(message);
+    expect(part.text).toBe("");
+    expect(state.streamingText).toEqual({ messageId: message.id, partId: part.id, text: "implicit" });
   });
 
-  test("load rejects on schema-invalid data", async () => {
-    const sessionId = randomUUID();
-    await mkdir(TMP_DIR, { recursive: true });
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(
-      join(TMP_DIR, `${sessionId}.json`),
-      JSON.stringify({ sessionId, createdAt: 123, events: [{ type: "unknown" }] }),
-      "utf-8",
-    );
-
-    expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+  test("text-end without streaming text does not crash", () => {
+    const store = createFreshStore("text-end-noop");
+    store.getState().append({ type: "text-end" });
+    expect(store.getState().messages).toEqual([]);
   });
 
-  test("load rejects when sessionId in file does not match parameter", async () => {
-    const fileSessionId = randomUUID();
-    const requestSessionId = randomUUID();
-    await mkdir(TMP_DIR, { recursive: true });
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(
-      join(TMP_DIR, `${requestSessionId}.json`),
-      JSON.stringify({ sessionId: fileSessionId, createdAt: 123, events: [] }),
-      "utf-8",
-    );
+  test("multiple text-start events create multiple text parts", () => {
+    const store = createFreshStore("multi-text");
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "one" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "text-start" });
 
-    expect(loadSessionTranscript(requestSessionId, TMP_DIR)).rejects.toThrow(
-      /mismatch/i,
-    );
+    const message = onlyMessage(store.getState().messages);
+    expect(message.parts).toHaveLength(2);
+    expect(textPart(message, 0).text).toBe("one");
+    expect(textPart(message, 1).text).toBe("");
+  });
+});
+
+describe("reasoning streaming", () => {
+  test("reasoning-start creates an assistant message, reasoning part, and streamingReasoning", () => {
+    const store = createFreshStore("reasoning-start");
+    store.getState().append({ type: "reasoning-start" });
+
+    const state = store.getState();
+    const message = onlyMessage(state.messages);
+    const part = reasoningPart(message);
+    expect(message.role).toBe("assistant");
+    expect(part.text).toBe("");
+    expect(state.streamingReasoning).toEqual({ messageId: message.id, partId: part.id, text: "" });
+  });
+
+  test("reasoning-delta appends to streaming buffer only", () => {
+    const store = createFreshStore("reasoning-delta");
+    store.getState().append({ type: "reasoning-start" });
+    store.getState().append({ type: "reasoning-delta", text: "think" });
+
+    const state = store.getState();
+    expect(state.streamingReasoning?.text).toBe("think");
+    expect(reasoningPart(onlyMessage(state.messages)).text).toBe("");
+  });
+
+  test("reasoning-end persists text, completes part, and clears streamingReasoning", () => {
+    const store = createFreshStore("reasoning-end");
+    store.getState().append({ type: "reasoning-delta", text: "because" });
+    store.getState().append({ type: "reasoning-end" });
+
+    const state = store.getState();
+    const part = reasoningPart(onlyMessage(state.messages));
+    expect(part.text).toBe("because");
+    expect(part.completedAt).toBeGreaterThan(0);
+    expect(state.streamingReasoning).toBeUndefined();
+  });
+
+  test("reasoning before text creates the assistant message correctly", () => {
+    const store = createFreshStore("reasoning-before-text");
+    store.getState().append({ type: "reasoning-start" });
+    store.getState().append({ type: "text-start" });
+
+    const message = onlyMessage(store.getState().messages);
+    expect(message.role).toBe("assistant");
+    expect(reasoningPart(message, 0).type).toBe("reasoning");
+    expect(textPart(message, 1).type).toBe("text");
+  });
+});
+
+describe("tool streaming", () => {
+  test("tool-input-start creates assistant message, pending tool part, and streaming entry", () => {
+    const store = createFreshStore("tool-input-start");
+    store.getState().append({ type: "tool-input-start", toolCallId: "call-1", toolName: "read" });
+
+    const state = store.getState();
+    const message = onlyMessage(state.messages);
+    const part = toolPart(message);
+    expect(part.state).toBe("pending");
+    expect(part.toolCallId).toBe("call-1");
+    expect(part.toolName).toBe("read");
+    expect(part.createdAt).toBeGreaterThan(0);
+    expect(state.streamingTools["call-1"]).toEqual({ messageId: message.id, partId: part.id, toolCallId: "call-1", toolName: "read" });
+  });
+
+  test("tool-call after tool-input-start transitions pending to running and stores input", () => {
+    const store = createFreshStore("tool-call-after-input");
+    const input = { path: "file.ts" };
+    store.getState().append({ type: "tool-input-start", toolCallId: "call-1", toolName: "read" });
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input });
+
+    const state = store.getState();
+    const part = toolPart(onlyMessage(state.messages));
+    expect(part.state).toBe("running");
+    if (part.state !== "running") throw new Error("Expected running tool");
+    expect(part.input).toBe(input);
+    expect(part.startedAt).toBeGreaterThan(0);
+    expect(state.streamingTools["call-1"]?.input).toBe(input);
+  });
+
+  test("tool-call without tool-input-start creates a running tool part directly", () => {
+    const store = createFreshStore("direct-tool-call");
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "pwd" });
+
+    const state = store.getState();
+    const part = toolPart(onlyMessage(state.messages));
+    expect(part.state).toBe("running");
+    if (part.state !== "running") throw new Error("Expected running tool");
+    expect(part.input).toBe("pwd");
+    expect(part.startedAt).toBeGreaterThan(0);
+    expect(state.streamingTools["call-1"]?.partId).toBe(part.id);
+  });
+
+  test("successful tool-result completes the part, stores output, and removes streaming entry", () => {
+    const store = createFreshStore("tool-result-success");
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", output: "content", isError: false });
+
+    const state = store.getState();
+    const part = toolPart(onlyMessage(state.messages));
+    expect(part.state).toBe("completed");
+    if (part.state !== "completed") throw new Error("Expected completed tool");
+    expect(part.output).toBe("content");
+    expect(part.endedAt).toBeGreaterThan(0);
+    expect(state.streamingTools["call-1"]).toBeUndefined();
+  });
+
+  test("error tool-result records errorMessage and endedAt", () => {
+    const store = createFreshStore("tool-result-error");
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "bad" });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "failed", isError: true });
+
+    const part = toolPart(onlyMessage(store.getState().messages));
+    expect(part.state).toBe("error");
+    if (part.state !== "error") throw new Error("Expected error tool");
+    expect(part.errorMessage).toBe("failed");
+    expect(part.endedAt).toBeGreaterThan(0);
+  });
+
+  test("tool-result falls back to finding a part by toolCallId when streaming entry is missing", () => {
+    const store = createFreshStore("tool-result-fallback");
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
+    store.setState({ streamingTools: {} });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false });
+
+    const part = toolPart(onlyMessage(store.getState().messages));
+    expect(part.state).toBe("completed");
+  });
+
+  test("multiple tools update independently and preserve part order", () => {
+    const store = createFreshStore("multi-tools");
+    store.getState().append({ type: "tool-input-start", toolCallId: "a", toolName: "first" });
+    store.getState().append({ type: "tool-input-start", toolCallId: "b", toolName: "second" });
+    store.getState().append({ type: "tool-call", toolCallId: "b", toolName: "second", input: 2 });
+    store.getState().append({ type: "tool-result", toolCallId: "b", toolName: "second", output: "two", isError: false });
+
+    const message = onlyMessage(store.getState().messages);
+    const first = toolPart(message, 0);
+    const second = toolPart(message, 1);
+    expect(first.toolCallId).toBe("a");
+    expect(first.state).toBe("pending");
+    expect(second.toolCallId).toBe("b");
+    expect(second.state).toBe("completed");
+    expect(store.getState().streamingTools.a).toBeDefined();
+    expect(store.getState().streamingTools.b).toBeUndefined();
+  });
+});
+
+describe("steps and errors", () => {
+  test("step-start sets isStreamingModel and creates StepInfo", () => {
+    const store = createFreshStore("step-start");
+    store.getState().append({ type: "run-start", runId: "run-step" });
+    store.getState().append({ type: "step-start", step: 1 });
+
+    const state = store.getState();
+    const step = onlyStep(state.steps);
+    expect(state.isStreamingModel).toBe(true);
+    expect(step.step).toBe(1);
+    expect(step.runId).toBe("run-step");
+    expect(step.startedAt).toBeGreaterThan(0);
+  });
+
+  test("step-end stops streaming and records finishReason, usage, and completedAt", () => {
+    const store = createFreshStore("step-end");
+    const usage = { inputTokens: 1, outputTokens: 2 };
+    store.getState().append({ type: "step-start", step: 1 });
+    store.getState().append({ type: "step-end", step: 1, finishReason: "stop", usage });
+
+    const state = store.getState();
+    const step = onlyStep(state.steps);
+    expect(state.isStreamingModel).toBe(false);
+    expect(step.finishReason).toBe("stop");
+    expect(step.usage).toBe(usage);
+    expect(step.completedAt).toBeGreaterThan(0);
+  });
+
+  test("multiple steps are appended in order", () => {
+    const store = createFreshStore("multi-steps");
+    store.getState().append({ type: "step-start", step: 1 });
+    store.getState().append({ type: "step-start", step: 2 });
+    expect(store.getState().steps.map((step) => step.step)).toEqual([1, 2]);
+  });
+
+  test("loop-error records error on a matching step", () => {
+    const store = createFreshStore("loop-error-match");
+    store.getState().append({ type: "step-start", step: 3 });
+    store.getState().append({ type: "loop-error", step: 3, error: "bad loop" });
+    expect(onlyStep(store.getState().steps).error).toBe("bad loop");
+  });
+
+  test("loop-error without a matching step appends an error step", () => {
+    const store = createFreshStore("loop-error-append");
+    store.getState().append({ type: "run-start", runId: "run-error" });
+    store.getState().append({ type: "loop-error", step: 4, error: "missing step" });
+
+    const step = onlyStep(store.getState().steps);
+    expect(step.step).toBe(4);
+    expect(step.runId).toBe("run-error");
+    expect(step.error).toBe("missing step");
+    expect(step.startedAt).toBeGreaterThan(0);
+  });
+});
+
+describe("Zustand integration and immutability", () => {
+  test("append triggers Zustand subscribers", () => {
+    const store = createFreshStore("subscriber");
+    let calls = 0;
+    const unsubscribe = store.subscribe(() => {
+      calls += 1;
+    });
+
+    store.getState().append({ type: "user-message", content: "notify" });
+    unsubscribe();
+    expect(calls).toBe(1);
+  });
+
+  test("messages array reference changes after append", () => {
+    const store = createFreshStore("immutability");
+    const before = store.getState().messages;
+    store.getState().append({ type: "user-message", content: "immutable" });
+    expect(store.getState().messages).not.toBe(before);
+  });
+
+  test("toModelMessages delegates projection over stored messages", () => {
+    const store = createFreshStore("projection");
+    store.getState().append({ type: "user-message", content: "hello" });
+    expect(store.getState().toModelMessages()).toEqual([
+      { role: "user", content: "hello" },
+    ]);
+  });
+});
+
+describe("Oracle regression tests", () => {
+  test("multi-step tool call creates separate assistant messages", () => {
+    const store = createFreshStore("multi-step");
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "run tool" });
+
+    // Step 0: assistant calls a tool
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "I'll run it" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
+    store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
+    store.getState().append({ type: "step-end", step: 0, finishReason: "tool-calls" });
+
+    store.getState().append({ type: "tool-result", toolCallId: "tc-1", toolName: "bash", output: "file.txt", isError: false });
+
+    // Step 1: should create a NEW assistant message (not merge into step 0's)
+    store.getState().append({ type: "step-start", step: 1 });
+    const messagesBeforeStep1 = store.getState().messages;
+    const step0Assistant = messagesBeforeStep1.find(m => m.role === "assistant");
+    expect(step0Assistant).toBeDefined();
+
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "Here's the result" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "step-end", step: 1, finishReason: "stop" });
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    // Two distinct assistant messages — tool-call in one, final text in another
+    const messages = store.getState().messages;
+    const assistantMessages = messages.filter(m => m.role === "assistant");
+    expect(assistantMessages.length).toBe(2);
+
+    const modelMessages = store.getState().toModelMessages();
+    // Order: user, assistant(tool-call), tool(result), assistant(final text)
+    expect(modelMessages[0]!.role).toBe("user");
+    expect(modelMessages[1]!.role).toBe("assistant");
+    expect(modelMessages[2]!.role).toBe("tool");
+    expect(modelMessages[3]!.role).toBe("assistant");
+  });
+
+  test("second run's step-end does not update first run's step", () => {
+    const store = createFreshStore("cross-run-step");
+
+    // Run 1
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "first" });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "first response" });
+    store.getState().append({ type: "text-end" });
+    store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    const run1Steps = store.getState().steps;
+
+    // Run 2 with same step number
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "second" });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    const run2Steps = store.getState().steps;
+    // Both runs' step 0 should still have their original data
+    expect(run2Steps.length).toBe(2);
+    expect(run2Steps[0]!.runId).not.toBe(run2Steps[1]!.runId);
+  });
+
+  test("partial text preserved when stream errors after text-delta", () => {
+    const store = createFreshStore("stream-error-text");
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "prompt" });
+    store.getState().append({ type: "step-start", step: 0 });
+
+    // Start text streaming, then simulate error (run-end handles cleanup)
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "partial" });
+
+    // consumeFullStream's finally block would flush text-end,
+    // then loop-error records the failure, then run-end settles incomplete state
+    store.getState().append({ type: "text-end" }); // flushed by try/finally
+    store.getState().append({ type: "loop-error", step: 0, error: "stream failed" });
+    store.getState().append({ type: "run-end", status: "failed" });
+
+    // Partial text should be persisted (not lost)
+    const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    const textParts = assistantMsg!.parts.filter(p => p.type === "text");
+    expect(textParts.length).toBe(1);
+    expect(textParts[0]!.text).toBe("partial");
+    expect(textParts[0]!.completedAt).toBeDefined();
+  });
+
+  test("duplicate text-start flushes previous text part", () => {
+    const store = createFreshStore("dup-text-start");
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "prompt" });
+    store.getState().append({ type: "step-start", step: 0 });
+
+    // First text section
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "First " });
+
+    // Duplicate text-start should finalize the first and start a second
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "Second" });
+    store.getState().append({ type: "text-end" });
+
+    const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    const textParts = assistantMsg!.parts.filter(p => p.type === "text");
+    // Should have two text parts: first completed, second streaming
+    expect(textParts.length).toBe(2);
+    expect(textParts[0]!.completedAt).toBeDefined();
+  });
+
+  test("failed run settles pending/running tools as error", () => {
+    const store = createFreshStore("failed-run-tools");
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "use tool" });
+    store.getState().append({ type: "step-start", step: 0 });
+
+    store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
+    store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
+
+    // Run ends before tool-result arrives
+    store.getState().append({ type: "loop-error", step: 0, error: "model crashed" });
+    store.getState().append({ type: "run-end", status: "failed" });
+
+    const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    const toolParts = assistantMsg!.parts.filter(p => p.type === "tool");
+    expect(toolParts.length).toBe(1);
+    expect(toolParts[0]!.state).toBe("error");
+    if (toolParts[0]!.type === "tool" && toolParts[0]!.state === "error") {
+      expect(toolParts[0]!.errorMessage).toBe("Run ended before tool result");
+    }
   });
 });

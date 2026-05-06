@@ -1,15 +1,8 @@
 import { streamText as aiStreamText } from "ai";
-import type { ModelMessage } from "ai";
-import { randomUUID } from "node:crypto";
+import type { StreamTextResult, ToolSet } from "ai";
+import type { StoreApi } from "zustand";
+import type { SessionStoreState, StreamEvent } from "../../store/types";
 import type { QueryLoopOptions, QueryLoopResult } from "./types";
-import type {
-  TranscriptEvent,
-  UserMessageEvent,
-  TextDeltaEvent,
-  ToolCallEvent,
-  ToolResultEvent,
-  LoopErrorEvent,
-} from "../../store/types";
 
 const DEFAULT_MAX_STEPS = 50;
 
@@ -19,24 +12,15 @@ export function __setStreamTextForTest(fn: typeof aiStreamText) {
   _streamText = fn;
 }
 
-type EventPayload =
-  | Omit<UserMessageEvent, "id" | "timestamp">
-  | Omit<TextDeltaEvent, "id" | "timestamp">
-  | Omit<ToolCallEvent, "id" | "timestamp">
-  | Omit<ToolResultEvent, "id" | "timestamp">
-  | Omit<LoopErrorEvent, "id" | "timestamp">;
+type TextStreamPart = StreamTextResult<ToolSet, never>["fullStream"] extends AsyncIterable<infer Part>
+  ? Part
+  : never;
 
-function appendEvent(
-  store: QueryLoopOptions["store"],
-  event: EventPayload,
-): void {
-  const enriched: TranscriptEvent = {
-    ...event,
-    id: randomUUID(),
-    timestamp: Date.now(),
-  } as TranscriptEvent;
-  store.getState().append(enriched);
-}
+type ToolCallArray = Array<{
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}>;
 
 export async function runQueryLoop(
   options: QueryLoopOptions,
@@ -51,180 +35,157 @@ export async function runQueryLoop(
     store,
   } = options;
 
-  const messages: ModelMessage[] = [
-    { role: "user", content: userMessage },
-  ];
-
-  appendEvent(store, { type: "user-message", step: 0, content: userMessage });
-
   let steps = 0;
   let lastText = "";
+  let failed = false;
 
-  while (steps < maxSteps) {
-    const streamOpts: Record<string, unknown> = {
-      model,
-      messages,
-    };
-    if (Object.keys(tools).length > 0) {
-      streamOpts.tools = tools;
-    }
-    if (systemPrompt) {
-      streamOpts.system = systemPrompt;
-    }
+  store.getState().append({ type: "run-start" });
 
-    let result: Awaited<ReturnType<typeof aiStreamText>>;
-    try {
-      result = _streamText(
-        streamOpts as Parameters<typeof aiStreamText>[0],
-      );
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
-    }
+  try {
+    store.getState().append({ type: "user-message", content: userMessage });
 
-    try {
-      for await (const chunk of result.fullStream) {
-        if (chunk.type === "text-delta") {
-          appendEvent(store, { type: "text-delta", step: steps, text: chunk.text });
-        }
-        if (chunk.type === "tool-call") {
-          appendEvent(store, {
-            type: "tool-call",
-            step: steps,
-            toolName: chunk.toolName,
-            toolCallId: chunk.toolCallId,
-            input: chunk.input,
-          });
-        }
-      }
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
-    }
+    while (steps < maxSteps) {
+      store.getState().append({ type: "step-start", step: steps });
+      const messages = store.getState().toModelMessages();
 
-    let responseMessages: ModelMessage[];
-    try {
-      responseMessages = (await result.response).messages;
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
-    }
-    messages.push(...responseMessages);
+      const result = _streamText({
+        model,
+        messages,
+        ...(Object.keys(tools).length > 0 ? { tools } : {}),
+        ...(systemPrompt ? { system: systemPrompt } : {}),
+      });
 
-    try {
+      await consumeFullStream(result.fullStream, store);
+      const finishReason = await result.finishReason;
+      const usage = await result.usage;
       lastText = await result.text;
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
+
+      store.getState().append({ type: "step-end", step: steps, finishReason, usage });
+
+      if (finishReason !== "tool-calls") break;
+
+      const toolCalls = await result.toolCalls;
+      await executeToolCalls(toolCalls, toolExecutors, store, steps);
+      steps++;
     }
 
-    let finishReason: string;
-    try {
-      finishReason = await result.finishReason;
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
+    if (steps >= maxSteps) {
+      store.getState().append({
+        type: "loop-error",
+        step: steps,
+        error: `Max steps (${maxSteps}) reached`,
+      });
     }
 
-    if (finishReason !== "tool-calls") {
-      break;
-    }
-
-    let toolCalls: Awaited<typeof result.toolCalls>;
-    try {
-      toolCalls = await result.toolCalls;
-    } catch (err) {
-      appendEvent(store, { type: "loop-error", step: steps, error: String(err) });
-      break;
-    }
-
-    const toolResultMessages = await Promise.all(
-      toolCalls.map(async (tc) => {
-        const executor = toolExecutors[tc.toolName] as
-          | ((input: unknown) => Promise<string>)
-          | undefined;
-
-        if (!executor) {
-          const errorMsg = `No executor for tool: ${tc.toolName}`;
-          appendEvent(store, {
-            type: "tool-result",
-            step: steps,
-            toolName: tc.toolName,
-            toolCallId: tc.toolCallId,
-            output: errorMsg,
-            isError: true,
-          });
-          // Must return a valid tool-result to keep the LLM message protocol intact
-          return {
-            role: "tool" as const,
-            content: [
-              {
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                type: "tool-result" as const,
-                output: { type: "text" as const, value: errorMsg },
-              },
-            ],
-          } satisfies ModelMessage;
-        }
-
-        try {
-          const output = await executor(tc.input);
-          appendEvent(store, {
-            type: "tool-result",
-            step: steps,
-            toolName: tc.toolName,
-            toolCallId: tc.toolCallId,
-            output,
-            isError: false,
-          });
-          return {
-            role: "tool" as const,
-            content: [
-              {
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                type: "tool-result" as const,
-                output: { type: "text" as const, value: output },
-              },
-            ],
-          } satisfies ModelMessage;
-        } catch (err) {
-          const errorMsg = String(err);
-          appendEvent(store, {
-            type: "tool-result",
-            step: steps,
-            toolName: tc.toolName,
-            toolCallId: tc.toolCallId,
-            output: errorMsg,
-            isError: true,
-          });
-          // Must return a valid tool-result to keep the LLM message protocol intact
-          return {
-            role: "tool" as const,
-            content: [
-              {
-                toolName: tc.toolName,
-                toolCallId: tc.toolCallId,
-                type: "tool-result" as const,
-                output: { type: "text" as const, value: errorMsg },
-              },
-            ],
-          } satisfies ModelMessage;
-        }
-      }),
-    );
-
-    for (const msg of toolResultMessages) {
-      messages.push(msg);
-    }
-
-    steps++;
+    return { text: lastText, steps };
+  } catch (err) {
+    failed = true;
+    store.getState().append({
+      type: "loop-error",
+      step: steps,
+      error: errorMessage(err),
+    });
+    return { text: lastText, steps };
+  } finally {
+    store.getState().append({
+      type: "run-end",
+      status: failed ? "failed" : "completed",
+      ...(failed ? { error: "Run failed" } : {}),
+    });
   }
+}
 
-  if (steps >= maxSteps) {
-    appendEvent(store, { type: "loop-error", step: steps, error: `Max steps (${maxSteps}) reached` });
+async function consumeFullStream(
+  fullStream: AsyncIterable<TextStreamPart>,
+  store: StoreApi<SessionStoreState>,
+): Promise<void> {
+  let textOpen = false;
+  let reasoningOpen = false;
+
+  try {
+    for await (const chunk of fullStream) {
+      if (chunk.type === "text-delta") {
+        if (!textOpen) {
+          store.getState().append({ type: "text-start" });
+          textOpen = true;
+        }
+        store.getState().append({ type: "text-delta", text: chunk.text });
+        continue;
+      }
+
+      if (chunk.type === "reasoning-delta") {
+        if (!reasoningOpen) {
+          store.getState().append({ type: "reasoning-start" });
+          reasoningOpen = true;
+        }
+        store.getState().append({ type: "reasoning-delta", text: chunk.text });
+        continue;
+      }
+
+      if (chunk.type === "tool-input-start") {
+        store.getState().append({
+          type: "tool-input-start",
+          toolCallId: chunk.id,
+          toolName: chunk.toolName,
+        });
+        continue;
+      }
+
+      if (chunk.type === "tool-call") {
+        store.getState().append({
+          type: "tool-call",
+          toolCallId: chunk.toolCallId,
+          toolName: chunk.toolName,
+          input: chunk.input,
+        });
+      }
+    }
+  } finally {
+    // Flush open streams even on error so partial content reaches persistent layer
+    if (textOpen) store.getState().append({ type: "text-end" });
+    if (reasoningOpen) store.getState().append({ type: "reasoning-end" });
   }
+}
 
-  return { text: lastText, messages, steps };
+async function executeToolCalls(
+  toolCalls: ToolCallArray,
+  toolExecutors: Record<string, (input: unknown) => Promise<string>>,
+  store: StoreApi<SessionStoreState>,
+  _step: number,
+): Promise<void> {
+  for (const toolCall of toolCalls) {
+    const executor = toolExecutors[toolCall.toolName];
+
+    if (!executor) {
+      appendToolResult(store, toolCall, `No executor for tool: ${toolCall.toolName}`, true);
+      continue;
+    }
+
+    try {
+      const output = await executor(toolCall.input);
+      appendToolResult(store, toolCall, output, false);
+    } catch (err) {
+      appendToolResult(store, toolCall, errorMessage(err), true);
+    }
+  }
+}
+
+function appendToolResult(
+  store: StoreApi<SessionStoreState>,
+  toolCall: ToolCallArray[number],
+  output: string,
+  isError: boolean,
+): void {
+  const event: StreamEvent = {
+    type: "tool-result",
+    toolCallId: toolCall.toolCallId,
+    toolName: toolCall.toolName,
+    output,
+    isError,
+  };
+  store.getState().append(event);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

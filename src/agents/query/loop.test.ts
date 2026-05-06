@@ -1,448 +1,610 @@
-import { describe, expect, test, mock } from "bun:test";
-import type { ModelMessage } from "ai";
-import { z } from "zod";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { ModelMessage, streamText as aiStreamText } from "ai";
 import { tool } from "ai";
 import { randomUUID } from "node:crypto";
-import { runQueryLoop, __setStreamTextForTest } from "./loop";
+import type { StoreApi } from "zustand";
+import { z } from "zod";
 import { createSessionStore } from "../../store/store";
+import type { SessionStoreState, StoredMessage } from "../../store/types";
+import { __setStreamTextForTest, runQueryLoop } from "./loop";
 import type { QueryLoopOptions } from "./types";
 
+type MockChunk =
+  | { type: "text-delta"; text: string }
+  | { type: "reasoning-delta"; text: string }
+  | { type: "tool-input-start"; id: string; toolName: string }
+  | { type: "tool-input-delta"; toolCallId: string; delta: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | { type: "start-step" }
+  | { type: "finish-step" }
+  | { type: "start" }
+  | { type: "finish" }
+  | { type: "abort" }
+  | { type: "error"; error: unknown };
+
+interface MockToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
 interface MockRound {
-  finishReason: string;
-  text?: string;
-  toolCalls?: Array<{
-    toolCallId: string;
-    toolName: string;
-    input: Record<string, unknown>;
-  }>;
+  chunks?: MockChunk[];
+  finishReason?: string | Promise<string>;
+  usage?: unknown | Promise<unknown>;
+  text?: string | Promise<string>;
+  toolCalls?: MockToolCall[] | Promise<MockToolCall[]>;
+  fullStreamError?: Error;
 }
 
-function setupMockStreamText(rounds: MockRound[]) {
-  let roundIndex = 0;
+const dummyModel = {
+  modelId: "mock-model",
+  provider: "mock-provider",
+} as unknown as LanguageModelV3;
 
-  const fn = mock((_opts: Record<string, unknown>) => {
-    const round = rounds[roundIndex++];
-    if (!round) throw new Error("No more mock rounds");
+const testTool = tool({
+  description: "Test tool",
+  inputSchema: z.object({ message: z.string().optional() }),
+});
 
-    const chunks: Array<Record<string, unknown>> = [];
-    if (round.text) {
-      chunks.push({ type: "text-delta", text: round.text });
-    }
-    if (round.toolCalls) {
-      for (const tc of round.toolCalls) {
-        chunks.push({
-          type: "tool-call",
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          input: tc.input,
-        });
-      }
-    }
-
-    const responseMessages: ModelMessage[] = [];
-    {
-      const content: Array<Record<string, unknown>> = [];
-      if (round.text) content.push({ type: "text", text: round.text });
-      if (round.toolCalls) {
-        for (const tc of round.toolCalls) {
-          content.push({
-            type: "tool-call",
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            input: tc.input,
-          });
-        }
-      }
-      responseMessages.push({
-        role: "assistant",
-        content,
-      } as unknown as ModelMessage);
-    }
-
-    return {
-      fullStream: (async function* () {
-        for (const chunk of chunks) {
-          yield chunk;
-        }
-      })(),
-      response: Promise.resolve({ messages: responseMessages }),
-      finishReason: round.finishReason,
-      text: round.text ?? "",
-      toolCalls:
-        round.toolCalls?.map((tc) => ({
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          input: tc.input,
-        })) ?? [],
-    };
-  });
-
-  __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
-  return fn;
+function createStore(): StoreApi<SessionStoreState> {
+  return createSessionStore(randomUUID());
 }
-
-const DUMMY_MODEL = { modelId: "mock", provider: "mock" } as unknown as import("@ai-sdk/provider").LanguageModelV3;
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   return {
-    model: DUMMY_MODEL,
+    model: dummyModel,
     tools: {},
     toolExecutors: {},
-    store: createSessionStore(randomUUID()),
+    store: createStore(),
     ...overrides,
   };
 }
 
-describe("runQueryLoop", () => {
-  const baseTool = tool({
-    description: "A test tool",
-    inputSchema: z.object({ message: z.string() }),
+function createMockStreamText(rounds: MockRound[]) {
+  let index = 0;
+
+  const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+    const round = rounds[index++];
+    if (!round) throw new Error("No more mock rounds");
+
+    const chunks = round.chunks ?? textToChunks(round.text);
+
+    return {
+      fullStream: (async function* () {
+        if (round.fullStreamError) throw round.fullStreamError;
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      })(),
+      finishReason: Promise.resolve(round.finishReason ?? "stop"),
+      usage: Promise.resolve(round.usage ?? { totalTokens: 1 }),
+      text: Promise.resolve(round.text ?? collectText(chunks)),
+      toolCalls: Promise.resolve(round.toolCalls ?? collectToolCalls(chunks)),
+    };
   });
 
-  test("returns text directly when LLM responds without tool calls", async () => {
-    const streamFn = setupMockStreamText([
-      { finishReason: "stop", text: "Hello from LLM" },
-    ]);
+  __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+  return fn;
+}
+
+function textToChunks(text: MockRound["text"]): MockChunk[] {
+  return typeof text === "string" && text.length > 0
+    ? [{ type: "text-delta", text }]
+    : [];
+}
+
+function collectText(chunks: MockChunk[]): string {
+  return chunks
+    .filter((chunk): chunk is Extract<MockChunk, { type: "text-delta" }> =>
+      chunk.type === "text-delta",
+    )
+    .map((chunk) => chunk.text)
+    .join("");
+}
+
+function collectToolCalls(chunks: MockChunk[]): MockToolCall[] {
+  return chunks
+    .filter((chunk): chunk is Extract<MockChunk, { type: "tool-call" }> =>
+      chunk.type === "tool-call",
+    )
+    .map((chunk) => ({
+      toolCallId: chunk.toolCallId,
+      toolName: chunk.toolName,
+      input: chunk.input,
+    }));
+}
+
+function assistantMessages(store: StoreApi<SessionStoreState>): StoredMessage[] {
+  return store.getState().messages.filter((message) => message.role === "assistant");
+}
+
+function lastAssistant(store: StoreApi<SessionStoreState>): StoredMessage {
+  const messages = assistantMessages(store);
+  const message = messages.at(-1);
+  if (!message) throw new Error("Expected assistant message");
+  return message;
+}
+
+function streamCallMessages(fn: ReturnType<typeof createMockStreamText>, callIndex: number): ModelMessage[] {
+  const args = fn.mock.calls[callIndex]?.[0];
+  if (!args || !("messages" in args)) throw new Error("Expected streamText messages");
+  return args.messages as ModelMessage[];
+}
+
+beforeEach(() => {
+  createMockStreamText([{ text: "default" }]);
+});
+
+describe("runQueryLoop store-source-of-truth behavior", () => {
+  test("returns only text and steps in result shape", async () => {
+    createMockStreamText([{ text: "Hello" }]);
 
     const result = await runQueryLoop(makeOptions(), "Hi");
 
-    expect(result.text).toBe("Hello from LLM");
-    expect(result.steps).toBe(0);
-    expect(streamFn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ text: "Hello", steps: 0 });
+    expect("messages" in result).toBe(false);
   });
 
-  test("executes tool and feeds result back to LLM", async () => {
-    const executor = mock(async (input: unknown) => {
-      return `echo: ${(input as { message: string }).message}`;
-    });
+  test("emits run lifecycle into store and ends not running", async () => {
+    const store = createStore();
+    createMockStreamText([{ text: "ok" }]);
 
-    const streamFn = setupMockStreamText([
-      {
-        finishReason: "tool-calls",
-        text: "Let me check that.",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "echo", input: { message: "hello" } },
-        ],
-      },
-      { finishReason: "stop", text: "Done" },
-    ]);
+    await runQueryLoop(makeOptions({ store }), "Question");
 
-    const result = await runQueryLoop(
-      makeOptions({
-        tools: { echo: baseTool },
-        toolExecutors: { echo: executor },
-      }),
-      "Say hello",
-    );
-
-    expect(result.text).toBe("Done");
-    expect(result.steps).toBe(1);
-    expect(executor).toHaveBeenCalledTimes(1);
-    expect(executor).toHaveBeenCalledWith({ message: "hello" });
-    expect(streamFn).toHaveBeenCalledTimes(2);
+    expect(store.getState().isRunning).toBe(false);
+    expect(store.getState().isStreamingModel).toBe(false);
+    expect(store.getState().currentRunId).toBeUndefined();
   });
 
-  test("handles multiple tool calls in a single round", async () => {
-    const executorA = mock(async (input: unknown) => `A: ${(input as { message: string }).message}`);
-    const executorB = mock(async (input: unknown) => `B: ${(input as { message: string }).message}`);
-
-    const streamFn = setupMockStreamText([
-      {
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "toolA", input: { message: "a" } },
-          { toolCallId: "tc-2", toolName: "toolB", input: { message: "b" } },
-        ],
-      },
-      { finishReason: "stop", text: "All done" },
-    ]);
-
-    const result = await runQueryLoop(
-      makeOptions({
-        tools: { toolA: baseTool, toolB: baseTool },
-        toolExecutors: { toolA: executorA, toolB: executorB },
-      }),
-      "test",
-    );
-
-    expect(result.text).toBe("All done");
-    expect(result.steps).toBe(1);
-    expect(executorA).toHaveBeenCalledTimes(1);
-    expect(executorB).toHaveBeenCalledTimes(1);
-  });
-
-  test("handles multi-step tool call loops", async () => {
-    const executor = mock(async (input: unknown) => `step: ${(input as { message: string }).message}`);
-
-    const streamFn = setupMockStreamText([
-      {
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "echo", input: { message: "first" } },
-        ],
-      },
-      {
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-2", toolName: "echo", input: { message: "second" } },
-        ],
-      },
-      { finishReason: "stop", text: "Final answer" },
-    ]);
-
-    const result = await runQueryLoop(
-      makeOptions({
-        tools: { echo: baseTool },
-        toolExecutors: { echo: executor },
-      }),
-      "Multi-step test",
-    );
-
-    expect(result.text).toBe("Final answer");
-    expect(result.steps).toBe(2);
-    expect(executor).toHaveBeenCalledTimes(2);
-    expect(streamFn).toHaveBeenCalledTimes(3);
-  });
-
-  test("respects maxSteps and stops early", async () => {
-    const executor = mock(async () => "result");
-
-    const rounds: MockRound[] = [];
-    for (let i = 0; i < 100; i++) {
-      rounds.push({
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: `tc-${i}`, toolName: "echo", input: { message: "loop" } },
-        ],
+  test("sets running flags during streamText after run-start and step-start", async () => {
+    const store = createStore();
+    const snapshots: Array<Pick<SessionStoreState, "isRunning" | "isStreamingModel">> = [];
+    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+      snapshots.push({
+        isRunning: store.getState().isRunning,
+        isStreamingModel: store.getState().isStreamingModel,
       });
-    }
+      return {
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "ok" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ totalTokens: 1 }),
+        text: Promise.resolve("ok"),
+        toolCalls: Promise.resolve([]),
+      };
+    });
+    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
 
-    setupMockStreamText(rounds);
+    await runQueryLoop(makeOptions({ store }), "Question");
 
-    const result = await runQueryLoop(
-      makeOptions({
-        tools: { echo: baseTool },
-        toolExecutors: { echo: executor },
-        maxSteps: 3,
-      }),
-      "test",
-    );
-
-    expect(result.steps).toBe(3);
+    expect(snapshots).toEqual([{ isRunning: true, isStreamingModel: true }]);
   });
 
-  test("accumulates message history correctly", async () => {
-    const executor = mock(async (input: unknown) => `result: ${(input as { message: string }).message}`);
+  test("records user and assistant messages in store", async () => {
+    const store = createStore();
+    createMockStreamText([{ text: "Answer" }]);
 
-    setupMockStreamText([
-      {
-        finishReason: "tool-calls",
-        text: "Calling tool",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "echo", input: { message: "ping" } },
-        ],
-      },
-      { finishReason: "stop", text: "Done" },
+    await runQueryLoop(makeOptions({ store }), "Question");
+
+    expect(store.getState().messages.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
     ]);
-
-    const result = await runQueryLoop(
-      makeOptions({
-        tools: { echo: baseTool },
-        toolExecutors: { echo: executor },
-      }),
-      "test",
-    );
-
-    expect(result.messages[0].role).toBe("user");
-    expect(result.messages.length).toBeGreaterThanOrEqual(3);
+    expect(store.getState().messages[0].parts[0]).toMatchObject({
+      type: "text",
+      text: "Question",
+    });
   });
 
-  test("passes system prompt via streamText options", async () => {
-    const streamFn = setupMockStreamText([
-      { finishReason: "stop", text: "ok" },
-    ]);
-
-    await runQueryLoop(
-      makeOptions({ systemPrompt: "You are a helpful assistant." }),
-      "test",
-    );
-
-    expect(streamFn).toHaveBeenCalledTimes(1);
-    const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
-    expect(callArgs.system).toBe("You are a helpful assistant.");
-  });
-
-  test("works with no tools defined", async () => {
-    setupMockStreamText([
-      { finishReason: "stop", text: "No tools needed" },
-    ]);
-
-    const result = await runQueryLoop(makeOptions(), "Simple question");
-
-    expect(result.text).toBe("No tools needed");
-    expect(result.steps).toBe(0);
-  });
-
-  test("passes user message as first message in history", async () => {
-    const streamFn = setupMockStreamText([
-      { finishReason: "stop", text: "ok" },
-    ]);
+  test("streamText receives store projection after user message", async () => {
+    const streamFn = createMockStreamText([{ text: "ok" }]);
 
     await runQueryLoop(makeOptions(), "Hello world");
 
-    const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
-    const messages = callArgs.messages as ModelMessage[];
-    expect(messages[0]).toEqual({ role: "user", content: "Hello world" });
-  });
-
-  test("records text-delta events in store", async () => {
-    setupMockStreamText([
-      { finishReason: "stop", text: "Hello" },
+    expect(streamCallMessages(streamFn, 0)).toEqual([
+      { role: "user", content: "Hello world" },
     ]);
-
-    const store = createSessionStore(randomUUID());
-    await runQueryLoop(makeOptions({ store }), "test");
-
-    const events = store.getState().events;
-    const textDeltas = events.filter((e) => e.type === "text-delta");
-    expect(textDeltas.length).toBeGreaterThan(0);
-    expect(textDeltas.some((e) => e.type === "text-delta" && e.text.includes("Hello"))).toBe(true);
   });
 
-  test("records user-message event in store", async () => {
-    setupMockStreamText([
-      { finishReason: "stop", text: "ok" },
-    ]);
-
-    const store = createSessionStore(randomUUID());
-    await runQueryLoop(makeOptions({ store }), "My question");
-
-    const events = store.getState().events;
-    const userMsg = events.find((e) => e.type === "user-message");
-    expect(userMsg).toBeDefined();
-    if (userMsg && userMsg.type === "user-message") {
-      expect(userMsg.content).toBe("My question");
-    }
-  });
-
-  test("records tool-call and tool-result events in store", async () => {
-    const executor = mock(async () => "file contents");
-
-    setupMockStreamText([
+  test("second step receives projected assistant tool history from store", async () => {
+    const streamFn = createMockStreamText([
       {
+        text: "Calling",
         finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "read", input: { path: "a.ts" } },
+        chunks: [
+          { type: "text-delta", text: "Calling" },
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "ping" } },
         ],
       },
-      { finishReason: "stop", text: "Done" },
+      { text: "Done" },
     ]);
 
-    const store = createSessionStore(randomUUID());
     await runQueryLoop(
       makeOptions({
-        tools: { read: baseTool },
-        toolExecutors: { read: executor },
-        store,
+        tools: { echo: testTool },
+        toolExecutors: { echo: async () => "pong" },
       }),
-      "read file",
+      "Use tool",
     );
 
-    const events = store.getState().events;
-    const toolCall = events.find((e) => e.type === "tool-call");
-    const toolResult = events.find((e) => e.type === "tool-result");
-    expect(toolCall).toBeDefined();
-    expect(toolResult).toBeDefined();
-    if (toolCall && toolCall.type === "tool-call") {
-      expect(toolCall.toolCallId).toBe("tc-1");
-      expect(toolCall.toolName).toBe("read");
-    }
-    if (toolResult && toolResult.type === "tool-result") {
-      expect(toolResult.toolCallId).toBe("tc-1");
-      expect(toolResult.output).toBe("file contents");
-      expect(toolResult.isError).toBe(false);
-    }
-  });
-
-  test("records tool-result event with isError=true when executor is missing", async () => {
-    setupMockStreamText([
+    expect(streamCallMessages(streamFn, 1)).toEqual([
+      { role: "user", content: "Use tool" },
       {
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "missing", input: {} },
+        role: "assistant",
+        content: [
+          { type: "text", text: "Calling" },
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "ping" } },
         ],
       },
-      { finishReason: "stop", text: "ok" },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc-1",
+            toolName: "echo",
+            output: { type: "text", value: "pong" },
+          },
+        ],
+      },
     ]);
-
-    const store = createSessionStore(randomUUID());
-    await runQueryLoop(
-      makeOptions({
-        tools: { missing: baseTool },
-        toolExecutors: {},
-        store,
-      }),
-      "test",
-    );
-
-    const events = store.getState().events;
-    const toolResult = events.find((e) => e.type === "tool-result");
-    expect(toolResult).toBeDefined();
-    if (toolResult && toolResult.type === "tool-result") {
-      expect(toolResult.toolName).toBe("missing");
-      expect(toolResult.isError).toBe(true);
-      expect(toolResult.output).toContain("No executor");
-    }
   });
 
-  test("records tool-result event with isError=true when executor throws", async () => {
-    const executor = mock(async () => {
-      throw new Error("disk full");
+  test("second run sees first run history in projection", async () => {
+    const store = createStore();
+    const streamFn = createMockStreamText([{ text: "First answer" }, { text: "Second answer" }]);
+
+    await runQueryLoop(makeOptions({ store }), "First question");
+    await runQueryLoop(makeOptions({ store }), "Second question");
+
+    expect(streamCallMessages(streamFn, 1)).toEqual([
+      { role: "user", content: "First question" },
+      { role: "assistant", content: [{ type: "text", text: "First answer" }] },
+      { role: "user", content: "Second question" },
+    ]);
+  });
+
+  test("text streaming creates text part with concatenated final text", async () => {
+    const store = createStore();
+    createMockStreamText([
+      { chunks: [{ type: "text-delta", text: "Hel" }, { type: "text-delta", text: "lo" }] },
+    ]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(lastAssistant(store).parts).toEqual([
+      expect.objectContaining({ type: "text", text: "Hello", completedAt: expect.any(Number) }),
+    ]);
+  });
+
+  test("single text delta implicitly starts and ends text stream", async () => {
+    const store = createStore();
+    createMockStreamText([{ chunks: [{ type: "text-delta", text: "Only" }] }]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(store.getState().streamingText).toBeUndefined();
+    expect(lastAssistant(store).parts[0]).toMatchObject({ type: "text", text: "Only" });
+  });
+
+  test("reasoning streaming creates completed reasoning part", async () => {
+    const store = createStore();
+    createMockStreamText([
+      { chunks: [{ type: "reasoning-delta", text: "Think " }, { type: "reasoning-delta", text: "carefully" }] },
+    ]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+    expect(lastAssistant(store).parts).toEqual([
+      expect.objectContaining({ type: "reasoning", text: "Think carefully", completedAt: expect.any(Number) }),
+    ]);
+  });
+
+  test("reasoning and text parts preserve stream order", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        chunks: [
+          { type: "reasoning-delta", text: "Thought" },
+          { type: "text-delta", text: "Answer" },
+        ],
+      },
+    ]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+    expect(lastAssistant(store).parts.map((part) => part.type)).toEqual(["reasoning", "text"]);
+  });
+
+  test("tool-input-start and tool-call create running tool part", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-input-start", id: "tc-1", toolName: "echo" },
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "hi" } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({
+      type: "tool",
+      state: "completed",
+      toolCallId: "tc-1",
+      toolName: "echo",
+      input: { message: "hi" },
+      output: "ok",
     });
-
-    setupMockStreamText([
-      {
-        finishReason: "tool-calls",
-        toolCalls: [
-          { toolCallId: "tc-1", toolName: "write", input: {} },
-        ],
-      },
-      { finishReason: "stop", text: "ok" },
-    ]);
-
-    const store = createSessionStore(randomUUID());
-    await runQueryLoop(
-      makeOptions({
-        tools: { write: baseTool },
-        toolExecutors: { write: executor },
-        store,
-      }),
-      "test",
-    );
-
-    const events = store.getState().events;
-    const toolResult = events.find((e) => e.type === "tool-result");
-    expect(toolResult).toBeDefined();
-    if (toolResult && toolResult.type === "tool-result") {
-      expect(toolResult.isError).toBe(true);
-      expect(toolResult.output).toContain("disk full");
-    }
   });
 
-  test("records loop-error event when streamText throws", async () => {
+  test("tool-call without tool-input-start still creates tool part", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "hi" } }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({ type: "tool", state: "completed" });
+  });
+
+  test("tool-input-delta chunks are ignored but do not break streaming", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-input-start", id: "tc-1", toolName: "echo" },
+          { type: "tool-input-delta", toolCallId: "tc-1", delta: "{}" },
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({ type: "tool", state: "completed" });
+  });
+
+  test("successful tool execution stores completed result", async () => {
+    const store = createStore();
+    const executor = mock(async () => "success output");
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "x" } }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: executor } }),
+      "Hi",
+    );
+
+    expect(executor).toHaveBeenCalledWith({ message: "x" });
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({
+      state: "completed",
+      output: "success output",
+    });
+  });
+
+  test("missing tool executor stores error result", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "missing", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, tools: { missing: testTool } }), "Hi");
+
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({
+      state: "error",
+      errorMessage: "No executor for tool: missing",
+    });
+  });
+
+  test("throwing tool executor stores error message", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        tools: { echo: testTool },
+        toolExecutors: { echo: async () => { throw new Error("boom"); } },
+      }),
+      "Hi",
+    );
+
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({
+      state: "error",
+      errorMessage: "boom",
+    });
+  });
+
+  test("non tool-calls finish reason stops loop", async () => {
+    const streamFn = createMockStreamText([{ finishReason: "stop", text: "Done" }, { text: "unused" }]);
+
+    const result = await runQueryLoop(makeOptions(), "Hi");
+
+    expect(result.steps).toBe(0);
+    expect(streamFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("tool-calls finish reason continues loop and increments steps", async () => {
+    const streamFn = createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { finishReason: "stop", text: "Final" },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(result).toEqual({ text: "Final", steps: 1 });
+    expect(streamFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("multiple tool-call steps continue until stop", async () => {
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} }] },
+      { finishReason: "stop", text: "Final" },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(result.steps).toBe(2);
+    expect(result.text).toBe("Final");
+  });
+
+  test("maxSteps emits loop-error but run-end completed", async () => {
+    const store = createStore();
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} }] },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, maxSteps: 2, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      "Hi",
+    );
+
+    expect(result.steps).toBe(2);
+    expect(store.getState().isRunning).toBe(false);
+    expect(store.getState().steps.at(-1)).toMatchObject({
+      step: 2,
+      error: "Max steps (2) reached",
+    });
+  });
+
+  test("streamText throw emits failed run-end state", async () => {
+    const store = createStore();
     const fn = mock(() => {
       throw new Error("model unavailable");
     });
-    __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
 
-    const store = createSessionStore(randomUUID());
-    await runQueryLoop(makeOptions({ store }), "test");
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    const events = store.getState().events;
-    const loopError = events.find((e) => e.type === "loop-error");
-    expect(loopError).toBeDefined();
-    if (loopError && loopError.type === "loop-error") {
-      expect(loopError.error).toContain("model unavailable");
-    }
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(store.getState().isRunning).toBe(false);
+    expect(store.getState().steps.at(-1)).toMatchObject({ step: 0, error: "model unavailable" });
+  });
+
+  test("fullStream error is caught and recorded", async () => {
+    const store = createStore();
+    createMockStreamText([{ fullStreamError: new Error("stream broke") }]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(store.getState().steps[0]).toMatchObject({ step: 0, error: "stream broke" });
+  });
+
+  test("usage rejection is caught and recorded", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        text: "partial",
+        usage: Promise.reject(new Error("usage failed")),
+      },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result.text).toBe("");
+    expect(store.getState().steps[0]).toMatchObject({ step: 0, error: "usage failed" });
+  });
+
+  test("passes systemPrompt to streamText", async () => {
+    const streamFn = createMockStreamText([{ text: "ok" }]);
+
+    await runQueryLoop(makeOptions({ systemPrompt: "Be helpful" }), "Hi");
+
+    expect(streamFn.mock.calls[0][0]).toMatchObject({ system: "Be helpful" });
+  });
+
+  test("omits system option when systemPrompt is empty", async () => {
+    const streamFn = createMockStreamText([{ text: "ok" }]);
+
+    await runQueryLoop(makeOptions(), "Hi");
+    expect("system" in streamFn.mock.calls[0][0]).toBe(false);
+  });
+
+  test("includes tools only when non-empty", async () => {
+    const noToolsFn = createMockStreamText([{ text: "ok" }]);
+    await runQueryLoop(makeOptions(), "Hi");
+    expect("tools" in noToolsFn.mock.calls[0][0]).toBe(false);
+
+    const withToolsFn = createMockStreamText([{ text: "ok" }]);
+    await runQueryLoop(makeOptions({ tools: { echo: testTool } }), "Hi");
+    expect(withToolsFn.mock.calls[0][0]).toMatchObject({ tools: { echo: testTool } });
+  });
+
+  test("step-end stores finish reason and usage", async () => {
+    const store = createStore();
+    createMockStreamText([{ text: "ok", finishReason: "length", usage: { totalTokens: 42 } }]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+    expect(store.getState().steps[0]).toMatchObject({
+      step: 0,
+      finishReason: "length",
+      usage: { totalTokens: 42 },
+      completedAt: expect.any(Number),
+    });
+  });
+
+  test("preserves __setStreamTextForTest mock pattern", async () => {
+    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => ({
+      fullStream: (async function* () {
+        yield { type: "text-delta", text: "custom" };
+      })(),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve(undefined),
+      text: Promise.resolve("custom"),
+      toolCalls: Promise.resolve([]),
+    }));
+    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+
+    const result = await runQueryLoop(makeOptions(), "Hi");
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result.text).toBe("custom");
   });
 });

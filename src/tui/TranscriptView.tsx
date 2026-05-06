@@ -1,8 +1,20 @@
 import { Box, Text } from "ink";
-import type { TranscriptEvent, TextDeltaEvent } from "../store/types";
+import type {
+  StoredMessage,
+  StoredPart,
+  TextPart,
+  ReasoningPart,
+  ToolPart,
+  StreamingTextState,
+  StreamingReasoningState,
+  StreamingToolState,
+} from "../store/types";
 
 export interface TranscriptViewProps {
-  events: TranscriptEvent[];
+  messages: StoredMessage[];
+  streamingText?: StreamingTextState;
+  streamingReasoning?: StreamingReasoningState;
+  streamingTools: Record<string, StreamingToolState>;
 }
 
 interface RenderBlock {
@@ -16,30 +28,16 @@ export function formatUserMessage(content: string): string {
   return `> ${content}`;
 }
 
-export function formatTextDeltas(events: TextDeltaEvent[]): string {
-  const stepTexts: string[] = [];
-  let currentStep: number | undefined;
-  let currentText = "";
+export function formatTextPart(text: string): string {
+  return text;
+}
 
-  for (const event of events) {
-    if (currentStep === undefined) {
-      currentStep = event.step;
-    }
+export function formatStreamingText(streamingText: StreamingTextState): string {
+  return streamingText.text;
+}
 
-    if (event.step !== currentStep) {
-      stepTexts.push(currentText);
-      currentStep = event.step;
-      currentText = "";
-    }
-
-    currentText += event.text;
-  }
-
-  if (currentStep !== undefined) {
-    stepTexts.push(currentText);
-  }
-
-  return stepTexts.join("\n\n");
+export function formatReasoningPart(text: string): string {
+  return `💭 ${text}`;
 }
 
 export function formatToolCall(toolName: string): string {
@@ -55,81 +53,187 @@ export function formatLoopError(error: string): string {
   return `✗ ${error}`;
 }
 
-function createTextDeltaBlock(buffer: TextDeltaEvent[]): RenderBlock | undefined {
-  if (buffer.length === 0) return undefined;
-  return {
-    id: buffer.map((event) => event.id).join(":"),
-    content: formatTextDeltas(buffer),
-  };
+function getUserTextContent(parts: StoredPart[]): string {
+  const textPart = parts.find((p) => p.type === "text") as TextPart | undefined;
+  return textPart?.text ?? "";
 }
 
-function buildRenderBlocks(events: TranscriptEvent[]): RenderBlock[] {
+function isStreamingTextMatch(
+  part: TextPart,
+  streamingText: StreamingTextState | undefined,
+): boolean {
+  return streamingText !== undefined && part.id === streamingText.partId;
+}
+
+function isStreamingReasoningMatch(
+  part: ReasoningPart,
+  streamingReasoning: StreamingReasoningState | undefined,
+): boolean {
+  return streamingReasoning !== undefined && part.id === streamingReasoning.partId;
+}
+
+export function buildRenderBlocks(
+  messages: StoredMessage[],
+  streamingText?: StreamingTextState,
+  streamingReasoning?: StreamingReasoningState,
+  streamingTools: Record<string, StreamingToolState> = {},
+): RenderBlock[] {
   const blocks: RenderBlock[] = [];
-  let textBuffer: TextDeltaEvent[] = [];
 
-  const flushTextBuffer = () => {
-    const block = createTextDeltaBlock(textBuffer);
-    if (block) blocks.push(block);
-    textBuffer = [];
-  };
-
-  for (const event of events) {
-    if (event.type === "text-delta") {
-      const previousEvent = textBuffer.at(-1);
-      if (previousEvent && previousEvent.step !== event.step) {
-        flushTextBuffer();
-      }
-      textBuffer.push(event);
+  for (const message of messages) {
+    if (message.role === "user") {
+      blocks.push({
+        id: message.id,
+        content: formatUserMessage(getUserTextContent(message.parts)),
+        color: "gray",
+      });
       continue;
     }
 
-    flushTextBuffer();
+    for (const part of message.parts) {
+      if (part.type === "text") {
+        if (part.completedAt !== undefined) {
+          blocks.push({
+            id: part.id,
+            content: formatTextPart(part.text),
+          });
+        } else if (isStreamingTextMatch(part, streamingText)) {
+          blocks.push({
+            id: `${part.id}:streaming`,
+            content: formatStreamingText(streamingText!),
+          });
+        }
+        continue;
+      }
 
-    switch (event.type) {
-      case "user-message":
-        blocks.push({
-          id: event.id,
-          content: formatUserMessage(event.content),
-          color: "gray",
-        });
-        break;
-      case "tool-call":
-        blocks.push({
-          id: event.id,
-          content: formatToolCall(event.toolName),
-          color: "yellow",
-        });
-        break;
-      case "tool-result":
-        blocks.push({
-          id: event.id,
-          content: formatToolResult(event.output, event.isError),
-          color: event.isError ? "red" : "green",
-        });
-        break;
-      case "loop-error":
-        blocks.push({
-          id: event.id,
-          content: formatLoopError(event.error),
-          color: "red",
-          bold: true,
-        });
-        break;
+      if (part.type === "reasoning") {
+        if (part.completedAt !== undefined) {
+          blocks.push({
+            id: part.id,
+            content: formatReasoningPart(part.text),
+          });
+        } else if (isStreamingReasoningMatch(part, streamingReasoning)) {
+          blocks.push({
+            id: `${part.id}:streaming`,
+            content: formatReasoningPart(streamingReasoning!.text),
+          });
+        }
+        continue;
+      }
+
+      if (part.type === "tool") {
+        const toolBlocks = renderToolPart(part);
+        blocks.push(...toolBlocks);
+        continue;
+      }
     }
   }
 
-  flushTextBuffer();
+  if (streamingText && !blocks.some((b) => b.id === `${streamingText.partId}:streaming`)) {
+    blocks.push({
+      id: `streaming-text:orphan`,
+      content: formatStreamingText(streamingText),
+    });
+  }
+
+  if (streamingReasoning && !blocks.some((b) => b.id === `${streamingReasoning.partId}:streaming`)) {
+    blocks.push({
+      id: `streaming-reasoning:orphan`,
+      content: formatReasoningPart(streamingReasoning.text),
+    });
+  }
+
+  for (const [toolCallId, streamingTool] of Object.entries(streamingTools)) {
+    const alreadyRendered = messagePartsContainTool(messages, toolCallId);
+    if (!alreadyRendered) {
+      blocks.push({
+        id: `streaming-tool:${toolCallId}`,
+        content: formatToolCall(streamingTool.toolName),
+        color: "yellow",
+      });
+    }
+  }
+
   return blocks;
 }
 
-export function TranscriptView({ events }: TranscriptViewProps) {
+function messagePartsContainTool(messages: StoredMessage[], toolCallId: string): boolean {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === "tool" && part.toolCallId === toolCallId) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function renderToolPart(part: ToolPart): RenderBlock[] {
+  const blocks: RenderBlock[] = [];
+
+  switch (part.state) {
+    case "pending": {
+      blocks.push({
+        id: part.id,
+        content: formatToolCall(part.toolName),
+        color: "yellow",
+      });
+      break;
+    }
+    case "running": {
+      blocks.push({
+        id: part.id,
+        content: `${formatToolCall(part.toolName)} (running)`,
+        color: "yellow",
+      });
+      break;
+    }
+    case "completed": {
+      blocks.push({
+        id: part.id,
+        content: formatToolCall(part.toolName),
+        color: "yellow",
+      });
+      blocks.push({
+        id: `${part.id}:result`,
+        content: formatToolResult(part.output, false),
+        color: "green",
+      });
+      break;
+    }
+    case "error": {
+      blocks.push({
+        id: part.id,
+        content: formatToolCall(part.toolName),
+        color: "yellow",
+      });
+      blocks.push({
+        id: `${part.id}:result`,
+        content: formatToolResult(part.errorMessage, true),
+        color: "red",
+      });
+      break;
+    }
+  }
+
+  return blocks;
+}
+
+export function TranscriptView({
+  messages,
+  streamingText,
+  streamingReasoning,
+  streamingTools,
+}: TranscriptViewProps) {
   return (
     <Box flexDirection="column">
-      {buildRenderBlocks(events).map((block) => (
-        <Text key={block.id} color={block.color} bold={block.bold}>
-          {block.content}
-        </Text>
-      ))}
+      {buildRenderBlocks(messages, streamingText, streamingReasoning, streamingTools).map(
+        (block) => (
+          <Text key={block.id} color={block.color} bold={block.bold}>
+            {block.content}
+          </Text>
+        ),
+      )}
     </Box>
   );
 }

@@ -1,58 +1,255 @@
+import type { ModelMessage } from "ai";
+import type { StoreApi } from "zustand";
+
+// ─── Stream Events (Loop → Store inputs, no id/timestamp) ───
+
+export interface RunStartEvent {
+  type: "run-start";
+  runId?: string;
+}
+
+export interface RunEndEvent {
+  type: "run-end";
+  status: "completed" | "failed";
+  error?: string;
+}
+
 export interface UserMessageEvent {
   type: "user-message";
-  id: string;
-  timestamp: number;
-  step: number;
   content: string;
+}
+
+export interface TextStartEvent {
+  type: "text-start";
 }
 
 export interface TextDeltaEvent {
   type: "text-delta";
-  id: string;
-  timestamp: number;
-  step: number;
   text: string;
+}
+
+export interface TextEndEvent {
+  type: "text-end";
+}
+
+export interface ReasoningStartEvent {
+  type: "reasoning-start";
+}
+
+export interface ReasoningDeltaEvent {
+  type: "reasoning-delta";
+  text: string;
+}
+
+export interface ReasoningEndEvent {
+  type: "reasoning-end";
+}
+
+export interface ToolInputStartEvent {
+  type: "tool-input-start";
+  toolCallId: string;
+  toolName: string;
 }
 
 export interface ToolCallEvent {
   type: "tool-call";
-  id: string;
-  timestamp: number;
-  step: number;
-  toolName: string;
   toolCallId: string;
+  toolName: string;
   input: unknown;
 }
 
 export interface ToolResultEvent {
   type: "tool-result";
-  id: string;
-  timestamp: number;
-  step: number;
-  toolName: string;
   toolCallId: string;
+  toolName: string;
   output: string;
   isError: boolean;
 }
 
+export interface StepStartEvent {
+  type: "step-start";
+  step: number;
+}
+
+export interface StepEndEvent {
+  type: "step-end";
+  step: number;
+  finishReason: string;
+  usage?: unknown;
+}
+
 export interface LoopErrorEvent {
   type: "loop-error";
-  id: string;
-  timestamp: number;
-  step: number;
+  step?: number;
   error: string;
 }
 
-export type TranscriptEvent =
+export type StreamEvent =
+  | RunStartEvent
+  | RunEndEvent
   | UserMessageEvent
+  | TextStartEvent
   | TextDeltaEvent
+  | TextEndEvent
+  | ReasoningStartEvent
+  | ReasoningDeltaEvent
+  | ReasoningEndEvent
+  | ToolInputStartEvent
   | ToolCallEvent
   | ToolResultEvent
+  | StepStartEvent
+  | StepEndEvent
   | LoopErrorEvent;
 
-export interface SessionTranscriptState {
-  sessionId: string;
-  events: TranscriptEvent[];
+// ─── Stored Parts (Persistent layer) ───
+
+export interface TextPart {
+  type: "text";
+  id: string;
+  text: string;
   createdAt: number;
-  append: (event: TranscriptEvent) => void;
+  completedAt?: number;
+}
+
+export interface ReasoningPart {
+  type: "reasoning";
+  id: string;
+  text: string;
+  createdAt: number;
+  completedAt?: number;
+}
+
+export interface PendingToolPart {
+  type: "tool";
+  id: string;
+  state: "pending";
+  toolCallId: string;
+  toolName: string;
+  createdAt: number;
+}
+
+export interface RunningToolPart {
+  type: "tool";
+  id: string;
+  state: "running";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  createdAt: number;
+  startedAt: number;
+}
+
+export interface CompletedToolPart {
+  type: "tool";
+  id: string;
+  state: "completed";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output: string;
+  createdAt: number;
+  startedAt: number;
+  endedAt: number;
+}
+
+export interface ErrorToolPart {
+  type: "tool";
+  id: string;
+  state: "error";
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  errorMessage: string;
+  createdAt: number;
+  startedAt: number;
+  endedAt: number;
+}
+
+export type ToolPart =
+  | PendingToolPart
+  | RunningToolPart
+  | CompletedToolPart
+  | ErrorToolPart;
+
+export type StoredPart = TextPart | ReasoningPart | ToolPart;
+
+// ─── Stored Message ───
+
+export interface StoredMessage {
+  id: string;
+  role: "user" | "assistant";
+  parts: StoredPart[];
+  createdAt: number;
+  completedAt?: number;
+  runId?: string;
+}
+
+// ─── Step Info (Session-level non-conversation metadata) ───
+
+export interface StepInfo {
+  id: string;
+  step: number;
+  runId?: string;
+  startedAt: number;
+  completedAt?: number;
+  finishReason?: string;
+  usage?: unknown;
+  error?: string;
+}
+
+// ─── Streaming Temporary State ───
+
+export interface StreamingTextState {
+  messageId: string;
+  partId: string;
+  text: string;
+}
+
+export interface StreamingReasoningState {
+  messageId: string;
+  partId: string;
+  text: string;
+}
+
+export interface StreamingToolState {
+  messageId: string;
+  partId: string;
+  toolCallId: string;
+  toolName: string;
+  input?: unknown;
+}
+
+// ─── Session Store State ───
+
+export interface SessionStoreState {
+  sessionId: string;
+  createdAt: number;
+
+  // Persistent layer
+  messages: StoredMessage[];
+  steps: StepInfo[];
+
+  // Running state
+  isRunning: boolean;
+  isStreamingModel: boolean;
+  currentRunId?: string;
+  currentAssistantMessageId?: string;
+
+  // Temporary streaming layer
+  streamingText?: StreamingTextState;
+  streamingReasoning?: StreamingReasoningState;
+  streamingTools: Record<string, StreamingToolState>;
+
+  // Methods
+  append: (event: StreamEvent) => void;
+  toModelMessages: () => ModelMessage[];
+}
+
+// ─── Errors ───
+
+export class BusyError extends Error {
+  constructor(sessionId: string) {
+    super(`Session "${sessionId}" is already running`);
+    this.name = "BusyError";
+  }
 }
