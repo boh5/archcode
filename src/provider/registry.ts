@@ -1,12 +1,12 @@
 import { createProviderRegistry } from "ai";
 import type { ProviderRegistryProvider } from "ai";
-import type { ProvidersConfig } from "../config/index.js";
+import type { ProvidersConfig } from "../config/index";
 import {
   createProviderInstance,
   getProviderConfig,
   getModelConfig,
-} from "../config/index.js";
-import { ModelInfo } from "./model.js";
+} from "../config/index";
+import { ModelInfo } from "./model";
 
 export class UnknownQualifiedIdError extends Error {
   constructor(
@@ -67,8 +67,8 @@ export class Registry {
  *
  * @example
  * ```ts
- * import { loadConfig } from "../config/index.js";
- * import { createRegistry } from "./provider/index.js";
+ * import { loadConfig } from "../config/index";
+ * import { createRegistry } from "./provider/index";
  * import { generateText } from "ai";
  *
  * const config = await loadConfig(".specra.json");

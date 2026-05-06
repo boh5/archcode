@@ -3,9 +3,9 @@ import type { ModelMessage } from "ai";
 import { z } from "zod";
 import { tool } from "ai";
 import { randomUUID } from "node:crypto";
-import { runQueryLoop, __setStreamTextForTest } from "./loop.js";
-import { createSessionStore } from "../../store/store.js";
-import type { QueryLoopOptions } from "./types.js";
+import { runQueryLoop, __setStreamTextForTest } from "./loop";
+import { createSessionStore } from "../../store/store";
+import type { QueryLoopOptions } from "./types";
 
 interface MockRound {
   finishReason: string;

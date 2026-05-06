@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import type { SpecraConfig } from "./schema.js";
-import { specraConfigSchema } from "./schema.js";
+import type { SpecraConfig } from "./schema";
+import { specraConfigSchema } from "./schema";
 
 export class ConfigLoadError extends Error {
   constructor(

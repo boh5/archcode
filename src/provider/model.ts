@@ -3,7 +3,7 @@ import type {
   ModelConfig,
   ModelLimit,
   ModelModalities,
-} from "../config/index.js";
+} from "../config/index";
 
 /**
  * Wraps an AI SDK LanguageModel instance together with its static metadata

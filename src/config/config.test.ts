@@ -14,7 +14,7 @@ import {
   UnsupportedProviderPackageError,
   UnknownProviderError,
   UnknownModelError,
-} from "./index.js";
+} from "./index";
 
 const VALID_CONFIG = {
   $schema: "http://xxxx/config.json",

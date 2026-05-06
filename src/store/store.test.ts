@@ -2,9 +2,9 @@ import { describe, expect, test, afterAll } from "bun:test";
 import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { createSessionStore, getSessionStore } from "./store.js";
-import { getAssistantText, saveSessionTranscript, loadSessionTranscript } from "./helpers.js";
-import type { TranscriptEvent, SessionTranscriptState } from "./types.js";
+import { createSessionStore, getSessionStore } from "./store";
+import { getAssistantText, saveSessionTranscript, loadSessionTranscript } from "./helpers";
+import type { TranscriptEvent, SessionTranscriptState } from "./types";
 import type { StoreApi } from "zustand";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");

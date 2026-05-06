@@ -1,11 +1,11 @@
-export { specraConfigSchema, type SpecraConfig } from "./schema.js";
+export { specraConfigSchema, type SpecraConfig } from "./schema";
 export {
   ConfigLoadError,
   ConfigParseError,
   ConfigValidationError,
   loadConfig,
   parseConfig,
-} from "./load.js";
+} from "./load";
 export {
   OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
   type ModelConfig,
@@ -29,4 +29,4 @@ export {
   providerConfigSchema,
   providerOptionsSchema,
   providersConfigSchema,
-} from "./provider.js";
+} from "./provider";

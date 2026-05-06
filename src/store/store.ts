@@ -3,7 +3,7 @@ import type { StoreApi } from "zustand";
 import type {
   SessionTranscriptState,
   TranscriptEvent,
-} from "./types.js";
+} from "./types";
 
 const sessionRegistry = new Map<string, StoreApi<SessionTranscriptState>>();
 

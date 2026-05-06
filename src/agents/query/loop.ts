@@ -1,7 +1,7 @@
 import { streamText as aiStreamText } from "ai";
 import type { ModelMessage } from "ai";
 import { randomUUID } from "node:crypto";
-import type { QueryLoopOptions, QueryLoopResult } from "./types.js";
+import type { QueryLoopOptions, QueryLoopResult } from "./types";
 import type {
   TranscriptEvent,
   UserMessageEvent,
@@ -9,7 +9,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
   LoopErrorEvent,
-} from "../../store/types.js";
+} from "../../store/types";
 
 const DEFAULT_MAX_STEPS = 50;
 

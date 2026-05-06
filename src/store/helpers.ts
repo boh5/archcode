@@ -5,8 +5,8 @@ import type { StoreApi } from "zustand";
 import type {
   TranscriptEvent,
   SessionTranscriptState,
-} from "./types.js";
-import { createSessionStore } from "./store.js";
+} from "./types";
+import { createSessionStore } from "./store";
 
 export function getAssistantText(events: TranscriptEvent[]): string {
   return events

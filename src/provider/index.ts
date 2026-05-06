@@ -1,6 +1,6 @@
-export { ModelInfo } from "./model.js";
+export { ModelInfo } from "./model";
 export {
   Registry,
-  UnknownQualifiedIdError,
   createRegistry,
-} from "./registry.js";
+  UnknownQualifiedIdError,
+} from "./registry";

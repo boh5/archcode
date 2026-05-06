@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { parseConfig } from "../config/index.js";
+import { parseConfig } from "../config/index";
 import {
   createRegistry,
   Registry,
   ModelInfo,
   UnknownQualifiedIdError,
-} from "./index.js";
+} from "./index";
 
 const VALID_CONFIG = {
   provider: {

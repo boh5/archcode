@@ -6,10 +6,10 @@ export type {
   ToolResultEvent,
   LoopErrorEvent,
   SessionTranscriptState,
-} from "./types.js";
-export { createSessionStore, getSessionStore } from "./store.js";
+} from "./types";
+export { createSessionStore, getSessionStore } from "./store";
 export {
   getAssistantText,
   saveSessionTranscript,
   loadSessionTranscript,
-} from "./helpers.js";
+} from "./helpers";
