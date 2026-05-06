@@ -1,5 +1,7 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { Tool, ModelMessage } from "ai";
+import type { StoreApi } from "zustand";
+import type { SessionTranscriptState } from "../../store/types.js";
 
 export type ToolExecutor<I = unknown> = (input: I) => Promise<string>;
 
@@ -11,6 +13,7 @@ export interface QueryLoopOptions {
   toolExecutors: ToolExecutorMap;
   systemPrompt?: string;
   maxSteps?: number;
+  store: StoreApi<SessionTranscriptState>;
 }
 
 export interface QueryLoopResult {

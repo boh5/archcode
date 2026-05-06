@@ -2,7 +2,10 @@ import { describe, expect, test, mock } from "bun:test";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
 import { tool } from "ai";
+import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "./loop.js";
+import { createSessionStore } from "../../store/store.js";
+import type { QueryLoopOptions } from "./types.js";
 
 interface MockRound {
   finishReason: string;
@@ -80,6 +83,16 @@ function setupMockStreamText(rounds: MockRound[]) {
 
 const DUMMY_MODEL = { modelId: "mock", provider: "mock" } as unknown as import("@ai-sdk/provider").LanguageModelV3;
 
+function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
+  return {
+    model: DUMMY_MODEL,
+    tools: {},
+    toolExecutors: {},
+    store: createSessionStore(randomUUID()),
+    ...overrides,
+  };
+}
+
 describe("runQueryLoop", () => {
   const baseTool = tool({
     description: "A test tool",
@@ -91,14 +104,7 @@ describe("runQueryLoop", () => {
       { finishReason: "stop", text: "Hello from LLM" },
     ]);
 
-    const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
-      },
-      "Hi",
-    );
+    const result = await runQueryLoop(makeOptions(), "Hi");
 
     expect(result.text).toBe("Hello from LLM");
     expect(result.steps).toBe(0);
@@ -122,11 +128,10 @@ describe("runQueryLoop", () => {
     ]);
 
     const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
+      makeOptions({
         tools: { echo: baseTool },
         toolExecutors: { echo: executor },
-      },
+      }),
       "Say hello",
     );
 
@@ -153,11 +158,10 @@ describe("runQueryLoop", () => {
     ]);
 
     const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
+      makeOptions({
         tools: { toolA: baseTool, toolB: baseTool },
         toolExecutors: { toolA: executorA, toolB: executorB },
-      },
+      }),
       "test",
     );
 
@@ -187,11 +191,10 @@ describe("runQueryLoop", () => {
     ]);
 
     const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
+      makeOptions({
         tools: { echo: baseTool },
         toolExecutors: { echo: executor },
-      },
+      }),
       "Multi-step test",
     );
 
@@ -217,12 +220,11 @@ describe("runQueryLoop", () => {
     setupMockStreamText(rounds);
 
     const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
+      makeOptions({
         tools: { echo: baseTool },
         toolExecutors: { echo: executor },
         maxSteps: 3,
-      },
+      }),
       "test",
     );
 
@@ -244,11 +246,10 @@ describe("runQueryLoop", () => {
     ]);
 
     const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
+      makeOptions({
         tools: { echo: baseTool },
         toolExecutors: { echo: executor },
-      },
+      }),
       "test",
     );
 
@@ -262,12 +263,7 @@ describe("runQueryLoop", () => {
     ]);
 
     await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
-        systemPrompt: "You are a helpful assistant.",
-      },
+      makeOptions({ systemPrompt: "You are a helpful assistant." }),
       "test",
     );
 
@@ -281,14 +277,7 @@ describe("runQueryLoop", () => {
       { finishReason: "stop", text: "No tools needed" },
     ]);
 
-    const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
-      },
-      "Simple question",
-    );
+    const result = await runQueryLoop(makeOptions(), "Simple question");
 
     expect(result.text).toBe("No tools needed");
     expect(result.steps).toBe(0);
@@ -299,45 +288,161 @@ describe("runQueryLoop", () => {
       { finishReason: "stop", text: "ok" },
     ]);
 
-    const result = await runQueryLoop(
-      {
-        model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
-      },
-      "Hello world",
-    );
+    await runQueryLoop(makeOptions(), "Hello world");
 
     const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
     const messages = callArgs.messages as ModelMessage[];
     expect(messages[0]).toEqual({ role: "user", content: "Hello world" });
   });
 
-  test("prints text-delta chunks via stdout.write", async () => {
-    const chunks: string[] = [];
-    const originalWrite = process.stdout.write;
-    process.stdout.write = ((str: string | Uint8Array) => {
-      if (typeof str === "string") chunks.push(str);
-      return true;
-    }) as typeof process.stdout.write;
+  test("records text-delta events in store", async () => {
+    setupMockStreamText([
+      { finishReason: "stop", text: "Hello" },
+    ]);
 
-    try {
-      setupMockStreamText([
-        { finishReason: "stop", text: "Hello" },
-      ]);
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(makeOptions({ store }), "test");
 
-      await runQueryLoop(
-        {
-          model: DUMMY_MODEL,
-          tools: {},
-          toolExecutors: {},
-        },
-        "test",
-      );
+    const events = store.getState().events;
+    const textDeltas = events.filter((e) => e.type === "text-delta");
+    expect(textDeltas.length).toBeGreaterThan(0);
+    expect(textDeltas.some((e) => e.type === "text-delta" && e.text.includes("Hello"))).toBe(true);
+  });
 
-      expect(chunks.some((c) => c.includes("Hello"))).toBe(true);
-    } finally {
-      process.stdout.write = originalWrite;
+  test("records user-message event in store", async () => {
+    setupMockStreamText([
+      { finishReason: "stop", text: "ok" },
+    ]);
+
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(makeOptions({ store }), "My question");
+
+    const events = store.getState().events;
+    const userMsg = events.find((e) => e.type === "user-message");
+    expect(userMsg).toBeDefined();
+    if (userMsg && userMsg.type === "user-message") {
+      expect(userMsg.content).toBe("My question");
+    }
+  });
+
+  test("records tool-call and tool-result events in store", async () => {
+    const executor = mock(async () => "file contents");
+
+    setupMockStreamText([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [
+          { toolCallId: "tc-1", toolName: "read", input: { path: "a.ts" } },
+        ],
+      },
+      { finishReason: "stop", text: "Done" },
+    ]);
+
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(
+      makeOptions({
+        tools: { read: baseTool },
+        toolExecutors: { read: executor },
+        store,
+      }),
+      "read file",
+    );
+
+    const events = store.getState().events;
+    const toolCall = events.find((e) => e.type === "tool-call");
+    const toolResult = events.find((e) => e.type === "tool-result");
+    expect(toolCall).toBeDefined();
+    expect(toolResult).toBeDefined();
+    if (toolCall && toolCall.type === "tool-call") {
+      expect(toolCall.toolCallId).toBe("tc-1");
+      expect(toolCall.toolName).toBe("read");
+    }
+    if (toolResult && toolResult.type === "tool-result") {
+      expect(toolResult.toolCallId).toBe("tc-1");
+      expect(toolResult.output).toBe("file contents");
+      expect(toolResult.isError).toBe(false);
+    }
+  });
+
+  test("records tool-result event with isError=true when executor is missing", async () => {
+    setupMockStreamText([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [
+          { toolCallId: "tc-1", toolName: "missing", input: {} },
+        ],
+      },
+      { finishReason: "stop", text: "ok" },
+    ]);
+
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(
+      makeOptions({
+        tools: { missing: baseTool },
+        toolExecutors: {},
+        store,
+      }),
+      "test",
+    );
+
+    const events = store.getState().events;
+    const toolResult = events.find((e) => e.type === "tool-result");
+    expect(toolResult).toBeDefined();
+    if (toolResult && toolResult.type === "tool-result") {
+      expect(toolResult.toolName).toBe("missing");
+      expect(toolResult.isError).toBe(true);
+      expect(toolResult.output).toContain("No executor");
+    }
+  });
+
+  test("records tool-result event with isError=true when executor throws", async () => {
+    const executor = mock(async () => {
+      throw new Error("disk full");
+    });
+
+    setupMockStreamText([
+      {
+        finishReason: "tool-calls",
+        toolCalls: [
+          { toolCallId: "tc-1", toolName: "write", input: {} },
+        ],
+      },
+      { finishReason: "stop", text: "ok" },
+    ]);
+
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(
+      makeOptions({
+        tools: { write: baseTool },
+        toolExecutors: { write: executor },
+        store,
+      }),
+      "test",
+    );
+
+    const events = store.getState().events;
+    const toolResult = events.find((e) => e.type === "tool-result");
+    expect(toolResult).toBeDefined();
+    if (toolResult && toolResult.type === "tool-result") {
+      expect(toolResult.isError).toBe(true);
+      expect(toolResult.output).toContain("disk full");
+    }
+  });
+
+  test("records loop-error event when streamText throws", async () => {
+    const fn = mock(() => {
+      throw new Error("model unavailable");
+    });
+    __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+    const store = createSessionStore(randomUUID());
+    await runQueryLoop(makeOptions({ store }), "test");
+
+    const events = store.getState().events;
+    const loopError = events.find((e) => e.type === "loop-error");
+    expect(loopError).toBeDefined();
+    if (loopError && loopError.type === "loop-error") {
+      expect(loopError.error).toContain("model unavailable");
     }
   });
 });
