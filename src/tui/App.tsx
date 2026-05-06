@@ -1,40 +1,20 @@
 import { useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
-import type { StoreApi } from "zustand";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { Tool } from "ai";
-import { randomUUID } from "node:crypto";
-import { runQueryLoop } from "../agents/query/loop";
-import type { ToolExecutorMap } from "../agents/query/types";
-import type { SessionTranscriptState } from "../store/types";
+import type { Agent } from "../agents/test-agent";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";
 
 interface AppProps {
-  store: StoreApi<SessionTranscriptState>;
-  model: LanguageModelV3;
-  tools: Record<string, Tool>;
-  toolExecutors: ToolExecutorMap;
-  systemPrompt?: string;
-}
-
-function normalizeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  agent: Agent;
 }
 
 export function shouldSubmit(text: string): boolean {
   return text.trim().length > 0;
 }
 
-export function App({
-  store,
-  model,
-  tools,
-  toolExecutors,
-  systemPrompt,
-}: AppProps) {
-  const events = useStore(store, (s) => s.events);
+export function App({ agent }: AppProps) {
+  const events = useStore(agent.store, (s) => s.events);
   const [isRunning, setIsRunning] = useState(false);
   const runningRef = useRef(false);
 
@@ -46,15 +26,9 @@ export function App({
     setIsRunning(true);
 
     try {
-      await runQueryLoop({ model, tools, toolExecutors, systemPrompt, store }, text);
-    } catch (err) {
-      store.getState().append({
-        type: "loop-error",
-        id: randomUUID(),
-        timestamp: Date.now(),
-        step: -1,
-        error: normalizeError(err),
-      });
+      await agent.run(text);
+    } catch {
+      // Agent handles error recording internally (loop-error in store)
     } finally {
       runningRef.current = false;
       setIsRunning(false);
