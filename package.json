@@ -5,10 +5,10 @@
   "description": "A long-running coding CLI agent that coordinates a virtual software company of AI roles — PM, backend, frontend, QA, PR review — all orchestrated from your terminal.",
   "type": "module",
   "bin": {
-    "specra": "./src/index.ts"
+    "specra": "./src/main.ts"
   },
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "bun run src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
