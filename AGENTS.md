@@ -6,7 +6,7 @@ Specra — long-running coding CLI agent that orchestrates AI roles (PM, backend
 
 - **Runtime**: Bun (not Node). All scripts use `bun run` / `bun test`.
 - **Package manager**: Bun (bun.lock present, not package-lock).
-- **TypeScript**: strict mode, ES2022 target, NodeNext module resolution with `.js` extensions in imports.
+- **TypeScript**: strict mode, ES2022 target, bundler module resolution. Do NOT use `.js` extensions in imports.
 
 ## Commands
 

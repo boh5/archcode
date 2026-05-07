@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelMessage, streamText as aiStreamText } from "ai";
-import { tool } from "ai";
 import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState, StoredMessage } from "../../store/types";
+import { createRegistry, defineTool } from "../../tools/index";
+import type { ToolExecutionContext } from "../../tools/index";
+import type { ToolRegistry } from "../../tools/registry";
 import { __setStreamTextForTest, runQueryLoop } from "./loop";
 import type { QueryLoopOptions } from "./types";
 
@@ -43,10 +45,27 @@ const dummyModel = {
   provider: "mock-provider",
 } as unknown as LanguageModelV3;
 
-const testTool = tool({
-  description: "Test tool",
-  inputSchema: z.object({ message: z.string().optional() }),
-});
+const testToolSchema = z.object({ message: z.string().optional() }).strict();
+
+function createTestTool(
+  name = "echo",
+  execute: (input: z.infer<typeof testToolSchema>, ctx: ToolExecutionContext) => string | Promise<string> = async () => "ok",
+) {
+  return defineTool({
+    name,
+    description: "Test tool",
+    inputSchema: testToolSchema,
+    capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+    execute,
+  });
+}
+
+function createTestRegistry(
+  execute: (input: z.infer<typeof testToolSchema>, ctx: ToolExecutionContext) => string | Promise<string> = async () => "ok",
+  name = "echo",
+): ToolRegistry {
+  return createRegistry([createTestTool(name, execute)]);
+}
 
 function createStore(): StoreApi<SessionStoreState> {
   return createSessionStore(randomUUID());
@@ -55,8 +74,7 @@ function createStore(): StoreApi<SessionStoreState> {
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   return {
     model: dummyModel,
-    tools: {},
-    toolExecutors: {},
+    toolRegistry: createRegistry(),
     store: createStore(),
     ...overrides,
   };
@@ -224,8 +242,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(
       makeOptions({
-        tools: { echo: testTool },
-        toolExecutors: { echo: async () => "pong" },
+        toolRegistry: createTestRegistry(async () => "pong"),
+        agentTools: ["echo"],
       }),
       "Use tool",
     );
@@ -331,7 +349,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     await runQueryLoop(
-      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ store, toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -356,7 +374,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     await runQueryLoop(
-      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ store, toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -378,7 +396,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     await runQueryLoop(
-      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ store, toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -387,7 +405,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
   test("successful tool execution stores completed result", async () => {
     const store = createStore();
-    const executor = mock(async () => "success output");
+    const seenInputs: unknown[] = [];
+    const executor = async (input: z.infer<typeof testToolSchema>) => {
+      seenInputs.push(input);
+      return "success output";
+    };
     createMockStreamText([
       {
         finishReason: "tool-calls",
@@ -397,18 +419,18 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     await runQueryLoop(
-      makeOptions({ store, tools: { echo: testTool }, toolExecutors: { echo: executor } }),
+      makeOptions({ store, toolRegistry: createTestRegistry(executor), agentTools: ["echo"] }),
       "Hi",
     );
 
-    expect(executor).toHaveBeenCalledWith({ message: "x" });
+    expect(seenInputs).toEqual([{ message: "x" }]);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "completed",
       output: "success output",
     });
   });
 
-  test("missing tool executor stores error result", async () => {
+  test("missing tool descriptor stores error result", async () => {
     const store = createStore();
     createMockStreamText([
       {
@@ -418,15 +440,15 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       { text: "Done" },
     ]);
 
-    await runQueryLoop(makeOptions({ store, tools: { missing: testTool } }), "Hi");
+    await runQueryLoop(makeOptions({ store }), "Hi");
 
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "error",
-      errorMessage: "No executor for tool: missing",
+      errorMessage: 'Tool "missing" is not registered',
     });
   });
 
-  test("throwing tool executor stores error message", async () => {
+  test("throwing registry tool stores error message", async () => {
     const store = createStore();
     createMockStreamText([
       {
@@ -439,8 +461,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     await runQueryLoop(
       makeOptions({
         store,
-        tools: { echo: testTool },
-        toolExecutors: { echo: async () => { throw new Error("boom"); } },
+        toolRegistry: createTestRegistry(async () => { throw new Error("boom"); }),
+        agentTools: ["echo"],
       }),
       "Hi",
     );
@@ -470,7 +492,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const result = await runQueryLoop(
-      makeOptions({ tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -486,7 +508,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const result = await runQueryLoop(
-      makeOptions({ tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -502,7 +524,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
 
     const result = await runQueryLoop(
-      makeOptions({ store, maxSteps: 2, tools: { echo: testTool }, toolExecutors: { echo: async () => "ok" } }),
+      makeOptions({ store, maxSteps: 2, toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
       "Hi",
     );
 
@@ -567,14 +589,142 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect("system" in streamFn.mock.calls[0][0]).toBe(false);
   });
 
-  test("includes tools only when non-empty", async () => {
+  test("omits tools when registry resolves empty tool set", async () => {
     const noToolsFn = createMockStreamText([{ text: "ok" }]);
     await runQueryLoop(makeOptions(), "Hi");
     expect("tools" in noToolsFn.mock.calls[0][0]).toBe(false);
+  });
 
+  test("passes AI tool descriptions without execute when registry resolves tools", async () => {
     const withToolsFn = createMockStreamText([{ text: "ok" }]);
-    await runQueryLoop(makeOptions({ tools: { echo: testTool } }), "Hi");
-    expect(withToolsFn.mock.calls[0][0]).toMatchObject({ tools: { echo: testTool } });
+    await runQueryLoop(
+      makeOptions({ toolRegistry: createTestRegistry(), agentTools: ["echo"] }),
+      "Hi",
+    );
+
+    const tools = withToolsFn.mock.calls[0][0].tools as Record<string, unknown>;
+    expect(tools).toEqual({
+      echo: {
+        description: "Test tool",
+        inputSchema: testToolSchema,
+      },
+    });
+    expect("execute" in (tools.echo as Record<string, unknown>)).toBe(false);
+  });
+
+  test("registry execute receives tool calls and step context", async () => {
+    const store = createStore();
+    const contexts: ToolExecutionContext[] = [];
+    const registry = createTestRegistry(async (_, ctx) => {
+      contexts.push(ctx);
+      return "registry output";
+    });
+    const executeSpy = mock(registry.execute.bind(registry));
+    registry.execute = executeSpy;
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "x" } }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, agentTools: ["echo"] }), "Hi");
+
+    expect(executeSpy.mock.calls[0][0]).toEqual({
+      toolCallId: "tc-1",
+      toolName: "echo",
+      input: { message: "x" },
+    });
+    expect(contexts[0]).toMatchObject({
+      store,
+      toolName: "echo",
+      toolCallId: "tc-1",
+      input: { message: "x" },
+      step: 0,
+    });
+    expect(assistantMessages(store)[0].parts[0]).toMatchObject({
+      state: "completed",
+      output: "registry output",
+    });
+  });
+
+  test("tool execution error does not skip remaining tool calls in same step", async () => {
+    const store = createStore();
+    const registry = createRegistry([
+      createTestTool("fail", async () => { throw new Error("boom"); }),
+      createTestTool("echo", async () => "ok after failure"),
+    ]);
+    const executeSpy = mock(registry.execute.bind(registry));
+    registry.execute = executeSpy;
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "fail", input: {} },
+          { type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, agentTools: ["fail", "echo"] }),
+      "Hi",
+    );
+
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+    expect(assistantMessages(store)[0].parts).toEqual([
+      expect.objectContaining({ state: "error", errorMessage: "boom" }),
+      expect.objectContaining({ state: "completed", output: "ok after failure" }),
+    ]);
+  });
+
+  test("abort signal identity reaches streamText and tool context", async () => {
+    const abort = new AbortController().signal;
+    let contextAbort: AbortSignal | undefined;
+    const registry = createTestRegistry(async (_, ctx) => {
+      contextAbort = ctx.abort;
+      return "ok";
+    });
+    const streamFn = createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ toolRegistry: registry, agentTools: ["echo"], abort }),
+      "Hi",
+    );
+
+    expect(streamFn.mock.calls[0][0].abortSignal === abort).toBe(true);
+    expect(contextAbort === abort).toBe(true);
+  });
+
+  test("tool result stores output and isError without registry meta", async () => {
+    const store = createStore();
+    const registry = createTestRegistry(async () => "ignored");
+    registry.globalHooks.after.push(() => ({
+      output: "with metadata",
+      isError: false,
+      meta: { secret: "do not store" },
+    }));
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, agentTools: ["echo"] }), "Hi");
+
+    const toolPart = assistantMessages(store)[0].parts[0];
+    expect(toolPart).toMatchObject({ state: "completed", output: "with metadata" });
+    expect("meta" in (toolPart as unknown as Record<string, unknown>)).toBe(false);
   });
 
   test("step-end stores finish reason and usage", async () => {

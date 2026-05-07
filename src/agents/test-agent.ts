@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
 import type { SpecraConfig } from "../config/index";
-import { createRegistry } from "../provider/registry";
+import { createRegistry as createProviderRegistry } from "../provider/registry";
 import type { ModelInfo } from "../provider/model";
 import { createSessionStore } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
+import { createRegistry } from "../tools/index";
 import { runQueryLoop } from "./query/loop";
 
 export interface Agent {
   readonly store: StoreApi<SessionStoreState>;
-  run(userMessage: string): Promise<AgentResult>;
+  run(userMessage: string, abort?: AbortSignal): Promise<AgentResult>;
 }
 
 export interface AgentResult {
@@ -36,12 +37,12 @@ export class AgentRunningError extends Error {
 
 export class TestAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
-  private registry: ReturnType<typeof createRegistry>;
+  private registry: ReturnType<typeof createProviderRegistry>;
   private modelInfo: ModelInfo;
   private running = false;
 
   constructor(config: SpecraConfig) {
-    this.registry = createRegistry(config.provider);
+    this.registry = createProviderRegistry(config.provider);
 
     const modelIds = this.registry.modelIds;
     if (modelIds.length === 0) {
@@ -52,7 +53,7 @@ export class TestAgent implements Agent {
     this.store = createSessionStore(randomUUID());
   }
 
-  async run(userMessage: string): Promise<AgentResult> {
+  async run(userMessage: string, abort?: AbortSignal): Promise<AgentResult> {
     if (this.running) {
       throw new AgentRunningError();
     }
@@ -62,8 +63,9 @@ export class TestAgent implements Agent {
       const result = await runQueryLoop(
         {
           model: this.modelInfo.model,
-          tools: {},
-          toolExecutors: {},
+          toolRegistry: createRegistry([]),
+          agentTools: [],
+          abort,
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           store: this.store,
         },

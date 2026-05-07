@@ -1,16 +1,13 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { Tool } from "ai";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/types";
-
-export type ToolExecutor<I = unknown> = (input: I) => Promise<string>;
-
-export type ToolExecutorMap = Record<string, ToolExecutor>;
+import type { ToolRegistry } from "../../tools/registry";
 
 export interface QueryLoopOptions {
   model: LanguageModelV3;
-  tools: Record<string, Tool>;
-  toolExecutors: ToolExecutorMap;
+  toolRegistry: ToolRegistry;
+  agentTools?: readonly string[];
+  abort?: AbortSignal;
   systemPrompt?: string;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;

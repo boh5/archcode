@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 bun.lockb
 .specra.json
+.sisyphus

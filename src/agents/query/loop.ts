@@ -2,6 +2,8 @@ import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StreamEvent } from "../../store/types";
+import type { ToolExecutionContext } from "../../tools/index";
+import type { ToolRegistry } from "../../tools/registry";
 import type { QueryLoopOptions, QueryLoopResult } from "./types";
 
 const DEFAULT_MAX_STEPS = 50;
@@ -28,12 +30,13 @@ export async function runQueryLoop(
 ): Promise<QueryLoopResult> {
   const {
     model,
-    tools,
-    toolExecutors,
+    toolRegistry,
+    agentTools,
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
   } = options;
+  const abort = options.abort ?? new AbortController().signal;
 
   let steps = 0;
   let lastText = "";
@@ -47,11 +50,13 @@ export async function runQueryLoop(
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
       const messages = store.getState().toModelMessages();
+      const resolved = toolRegistry.resolveForAgent(agentTools);
 
       const result = _streamText({
         model,
         messages,
-        ...(Object.keys(tools).length > 0 ? { tools } : {}),
+        abortSignal: abort,
+        ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
         ...(systemPrompt ? { system: systemPrompt } : {}),
       });
 
@@ -65,7 +70,7 @@ export async function runQueryLoop(
       if (finishReason !== "tool-calls") break;
 
       const toolCalls = await result.toolCalls;
-      await executeToolCalls(toolCalls, toolExecutors, store, steps);
+      await executeToolCalls(toolCalls, toolRegistry, store, steps, abort);
       steps++;
     }
 
@@ -149,24 +154,23 @@ async function consumeFullStream(
 
 async function executeToolCalls(
   toolCalls: ToolCallArray,
-  toolExecutors: Record<string, (input: unknown) => Promise<string>>,
+  registry: ToolRegistry,
   store: StoreApi<SessionStoreState>,
-  _step: number,
+  step: number,
+  abort: AbortSignal,
 ): Promise<void> {
   for (const toolCall of toolCalls) {
-    const executor = toolExecutors[toolCall.toolName];
-
-    if (!executor) {
-      appendToolResult(store, toolCall, `No executor for tool: ${toolCall.toolName}`, true);
-      continue;
-    }
-
-    try {
-      const output = await executor(toolCall.input);
-      appendToolResult(store, toolCall, output, false);
-    } catch (err) {
-      appendToolResult(store, toolCall, errorMessage(err), true);
-    }
+    const ctx: ToolExecutionContext = {
+      store,
+      toolName: toolCall.toolName,
+      toolCallId: toolCall.toolCallId,
+      input: toolCall.input,
+      step,
+      abort,
+      startedAt: Date.now(),
+    };
+    const result = await registry.execute(toolCall, ctx);
+    appendToolResult(store, toolCall, result.output, result.isError);
   }
 }
 

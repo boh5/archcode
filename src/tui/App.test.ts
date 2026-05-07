@@ -3,6 +3,7 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
+import { createRegistry } from "../tools/index";
 import { shouldSubmit } from "./App";
 
 interface MockRound {
@@ -64,8 +65,7 @@ describe("App orchestration", () => {
     await runQueryLoop(
       {
         model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
+        toolRegistry: createRegistry([]),
         store,
       },
       "Hi App",
@@ -98,8 +98,7 @@ describe("App orchestration", () => {
     await runQueryLoop(
       {
         model: DUMMY_MODEL,
-        tools: {},
-        toolExecutors: {},
+        toolRegistry: createRegistry([]),
         store,
       },
       "trigger error",

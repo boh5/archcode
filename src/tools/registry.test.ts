@@ -1,0 +1,828 @@
+import { describe, expect, test, beforeEach, afterAll, mock } from "bun:test";
+import { join } from "node:path";
+import { rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { z } from "zod";
+import { createRegistry } from "./registry.js";
+import type { ToolRegistry } from "./registry.js";
+import { ResolvedToolSet } from "./registry.js";
+import type {
+  ToolDescriptor,
+  Logger,
+  ToolExecutionContext,
+  ToolCallLike,
+  ToolExecutionResult,
+} from "./types.js";
+import { DuplicateToolError } from "./types.js";
+import { createExecutionLogger } from "./hooks/logger.js";
+import { createOutputTruncator } from "./hooks/truncate.js";
+import { createPermissionGuard } from "./hooks/permission.js";
+
+// ─── Test helpers ───
+
+function makeDescriptor(name: string): ToolDescriptor {
+  return {
+    name,
+    description: `Tool: ${name}`,
+    inputSchema: z.object({ msg: z.string() }).strict(),
+    capabilities: {
+      readOnly: true,
+      destructive: false,
+      concurrencySafe: true,
+    },
+    async execute(input, _ctx) {
+      return `echo: ${(input as { msg: string }).msg}`;
+    },
+  };
+}
+
+function makeLogger(): Logger & { warn: ReturnType<typeof mock> } {
+  return {
+    warn: mock((_message: string, _meta?: Record<string, unknown>) => {}),
+    debug: mock(() => {}),
+    info: mock(() => {}),
+  };
+}
+
+// ─── ToolRegistry ───
+
+describe("ToolRegistry", () => {
+  let registry: ToolRegistry;
+
+  beforeEach(() => {
+    registry = createRegistry();
+  });
+
+  describe("register()", () => {
+    test("registers a single tool and retrieves it by name", () => {
+      const desc = makeDescriptor("echo");
+      registry.register(desc);
+
+      expect(registry.get("echo")).toBe(desc);
+    });
+
+    test("throws DuplicateToolError for duplicate name", () => {
+      registry.register(makeDescriptor("echo"));
+
+      expect(() => registry.register(makeDescriptor("echo"))).toThrow(
+        DuplicateToolError,
+      );
+    });
+  });
+
+  describe("registerAll()", () => {
+    test("registers multiple tools at once", () => {
+      const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("write")];
+
+      registry.registerAll(descs);
+
+      expect(registry.get("echo")).toBe(descs[0]);
+      expect(registry.get("read")).toBe(descs[1]);
+      expect(registry.get("write")).toBe(descs[2]);
+    });
+
+    test("throws on first duplicate", () => {
+      registry.register(makeDescriptor("echo"));
+
+      expect(() =>
+        registry.registerAll([makeDescriptor("read"), makeDescriptor("echo")]),
+      ).toThrow(DuplicateToolError);
+    });
+  });
+
+  describe("get()", () => {
+    test("returns undefined for unknown name", () => {
+      expect(registry.get("nonexistent")).toBeUndefined();
+    });
+  });
+
+  describe("getAll()", () => {
+    test("returns all registered descriptors", () => {
+      const descs = [makeDescriptor("a"), makeDescriptor("b")];
+      registry.registerAll(descs);
+
+      const all = registry.getAll();
+
+      expect(all).toHaveLength(2);
+      expect(all).toContain(descs[0]);
+      expect(all).toContain(descs[1]);
+    });
+
+    test("returns empty array when nothing registered", () => {
+      expect(registry.getAll()).toEqual([]);
+    });
+  });
+
+  describe("globalHooks", () => {
+    test("initializes to empty arrays", () => {
+      expect(registry.globalHooks.before).toEqual([]);
+      expect(registry.globalHooks.after).toEqual([]);
+    });
+  });
+
+  // ─── execute() ───
+
+  function makeContext(
+    overrides?: Partial<ToolExecutionContext>,
+  ): ToolExecutionContext {
+    const ac = new AbortController();
+    return {
+      store: {} as ToolExecutionContext["store"],
+      toolName: "echo",
+      toolCallId: "call-1",
+      input: { msg: "hello" },
+      step: 0,
+      abort: ac.signal,
+      startedAt: 0,
+      ...overrides,
+    };
+  }
+
+  function makeToolCall(
+    overrides?: Partial<ToolCallLike>,
+  ): ToolCallLike {
+    return {
+      toolCallId: "call-1",
+      toolName: "echo",
+      input: { msg: "hello" },
+      ...overrides,
+    };
+  }
+
+  describe("execute()", () => {
+    // 1. Unknown tool returns error result (no throw)
+    test("unknown tool returns error result, no throw", async () => {
+      const ctx = makeContext({ toolName: "missing" });
+      const call = makeToolCall({ toolName: "missing" });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("missing");
+      expect(result.output).toContain("not registered");
+    });
+
+    // 2. Invalid input returns error result (no throw)
+    test("invalid input returns error result, no throw", async () => {
+      registry.register(makeDescriptor("echo"));
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { bad: 123 } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("invalid_type");
+    });
+
+    // 3. Successful execution
+    test("successful execution returns output with isError false", async () => {
+      registry.register(makeDescriptor("echo"));
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "world" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("echo: world");
+    });
+
+    // 4. Executor throw becomes error result
+    test("executor throw becomes error result", async () => {
+      const desc: ToolDescriptor = {
+        name: "crash",
+        description: "always crashes",
+        inputSchema: z.object({}).strict(),
+        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        async execute() {
+          throw new Error("BOOM");
+        },
+      };
+      registry.register(desc);
+      const ctx = makeContext({ toolName: "crash" });
+      const call = makeToolCall({ toolName: "crash", input: {} });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("BOOM");
+    });
+
+    // 5. Global before hook mutates input, re-parsed
+    test("global before hook mutates input, re-parsed successfully", async () => {
+      registry.register(makeDescriptor("echo"));
+      registry.globalHooks.before.push(async (input) => {
+        return { msg: (input as { msg: string }).msg + "!" };
+      });
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "hi" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("echo: hi!");
+    });
+
+    // 6. Global before hook mutation fails re-parse → error result
+    test("global before hook mutation fails re-parse → error result", async () => {
+      registry.register(makeDescriptor("echo"));
+      registry.globalHooks.before.push(async () => {
+        return { bad: true };
+      });
+      const ctx = makeContext();
+      const call = makeToolCall();
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+    });
+
+    // 7. Per-tool before hook mutates input, re-parsed
+    test("per-tool before hook mutates input, re-parsed successfully", async () => {
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        before: [
+          async (input) => {
+            return { msg: ((input as { msg: string }).msg as string).toUpperCase() };
+          },
+        ],
+      };
+      registry.register(desc);
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "hey" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("echo: HEY");
+    });
+
+    // 8. Per-tool before hook mutation fails re-parse → error result
+    test("per-tool before hook mutation fails re-parse → error result", async () => {
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        before: [
+          async () => {
+            return { nope: 1 };
+          },
+        ],
+      };
+      registry.register(desc);
+      const ctx = makeContext();
+      const call = makeToolCall();
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+    });
+
+    // 9. Per-tool after hook mutates result
+    test("per-tool after hook mutates result", async () => {
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        after: [
+          async (result) => {
+            return { ...result, output: `[wrapped] ${result.output}` };
+          },
+        ],
+      };
+      registry.register(desc);
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "test" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("[wrapped] echo: test");
+    });
+
+    // 10. Per-tool after hook throws → result becomes error, global after still runs
+    test("per-tool after hook throws → result becomes error, global after still runs", async () => {
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        after: [
+          async () => {
+            throw new Error("after boom");
+          },
+        ],
+      };
+      registry.register(desc);
+
+      let globalAfterRan = false;
+      registry.globalHooks.after.push(async (result, _ctx) => {
+        globalAfterRan = true;
+        return result;
+      });
+
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "x" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("after boom");
+      expect(globalAfterRan).toBe(true);
+    });
+
+    // 11. Global after hook mutates result
+    test("global after hook mutates result", async () => {
+      registry.register(makeDescriptor("echo"));
+      registry.globalHooks.after.push(async (result) => {
+        return { ...result, output: `[global] ${result.output}` };
+      });
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "x" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("[global] echo: x");
+    });
+
+    // 12. Global after hook throws → result becomes error, remaining global after still run
+    test("global after hook throws → result becomes error, remaining still run", async () => {
+      registry.register(makeDescriptor("echo"));
+
+      let secondRan = false;
+      registry.globalHooks.after.push(async () => {
+        throw new Error("global after error 1");
+      });
+      registry.globalHooks.after.push(async (result, _ctx) => {
+        secondRan = true;
+        return result;
+      });
+
+      const ctx = makeContext();
+      const call = makeToolCall({ input: { msg: "x" } });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("global after error 1");
+      expect(secondRan).toBe(true);
+    });
+
+    // 13. Hook ordering: global before → per-tool before → executor → per-tool after → global after
+    test("hook ordering is correct", async () => {
+      const order: string[] = [];
+
+      registry.globalHooks.before.push(async () => {
+        order.push("global-before");
+      });
+
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        before: [
+          async () => {
+            order.push("per-tool-before");
+          },
+        ],
+        after: [
+          async (result) => {
+            order.push("per-tool-after");
+            return result;
+          },
+        ],
+      };
+      desc.execute = async (input) => {
+        order.push("executor");
+        return `echo: ${(input as { msg: string }).msg}`;
+      };
+      registry.register(desc);
+
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const ctx = makeContext();
+      const call = makeToolCall();
+
+      await registry.execute(call, ctx);
+
+      expect(order).toEqual([
+        "global-before",
+        "per-tool-before",
+        "executor",
+        "per-tool-after",
+        "global-after",
+      ]);
+    });
+
+    // 14. Context has correct toolName, toolCallId, step, startedAt, durationMs
+    test("context is populated with correct fields", async () => {
+      registry.register(makeDescriptor("echo"));
+
+      let capturedCtx: ToolExecutionContext | null = null;
+      const desc: ToolDescriptor = {
+        name: "capture",
+        description: "captures ctx",
+        inputSchema: z.object({}).strict(),
+        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        async execute(_input, ctx) {
+          capturedCtx = ctx;
+          return "ok";
+        },
+      };
+      registry.register(desc);
+
+      const ac = new AbortController();
+      const ctx = makeContext({
+        toolName: "capture",
+        toolCallId: "my-call-id",
+        step: 5,
+        abort: ac.signal,
+      });
+      const call = makeToolCall({
+        toolName: "capture",
+        toolCallId: "my-call-id",
+        input: {},
+      });
+
+      await registry.execute(call, ctx);
+
+      expect(capturedCtx).not.toBeNull();
+      expect(capturedCtx!.toolName).toBe("capture");
+      expect(capturedCtx!.toolCallId).toBe("my-call-id");
+      expect(capturedCtx!.step).toBe(5);
+      expect(capturedCtx!.startedAt).toBeGreaterThan(0);
+      expect(capturedCtx!.durationMs).toBeGreaterThanOrEqual(0);
+      expect(capturedCtx!.input).toEqual({});
+    });
+
+    // 15. AbortSignal identity preserved in context
+    test("abort signal identity is preserved", async () => {
+      registry.register(makeDescriptor("echo"));
+
+      let capturedSignal: AbortSignal | null = null;
+      const desc: ToolDescriptor = {
+        name: "check-abort",
+        description: "checks abort signal",
+        inputSchema: z.object({}).strict(),
+        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        async execute(_input, ctx) {
+          capturedSignal = ctx.abort;
+          return "ok";
+        },
+      };
+      registry.register(desc);
+
+      const ac = new AbortController();
+      const ctx = makeContext({
+        toolName: "check-abort",
+        abort: ac.signal,
+      });
+      const call = makeToolCall({ toolName: "check-abort", input: {} });
+
+      await registry.execute(call, ctx);
+
+      expect(capturedSignal).not.toBeNull();
+      expect(capturedSignal === ac.signal).toBe(true);
+    });
+
+    // 16. execute() never throws
+    test("execute() never throws for any failure mode", async () => {
+      // Unknown tool
+      await expect(
+        registry.execute(makeToolCall({ toolName: "nope" }), makeContext({ toolName: "nope" })),
+      ).resolves.toBeDefined();
+
+      // Registered tool with invalid input
+      registry.register(makeDescriptor("echo"));
+      await expect(
+        registry.execute(makeToolCall({ input: { bad: 1 } }), makeContext()),
+      ).resolves.toBeDefined();
+
+      // Executor throws
+      const crashDesc: ToolDescriptor = {
+        name: "crash",
+        description: "crashes",
+        inputSchema: z.object({}).strict(),
+        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        async execute() {
+          throw new Error("bang");
+        },
+      };
+      registry.register(crashDesc);
+      await expect(
+        registry.execute(
+          makeToolCall({ toolName: "crash", input: {} }),
+          makeContext({ toolName: "crash" }),
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+});
+
+// ─── resolveForAgent ───
+
+describe("resolveForAgent()", () => {
+  let registry: ToolRegistry;
+
+  beforeEach(() => {
+    registry = createRegistry();
+  });
+
+  test("undefined toolNames returns empty ResolvedToolSet", () => {
+    registry.register(makeDescriptor("echo"));
+
+    const resolved = registry.resolveForAgent(undefined);
+
+    expect(resolved.descriptors).toEqual([]);
+  });
+
+  test("empty array toolNames returns empty ResolvedToolSet", () => {
+    registry.register(makeDescriptor("echo"));
+
+    const resolved = registry.resolveForAgent([]);
+
+    expect(resolved.descriptors).toEqual([]);
+  });
+
+  test("resolves registered tool by name", () => {
+    const echoDesc = makeDescriptor("echo");
+    const readDesc = makeDescriptor("read");
+    registry.registerAll([echoDesc, readDesc]);
+
+    const resolved = registry.resolveForAgent(["echo"]);
+
+    expect(resolved.has("echo")).toBe(true);
+    expect(resolved.has("read")).toBe(false);
+    expect(resolved.get("echo")).toBe(echoDesc);
+    expect(resolved.get("read")).toBeUndefined();
+  });
+
+  test("unknown tool name is warned via logger and omitted", () => {
+    const logger = makeLogger();
+    registry = createRegistry([], logger);
+
+    registry.register(makeDescriptor("echo"));
+
+    const resolved = registry.resolveForAgent(["echo", "missing"]);
+
+    // missing tool is omitted
+    expect(resolved.has("echo")).toBe(true);
+    expect(resolved.has("missing")).toBe(false);
+    expect(resolved.descriptors).toHaveLength(1);
+
+    // logger.warn was called for the missing tool
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const callArg = (logger.warn as ReturnType<typeof mock>).mock.calls[0][0];
+    expect(callArg).toContain("missing");
+  });
+});
+
+// ─── ResolvedToolSet ───
+
+describe("ResolvedToolSet", () => {
+  let echoDesc: ToolDescriptor;
+  let readDesc: ToolDescriptor;
+  let set: ResolvedToolSet;
+
+  beforeEach(() => {
+    echoDesc = makeDescriptor("echo");
+    readDesc = makeDescriptor("read");
+    set = new ResolvedToolSet([echoDesc, readDesc]);
+  });
+
+  describe("descriptors", () => {
+    test("exposes all descriptors", () => {
+      expect(set.descriptors).toHaveLength(2);
+      expect(set.descriptors[0]).toBe(echoDesc);
+      expect(set.descriptors[1]).toBe(readDesc);
+    });
+  });
+
+  describe("has()", () => {
+    test("returns true for known name", () => {
+      expect(set.has("echo")).toBe(true);
+      expect(set.has("read")).toBe(true);
+    });
+
+    test("returns false for unknown name", () => {
+      expect(set.has("write")).toBe(false);
+    });
+  });
+
+  describe("get()", () => {
+    test("returns descriptor for known name", () => {
+      expect(set.get("echo")).toBe(echoDesc);
+    });
+
+    test("returns undefined for unknown name", () => {
+      expect(set.get("write")).toBeUndefined();
+    });
+  });
+
+  describe("toAITools()", () => {
+    test("returns description + inputSchema, no execute", () => {
+      const aiTools = set.toAITools();
+
+      expect(aiTools).toHaveProperty("echo");
+      expect(aiTools).toHaveProperty("read");
+
+      const echoAi = aiTools["echo"];
+      expect(echoAi).toHaveProperty("description", "Tool: echo");
+      expect(echoAi).toHaveProperty("inputSchema");
+      // Must NOT include execute
+      expect(echoAi).not.toHaveProperty("execute");
+
+      const readAi = aiTools["read"];
+      expect(readAi).toHaveProperty("description", "Tool: read");
+      expect(readAi).toHaveProperty("inputSchema");
+      expect(readAi).not.toHaveProperty("execute");
+    });
+
+    test("returns empty object for empty descriptor list", () => {
+      const empty = new ResolvedToolSet([]);
+      expect(empty.toAITools()).toEqual({});
+    });
+  });
+});
+
+// ─── createRegistry factory ───
+
+describe("createRegistry()", () => {
+  test("creates ToolRegistry with no descriptors", () => {
+    const registry = createRegistry();
+
+    expect(registry.getAll()).toEqual([]);
+    expect(registry.globalHooks.before).toEqual([]);
+    expect(registry.globalHooks.after).toEqual([]);
+  });
+
+  test("creates ToolRegistry and registers initial descriptors", () => {
+    const descs = [makeDescriptor("echo"), makeDescriptor("read")];
+
+    const registry = createRegistry(descs);
+
+    expect(registry.getAll()).toHaveLength(2);
+    expect(registry.get("echo")).toBe(descs[0]);
+    expect(registry.get("read")).toBe(descs[1]);
+  });
+
+  test("accepts optional logger", () => {
+    const logger = makeLogger();
+
+    const registry = createRegistry([], logger);
+
+    // Verify the logger is used (resolveForAgent for a missing tool)
+    registry.register(makeDescriptor("echo"));
+    const resolved = registry.resolveForAgent(["missing"]);
+
+    expect(resolved.descriptors).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Hook Integration with Registry ───
+
+describe("hook integration with registry", () => {
+  const tmpRoot = join(import.meta.dir, "__test_tmp__");
+
+  afterAll(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  function makeContext(
+    overrides?: Partial<ToolExecutionContext>,
+  ): ToolExecutionContext {
+    const ac = new AbortController();
+    return {
+      store: {} as ToolExecutionContext["store"],
+      toolName: "echo",
+      toolCallId: "call-1",
+      input: { msg: "hello" },
+      step: 0,
+      abort: ac.signal,
+      startedAt: 0,
+      ...overrides,
+    };
+  }
+
+  function makeToolCall(
+    overrides?: Partial<ToolCallLike>,
+  ): ToolCallLike {
+    return {
+      toolCallId: "call-1",
+      toolName: "echo",
+      input: { msg: "hello" },
+      ...overrides,
+    };
+  }
+
+  // 1. Duration flows into execution logger via global after hook
+  test("duration flows into execution logger via global after hook", async () => {
+    const registry = createRegistry();
+    registry.register(makeDescriptor("echo"));
+
+    const logger = makeLogger();
+    registry.globalHooks.after.push(createExecutionLogger(logger));
+
+    const ctx = makeContext();
+    const call = makeToolCall({ input: { msg: "hello" } });
+
+    await registry.execute(call, ctx);
+
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    const calls = (logger.info as ReturnType<typeof mock>).mock.calls;
+    expect(calls[0][0]).toBe("Tool execution completed");
+
+    const meta = calls[0][1] as Record<string, unknown>;
+    expect(meta.toolName).toBe("echo");
+    expect(meta.toolCallId).toBe("call-1");
+    expect(meta.isError).toBe(false);
+    expect(typeof meta.outputSize).toBe("number");
+    expect((meta.outputSize as number) > 0).toBe(true);
+    expect(typeof meta.durationMs).toBe("number");
+    expect((meta.durationMs as number) >= 0).toBe(true);
+  });
+
+  // 2. Truncator runs after per-tool after failure and truncates error output
+  test("truncator truncates error output from failed per-tool after hook", async () => {
+    const registry = createRegistry();
+    const desc = makeDescriptor("echo");
+
+    // Per-tool after hook throws a long error message (> maxBytes=100)
+    const longErrorMessage = "ERROR: " + "X".repeat(200);
+    desc.hooks = {
+      after: [
+        async () => {
+          throw new Error(longErrorMessage);
+        },
+      ],
+    };
+    registry.register(desc);
+
+    const truncOutDir = join(tmpRoot, "scenario2");
+    registry.globalHooks.after.push(
+      createOutputTruncator({ outputDir: truncOutDir, maxBytes: 100, maxLines: 5 }),
+    );
+
+    const ctx = makeContext();
+    const call = makeToolCall({ input: { msg: "hello" } });
+
+    const result = await registry.execute(call, ctx);
+
+    // Result should still be error
+    expect(result.isError).toBe(true);
+    // Output should contain truncation marker
+    expect(result.output).toContain("[Output truncated; full output saved to:");
+    expect(result.meta?.truncated).toBe(true);
+    expect(typeof result.meta?.fullOutputPath).toBe("string");
+
+    // Verify full error was persisted to file
+    const fullPath = result.meta!.fullOutputPath as string;
+    const fileContent = await readFile(fullPath, "utf-8");
+    expect(fileContent).toBe(longErrorMessage);
+  });
+
+  // 3. Permission guard runs before executor without mutating input
+  test("permission guard runs before executor without mutating input", async () => {
+    const registry = createRegistry();
+    registry.register(makeDescriptor("echo"));
+    registry.globalHooks.before.push(createPermissionGuard());
+
+    const ctx = makeContext();
+    const call = makeToolCall({ input: { msg: "hello" } });
+
+    const result = await registry.execute(call, ctx);
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe("echo: hello");
+  });
+
+  // 4. Truncator handles large successful output, preserves isError false
+  test("truncator truncates large successful output, preserves isError false", async () => {
+    const registry = createRegistry();
+    const desc = makeDescriptor("echo");
+
+    // Executor returns large output (> maxBytes=100)
+    desc.execute = async () => {
+      return "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
+    };
+    registry.register(desc);
+
+    const truncOutDir = join(tmpRoot, "scenario4");
+    registry.globalHooks.after.push(
+      createOutputTruncator({ outputDir: truncOutDir, maxBytes: 100, maxLines: 5 }),
+    );
+
+    const ctx = makeContext();
+    const call = makeToolCall({ input: { msg: "hello" } });
+
+    const result = await registry.execute(call, ctx);
+
+    // isError should remain false (successful execution)
+    expect(result.isError).toBe(false);
+    // Output should contain truncation marker
+    expect(result.output).toContain("[Output truncated; full output saved to:");
+    expect(result.meta?.truncated).toBe(true);
+    expect(typeof result.meta?.fullOutputPath).toBe("string");
+
+    // Verify full output was persisted to file
+    const fullPath = result.meta!.fullOutputPath as string;
+    const fileContent = await readFile(fullPath, "utf-8");
+    const expectedContent = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
+    expect(fileContent).toBe(expectedContent);
+  });
+});
