@@ -1,0 +1,5 @@
+- claude-code: https://github.com/ChinaSiro/claude-code-sourcemap
+- opencode: https://github.com/anomalyco/opencode
+- oh-my-openagent(oh-my-opencode): https://github.com/code-yeongyu/oh-my-openagent
+- oh-my-opencode-slim: https://github.com/alvinunreal/oh-my-opencode-slim
+- pi: https://github.com/badlogic/pi-mono
