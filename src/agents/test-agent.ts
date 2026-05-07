@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
-import type { SpecraConfig } from "../config/index";
-import { createRegistry as createProviderRegistry } from "../provider/registry";
+import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import { createSessionStore } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
-import { createRegistry } from "../tools/index";
+import type { ToolRegistry } from "../tools/index";
 import { runQueryLoop } from "./query/loop";
 
 export interface Agent {
@@ -35,21 +34,28 @@ export class AgentRunningError extends Error {
   }
 }
 
+export interface TestAgentOptions {
+  readonly providerRegistry: ProviderRegistry;
+  readonly toolRegistry: ToolRegistry;
+}
+
 export class TestAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
-  private registry: ReturnType<typeof createProviderRegistry>;
+  private providerRegistry: ProviderRegistry;
+  private toolRegistry: ToolRegistry;
   private modelInfo: ModelInfo;
   private running = false;
 
-  constructor(config: SpecraConfig) {
-    this.registry = createProviderRegistry(config.provider);
+  constructor(options: TestAgentOptions) {
+    this.providerRegistry = options.providerRegistry;
+    this.toolRegistry = options.toolRegistry;
 
-    const modelIds = this.registry.modelIds;
+    const modelIds = this.providerRegistry.modelIds;
     if (modelIds.length === 0) {
       throw new NoModelsConfiguredError();
     }
 
-    this.modelInfo = this.registry.getModel(modelIds[0]);
+    this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
     this.store = createSessionStore(randomUUID());
   }
 
@@ -63,7 +69,8 @@ export class TestAgent implements Agent {
       const result = await runQueryLoop(
         {
           model: this.modelInfo.model,
-          toolRegistry: createRegistry([]),
+          toolRegistry: this.toolRegistry,
+          // TODO: define allowed tool names once builtin tools are implemented
           agentTools: [],
           abort,
           systemPrompt: DEFAULT_SYSTEM_PROMPT,

@@ -1,5 +1,8 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
 import type { SpecraConfig } from "../config/index";
+import { createRegistry as createProviderRegistry } from "../provider/index";
+import { createRegistry as createToolRegistry } from "../tools/index";
+import { registerBuiltinTools } from "../core/index";
 import { TestAgent } from "./test-agent";
 import { AgentRunningError, NoModelsConfiguredError } from "./test-agent";
 import type { Agent, AgentResult } from "./test-agent";
@@ -45,6 +48,20 @@ function makeEmptyModelConfig(): SpecraConfig {
   } as unknown as SpecraConfig;
 }
 
+function makeTestAgent(): TestAgent {
+  const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+  const toolRegistry = createToolRegistry();
+  registerBuiltinTools(toolRegistry);
+  return new TestAgent({ providerRegistry, toolRegistry });
+}
+
+function makeEmptyModelTestAgent(): TestAgent {
+  const providerRegistry = createProviderRegistry(makeEmptyModelConfig().provider);
+  const toolRegistry = createToolRegistry();
+  registerBuiltinTools(toolRegistry);
+  return new TestAgent({ providerRegistry, toolRegistry });
+}
+
 function setupMockStreamText(text: string, finishReason = "stop") {
   const fn = mock((_opts: Record<string, unknown>) => {
     return {
@@ -84,7 +101,7 @@ describe("TestAgent", () => {
     test("creates agent with valid config", () => {
       setupMockStreamText("ok");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
 
       expect(agent.store).toBeDefined();
       expect(agent.store.getState().sessionId).toBeDefined();
@@ -92,7 +109,7 @@ describe("TestAgent", () => {
     });
 
     test("throws NoModelsConfiguredError when config has no models", () => {
-      expect(() => new TestAgent(makeEmptyModelConfig())).toThrow(
+      expect(() => makeEmptyModelTestAgent()).toThrow(
         NoModelsConfiguredError,
       );
     });
@@ -108,7 +125,7 @@ describe("TestAgent", () => {
     test("returns AgentResult with text and steps", async () => {
       setupMockStreamText("Hello from agent");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       const result = await agent.run("Hi");
 
       expect(result.text).toBe("Hello from agent");
@@ -118,7 +135,7 @@ describe("TestAgent", () => {
     test("appends user and assistant messages to store", async () => {
       setupMockStreamText("Hello");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       await agent.run("My question");
 
       const messages = agent.store.getState().messages;
@@ -140,7 +157,7 @@ describe("TestAgent", () => {
     test("does NOT duplicate user-message (runQueryLoop handles it)", async () => {
       setupMockStreamText("ok");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       await agent.run("test");
 
       const messages = agent.store.getState().messages;
@@ -151,7 +168,7 @@ describe("TestAgent", () => {
     test("passes hardcoded system prompt to runQueryLoop", async () => {
       const streamFn = setupMockStreamText("ok");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       await agent.run("test");
 
       const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
@@ -163,7 +180,7 @@ describe("TestAgent", () => {
     test("records loop-error in store when streamText fails", async () => {
       setupFailingStreamText("model unavailable");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       await agent.run("test");
 
       // Agent catch + runQueryLoop internal catch both record errors
@@ -176,7 +193,7 @@ describe("TestAgent", () => {
     test("preserves memory across multiple runs", async () => {
       setupMockStreamText("response");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
 
       await agent.run("first");
       const firstRunMessages = agent.store.getState().messages;
@@ -212,7 +229,7 @@ describe("TestAgent", () => {
         fn as unknown as typeof import("ai").streamText,
       );
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
 
       const firstRun = agent.run("first");
 
@@ -237,7 +254,7 @@ describe("TestAgent", () => {
     test("allows run() again after previous run completes", async () => {
       setupMockStreamText("response");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
 
       const result1 = await agent.run("first");
       expect(result1.text).toBe("response");
@@ -251,7 +268,7 @@ describe("TestAgent", () => {
     test("TestAgent implements Agent interface (store + run)", () => {
       setupMockStreamText("ok");
 
-      const agent: Agent = new TestAgent(makeMockConfig());
+      const agent: Agent = makeTestAgent();
 
       expect(agent.store).toBeDefined();
       expect(typeof agent.run).toBe("function");
@@ -260,7 +277,7 @@ describe("TestAgent", () => {
     test("AgentResult has correct shape", async () => {
       setupMockStreamText("Hello");
 
-      const agent = new TestAgent(makeMockConfig());
+      const agent = makeTestAgent();
       const result: AgentResult = await agent.run("test");
 
       expect(result).toHaveProperty("text");
