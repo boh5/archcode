@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findAgentsMd, loadAgentsMd, AgentsMdLoadError } from "./agents-md";
@@ -14,7 +14,7 @@ describe("findAgentsMd", () => {
   test("finds AGENTS.md in start directory", async () => {
     const dir = join(TMP, "find-direct");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "AGENTS.md"), "# Direct", "utf-8");
+    await Bun.write(join(dir, "AGENTS.md"), "# Direct");
 
     const result = await findAgentsMd(dir);
     expect(result).toBe(join(dir, "AGENTS.md"));
@@ -24,7 +24,7 @@ describe("findAgentsMd", () => {
     const parent = join(TMP, "find-parent");
     const child = join(parent, "child");
     await mkdir(child, { recursive: true });
-    await writeFile(join(parent, "AGENTS.md"), "# Parent", "utf-8");
+    await Bun.write(join(parent, "AGENTS.md"), "# Parent");
 
     const result = await findAgentsMd(child);
     expect(result).toBe(join(parent, "AGENTS.md"));
@@ -35,7 +35,7 @@ describe("findAgentsMd", () => {
     const parent = join(gp, "mid");
     const child = join(parent, "deep");
     await mkdir(child, { recursive: true });
-    await writeFile(join(gp, "AGENTS.md"), "# Grandparent", "utf-8");
+    await Bun.write(join(gp, "AGENTS.md"), "# Grandparent");
 
     const result = await findAgentsMd(child);
     expect(result).toBe(join(gp, "AGENTS.md"));
@@ -52,7 +52,7 @@ describe("findAgentsMd", () => {
   test("resolves relative startDir to absolute path", async () => {
     const dir = join(TMP, "find-relative");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "AGENTS.md"), "# Relative", "utf-8");
+    await Bun.write(join(dir, "AGENTS.md"), "# Relative");
 
     const result = await findAgentsMd(dir);
     expect(result).toBeDefined();
@@ -65,7 +65,7 @@ describe("loadAgentsMd", () => {
     const dir = join(TMP, "load-content");
     await mkdir(dir, { recursive: true });
     const content = "# Loaded\n\nHello world";
-    await writeFile(join(dir, "AGENTS.md"), content, "utf-8");
+    await Bun.write(join(dir, "AGENTS.md"), content);
 
     const result = await loadAgentsMd(dir);
     expect(result).toBe(content);
@@ -83,7 +83,7 @@ describe("loadAgentsMd", () => {
     const parent = join(TMP, "load-parent");
     const child = join(parent, "sub");
     await mkdir(child, { recursive: true });
-    await writeFile(join(parent, "AGENTS.md"), "# Parent content", "utf-8");
+    await Bun.write(join(parent, "AGENTS.md"), "# Parent content");
 
     const result = await loadAgentsMd(child);
     expect(result).toBe("# Parent content");
@@ -92,7 +92,7 @@ describe("loadAgentsMd", () => {
   test("returns empty string content when AGENTS.md is empty", async () => {
     const dir = join(TMP, "load-empty");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "AGENTS.md"), "", "utf-8");
+    await Bun.write(join(dir, "AGENTS.md"), "");
 
     const result = await loadAgentsMd(dir);
     expect(result).toBe("");

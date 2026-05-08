@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterAll, mock } from "bun:test";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+
 import { z } from "zod";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
@@ -1301,7 +1301,7 @@ describe("hook integration with registry", () => {
 
     // Verify full error was persisted to file
     const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await readFile(fullPath, "utf-8");
+    const fileContent = await Bun.file(fullPath).text();
     expect(fileContent).toContain("TOOL_AFTER_HOOK_FAILED");
     expect(fileContent).toContain("ERROR: [REDACTED:SECRET]");
   });
@@ -1359,7 +1359,7 @@ describe("hook integration with registry", () => {
 
     // Verify full output was persisted to file
     const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await readFile(fullPath, "utf-8");
+    const fileContent = await Bun.file(fullPath).text();
     const expectedContent = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
     expect(fileContent).toBe(expectedContent);
   });
@@ -1395,7 +1395,7 @@ describe("hook integration with registry", () => {
     expect(result.output).not.toContain(rawSecret);
     expect(result.output).toContain("[Output truncated; full output saved to:");
     const fullPath = result.meta!.fullOutputPath as string;
-    const fileContent = await readFile(fullPath, "utf-8");
+    const fileContent = await Bun.file(fullPath).text();
     expect(fileContent).toContain(REDACTION_MARKER);
     expect(fileContent).not.toContain(rawSecret);
     expect(JSON.stringify(events)).toContain(REDACTION_MARKER);

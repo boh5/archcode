@@ -1,6 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
 import type { SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
@@ -15,7 +14,7 @@ beforeEach(async () => {
 });
 
 function uniqueSessionId(label: string): string {
-  return `${label}-${randomUUID()}`;
+  return `${label}-${crypto.randomUUID()}`;
 }
 
 function sessionFilePath(sessionId: string): string {
@@ -23,7 +22,7 @@ function sessionFilePath(sessionId: string): string {
 }
 
 async function writeSessionFile(sessionId: string, data: unknown): Promise<void> {
-  await writeFile(sessionFilePath(sessionId), JSON.stringify(data, null, 2), "utf-8");
+  await Bun.write(sessionFilePath(sessionId), JSON.stringify(data, null, 2));
 }
 
 function textPart(id: string, text: string, completedAt?: number): StoredPart {
@@ -174,7 +173,7 @@ describe("session transcript serialization", () => {
 
   test("load rejects corrupted JSON", async () => {
     const sessionId = uniqueSessionId("corrupted");
-    await writeFile(sessionFilePath(sessionId), "{not json", "utf-8");
+    await Bun.write(sessionFilePath(sessionId), "{not json");
 
     await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
   });
@@ -339,7 +338,7 @@ describe("session transcript serialization", () => {
     const sessionId = uniqueSessionId("shape");
 
     await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const raw = await readFile(sessionFilePath(sessionId), "utf-8");
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
     expect(Object.keys(parsed).sort()).toEqual(["createdAt", "messages", "sessionId", "steps", "todos"]);

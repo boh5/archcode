@@ -1,0 +1,1 @@
+export { getSystemErrorCode } from "./error";

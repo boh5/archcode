@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { BusyError, InvalidTodoStateError, type ReasoningPart, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, getSessionStore } from "./store";
 
 function uniqueSessionId(label: string): string {
-  return `${label}-${randomUUID()}`;
+  return `${label}-${crypto.randomUUID()}`;
 }
 
 function createFreshStore(label: string) {

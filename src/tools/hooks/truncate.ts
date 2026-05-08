@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -30,7 +30,7 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
     result: ToolExecutionResult,
     ctx: ToolExecutionContext,
   ): Promise<ToolExecutionResult | void> {
-    const byteCount = Buffer.byteLength(result.output, "utf-8");
+    const byteCount = new TextEncoder().encode(result.output).length;
     const lineCount = result.output.split("\n").length;
 
     const exceedsBytes = byteCount > maxBytes;
@@ -48,7 +48,7 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
     const filename = `${sanitizedTool}-${sanitizedCallId}-${suffix}.txt`;
     const filePath = join(outputDir, filename);
 
-    await writeFile(filePath, result.output, "utf-8");
+    await Bun.write(filePath, result.output);
 
     const lines = result.output.split("\n");
     const previewLines = lines.slice(0, PREVIEW_LINES).join("\n");

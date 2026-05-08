@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createRedactionHook, REDACTION_MARKER } from "./redact";
@@ -79,7 +79,7 @@ describe("createOutputTruncator", () => {
 
     const files = await readdir(OUTPUT_DIR);
     expect(files.length).toBe(1);
-    const savedContent = await readFile(join(OUTPUT_DIR, files[0]!), "utf-8");
+    const savedContent = await Bun.file(join(OUTPUT_DIR, files[0]!)).text();
     expect(savedContent).toBe(fullOutput);
   });
 
@@ -97,7 +97,7 @@ describe("createOutputTruncator", () => {
 
     const files = await readdir(OUTPUT_DIR);
     expect(files.length).toBe(1);
-    const savedContent = await readFile(join(OUTPUT_DIR, files[0]!), "utf-8");
+    const savedContent = await Bun.file(join(OUTPUT_DIR, files[0]!)).text();
     expect(savedContent).toBe(fullOutput);
   });
 
@@ -191,7 +191,7 @@ describe("createOutputTruncator", () => {
     const redacted = await redactor(makeResult({ output: longOutput }), ctx);
     const returned = await truncator(redacted!, ctx);
 
-    const savedContent = await readFile(returned!.meta!.fullOutputPath as string, "utf-8");
+    const savedContent = await Bun.file(returned!.meta!.fullOutputPath as string).text();
     expect(savedContent).toContain(REDACTION_MARKER);
     expect(savedContent).not.toContain(rawSecret);
   });

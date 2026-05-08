@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from "bun:test";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createExecutionLogger } from "./logger";
 import { REDACTION_MARKER } from "./redact";
@@ -29,16 +29,16 @@ function makeResult(overrides: Partial<ToolExecutionResult> = {}): ToolExecution
 
 describe("createExecutionLogger", () => {
   let mockLogger: {
-    debug: jest.Mock;
-    info: jest.Mock;
-    warn: jest.Mock;
+    debug: ReturnType<typeof mock>;
+    info: ReturnType<typeof mock>;
+    warn: ReturnType<typeof mock>;
   };
 
   beforeEach(() => {
     mockLogger = {
-      debug: jest.fn(),
-      info: jest.fn(),
-      warn: jest.fn(),
+      debug: mock(),
+      info: mock(),
+      warn: mock(),
     };
   });
 

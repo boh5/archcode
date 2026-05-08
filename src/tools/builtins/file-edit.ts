@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { rename } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
@@ -311,7 +310,7 @@ function applyEdits(content: string, matches: EditMatch[]): string {
 
 async function cleanupTempFile(tmpPath: string): Promise<void> {
   try {
-    await unlink(tmpPath);
+    await Bun.file(tmpPath).delete();
   } catch {
     // Best-effort cleanup only.
   }
@@ -348,7 +347,7 @@ export const fileEditTool = defineTool({
           });
         }
 
-        const content = await readFile(resolvedPath, "utf8");
+        const content = await Bun.file(resolvedPath).text();
         const matchResult = findEditMatches(content, input.edits);
         if (!Array.isArray(matchResult)) {
           return editFailToResult(matchResult);
@@ -356,10 +355,10 @@ export const fileEditTool = defineTool({
         const matches = matchResult;
 
         const modified = applyEdits(content, matches);
-        const tmpPath = `${resolvedPath}.tmp.${randomUUID()}`;
+        const tmpPath = `${resolvedPath}.tmp.${crypto.randomUUID()}`;
 
         try {
-          await writeFile(tmpPath, modified);
+          await Bun.write(tmpPath, modified);
           await rename(tmpPath, resolvedPath);
         } catch (error) {
           await cleanupTempFile(tmpPath);

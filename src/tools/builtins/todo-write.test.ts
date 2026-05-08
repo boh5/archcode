@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
@@ -13,7 +12,7 @@ import { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 const testDir = join(import.meta.dir, "__test_tmp__", "todo-write");
 
 function makeStore(): StoreApi<SessionStoreState> {
-  return createSessionStore(`todo-test-${randomUUID()}`);
+  return createSessionStore(`todo-test-${crypto.randomUUID()}`);
 }
 
 function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {

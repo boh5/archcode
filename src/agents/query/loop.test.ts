@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelMessage, streamText as aiStreamText } from "ai";
-import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import { createSessionStore } from "../../store/store";
@@ -96,7 +95,7 @@ function createPermissionBranchRegistry(
 }
 
 function createStore(): StoreApi<SessionStoreState> {
-  return createSessionStore(randomUUID());
+  return createSessionStore(crypto.randomUUID());
 }
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {

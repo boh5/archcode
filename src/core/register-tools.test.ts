@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, mock } from "bun:test";
 import { rmSync } from "node:fs";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
@@ -201,7 +201,7 @@ describe("registerBuiltinTools", () => {
     expect(result.output).not.toContain(rawSecret);
 
     const fullOutputPath = result.meta?.fullOutputPath as string;
-    const persisted = await readFile(fullOutputPath, "utf-8");
+    const persisted = await Bun.file(fullOutputPath).text();
     expect(persisted).toContain(REDACTION_MARKER);
     expect(persisted).not.toContain(rawSecret);
     expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
@@ -216,7 +216,7 @@ describe("registerBuiltinTools", () => {
   it("existing Tier 1 builtins still register and execute", async () => {
     const workspaceRoot = await createTmpRoot("tier1-execute");
     const samplePath = join(workspaceRoot, "sample.txt");
-    await writeFile(samplePath, "hello tier1\n", "utf-8");
+    await Bun.write(samplePath, "hello tier1\n");
 
     const registry = new ToolRegistry();
     registerBuiltinTools(registry);

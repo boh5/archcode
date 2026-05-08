@@ -1,6 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
+import { getSystemErrorCode } from "../utils";
 
 const AGENTS_MD_FILENAME = "AGENTS.md";
 
@@ -37,15 +37,16 @@ export async function findAgentsMd(startDir: string): Promise<string | undefined
   while (true) {
     const candidate = resolve(dir, AGENTS_MD_FILENAME);
 
-    // existsSync is synchronous but cheap; avoids try/catch on readFile
+    // existsSync is synchronous but cheap; avoids try/catch on file.stat()
     // which would swallow permission errors.
     if (existsSync(candidate)) {
       // Verify it's actually readable (not EACCES)
       try {
-        await stat(candidate);
+        const file = Bun.file(candidate);
+        await file.stat();
         return candidate;
       } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
+        const code = getSystemErrorCode(err);
         if (code === "EACCES" || code === "EPERM") {
           throw new AgentsMdLoadError(
             `AGENTS.md found but not readable: ${candidate}`,
@@ -75,7 +76,7 @@ export async function loadAgentsMd(startDir: string): Promise<string | undefined
   if (!filePath) return undefined;
 
   try {
-    return await readFile(filePath, "utf-8");
+    return await Bun.file(filePath).text();
   } catch (err) {
     throw new AgentsMdLoadError(
       `Failed to read AGENTS.md: ${filePath}`,

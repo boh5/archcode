@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
@@ -62,7 +61,7 @@ describe("App orchestration", () => {
     const streamFn = setupMockStreamText([
       { finishReason: "stop", text: "Hello from App smoke test" },
     ]);
-    const store = createSessionStore(randomUUID());
+    const store = createSessionStore(crypto.randomUUID());
 
     await runQueryLoop(
       {
@@ -96,7 +95,7 @@ describe("App orchestration", () => {
     });
 
     __setStreamTextForTest(streamFn as unknown as typeof import("ai").streamText);
-    const store = createSessionStore(randomUUID());
+    const store = createSessionStore(crypto.randomUUID());
 
     await runQueryLoop(
       {

@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
 import {
   buildRenderBlocks,
   formatLoopError,
@@ -29,7 +28,7 @@ const now = Date.now();
 function makeTextPart(overrides: Partial<TextPart> = {}): TextPart {
   return {
     type: "text",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     text: "",
     createdAt: now,
     ...overrides,
@@ -39,7 +38,7 @@ function makeTextPart(overrides: Partial<TextPart> = {}): TextPart {
 function makeReasoningPart(overrides: Partial<ReasoningPart> = {}): ReasoningPart {
   return {
     type: "reasoning",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     text: "",
     createdAt: now,
     ...overrides,
@@ -49,9 +48,9 @@ function makeReasoningPart(overrides: Partial<ReasoningPart> = {}): ReasoningPar
 function makePendingToolPart(overrides: Partial<PendingToolPart> = {}): PendingToolPart {
   return {
     type: "tool",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     state: "pending",
-    toolCallId: randomUUID(),
+    toolCallId: crypto.randomUUID(),
     toolName: "testTool",
     createdAt: now,
     ...overrides,
@@ -61,9 +60,9 @@ function makePendingToolPart(overrides: Partial<PendingToolPart> = {}): PendingT
 function makeRunningToolPart(overrides: Partial<RunningToolPart> = {}): RunningToolPart {
   return {
     type: "tool",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     state: "running",
-    toolCallId: randomUUID(),
+    toolCallId: crypto.randomUUID(),
     toolName: "testTool",
     input: {},
     createdAt: now,
@@ -75,9 +74,9 @@ function makeRunningToolPart(overrides: Partial<RunningToolPart> = {}): RunningT
 function makeCompletedToolPart(overrides: Partial<CompletedToolPart> = {}): CompletedToolPart {
   return {
     type: "tool",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     state: "completed",
-    toolCallId: randomUUID(),
+    toolCallId: crypto.randomUUID(),
     toolName: "testTool",
     input: {},
     output: "done",
@@ -91,9 +90,9 @@ function makeCompletedToolPart(overrides: Partial<CompletedToolPart> = {}): Comp
 function makeErrorToolPart(overrides: Partial<ErrorToolPart> = {}): ErrorToolPart {
   return {
     type: "tool",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     state: "error",
-    toolCallId: randomUUID(),
+    toolCallId: crypto.randomUUID(),
     toolName: "testTool",
     input: {},
     errorMessage: "failed",
@@ -106,7 +105,7 @@ function makeErrorToolPart(overrides: Partial<ErrorToolPart> = {}): ErrorToolPar
 
 function makeUserMessage(parts: TextPart[] = []): StoredMessage {
   return {
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     role: "user",
     parts: parts.length > 0 ? parts : [makeTextPart({ text: "hello", completedAt: now })],
     createdAt: now,
@@ -116,7 +115,7 @@ function makeUserMessage(parts: TextPart[] = []): StoredMessage {
 
 function makeAssistantMessage(parts: StoredPart[] = []): StoredMessage {
   return {
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     role: "assistant",
     parts,
     createdAt: now,
@@ -150,8 +149,8 @@ describe("formatTextPart", () => {
 describe("formatStreamingText", () => {
   test("returns streaming text content", () => {
     const streaming: StreamingTextState = {
-      messageId: randomUUID(),
-      partId: randomUUID(),
+      messageId: crypto.randomUUID(),
+      partId: crypto.randomUUID(),
       text: "streaming content",
     };
     expect(formatStreamingText(streaming)).toBe("streaming content");
@@ -159,8 +158,8 @@ describe("formatStreamingText", () => {
 
   test("returns empty string for empty streaming text", () => {
     const streaming: StreamingTextState = {
-      messageId: randomUUID(),
-      partId: randomUUID(),
+      messageId: crypto.randomUUID(),
+      partId: crypto.randomUUID(),
       text: "",
     };
     expect(formatStreamingText(streaming)).toBe("");
@@ -226,8 +225,8 @@ describe("buildRenderBlocks", () => {
   });
 
   test("streaming text renders live text block", () => {
-    const partId = randomUUID();
-    const msgId = randomUUID();
+    const partId = crypto.randomUUID();
+    const msgId = crypto.randomUUID();
     const msg = makeAssistantMessage([makeTextPart({ id: partId, text: "", completedAt: undefined })]);
     msg.id = msgId;
     const streaming: StreamingTextState = { messageId: msgId, partId, text: "streaming..." };
@@ -250,8 +249,8 @@ describe("buildRenderBlocks", () => {
   });
 
   test("streaming reasoning renders live reasoning block", () => {
-    const partId = randomUUID();
-    const msgId = randomUUID();
+    const partId = crypto.randomUUID();
+    const msgId = crypto.randomUUID();
     const msg = makeAssistantMessage([makeReasoningPart({ id: partId, text: "", completedAt: undefined })]);
     msg.id = msgId;
     const streaming: StreamingReasoningState = { messageId: msgId, partId, text: "thinking..." };
@@ -311,8 +310,8 @@ describe("buildRenderBlocks", () => {
 
   test("orphan streamingText renders even without matching part", () => {
     const streaming: StreamingTextState = {
-      messageId: randomUUID(),
-      partId: randomUUID(),
+      messageId: crypto.randomUUID(),
+      partId: crypto.randomUUID(),
       text: "orphan text",
     };
     const blocks = buildRenderBlocks([], streaming);
@@ -322,8 +321,8 @@ describe("buildRenderBlocks", () => {
 
   test("orphan streamingReasoning renders even without matching part", () => {
     const streaming: StreamingReasoningState = {
-      messageId: randomUUID(),
-      partId: randomUUID(),
+      messageId: crypto.randomUUID(),
+      partId: crypto.randomUUID(),
       text: "orphan reasoning",
     };
     const blocks = buildRenderBlocks([], undefined, streaming);
@@ -334,8 +333,8 @@ describe("buildRenderBlocks", () => {
   test("streaming tool not in message parts renders tool name", () => {
     const streamingTools: Record<string, StreamingToolState> = {
       call123: {
-        messageId: randomUUID(),
-        partId: randomUUID(),
+        messageId: crypto.randomUUID(),
+        partId: crypto.randomUUID(),
         toolCallId: "call123",
         toolName: "readFile",
       },

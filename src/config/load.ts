@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type { SpecraConfig } from "./schema";
 import { specraConfigSchema } from "./schema";
 
@@ -65,7 +64,7 @@ export async function loadConfig(filePath: string): Promise<SpecraConfig> {
   let raw: string;
 
   try {
-    raw = await readFile(filePath, "utf-8");
+    raw = await Bun.file(filePath).text();
   } catch (err) {
     throw new ConfigLoadError(
       `Failed to read config file: ${filePath}`,

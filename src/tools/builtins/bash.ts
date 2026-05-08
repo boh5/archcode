@@ -17,7 +17,7 @@ type BashInput = z.infer<typeof BashInputSchema>;
 
 const ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL"] as const;
 
-export function buildBashEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function buildBashEnv(source: Record<string, string | undefined> = Bun.env): Record<string, string> {
   const env: Record<string, string> = { SPECRA_CLI: "1" };
 
   for (const key of ENV_ALLOWLIST) {

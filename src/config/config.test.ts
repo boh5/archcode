@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   parseConfig,
@@ -124,7 +124,7 @@ describe("parseConfig", () => {
 });
 
 describe("loadConfig", () => {
-  const tmpDir = join(import.meta.dirname, "__test_tmp__");
+  const tmpDir = join(import.meta.dir, "__test_tmp__");
 
   afterAll(async () => {
     await rm(tmpDir, { recursive: true, force: true });
@@ -133,7 +133,7 @@ describe("loadConfig", () => {
   test("loads a valid config from file", async () => {
     await mkdir(tmpDir, { recursive: true });
     const filePath = join(tmpDir, "valid.json");
-    await writeFile(filePath, JSON.stringify(VALID_CONFIG), "utf-8");
+    await Bun.write(filePath, JSON.stringify(VALID_CONFIG));
 
     const config = await loadConfig(filePath);
     expect(config.provider["xxx"].name).toBe("xxx");
@@ -148,7 +148,7 @@ describe("loadConfig", () => {
   test("throws ConfigParseError for invalid JSON", async () => {
     await mkdir(tmpDir, { recursive: true });
     const filePath = join(tmpDir, "bad.json");
-    await writeFile(filePath, "{ not valid json", "utf-8");
+    await Bun.write(filePath, "{ not valid json");
 
     expect(loadConfig(filePath)).rejects.toThrow(ConfigParseError);
   });
@@ -156,7 +156,7 @@ describe("loadConfig", () => {
   test("throws ConfigValidationError for invalid schema", async () => {
     await mkdir(tmpDir, { recursive: true });
     const filePath = join(tmpDir, "invalid.json");
-    await writeFile(filePath, JSON.stringify({ provider: {} }), "utf-8");
+    await Bun.write(filePath, JSON.stringify({ provider: {} }));
 
     expect(loadConfig(filePath)).rejects.toThrow(ConfigValidationError);
   });

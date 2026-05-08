@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
@@ -83,7 +82,7 @@ function reduceStreamEvent(
 
       return {
         isRunning: true,
-        currentRunId: event.runId ?? randomUUID(),
+        currentRunId: event.runId ?? crypto.randomUUID(),
         currentAssistantMessageId: undefined,
         isStreamingModel: false,
         streamingText: undefined,
@@ -110,13 +109,13 @@ function reduceStreamEvent(
     case "user-message": {
       const part: TextPart = {
         type: "text",
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         text: event.content,
         createdAt: timestamp,
         completedAt: timestamp,
       };
       const message: StoredMessage = {
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         role: "user",
         parts: [part],
         createdAt: timestamp,
@@ -257,7 +256,7 @@ function reduceStreamEvent(
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
       const part: ToolPart = {
         type: "tool",
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         state: "pending",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
@@ -310,7 +309,7 @@ function reduceStreamEvent(
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
       const part: RunningToolPart = {
         type: "tool",
-        id: randomUUID(),
+        id: crypto.randomUUID(),
         state: "running",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
@@ -385,7 +384,7 @@ function reduceStreamEvent(
         steps: [
           ...state.steps,
           {
-            id: randomUUID(),
+            id: crypto.randomUUID(),
             step: event.step,
             runId: state.currentRunId,
             startedAt: timestamp,
@@ -430,7 +429,7 @@ function reduceStreamEvent(
         steps: [
           ...state.steps,
           {
-            id: randomUUID(),
+            id: crypto.randomUUID(),
             step: event.step ?? state.steps.length,
             runId: state.currentRunId,
             startedAt: timestamp,
@@ -557,7 +556,7 @@ function ensureCurrentAssistantMessage(
   }
 
   const message: StoredMessage = {
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     role: "assistant",
     parts: [],
     createdAt: timestamp,
@@ -621,7 +620,7 @@ function startTextStreaming(
 ): Partial<SessionStoreState> & { streamingText: NonNullable<SessionStoreState["streamingText"]> } {
   const part: TextPart = {
     type: "text",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     text: "",
     createdAt: timestamp,
   };
@@ -649,7 +648,7 @@ function startReasoningStreaming(
 } {
   const part: ReasoningPart = {
     type: "reasoning",
-    id: randomUUID(),
+    id: crypto.randomUUID(),
     text: "",
     createdAt: timestamp,
   };

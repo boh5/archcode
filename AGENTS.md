@@ -71,10 +71,11 @@ streamText → toolCalls → partitionToolCalls (parallel vs serial) → guards 
 - Talk in chinese, code in english (include comments).
 - If you have any questions or choices, feel free to ask user.
 - Use TDD development.
+- **Prefer Bun-native APIs** over `node:*` imports. Use `crypto.randomUUID()` (Web Crypto global) instead of `import { randomUUID } from "node:crypto"`. Use `Bun.file()`, `Bun.write()`, `Bun.file().delete()` instead of `node:fs/promises` readFile/writeFile/unlink. Use `Bun.SystemError` instead of `NodeJS.ErrnoException`. Use `import.meta.dir` instead of `import.meta.dirname`. Only use `node:*` imports when Bun has no native alternative (e.g. `node:path` for join/resolve/dirname, `node:os` for tmpdir/homedir, `node:fs/promises` for mkdir/rename/readdir/rm, `node:fs` sync methods).
 - Custom error classes extend `Error` with typed constructor params, explicit `this.name = "ClassName"`, and meaningful public fields.
 - Barrel exports via `index.ts` files in each module.
 - All Zod schemas use `.strict()` — no passthrough of unknown properties.
-- Test runner: `bun:test` (not Jest/Vitest). Import from `"bun:test"`.
+- Test runner: `bun:test` (not Jest/Vitest). Import from `"bun:test"`. Use `mock()` instead of `jest.fn()`.
 - Test file convention: `<name>.test.ts` colocated with source.
 - Tests create temp files in `__test_tmp__/` relative to test file dir, cleaned up in `afterAll`.
 - Entry point is `src/main.ts` (not `src/index.ts`). The `package.json` bin field points to `./src/main.ts`.

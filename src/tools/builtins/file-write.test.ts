@@ -8,11 +8,9 @@ import {
 import { existsSync } from "node:fs";
 import {
   mkdir,
-  readFile,
   realpath,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
@@ -72,7 +70,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
 async function writeWorkspaceFile(relativePath: string, content: string): Promise<string> {
   const filePath = join(testDir, relativePath);
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, content);
+  await Bun.write(filePath, content);
   return filePath;
 }
 
@@ -106,7 +104,7 @@ describe("fileWriteTool", () => {
     );
 
     expect(output).toBe("File written to sample.txt");
-    const content = await readFile(join(testDir, "sample.txt"), "utf8");
+    const content = await Bun.file(join(testDir, "sample.txt")).text();
     expect(content).toBe("hello\nworld\n");
   });
 
@@ -139,7 +137,7 @@ describe("fileWriteTool", () => {
     expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     expect(result.output).toContain("already exists");
 
-    const content = await readFile(join(testDir, "execute-existing.txt"), "utf8");
+    const content = await Bun.file(join(testDir, "execute-existing.txt")).text();
     expect(content).toBe("old");
   });
 
@@ -187,7 +185,7 @@ describe("fileWriteTool", () => {
     );
 
     expect(output).toBe("File written to nested/deep/file.txt");
-    const content = await readFile(join(testDir, "nested/deep/file.txt"), "utf8");
+    const content = await Bun.file(join(testDir, "nested/deep/file.txt")).text();
     expect(content).toBe("nested");
   });
 
@@ -220,8 +218,8 @@ describe("fileWriteTool", () => {
       "File written to parallel-a.txt",
       "File written to parallel-b.txt",
     ]);
-    const contentA = await readFile(join(testDir, "parallel-a.txt"), "utf8");
-    const contentB = await readFile(join(testDir, "parallel-b.txt"), "utf8");
+    const contentA = await Bun.file(join(testDir, "parallel-a.txt")).text();
+    const contentB = await Bun.file(join(testDir, "parallel-b.txt")).text();
     expect(contentA).toBe("a");
     expect(contentB).toBe("b");
   });
@@ -248,7 +246,7 @@ describe("fileWriteTool", () => {
     );
     expect(succeeded).toHaveLength(1);
     expect(failed).toHaveLength(1);
-    const content = await readFile(join(testDir, "same.txt"), "utf8");
+    const content = await Bun.file(join(testDir, "same.txt")).text();
     expect(["first", "second"]).toContain(content);
   });
 
@@ -279,7 +277,7 @@ describe("fileWriteTool", () => {
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
     expect(result.output).toContain("already exists");
-    const content = await readFile(join(testDir, "registry-existing.txt"), "utf8");
+    const content = await Bun.file(join(testDir, "registry-existing.txt")).text();
     expect(content).toBe("old");
   });
 

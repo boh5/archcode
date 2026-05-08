@@ -1,4 +1,4 @@
-import { mkdir, rename, readFile, writeFile } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { StoreApi } from "zustand";
@@ -157,7 +157,7 @@ export async function saveSessionTranscript(
   const finalPath = join(dir, `${state.sessionId}.json`);
   const tmpPath = join(dir, `${state.sessionId}.json.tmp`);
 
-  await writeFile(tmpPath, json, "utf-8");
+  await Bun.write(tmpPath, json);
   await rename(tmpPath, finalPath);
 }
 
@@ -166,7 +166,7 @@ export async function loadSessionTranscript(
   dir: string,
 ): Promise<StoreApi<SessionStoreState>> {
   const filePath = join(dir, `${sessionId}.json`);
-  const raw = await readFile(filePath, "utf-8");
+  const raw = await Bun.file(filePath).text();
   const parsed = SessionFileSchema.parse(JSON.parse(raw));
 
   if (parsed.sessionId !== sessionId) {

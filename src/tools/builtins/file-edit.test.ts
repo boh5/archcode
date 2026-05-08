@@ -8,11 +8,9 @@ import {
 import { realpathSync, statSync } from "node:fs";
 import {
   mkdir,
-  readFile,
   rm,
   stat,
   utimes,
-  writeFile,
 } from "node:fs/promises";
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
@@ -75,7 +73,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
 async function writeWorkspaceFile(relativePath: string, content: string): Promise<string> {
   const filePath = join(testDir, relativePath);
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, content);
+  await Bun.write(filePath, content);
   return filePath;
 }
 
@@ -132,7 +130,7 @@ describe("fileEditTool", () => {
     );
 
     expect(output).toBe("Successfully applied 1 edit(s) to single.txt");
-    expect(await readFile(join(testDir, "single.txt"), "utf8")).toBe("hello specra\n");
+    expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello specra\n");
   });
 
   test("successfully applies multiple edits", async () => {
@@ -151,7 +149,7 @@ describe("fileEditTool", () => {
     );
 
     expect(output).toBe("Successfully applied 2 edit(s) to multiple.txt");
-    expect(await readFile(join(testDir, "multiple.txt"), "utf8")).toBe(
+    expect(await Bun.file(join(testDir, "multiple.txt")).text()).toBe(
       "one beta three\n",
     );
   });
@@ -167,7 +165,7 @@ describe("fileEditTool", () => {
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("Successfully applied 1 edit(s) to compat.txt");
-    expect(await readFile(join(testDir, "compat.txt"), "utf8")).toBe("after\n");
+    expect(await Bun.file(join(testDir, "compat.txt")).text()).toBe("after\n");
   });
 
   test("returns error when oldString is not found", async () => {
@@ -268,7 +266,7 @@ describe("fileEditTool", () => {
     );
 
     expect(output).toBe("Successfully applied 1 edit(s) to fuzzy.txt");
-    expect(await readFile(join(testDir, "fuzzy.txt"), "utf8")).toBe(
+    expect(await Bun.file(join(testDir, "fuzzy.txt")).text()).toBe(
       "const text = 'updated';\nnext line\r\n",
     );
   });
@@ -302,7 +300,7 @@ describe("fileEditTool", () => {
     );
 
     expect(result.isError).toBe(false);
-    expect(await readFile(filePath, "utf8")).toBe("after\n");
+    expect(await Bun.file(filePath).text()).toBe("after\n");
   });
 
   test("read-before-edit guard denies when mtime differs from snapshot", async () => {
@@ -344,7 +342,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(await readFile(join(testDir, "offsets.txt"), "utf8")).toBe("start234567end");
+    expect(await Bun.file(join(testDir, "offsets.txt")).text()).toBe("start234567end");
   });
 
   test("serializes concurrent edits to the same file with mutation queue", async () => {
@@ -367,7 +365,7 @@ describe("fileEditTool", () => {
       "Successfully applied 1 edit(s) to queue.txt",
       "Successfully applied 1 edit(s) to queue.txt",
     ]);
-    expect(await readFile(join(testDir, "queue.txt"), "utf8")).toBe("1 two 3");
+    expect(await Bun.file(join(testDir, "queue.txt")).text()).toBe("1 two 3");
   });
 
   test("after error recovery hook appends nudge while preserving structured edit errors", async () => {

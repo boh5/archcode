@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
@@ -88,7 +87,7 @@ export class TestAgent implements Agent {
     }
 
     this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
-    this.store = createSessionStore(randomUUID());
+    this.store = createSessionStore(crypto.randomUUID());
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
   }
 

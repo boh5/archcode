@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
@@ -47,7 +46,7 @@ function createFileExistsGuard(): GuardHook {
 
 async function cleanupTempFile(tmpPath: string): Promise<void> {
   try {
-    await unlink(tmpPath);
+    await Bun.file(tmpPath).delete();
   } catch {
     // best-effort
   }
@@ -85,8 +84,8 @@ export const fileWriteTool = defineTool({
         const parentDir = path.dirname(resolvedPath);
         await mkdir(parentDir, { recursive: true });
 
-        const tmpPath = `${resolvedPath}.tmp.${randomUUID()}`;
-        await writeFile(tmpPath, input.content);
+        const tmpPath = `${resolvedPath}.tmp.${crypto.randomUUID()}`;
+        await Bun.write(tmpPath, input.content);
 
         try {
           await rename(tmpPath, resolvedPath);

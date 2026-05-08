@@ -1,7 +1,7 @@
-import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
+import { getSystemErrorCode } from "../../utils";
 import type { ToolExecutionResult } from "../types";
 import {
   createReadSnapshotAfterHook,
@@ -74,8 +74,8 @@ export const fileReadTool = defineTool({
     }
 
     try {
-      const fileStat = await stat(resolved);
-      const size = fileStat.size;
+      const file = Bun.file(resolved);
+      const size = file.size;
       if (size > 10 * 1024 * 1024) {
         return createToolErrorResult({
           kind: "file-too-large",
@@ -84,7 +84,7 @@ export const fileReadTool = defineTool({
         });
       }
 
-      const buffer = await readFile(resolved);
+      const buffer = await file.bytes();
       if (containsNullByte(buffer.subarray(0, Math.min(buffer.length, BINARY_DETECTION_BYTES)))) {
         return "Binary file, cannot display";
       }
@@ -99,22 +99,20 @@ export const fileReadTool = defineTool({
 
       return formatted;
     } catch (error) {
-      if (typeof error === "object" && error !== null && "code" in error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") {
-          return createToolErrorResult({
-            kind: "file-not-found",
-            code: "TOOL_FILE_NOT_FOUND",
-            message: `File not found: ${input.path}`,
-          });
-        }
-        if (code === "EACCES" || code === "EPERM") {
-          return createToolErrorResult({
-            kind: "file-permission-denied",
-            code: "TOOL_FILE_PERMISSION_DENIED",
-            message: `Permission denied: ${input.path}`,
-          });
-        }
+      const code = getSystemErrorCode(error);
+      if (code === "ENOENT") {
+        return createToolErrorResult({
+          kind: "file-not-found",
+          code: "TOOL_FILE_NOT_FOUND",
+          message: `File not found: ${input.path}`,
+        });
+      }
+      if (code === "EACCES" || code === "EPERM") {
+        return createToolErrorResult({
+          kind: "file-permission-denied",
+          code: "TOOL_FILE_PERMISSION_DENIED",
+          message: `Permission denied: ${input.path}`,
+        });
       }
       return createToolErrorResult({
         kind: "execution",

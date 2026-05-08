@@ -11,7 +11,6 @@ import {
   realpath,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
@@ -70,7 +69,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
 async function writeWorkspaceFile(relativePath: string, content: string | Uint8Array): Promise<string> {
   const filePath = join(testDir, relativePath);
   await mkdir(join(filePath, ".."), { recursive: true });
-  await writeFile(filePath, content);
+  await Bun.write(filePath, content);
   return filePath;
 }
 
