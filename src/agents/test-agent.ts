@@ -6,8 +6,14 @@ import { createSessionStore } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
-import type { ToolConfirmationCallback } from "../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
 import { runQueryLoop } from "./query/loop";
+
+export interface AgentRunOptions {
+  abort?: AbortSignal;
+  confirmPermission?: ToolConfirmationCallback;
+  askUser?: AskUserCallback;
+}
 
 export interface Agent {
   readonly store: StoreApi<SessionStoreState>;
@@ -16,6 +22,7 @@ export interface Agent {
     abort?: AbortSignal,
     confirmPermission?: ToolConfirmationCallback,
   ): Promise<AgentResult>;
+  run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
 }
 
 export interface AgentResult {
@@ -43,6 +50,7 @@ export interface TestAgentOptions {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly confirmPermission?: ToolConfirmationCallback;
+  readonly askUser?: AskUserCallback;
 }
 
 export class TestAgent implements Agent {
@@ -51,12 +59,14 @@ export class TestAgent implements Agent {
   private toolRegistry: ToolRegistry;
   private modelInfo: ModelInfo;
   private confirmPermission: ToolConfirmationCallback | undefined;
+  private askUserDefault: AskUserCallback | undefined;
   private running = false;
 
   constructor(options: TestAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
     this.confirmPermission = options.confirmPermission;
+    this.askUserDefault = options.askUser;
 
     const modelIds = this.providerRegistry.modelIds;
     if (modelIds.length === 0) {
@@ -69,9 +79,28 @@ export class TestAgent implements Agent {
 
   async run(
     userMessage: string,
-    abort?: AbortSignal,
+    abortOrOptions?: AbortSignal | AgentRunOptions,
     confirmPermission?: ToolConfirmationCallback,
   ): Promise<AgentResult> {
+    let abort: AbortSignal | undefined;
+    let confirm: ToolConfirmationCallback | undefined;
+    let askUser: AskUserCallback | undefined;
+
+    if (abortOrOptions && typeof abortOrOptions === "object" && abortOrOptions instanceof AbortSignal) {
+      abort = abortOrOptions;
+      confirm = confirmPermission ?? this.confirmPermission;
+      askUser = this.askUserDefault;
+    } else if (abortOrOptions && typeof abortOrOptions === "object") {
+      const opts = abortOrOptions as AgentRunOptions;
+      abort = opts.abort;
+      confirm = opts.confirmPermission ?? this.confirmPermission;
+      askUser = opts.askUser ?? this.askUserDefault;
+    } else {
+      abort = undefined;
+      confirm = confirmPermission ?? this.confirmPermission;
+      askUser = this.askUserDefault;
+    }
+
     if (this.running) {
       throw new AgentRunningError();
     }
@@ -85,7 +114,8 @@ export class TestAgent implements Agent {
         model: this.modelInfo.model,
         toolRegistry: this.toolRegistry,
         allowedTools: allToolNames,
-        confirmPermission: confirmPermission ?? this.confirmPermission,
+        confirmPermission: confirm,
+        askUser,
         abort,
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
         store: this.store,

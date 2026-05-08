@@ -1,6 +1,6 @@
 import { useReducer } from "react";
 import { Box, Text, useInput } from "ink";
-import type { ToolConfirmationRequest } from "../tools/index";
+import type { AskUserRequest, ToolConfirmationRequest } from "../tools/index";
 
 export interface InputState {
   text: string;
@@ -17,6 +17,9 @@ export interface UserInputProps {
   isRunning: boolean;
   confirmationRequest?: ToolConfirmationRequest | null;
   onConfirm?: (result: "approve" | "deny") => void;
+  askUserRequest?: AskUserRequest | null;
+  onAskUserAnswer?: (answer: string) => void;
+  onAskUserCancel?: () => void;
 }
 
 export function handleConfirmationInput(
@@ -43,7 +46,7 @@ export function inputReducer(state: InputState, action: InputAction): InputState
   }
 }
 
-export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm }: UserInputProps) {
+export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm, askUserRequest, onAskUserAnswer, onAskUserCancel }: UserInputProps) {
   const [state, dispatch] = useReducer(inputReducer, { text: "" });
 
   useInput((input, key) => {
@@ -51,6 +54,30 @@ export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm 
       const result = handleConfirmationInput(input, key);
       if (result && onConfirm) {
         onConfirm(result);
+      }
+      return;
+    }
+
+    if (askUserRequest) {
+      if (key.escape) {
+        onAskUserCancel?.();
+        return;
+      }
+      if (key.return) {
+        if (state.text.trim().length > 0) {
+          onAskUserAnswer?.(state.text.trim());
+          dispatch({ type: "submit" });
+        }
+        return;
+      }
+      if (key.backspace || key.delete) {
+        dispatch({ type: "backspace" });
+      } else if (input) {
+        if (input.includes("\n") || input.includes("\r")) {
+          dispatch({ type: "paste", text: input });
+        } else {
+          dispatch({ type: "type", char: input });
+        }
       }
       return;
     }
@@ -81,6 +108,16 @@ export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm 
       <Box marginTop={1} flexDirection="column">
         <Text color="yellow">{confirmationRequest.description}</Text>
         <Text dimColor>Allow? [y/n]</Text>
+      </Box>
+    );
+  }
+
+  if (askUserRequest) {
+    return (
+      <Box marginTop={1} flexDirection="column">
+        <Text color="cyan">{askUserRequest.question}</Text>
+        <Text color="cyan">{">"} {state.text}</Text>
+        <Text dimColor>Press Enter to submit, Escape to cancel</Text>
       </Box>
     );
   }

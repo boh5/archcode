@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
-import type { SessionStoreState, StepInfo, StoredMessage, StoredPart } from "./types";
+import type { SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -86,12 +86,19 @@ function sampleSteps(): StepInfo[] {
   ];
 }
 
-function persistedState(sessionId: string, messages = sampleMessages(), steps = sampleSteps()): Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps"> {
-  return { sessionId, createdAt: 99, messages, steps };
+function sampleTodos(): StoredTodo[] {
+  return [
+    { id: "todo-1", content: "first", status: "completed", createdAt: 400, updatedAt: 410 },
+    { id: "todo-2", content: "second", status: "in_progress", createdAt: 420 },
+  ];
+}
+
+function persistedState(sessionId: string, messages = sampleMessages(), steps = sampleSteps(), todos = sampleTodos()): Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos"> {
+  return { sessionId, createdAt: 99, messages, steps, todos };
 }
 
 describe("session transcript serialization", () => {
-  test("save/load roundtrips sessionId, createdAt, messages, and steps", async () => {
+  test("save/load roundtrips sessionId, createdAt, messages, steps, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
     const state = persistedState(sessionId);
 
@@ -102,6 +109,7 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().createdAt).toBe(state.createdAt);
     expect(loaded.getState().messages).toEqual(state.messages);
     expect(loaded.getState().steps).toEqual(state.steps);
+    expect(loaded.getState().todos).toEqual(state.todos);
   });
 
   test("roundtrips completed text, incomplete text, reasoning, and all tool part variants", async () => {
@@ -128,6 +136,16 @@ describe("session transcript serialization", () => {
     expect(state.streamingText).toBeUndefined();
     expect(state.streamingReasoning).toBeUndefined();
     expect(state.streamingTools).toEqual({});
+  });
+
+  test("load defaults missing todos to an empty list", async () => {
+    const sessionId = uniqueSessionId("missing-todos");
+    const { todos: _todos, ...legacyState } = persistedState(sessionId);
+    await writeSessionFile(sessionId, legacyState);
+
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().todos).toEqual([]);
   });
 
   test("loaded store preserves methods and can continue appending", async () => {
@@ -225,6 +243,39 @@ describe("session transcript serialization", () => {
     await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
+  test("load rejects invalid todo status", async () => {
+    const sessionId = uniqueSessionId("invalid-todo-status");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      todos: [{ id: "todo", content: "bad", status: "blocked" }],
+    });
+
+    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects more than one in_progress todo", async () => {
+    const sessionId = uniqueSessionId("multiple-in-progress-todos");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      todos: [
+        { id: "todo-1", content: "one", status: "in_progress" },
+        { id: "todo-2", content: "two", status: "in_progress" },
+      ],
+    });
+
+    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects unknown todo fields", async () => {
+    const sessionId = uniqueSessionId("unknown-todo-field");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      todos: [{ id: "todo", content: "bad", status: "pending", extra: true }],
+    });
+
+    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
   test("load rejects sessionId mismatch", async () => {
     const requestedSessionId = uniqueSessionId("requested");
     await writeSessionFile(requestedSessionId, persistedState("different-session"));
@@ -291,8 +342,9 @@ describe("session transcript serialization", () => {
     const raw = await readFile(sessionFilePath(sessionId), "utf-8");
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
-    expect(Object.keys(parsed).sort()).toEqual(["createdAt", "messages", "sessionId", "steps"]);
+    expect(Object.keys(parsed).sort()).toEqual(["createdAt", "messages", "sessionId", "steps", "todos"]);
     expect("events" in parsed).toBe(false);
+    expect(parsed.todos).toEqual(sampleTodos());
   });
 });
 

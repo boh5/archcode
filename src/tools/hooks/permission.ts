@@ -1,4 +1,5 @@
 import type { GuardDecision, PermissionErrorCode, ToolExecutionResult } from "../types";
+import { createToolErrorResult } from "../errors";
 
 /**
  * Compose multiple guard decisions with priority: deny > ask > allow.
@@ -21,13 +22,15 @@ export function createPermissionErrorResult(
   message: string,
   meta?: Record<string, unknown>,
 ): ToolExecutionResult {
-  return {
-    output: message,
-    isError: true,
+  return createToolErrorResult({
+    code,
+    message,
     meta: {
       permissionErrorCode: code,
       skippedExecution: true,
       ...meta,
     },
-  };
+  });
 }
+
+

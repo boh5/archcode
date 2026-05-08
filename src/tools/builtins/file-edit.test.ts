@@ -17,6 +17,7 @@ import {
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
 import { ToolRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
 import { fileEditTool } from "./file-edit";
@@ -31,6 +32,7 @@ function createMockStore(
     createdAt: Date.now(),
     messages: [],
     steps: [],
+    todos: [],
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},
@@ -255,6 +257,25 @@ describe("fileEditTool", () => {
     expect(result.output).toContain("not been read first");
   });
 
+  test("file_read equivalent normalized path snapshot allows file_edit direct path", async () => {
+    const filePath = await writeWorkspaceFile("src/main.ts", "before\n");
+    const resolved = realpathSync.native(filePath);
+    const store = createMockStore();
+    const readCtx = makeCtx({ store, toolName: "file_read", input: { path: "src/../src/main.ts" } });
+
+    await createReadSnapshotAfterHook()({ output: "1: before\n", isError: false }, readCtx);
+
+    expect(store.getState().readSnapshots.has(resolved)).toBe(true);
+
+    const result = await executeThroughRegistry(
+      { path: "src/main.ts", edits: [{ oldString: "before", newString: "after" }] },
+      makeCtx({ store }),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(await readFile(filePath, "utf8")).toBe("after\n");
+  });
+
   test("read-before-edit guard denies when mtime differs from snapshot", async () => {
     const filePath = await writeWorkspaceFile("mtime.txt", "content");
     const resolved = realpathSync.native(filePath);
@@ -330,8 +351,8 @@ describe("fileEditTool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("---");
-    expect(result.output).toContain("Try re-reading the file");
+    expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
+    expect(result.output).toContain("Re-read the file");
   });
 
   test("refreshes read snapshot after successful edit", async () => {

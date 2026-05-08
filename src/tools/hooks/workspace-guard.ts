@@ -1,5 +1,5 @@
 import type { GuardHook, GuardDecision, ToolExecutionContext } from "../types";
-import { resolveAndValidatePath } from "./read-snapshot";
+import { resolveAndValidatePath } from "../security/path-validator";
 
 export function createWorkspaceGuard(): GuardHook {
   return (input: unknown, ctx: ToolExecutionContext): GuardDecision => {

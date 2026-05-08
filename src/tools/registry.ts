@@ -1,6 +1,7 @@
 import type { ZodTypeAny } from "zod";
 import type {
   ToolDescriptor,
+  AnyToolDescriptor,
   Logger,
   BeforeHook,
   AfterHook,
@@ -16,9 +17,15 @@ import {
   combineGuardDecisions,
   createPermissionErrorResult,
 } from "./hooks/permission";
+import { redactString, redactValue } from "./hooks/redact";
+import {
+  createToolErrorResult,
+  inferToolErrorKindFromResult,
+  normalizeToolErrorResult,
+} from "./errors";
 
 export class ToolRegistry {
-  private _descriptors: Map<string, ToolDescriptor>;
+  private _descriptors: Map<string, AnyToolDescriptor>;
   private _logger: Logger | undefined;
 
   globalHooks: { before: BeforeHook[]; after: AfterHook[] };
@@ -31,24 +38,24 @@ export class ToolRegistry {
     this.globalGuards = [];
   }
 
-  register(descriptor: ToolDescriptor): void {
+  register(descriptor: AnyToolDescriptor): void {
     if (this._descriptors.has(descriptor.name)) {
       throw new DuplicateToolError(descriptor.name);
     }
     this._descriptors.set(descriptor.name, descriptor);
   }
 
-  registerAll(descriptors: ToolDescriptor[]): void {
+  registerAll(descriptors: AnyToolDescriptor[]): void {
     for (const desc of descriptors) {
       this.register(desc);
     }
   }
 
-  get(name: string): ToolDescriptor | undefined {
+  get(name: string): AnyToolDescriptor | undefined {
     return this._descriptors.get(name);
   }
 
-  getAll(): ToolDescriptor[] {
+  getAll(): AnyToolDescriptor[] {
     return Array.from(this._descriptors.values());
   }
 
@@ -57,7 +64,7 @@ export class ToolRegistry {
       return new ResolvedToolSet([]);
     }
 
-    const resolved: ToolDescriptor[] = [];
+    const resolved: AnyToolDescriptor[] = [];
 
     for (const name of toolNames) {
       const desc = this._descriptors.get(name);
@@ -78,6 +85,7 @@ export class ToolRegistry {
     ctx.toolName = toolCall.toolName;
     ctx.toolCallId = toolCall.toolCallId;
     ctx.input = toolCall.input;
+    ctx.redactedInput = redactValue(toolCall.input);
     ctx.startedAt = Date.now();
 
     let result: ToolExecutionResult;
@@ -106,9 +114,17 @@ export class ToolRegistry {
 
     let parsed = descriptor.inputSchema.safeParse(rawInput);
     if (!parsed.success) {
-      return { output: parsed.error.message, isError: true };
+      return this.runGlobalAfterHooks(
+        createToolErrorResult({
+          kind: "schema",
+          zodError: parsed.error,
+          expectedInput: `Tool "${descriptor.name}" input must match its registered Zod schema.`,
+        }),
+        ctx,
+      );
     }
     let currentInput = parsed.data;
+    ctx.redactedInput = redactValue(currentInput);
 
     if (!isAllowedTool(ctx, toolCall.toolName)) {
       result = createPermissionErrorResult(
@@ -136,10 +152,15 @@ export class ToolRegistry {
           if (mutation !== undefined) {
             parsed = descriptor.inputSchema.safeParse(mutation);
             if (!parsed.success) {
-              result = { output: parsed.error.message, isError: true };
+              result = createToolErrorResult({
+                kind: "before-hook-schema",
+                zodError: parsed.error,
+                expectedInput: `Tool "${descriptor.name}" input must still match its registered Zod schema after global before hooks.`,
+              });
               break pipeline;
             }
             currentInput = parsed.data;
+            ctx.redactedInput = redactValue(currentInput);
           }
         }
 
@@ -149,22 +170,24 @@ export class ToolRegistry {
             if (mutation !== undefined) {
               parsed = descriptor.inputSchema.safeParse(mutation);
               if (!parsed.success) {
-                result = { output: parsed.error.message, isError: true };
+                result = createToolErrorResult({
+                  kind: "before-hook-schema",
+                  zodError: parsed.error,
+                  expectedInput: `Tool "${descriptor.name}" input must still match its registered Zod schema after tool before hooks.`,
+                });
                 break pipeline;
               }
               currentInput = parsed.data;
+              ctx.redactedInput = redactValue(currentInput);
             }
           }
         }
 
         try {
           const output = await descriptor.execute(currentInput, ctx);
-          result = { output, isError: false };
+          result = normalizeExecuteOutput(output);
         } catch (err) {
-          result = {
-            output: errorMessage(err),
-            isError: true,
-          };
+          result = createToolErrorResult({ kind: "execution", error: err });
         }
         ctx.durationMs = Date.now() - ctx.startedAt;
 
@@ -176,18 +199,12 @@ export class ToolRegistry {
                 result = mutated;
               }
             } catch (err) {
-              result = {
-                output: errorMessage(err),
-                isError: true,
-              };
+              result = createToolErrorResult({ kind: "after-hook", error: err });
             }
           }
         }
       } catch (err) {
-        result = {
-          output: errorMessage(err),
-          isError: true,
-        };
+        result = createToolErrorResult({ kind: "execution", error: err });
       }
     }
 
@@ -195,7 +212,7 @@ export class ToolRegistry {
   }
 
   private async resolvePermission(
-    descriptor: ToolDescriptor,
+    descriptor: AnyToolDescriptor,
     input: unknown,
     ctx: ToolExecutionContext,
   ): Promise<ToolExecutionResult | undefined> {
@@ -203,12 +220,12 @@ export class ToolRegistry {
 
     try {
       for (const guard of this.globalGuards) {
-        decisions.push(await guard(input, ctx));
+        decisions.push(redactDecision(await guard(input, ctx)));
       }
 
       if (descriptor.guards) {
         for (const guard of descriptor.guards) {
-          decisions.push(await guard(input, ctx));
+          decisions.push(redactDecision(await guard(input, ctx)));
         }
       }
     } catch (err) {
@@ -219,6 +236,7 @@ export class ToolRegistry {
     }
 
     const decision = combineGuardDecisions(decisions);
+    ctx.permissionOutcome = decision.outcome;
     if (decision.outcome === "allow") {
       return undefined;
     }
@@ -241,7 +259,7 @@ export class ToolRegistry {
       const confirmation = await ctx.confirmPermission({
         toolName: ctx.toolName,
         toolCallId: ctx.toolCallId,
-        input,
+        input: ctx.redactedInput ?? redactValue(input),
         description: descriptor.description,
         reason: decision.prompt ?? decision.reason,
       });
@@ -280,19 +298,49 @@ export class ToolRegistry {
           result = mutated;
         }
       } catch (err) {
-        result = {
-          output: errorMessage(err),
-          isError: true,
-        };
+        result = createToolErrorResult({ kind: "after-hook", error: err });
       }
     }
 
-    return result;
+    return normalizeToolErrorResult(result, {
+      kind: inferToolErrorKindFromResult(result) ?? "execution",
+    });
   }
+}
+
+function normalizeExecuteOutput(output: string | ToolExecutionResult): ToolExecutionResult {
+  if (typeof output === "string") {
+    return { output, isError: false };
+  }
+
+  if (
+    output &&
+    typeof output === "object" &&
+    typeof output.output === "string" &&
+    typeof output.isError === "boolean"
+  ) {
+    return normalizeToolErrorResult(output, {
+      kind: inferToolErrorKindFromResult(output) ?? "execution",
+    });
+  }
+
+  return createToolErrorResult({
+    kind: "execution",
+    error: output,
+    message: "Tool returned an invalid result shape",
+  });
 }
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function redactDecision(decision: GuardDecision): GuardDecision {
+  return {
+    outcome: decision.outcome,
+    ...(decision.reason ? { reason: redactString(decision.reason) } : {}),
+    ...(decision.prompt ? { prompt: redactString(decision.prompt) } : {}),
+  };
 }
 
 function isAllowedTool(ctx: ToolExecutionContext, name: string): boolean {
@@ -300,9 +348,9 @@ function isAllowedTool(ctx: ToolExecutionContext, name: string): boolean {
 }
 
 export class ResolvedToolSet {
-  readonly descriptors: readonly ToolDescriptor[];
+  readonly descriptors: readonly AnyToolDescriptor[];
 
-  constructor(descriptors: readonly ToolDescriptor[]) {
+  constructor(descriptors: readonly AnyToolDescriptor[]) {
     this.descriptors = descriptors;
   }
 
@@ -310,7 +358,7 @@ export class ResolvedToolSet {
     return this.descriptors.some((d) => d.name === name);
   }
 
-  get(name: string): ToolDescriptor | undefined {
+  get(name: string): AnyToolDescriptor | undefined {
     return this.descriptors.find((d) => d.name === name);
   }
 
@@ -332,7 +380,7 @@ export class ResolvedToolSet {
 }
 
 export function createRegistry(
-  descriptors?: ToolDescriptor[],
+  descriptors?: AnyToolDescriptor[],
   logger?: Logger,
 ): ToolRegistry {
   const registry = new ToolRegistry(logger);

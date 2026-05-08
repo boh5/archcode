@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createRedactionHook, REDACTION_MARKER } from "./redact";
 import { createOutputTruncator } from "./truncate";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
@@ -178,5 +179,20 @@ describe("createOutputTruncator", () => {
     expect(errorResult!.meta!.truncated).toBe(true);
     expect(successResult!.isError).toBe(false);
     expect(errorResult!.isError).toBe(true);
+  });
+
+  it("persists redacted full output when redaction runs before truncation", async () => {
+    const rawSecret = "sk_test_1234567890abcdef";
+    const redactor = createRedactionHook();
+    const truncator = createOutputTruncator({ outputDir: OUTPUT_DIR, maxBytes: 30, maxLines: 3 });
+    const ctx = makeCtx({ input: { command: `token=${rawSecret}` } });
+    const longOutput = ["line1", "line2", "line3", "line4", `line5 token=${rawSecret}`].join("\n");
+
+    const redacted = await redactor(makeResult({ output: longOutput }), ctx);
+    const returned = await truncator(redacted!, ctx);
+
+    const savedContent = await readFile(returned!.meta!.fullOutputPath as string, "utf-8");
+    expect(savedContent).toContain(REDACTION_MARKER);
+    expect(savedContent).not.toContain(rawSecret);
   });
 });

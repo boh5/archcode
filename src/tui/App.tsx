@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
-import type { Agent } from "../agents/test-agent";
-import type { ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
+import type { Agent, AgentRunOptions } from "../agents/test-agent";
+import type { AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";
 
@@ -13,6 +13,11 @@ interface AppProps {
 export interface PendingConfirmation {
   request: ToolConfirmationRequest;
   resolve: (result: "approve" | "deny" | "timeout") => void;
+}
+
+export interface PendingAskUser {
+  request: AskUserRequest;
+  resolve: (result: { answer: string } | { isError: true; reason: string }) => void;
 }
 
 export function shouldSubmit(text: string): boolean {
@@ -29,6 +34,21 @@ export function createConfirmationCallback(
   };
 }
 
+export function createAskUserCallback(
+  setPending: (pending: PendingAskUser | null) => void,
+  getPending: () => PendingAskUser | null,
+): AskUserCallback {
+  return async (request) => {
+    const existing = getPending();
+    if (existing) {
+      return { isError: true, reason: "Another question is already pending" };
+    }
+    return new Promise<{ answer: string } | { isError: true; reason: string }>((resolve) => {
+      setPending({ request, resolve });
+    });
+  };
+}
+
 export function App({ agent }: AppProps) {
   const messages = useStore(agent.store, (s) => s.messages);
   const streamingText = useStore(agent.store, (s) => s.streamingText);
@@ -39,16 +59,36 @@ export function App({ agent }: AppProps) {
 
   const runningRef = useRef(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [pendingAskUser, setPendingAskUser] = useState<PendingAskUser | null>(null);
 
   const confirmPermission = useMemo(
     () => createConfirmationCallback(setPendingConfirmation),
     [setPendingConfirmation],
   );
 
+  const askUser = useMemo(
+    () => createAskUserCallback(setPendingAskUser, () => pendingAskUser),
+    [setPendingAskUser, pendingAskUser],
+  );
+
   const handleConfirm = (result: "approve" | "deny") => {
     if (pendingConfirmation) {
       pendingConfirmation.resolve(result);
       setPendingConfirmation(null);
+    }
+  };
+
+  const handleAskUserAnswer = (answer: string) => {
+    if (pendingAskUser) {
+      pendingAskUser.resolve({ answer });
+      setPendingAskUser(null);
+    }
+  };
+
+  const handleAskUserCancel = () => {
+    if (pendingAskUser) {
+      pendingAskUser.resolve({ isError: true, reason: "Cancelled" });
+      setPendingAskUser(null);
     }
   };
 
@@ -59,7 +99,7 @@ export function App({ agent }: AppProps) {
     runningRef.current = true;
 
     try {
-      await agent.run(text, undefined, confirmPermission);
+      await agent.run(text, { confirmPermission, askUser });
     } catch {
     } finally {
       runningRef.current = false;
@@ -80,6 +120,14 @@ export function App({ agent }: AppProps) {
           isRunning={isRunning}
           confirmationRequest={pendingConfirmation.request}
           onConfirm={handleConfirm}
+        />
+      ) : pendingAskUser ? (
+        <UserInput
+          onSubmit={handleSubmit}
+          isRunning={isRunning}
+          askUserRequest={pendingAskUser.request}
+          onAskUserAnswer={handleAskUserAnswer}
+          onAskUserCancel={handleAskUserCancel}
         />
       ) : isRunning && isStreamingModel ? (
         <Box marginTop={1}>

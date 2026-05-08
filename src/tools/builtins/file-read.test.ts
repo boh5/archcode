@@ -27,6 +27,7 @@ function createMockStore(): StoreApi<SessionStoreState> {
     createdAt: Date.now(),
     messages: [],
     steps: [],
+    todos: [],
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},

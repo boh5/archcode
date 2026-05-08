@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { BusyError, type ReasoningPart, type StepInfo, type StoredMessage, type TextPart, type ToolPart } from "./types";
+import { BusyError, InvalidTodoStateError, type ReasoningPart, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, getSessionStore } from "./store";
 
 function uniqueSessionId(label: string): string {
@@ -51,6 +51,7 @@ describe("createSessionStore", () => {
     expect(state.sessionId).toBe(sessionId);
     expect(state.messages).toEqual([]);
     expect(state.steps).toEqual([]);
+    expect(state.todos).toEqual([]);
     expect(state.createdAt).toBeGreaterThan(0);
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
@@ -68,6 +69,91 @@ describe("createSessionStore", () => {
     expect(getSessionStore(sessionId)).toBeUndefined();
     const store = createSessionStore(sessionId);
     expect(getSessionStore(sessionId)).toBe(store);
+  });
+});
+
+describe("todo-write events", () => {
+  test("replaces the full todo list", () => {
+    const store = createFreshStore("todo-replace");
+    const initialTodos: StoredTodo[] = [
+      { id: "todo-1", content: "first", status: "pending", createdAt: 1 },
+      { id: "todo-2", content: "second", status: "in_progress", createdAt: 2, updatedAt: 3 },
+    ];
+    const replacementTodos: StoredTodo[] = [
+      { id: "todo-3", content: "replacement", status: "completed", createdAt: 4, updatedAt: 5 },
+    ];
+
+    store.getState().append({ type: "todo-write", todos: initialTodos });
+    expect(store.getState().todos).toEqual(initialTodos);
+
+    store.getState().append({ type: "todo-write", todos: replacementTodos });
+    expect(store.getState().todos).toEqual(replacementTodos);
+  });
+
+  test("invalid status throws InvalidTodoStateError without mutating todos", () => {
+    const store = createFreshStore("todo-invalid-status");
+    const previousTodos: StoredTodo[] = [{ id: "todo-1", content: "keep", status: "pending" }];
+    store.getState().append({ type: "todo-write", todos: previousTodos });
+    const previousReference = store.getState().todos;
+
+    expect(() =>
+      store.getState().append({
+        type: "todo-write",
+        todos: [{ id: "bad", content: "bad", status: "blocked" } as unknown as StoredTodo],
+      }),
+    ).toThrow(InvalidTodoStateError);
+
+    expect(store.getState().todos).toBe(previousReference);
+    expect(store.getState().todos).toEqual(previousTodos);
+  });
+
+  test("multiple in_progress todos throw InvalidTodoStateError without mutating todos", () => {
+    const store = createFreshStore("todo-multiple-progress");
+    const previousTodos: StoredTodo[] = [{ id: "todo-1", content: "keep", status: "completed" }];
+    store.getState().append({ type: "todo-write", todos: previousTodos });
+    const previousReference = store.getState().todos;
+
+    expect(() =>
+      store.getState().append({
+        type: "todo-write",
+        todos: [
+          { id: "todo-2", content: "one", status: "in_progress" },
+          { id: "todo-3", content: "two", status: "in_progress" },
+        ],
+      }),
+    ).toThrow(InvalidTodoStateError);
+
+    expect(store.getState().todos).toBe(previousReference);
+    expect(store.getState().todos).toEqual(previousTodos);
+  });
+
+  test("invalid todo event throws a named deterministic error", () => {
+    const store = createFreshStore("todo-named-error");
+
+    try {
+      store.getState().append({
+        type: "todo-write",
+        todos: [{ id: "bad", content: "bad", status: "paused" } as unknown as StoredTodo],
+      });
+      throw new Error("Expected invalid todo event to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvalidTodoStateError);
+      expect((err as Error).name).toBe("InvalidTodoStateError");
+      expect((err as Error).message).toContain("invalid status");
+    }
+  });
+
+  test("toModelMessages does not inject separate todo messages", () => {
+    const store = createFreshStore("todo-projection");
+    store.getState().append({
+      type: "todo-write",
+      todos: [{ id: "todo-1", content: "hidden from projection", status: "in_progress" }],
+    });
+    store.getState().append({ type: "user-message", content: "hello" });
+
+    const projected = store.getState().toModelMessages();
+    expect(projected).toEqual([{ role: "user", content: "hello" }]);
+    expect(JSON.stringify(projected)).not.toContain("hidden from projection");
   });
 });
 

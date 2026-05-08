@@ -1,4 +1,5 @@
 import type { AfterHook, ToolExecutionResult } from "../types";
+import { isStructuredToolError } from "../errors";
 
 interface NudgeRule {
   patterns: RegExp[];
@@ -53,6 +54,10 @@ export function createEditErrorRecoveryHook(): AfterHook {
   return (result: ToolExecutionResult): ToolExecutionResult | void => {
     if (!result.isError) {
       return;
+    }
+
+    if (isStructuredToolError(result)) {
+      return result;
     }
 
     const nudge = findNudge(result.output);

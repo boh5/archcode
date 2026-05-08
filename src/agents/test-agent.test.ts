@@ -3,12 +3,12 @@ import { z } from "zod";
 import type { SpecraConfig } from "../config/index";
 import { createRegistry as createProviderRegistry } from "../provider/index";
 import { createRegistry as createToolRegistry, defineTool } from "../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionContext } from "../tools/index";
 import { registerBuiltinTools } from "../core/index";
 import { TestAgent } from "./test-agent";
 import { AgentRunningError, NoModelsConfiguredError } from "./test-agent";
 import type { Agent, AgentResult } from "./test-agent";
 import { __setStreamTextForTest } from "./query/loop";
-import type { ToolConfirmationCallback, ToolExecutionContext } from "../tools/index";
 
 function makeMockConfig(): SpecraConfig {
   return {
@@ -420,6 +420,173 @@ describe("TestAgent", () => {
       expect(result).toHaveProperty("steps");
       expect(typeof result.text).toBe("string");
       expect(typeof result.steps).toBe("number");
+    });
+  });
+
+  describe("askUser callback", () => {
+    test("passes askUser callback to tool execution context via options object", async () => {
+      const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+      let contextAskUser: ToolExecutionContext["askUser"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextAskUser = ctx.askUser;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser });
+      await agent.run("test", { askUser });
+
+      expect(contextAskUser).toBe(askUser);
+    });
+
+    test("run() with positional args still works (backward compatibility)", async () => {
+      setupMockStreamText("Hello from positional");
+
+      const agent = makeTestAgent();
+      const result = await agent.run("test", undefined, undefined);
+
+      expect(result.text).toBe("Hello from positional");
+    });
+
+    test("run() with options object works", async () => {
+      setupMockStreamText("Hello from options");
+
+      const agent = makeTestAgent();
+      const result = await agent.run("test", {});
+
+      expect(result.text).toBe("Hello from options");
+    });
+
+    test("run() options.askUser overrides constructor askUser", async () => {
+      const constructorAskUser = mock(async () => ({ answer: "constructor" }) as { answer: string }) as AskUserCallback;
+      const runAskUser = mock(async () => ({ answer: "runtime" }) as { answer: string }) as AskUserCallback;
+      let contextAskUser: ToolExecutionContext["askUser"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextAskUser = ctx.askUser;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
+      await agent.run("test", { askUser: runAskUser });
+
+      expect(contextAskUser).toBe(runAskUser);
+      expect(constructorAskUser).not.toHaveBeenCalled();
+    });
+
+    test("run() falls back to constructor askUser when not provided in options", async () => {
+      const constructorAskUser = mock(async () => ({ answer: "constructor" }) as { answer: string }) as AskUserCallback;
+      let contextAskUser: ToolExecutionContext["askUser"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextAskUser = ctx.askUser;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
+      await agent.run("test");
+
+      expect(contextAskUser).toBe(constructorAskUser);
+    });
+
+    test("askUser is separate from confirmPermission in tool context", async () => {
+      const confirmPermission = mock(async () => "approve" as const);
+      const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+      let contextConfirm: ToolExecutionContext["confirmPermission"];
+      let contextAskUser: ToolExecutionContext["askUser"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextConfirm = ctx.confirmPermission;
+        contextAskUser = ctx.askUser;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry });
+      await agent.run("test", { confirmPermission, askUser });
+
+      expect(contextConfirm).toBe(confirmPermission);
+      expect(contextAskUser).toBe(askUser);
+      expect(contextAskUser).not.toBe(contextConfirm);
     });
   });
 });

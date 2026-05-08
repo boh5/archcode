@@ -50,6 +50,7 @@ function createMockStore(
     createdAt: Date.now(),
     messages: [],
     steps: [],
+    todos: [],
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},
@@ -211,6 +212,19 @@ describe("createReadBeforeEditGuard", () => {
 
     const guard = createReadBeforeEditGuard();
     const decision = await guard({ path: file }, ctx);
+
+    expect(decision).toEqual({ outcome: "allow" });
+  });
+
+  test("allows equivalent normalized path when canonical snapshot exists", async () => {
+    const file = workspaceFile("subdir/canonical-edit.txt");
+    const realpath = realpathSync.native(file);
+    const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
+    const store = createMockStore(snapshots);
+    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
+
+    const guard = createReadBeforeEditGuard();
+    const decision = await guard({ path: "subdir/../subdir/canonical-edit.txt" }, ctx);
 
     expect(decision).toEqual({ outcome: "allow" });
   });

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from "bun:test";
 import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createExecutionLogger } from "./logger";
+import { REDACTION_MARKER } from "./redact";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -153,5 +154,20 @@ describe("createExecutionLogger", () => {
     // Should not throw
     const returned = await hook(result, ctx);
     expect(returned).toBeUndefined();
+  });
+
+  it("logs only redacted input metadata", async () => {
+    const rawSecret = "sk_test_1234567890abcdef";
+    const hook = createExecutionLogger(mockLogger as unknown as Logger);
+    const ctx = makeCtx({
+      input: { command: `token=${rawSecret}` },
+      redactedInput: { command: `token=${REDACTION_MARKER}` },
+    });
+
+    await hook(makeResult(), ctx);
+
+    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    expect(JSON.stringify(meta)).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(meta)).not.toContain(rawSecret);
   });
 });

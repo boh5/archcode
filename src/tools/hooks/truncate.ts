@@ -26,10 +26,10 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
   const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;
   const outputDir = options?.outputDir ?? join(homedir(), ".specra", "tool-output");
 
-  return async (
+  return async function truncationAfterHook(
     result: ToolExecutionResult,
     ctx: ToolExecutionContext,
-  ): Promise<ToolExecutionResult | void> => {
+  ): Promise<ToolExecutionResult | void> {
     const byteCount = Buffer.byteLength(result.output, "utf-8");
     const lineCount = result.output.split("\n").length;
 

@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage } from "./types";
+import { redactValue } from "../tools/hooks/redact";
 
 export function toModelMessagesFromStoredMessages(
   messages: StoredMessage[],
@@ -44,7 +45,7 @@ export function toModelMessagesFromStoredMessages(
           type: "tool-call",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          input: part.input,
+          input: redactValue(part.input),
         });
         toolContent.push({
           type: "tool-result",
@@ -59,7 +60,7 @@ export function toModelMessagesFromStoredMessages(
           type: "tool-call",
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          input: part.input,
+          input: redactValue(part.input),
         });
         toolContent.push({
           type: "tool-result",

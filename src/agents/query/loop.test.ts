@@ -7,10 +7,11 @@ import { z } from "zod";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState, StoredMessage } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
-import type { PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
+import { REDACTION_MARKER } from "../../tools/index";
+import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { __setStreamTextForTest, runQueryLoop } from "./loop";
-import type { QueryLoopOptions } from "./types";
+import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 
 type MockChunk =
   | { type: "text-delta"; text: string }
@@ -184,6 +185,12 @@ beforeEach(() => {
 });
 
 describe("runQueryLoop store-source-of-truth behavior", () => {
+  function toolErrorMessage(store: ReturnType<typeof createStore>, index = 0): string {
+    const part = assistantMessages(store)[0].parts[index];
+    if (!("errorMessage" in part)) throw new Error("Expected error tool part");
+    return String(part.errorMessage);
+  }
+
   test("returns only text and steps in result shape", async () => {
     createMockStreamText([{ text: "Hello" }]);
 
@@ -391,6 +398,40 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
+  test("redacts tool-call input before storing and projecting while execution receives raw input", async () => {
+    const store = createStore();
+    const rawSecret = "sk_test_1234567890abcdef";
+    let executedInput: unknown;
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: `token=${rawSecret}` } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: createTestRegistry(async (input) => {
+          executedInput = input;
+          return "ok";
+        }),
+        allowedTools: ["echo"],
+      }),
+      "Hi",
+    );
+
+    expect(executedInput).toEqual({ message: `token=${rawSecret}` });
+    const serializedStore = JSON.stringify(store.getState().messages);
+    expect(serializedStore).toContain(REDACTION_MARKER);
+    expect(serializedStore).not.toContain(rawSecret);
+    expect(JSON.stringify(store.getState().toModelMessages())).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(store.getState().toModelMessages())).not.toContain(rawSecret);
+  });
+
   test("tool-call without tool-input-start still creates tool part", async () => {
     const store = createStore();
     createMockStreamText([
@@ -470,10 +511,12 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(makeOptions({ store }), "Hi");
 
+    const errorMessage = toolErrorMessage(store);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "error",
-      errorMessage: 'Tool "missing" is not registered',
     });
+    expect(errorMessage).toContain('"code":"TOOL_UNKNOWN"');
+    expect(errorMessage).toContain('Tool \\"missing\\" is not registered');
   });
 
   test("missingTool stores TOOL_UNKNOWN even when allowedTools includes it", async () => {
@@ -491,11 +534,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use missing tool",
     );
 
+    const errorMessage = toolErrorMessage(store);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "error",
       toolName: "missingTool",
-      errorMessage: 'Tool "missingTool" is not registered',
     });
+    expect(errorMessage).toContain('"code":"TOOL_UNKNOWN"');
+    expect(errorMessage).toContain('Tool \\"missingTool\\" is not registered');
   });
 
   test("destructiveTool registered but not allowed stores TOOL_NOT_ALLOWED and skips executor", async () => {
@@ -519,11 +564,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     );
 
     expect(executor).not.toHaveBeenCalled();
+    const errorMessage = toolErrorMessage(store);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "error",
       toolName: "destructiveTool",
-      errorMessage: 'Tool "destructiveTool" is not allowed for this execution context',
     });
+    expect(errorMessage).toContain('"code":"TOOL_NOT_ALLOWED"');
+    expect(errorMessage).toContain('Tool \\"destructiveTool\\" is not allowed');
   });
 
   test("permission branch errors store stable messages and skip executor", async () => {
@@ -581,11 +628,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       );
 
       expect(executor).not.toHaveBeenCalled();
+      const errorMessage = toolErrorMessage(store);
       expect(assistantMessages(store)[0].parts[0]).toMatchObject({
         state: "error",
         toolName: testCase.toolName,
-        errorMessage: testCase.message,
       });
+      expect(errorMessage).toContain(`"code":"${testCase.code}"`);
+      expect(errorMessage).toContain(testCase.message);
     }
   });
 
@@ -608,10 +657,12 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Hi",
     );
 
+    const errorMessage = toolErrorMessage(store);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({
       state: "error",
-      errorMessage: "boom",
     });
+    expect(errorMessage).toContain('"code":"TOOL_EXECUTION_FAILED"');
+    expect(errorMessage).toContain("boom");
   });
 
   test("non tool-calls finish reason stops loop", async () => {
@@ -655,6 +706,181 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(result.steps).toBe(2);
     expect(result.text).toBe("Final");
+  });
+
+  test("third consecutive identical normalized tool call appends doom error and skips execution", async () => {
+    const store = createStore();
+    const executedInputs: unknown[] = [];
+    const registry = createRegistry([
+      defineTool({
+        name: "echo",
+        description: "Canonical input test tool",
+        inputSchema: z.object({
+          a: z.number(),
+          b: z.number(),
+          omitted: z.undefined().optional(),
+        }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async (input) => {
+          executedInputs.push(input);
+          return "ok";
+        },
+      }),
+    ]);
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { b: 2, a: 1 } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: { a: 1, b: 2, omitted: undefined } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: { b: 2, a: 1 } }] },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: registry,
+        allowedTools: ["echo"],
+      }),
+      "Hi",
+    );
+
+    expect(executedInputs).toEqual([{ b: 2, a: 1 }, { a: 1, b: 2, omitted: undefined }]);
+    expect(assistantMessages(store).flatMap((message) => message.parts).filter((part) => part.type === "tool")).toEqual([
+      expect.objectContaining({ toolCallId: "tc-1", state: "completed", output: "ok" }),
+      expect.objectContaining({ toolCallId: "tc-2", state: "completed", output: "ok" }),
+      expect.objectContaining({
+        toolCallId: "tc-3",
+        toolName: "echo",
+        state: "error",
+        errorMessage: DOOM_LOOP_MESSAGE,
+      }),
+    ]);
+  });
+
+  test("different inputs, tool names, and non-consecutive repeats do not trigger doom", async () => {
+    const store = createStore();
+    const executedCalls: string[] = [];
+    const variedInputSchema = z.object({ value: z.unknown().optional() }).strict();
+    const registry = createRegistry([
+      defineTool({
+        name: "echo",
+        description: "Varied input test tool",
+        inputSchema: variedInputSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async (input) => { executedCalls.push(`echo:${JSON.stringify(input.value)}`); return "echo ok"; },
+      }),
+      defineTool({
+        name: "second",
+        description: "Second varied input test tool",
+        inputSchema: variedInputSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async (input) => { executedCalls.push(`second:${JSON.stringify(input.value)}`); return "second ok"; },
+      }),
+    ]);
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { value: ["same", 1] } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: { value: [1, "same"] } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: { value: ["same", 1] } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-4", toolName: "second", input: { value: ["same", 1] } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-5", toolName: "echo", input: { value: ["same", 1] } }] },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo", "second"] }),
+      "Hi",
+    );
+
+    expect(executedCalls).toEqual([
+      'echo:["same",1]',
+      'echo:[1,"same"]',
+      'echo:["same",1]',
+      'second:["same",1]',
+      'echo:["same",1]',
+    ]);
+    expect(JSON.stringify(store.getState().messages)).not.toContain(DOOM_LOOP_MESSAGE);
+  });
+
+  test("two identical calls followed by different input resets doom tracker", async () => {
+    const store = createStore();
+    const executedInputs: unknown[] = [];
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "repeat" } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: { message: "repeat" } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: { message: "reset" } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-4", toolName: "echo", input: { message: "repeat" } }] },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: createTestRegistry(async (input) => { executedInputs.push(input); return "ok"; }),
+        allowedTools: ["echo"],
+      }),
+      "Hi",
+    );
+
+    expect(executedInputs).toEqual([
+      { message: "repeat" },
+      { message: "repeat" },
+      { message: "reset" },
+      { message: "repeat" },
+    ]);
+    expect(JSON.stringify(store.getState().messages)).not.toContain(DOOM_LOOP_MESSAGE);
+  });
+
+  test("three identical calls inside one assistant response doom only the third before partition execution", async () => {
+    const store = createStore();
+    const executedIds: string[] = [];
+    const registry = createTestRegistry(async (_input, ctx) => {
+      executedIds.push(ctx.toolCallId);
+      return `ok ${ctx.toolCallId}`;
+    });
+    const executeSpy = mock(registry.execute.bind(registry));
+    registry.execute = executeSpy;
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "same" } },
+          { type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: { message: "same" } },
+          { type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: { message: "same" } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Hi");
+
+    expect(executedIds).toEqual(["tc-1", "tc-2"]);
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+    expect(assistantMessages(store)[0].parts).toEqual([
+      expect.objectContaining({ toolCallId: "tc-1", state: "completed", output: "ok tc-1" }),
+      expect.objectContaining({ toolCallId: "tc-2", state: "completed", output: "ok tc-2" }),
+      expect.objectContaining({ toolCallId: "tc-3", state: "error", errorMessage: DOOM_LOOP_MESSAGE }),
+    ]);
+  });
+
+  test("doom tracker is scoped to a single runQueryLoop invocation", async () => {
+    const store = createStore();
+    const executedIds: string[] = [];
+    const registry = createTestRegistry(async (_input, ctx) => {
+      executedIds.push(ctx.toolCallId);
+      return "ok";
+    });
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "run1-tc-1", toolName: "echo", input: { message: "same" } }] },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "run1-tc-2", toolName: "echo", input: { message: "same" } }] },
+      { text: "First done" },
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "run2-tc-1", toolName: "echo", input: { message: "same" } }] },
+      { text: "Second done" },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "First");
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Second");
+
+    expect(executedIds).toEqual(["run1-tc-1", "run1-tc-2", "run2-tc-1"]);
+    expect(JSON.stringify(store.getState().messages)).not.toContain(DOOM_LOOP_MESSAGE);
   });
 
   test("maxSteps emits loop-error but run-end completed", async () => {
@@ -941,6 +1167,78 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(contextConfirmPermission).toBe(confirmPermission);
   });
 
+  test("passes askUser callback to tool execution context", async () => {
+    const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+    let contextAskUser: ToolExecutionContext["askUser"];
+    const registry = createTestRegistry(async (_, ctx) => {
+      contextAskUser = ctx.askUser;
+      return "ok";
+    });
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ toolRegistry: registry, allowedTools: ["echo"], askUser }),
+      "Hi",
+    );
+
+    expect(contextAskUser).toBe(askUser);
+  });
+
+  test("askUser is undefined in context when not provided", async () => {
+    let contextAskUser: ToolExecutionContext["askUser"];
+    const registry = createTestRegistry(async (_, ctx) => {
+      contextAskUser = ctx.askUser;
+      return "ok";
+    });
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ toolRegistry: registry, allowedTools: ["echo"] }),
+      "Hi",
+    );
+
+    expect(contextAskUser).toBeUndefined();
+  });
+
+  test("redacts ToolConfirmationRequest input before callback observes it", async () => {
+    const rawSecret = "sk_test_1234567890abcdef";
+    const registry = createTestRegistry(async () => "ok");
+    const tool = registry.get("echo");
+    if (!tool) throw new Error("Expected echo tool");
+    tool.guards = [async () => ({ outcome: "ask", reason: `confirm token=${rawSecret}` })];
+    const confirmPermission = mock(async (request) => {
+      expect(JSON.stringify(request)).toContain(REDACTION_MARKER);
+      expect(JSON.stringify(request)).not.toContain(rawSecret);
+      return "approve" as const;
+    });
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: `token=${rawSecret}` } }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ toolRegistry: registry, allowedTools: ["echo"], confirmPermission }),
+      "Hi",
+    );
+
+    expect(confirmPermission).toHaveBeenCalledTimes(1);
+  });
+
   test("tool execution error does not skip remaining tool calls in same step", async () => {
     const store = createStore();
     const registry = createRegistry([
@@ -967,7 +1265,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(executeSpy).toHaveBeenCalledTimes(2);
     expect(assistantMessages(store)[0].parts).toEqual([
-      expect.objectContaining({ state: "error", errorMessage: "boom" }),
+      expect.objectContaining({ state: "error", errorMessage: expect.stringContaining("boom") }),
       expect.objectContaining({ state: "completed", output: "ok after failure" }),
     ]);
   });

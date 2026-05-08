@@ -3,10 +3,11 @@ import type { StreamTextResult, ToolSet } from "ai";
 import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StreamEvent } from "../../store/types";
-import type { ToolExecutionContext, ToolCallLike } from "../../tools/index";
+import type { ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
-import type { QueryLoopOptions, QueryLoopResult } from "./types";
+import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
+import { redactValue } from "../../tools/hooks/redact";
 
 const DEFAULT_MAX_STEPS = 50;
 
@@ -25,6 +26,30 @@ type ToolCallArray = Array<{
   toolName: string;
   input: unknown;
 }>;
+
+class DoomTracker {
+  private previous?: NormalizedToolCall;
+  private count = 0;
+
+  check(toolCall: ToolCallArray[number]): boolean {
+    const current: NormalizedToolCall = {
+      toolName: toolCall.toolName,
+      canonicalInput: canonicalizeToolInput(toolCall.input),
+    };
+
+    if (
+      this.previous?.toolName === current.toolName &&
+      this.previous.canonicalInput === current.canonicalInput
+    ) {
+      this.count += 1;
+    } else {
+      this.previous = current;
+      this.count = 1;
+    }
+
+    return this.count >= 3;
+  }
+}
 
 export async function runQueryLoop(
   options: QueryLoopOptions,
@@ -45,6 +70,7 @@ export async function runQueryLoop(
   let steps = 0;
   let lastText = "";
   let failed = false;
+  const doomTracker = new DoomTracker();
 
   store.getState().append({ type: "run-start" });
 
@@ -84,6 +110,8 @@ export async function runQueryLoop(
         allowedTools,
         resolvedWorkspaceRoot,
         confirmPermission,
+        options.askUser,
+        doomTracker,
       );
       steps++;
     }
@@ -155,7 +183,7 @@ async function consumeFullStream(
           type: "tool-call",
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
-          input: chunk.input,
+          input: redactValue(chunk.input),
         });
       }
     }
@@ -175,8 +203,20 @@ async function executeToolCalls(
   allowedTools: readonly string[],
   workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
+  askUser?: QueryLoopOptions["askUser"],
+  doomTracker?: DoomTracker,
 ): Promise<void> {
-  const batches = partitionToolCalls(toolCalls, registry);
+  const executableToolCalls: ToolCallArray = [];
+
+  for (const toolCall of toolCalls) {
+    if (doomTracker?.check(toolCall)) {
+      appendToolResult(store, toolCall, DOOM_LOOP_MESSAGE, true);
+    } else {
+      executableToolCalls.push(toolCall);
+    }
+  }
+
+  const batches = partitionToolCalls(executableToolCalls, registry);
 
   for (const batch of batches) {
     if (batch.type === "parallel") {
@@ -187,12 +227,14 @@ async function executeToolCalls(
             toolName: toolCall.toolName,
             toolCallId: toolCall.toolCallId,
             input: toolCall.input,
+            redactedInput: redactValue(toolCall.input),
             step,
             abort,
             startedAt: Date.now(),
             allowedTools: new Set(allowedTools),
             workspaceRoot,
             ...(confirmPermission ? { confirmPermission } : {}),
+            ...(askUser ? { askUser } : {}),
           };
           const result = await registry.execute(toolCall, ctx);
           appendToolResult(store, toolCall, result.output, result.isError);
@@ -205,12 +247,14 @@ async function executeToolCalls(
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
         input: toolCall.input,
+        redactedInput: redactValue(toolCall.input),
         step,
         abort,
         startedAt: Date.now(),
         allowedTools: new Set(allowedTools),
         workspaceRoot,
         ...(confirmPermission ? { confirmPermission } : {}),
+        ...(askUser ? { askUser } : {}),
       };
       const result = await registry.execute(toolCall, ctx);
       appendToolResult(store, toolCall, result.output, result.isError);
@@ -236,4 +280,42 @@ function appendToolResult(
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function canonicalizeToolInput(value: unknown): string {
+  return JSON.stringify(toCanonicalJsonValue(value));
+}
+
+function toCanonicalJsonValue(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+
+  const valueType = typeof value;
+  if (valueType === "string" || valueType === "number" || valueType === "boolean") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const canonicalItem = toCanonicalJsonValue(item);
+      return canonicalItem === undefined ? null : canonicalItem;
+    });
+  }
+
+  if (valueType === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right));
+    const canonicalObject: Record<string, unknown> = {};
+
+    for (const [key, objectValue] of entries) {
+      const canonicalObjectValue = toCanonicalJsonValue(objectValue);
+      if (canonicalObjectValue !== undefined) {
+        canonicalObject[key] = canonicalObjectValue;
+      }
+    }
+
+    return canonicalObject;
+  }
+
+  return value;
 }

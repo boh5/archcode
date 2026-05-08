@@ -5,6 +5,14 @@ import type { StoreApi } from "zustand";
 import { createSessionStore } from "./store";
 import type { SessionStoreState, StoredMessage } from "./types";
 
+const StoredTodoSchema = z.strictObject({
+  id: z.string(),
+  content: z.string(),
+  status: z.enum(["pending", "in_progress", "completed", "cancelled"]),
+  createdAt: z.number().optional(),
+  updatedAt: z.number().optional(),
+});
+
 const TextPartSchema = z.strictObject({
   type: z.literal("text"),
   id: z.string(),
@@ -105,6 +113,12 @@ const SessionFileSchema = z.strictObject({
   createdAt: z.number(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema).optional(),
+  todos: z.array(StoredTodoSchema)
+    .refine(
+      (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
+      "Only one todo can be in_progress",
+    )
+    .optional(),
 });
 
 export type SessionFile = z.infer<typeof SessionFileSchema>;
@@ -126,7 +140,7 @@ export function getAssistantText(messages: StoredMessage[]): string {
 }
 
 export async function saveSessionTranscript(
-  state: Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps">,
+  state: Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos">,
   dir: string,
 ): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -136,6 +150,7 @@ export async function saveSessionTranscript(
     createdAt: state.createdAt,
     messages: state.messages,
     steps: state.steps,
+    todos: state.todos,
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -166,6 +181,7 @@ export async function loadSessionTranscript(
     createdAt: parsed.createdAt,
     messages: parsed.messages,
     steps: parsed.steps ?? [],
+    todos: parsed.todos ?? [],
     isRunning: false,
     isStreamingModel: false,
     currentRunId: undefined,

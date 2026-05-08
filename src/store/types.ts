@@ -1,5 +1,4 @@
 import type { ModelMessage } from "ai";
-import type { StoreApi } from "zustand";
 
 // ─── Stream Events (Loop → Store inputs, no id/timestamp) ───
 
@@ -66,6 +65,11 @@ export interface ToolResultEvent {
   isError: boolean;
 }
 
+export interface TodoWriteEvent {
+  type: "todo-write";
+  todos: StoredTodo[];
+}
+
 export interface StepStartEvent {
   type: "step-start";
   step: number;
@@ -97,9 +101,22 @@ export type StreamEvent =
   | ToolInputStartEvent
   | ToolCallEvent
   | ToolResultEvent
+  | TodoWriteEvent
   | StepStartEvent
   | StepEndEvent
   | LoopErrorEvent;
+
+// ─── Session-only Todos ───
+
+export type StoredTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+export interface StoredTodo {
+  id: string;
+  content: string;
+  status: StoredTodoStatus;
+  createdAt?: number;
+  updatedAt?: number;
+}
 
 // ─── Stored Parts (Persistent layer) ───
 
@@ -229,6 +246,9 @@ export interface SessionStoreState {
   messages: StoredMessage[];
   steps: StepInfo[];
 
+  // Session-only state
+  todos: StoredTodo[];
+
   // Running state
   isRunning: boolean;
   isStreamingModel: boolean;
@@ -253,5 +273,12 @@ export class BusyError extends Error {
   constructor(sessionId: string) {
     super(`Session "${sessionId}" is already running`);
     this.name = "BusyError";
+  }
+}
+
+export class InvalidTodoStateError extends Error {
+  constructor(public readonly reason: string) {
+    super(`Invalid todo state: ${reason}`);
+    this.name = "InvalidTodoStateError";
   }
 }

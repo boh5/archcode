@@ -14,6 +14,8 @@ export type {
   ToolConfirmationRequest,
   ToolConfirmationCallback,
   PermissionErrorCode,
+  AskUserRequest,
+  AskUserCallback,
 } from "./types";
 
 // ─── Values ───
@@ -23,10 +25,24 @@ export { ToolRegistry, ResolvedToolSet, createRegistry } from "./registry";
 export { createOutputTruncator } from "./hooks/truncate";
 export type { TruncatorOptions } from "./hooks/truncate";
 export { createExecutionLogger } from "./hooks/logger";
+export { createRedactionHook, redactString, redactValue, REDACTION_MARKER } from "./hooks/redact";
+export { createAuditHook } from "./hooks/audit";
+export type { AuditEvent, AuditHookOptions, AuditSink } from "./hooks/audit";
 export {
   combineGuardDecisions,
   createPermissionErrorResult,
 } from "./hooks/permission";
+export {
+  TOOL_ERROR_META_KEY,
+  createToolErrorResult,
+  extractCode,
+  formatToolError,
+  inferToolErrorKindFromResult,
+  isStructuredToolError,
+  normalizeToolErrorResult,
+  serializeToolError,
+} from "./errors";
+export type { FormattedToolError, FormatToolErrorOptions, ToolErrorKind } from "./errors";
 export {
   createReadSnapshotAfterHook,
   createReadBeforeEditGuard,
@@ -41,6 +57,17 @@ export {
 export type { AfterHook as AfterHookType } from "./types";
 export { createEditErrorRecoveryHook } from "./hooks/edit-error-recovery";
 export { createWorkspaceGuard } from "./hooks/workspace-guard";
+export {
+  PathValidator,
+  createPathValidator,
+  validateWorkspacePath,
+} from "./security/path-validator";
+export type {
+  PathValidationError,
+  PathValidationErrorCode,
+  PathValidationResult,
+  ResolveAndValidatePathResult,
+} from "./security/path-validator";
 
 // ─── Concurrency ───
 export { createMutationQueue, sharedMutationQueue } from "./concurrency/mutation-queue";
@@ -74,5 +101,8 @@ export {
   globTool,
   gitStatusTool,
   gitDiffTool,
+  bashTool,
+  todoWriteTool,
+  askUserTool,
   createBuiltinToolDescriptors,
 } from "./builtins";

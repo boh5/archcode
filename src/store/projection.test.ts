@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import type { StoredMessage, StoredPart } from "./types";
+import { REDACTION_MARKER } from "../tools/hooks/redact";
 
 let idCounter = 0;
 
@@ -106,6 +107,11 @@ function storedMessage(role: StoredMessage["role"], parts: StoredPart[]): Stored
 describe("toModelMessagesFromStoredMessages", () => {
   test("returns empty ModelMessage array for empty stored messages", () => {
     expect(toModelMessagesFromStoredMessages([])).toEqual([]);
+  });
+
+  test("has no todo-specific projection path", () => {
+    expect(toModelMessagesFromStoredMessages([])).toEqual([]);
+    expect(JSON.stringify(toModelMessagesFromStoredMessages([]))).not.toContain("todo");
   });
 
   test("projects a user message with completed text to a single user ModelMessage", () => {
@@ -290,6 +296,16 @@ describe("toModelMessagesFromStoredMessages", () => {
       ],
     });
     expect(JSON.stringify(projected)).not.toContain("args");
+  });
+
+  test("tool projection redacts secret-like input defensively", () => {
+    const rawSecret = "sk_test_1234567890abcdef";
+    const projected = toModelMessagesFromStoredMessages([
+      storedMessage("assistant", [completedToolPart({ toolCallId: "call-secret", input: { command: `token=${rawSecret}` } })]),
+    ]);
+
+    expect(JSON.stringify(projected)).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(projected)).not.toContain(rawSecret);
   });
 
   test("successful tool result uses output text object and never isError", () => {

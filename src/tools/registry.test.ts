@@ -14,7 +14,10 @@ import type {
 } from "./types";
 import { DuplicateToolError } from "./types";
 import { createExecutionLogger } from "./hooks/logger";
+import { createAuditHook, type AuditEvent } from "./hooks/audit";
+import { createRedactionHook, REDACTION_MARKER } from "./hooks/redact";
 import { createOutputTruncator } from "./hooks/truncate";
+import { TOOL_ERROR_META_KEY } from "./errors";
 
 
 // ─── Test helpers ───
@@ -71,7 +74,7 @@ describe("ToolRegistry", () => {
 
   describe("registerAll()", () => {
     test("registers multiple tools at once", () => {
-      const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("write")];
+const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("write")];
 
       registry.registerAll(descs);
 
@@ -169,6 +172,7 @@ describe("ToolRegistry", () => {
       expect(result.isError).toBe(true);
       expect(result.output).toContain("missing");
       expect(result.output).toContain("not registered");
+      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
       expect(result.meta?.permissionErrorCode).toBe("TOOL_UNKNOWN");
       expect(result.meta?.skippedExecution).toBe(true);
     });
@@ -198,6 +202,7 @@ describe("ToolRegistry", () => {
 
       expect(result.isError).toBe(true);
       expect(result.output).toContain("invalid_type");
+      expect(result.output).toContain("TOOL_SCHEMA_INVALID_INPUT");
     });
 
     // 3. Successful execution
@@ -230,7 +235,9 @@ describe("ToolRegistry", () => {
       const result = await registry.execute(call, ctx);
 
       expect(result.isError).toBe(true);
-      expect(result.output).toBe("BOOM");
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      expect(output.message).toBe("BOOM");
+      expect(output.code).toBe("TOOL_EXECUTION_FAILED");
     });
 
     // 5. Global before hook mutates input, re-parsed
@@ -345,7 +352,9 @@ describe("ToolRegistry", () => {
       const result = await registry.execute(call, ctx);
 
       expect(result.isError).toBe(true);
-      expect(result.output).toBe("after boom");
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      expect(output.message).toBe("after boom");
+      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
       expect(globalAfterRan).toBe(true);
     });
 
@@ -383,7 +392,9 @@ describe("ToolRegistry", () => {
       const result = await registry.execute(call, ctx);
 
       expect(result.isError).toBe(true);
-      expect(result.output).toBe("global after error 1");
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      expect(output.message).toBe("global after error 1");
+      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
       expect(secondRan).toBe(true);
     });
 
@@ -587,7 +598,8 @@ describe("ToolRegistry", () => {
       const result = await registry.execute(makeToolCall(), makeContext());
 
       expect(result.isError).toBe(true);
-      expect(result.output).toBe("prepare failed wrapped");
+      expect(result.output).toContain("prepare failed");
+      expect(result.output).toContain("wrapped");
       expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
       expect(result.meta?.skippedExecution).toBe(true);
       expect(order).toEqual(["prepare-input", "global-after"]);
@@ -866,9 +878,9 @@ describe("ToolRegistry", () => {
 
       expect(result.isError).toBe(true);
       expect(result.output).toContain("invalid_type");
-      expect(result.meta).toBeUndefined();
+      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
       expect(desc.execute).not.toHaveBeenCalled();
-      expect(globalAfter).not.toHaveBeenCalled();
+      expect(globalAfter).toHaveBeenCalledTimes(1);
     });
 
     test("global after hook throwing on permission denied preserves current global-after semantics", async () => {
@@ -886,7 +898,9 @@ describe("ToolRegistry", () => {
         makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
       );
 
-      expect(result).toEqual({ output: "global after denied failure", isError: true });
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      expect(output.message).toBe("global after denied failure");
+      expect(output.code).toBe("TOOL_AFTER_HOOK_FAILED");
       expect(desc.execute).not.toHaveBeenCalled();
       expect(secondAfter).toHaveBeenCalledTimes(1);
     });
@@ -944,7 +958,7 @@ describe("ToolRegistry", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toBe("bad mirror input");
+      expect(result.output).toContain("bad mirror input");
       expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
       expect(desc.execute).not.toHaveBeenCalled();
       expect(order).toEqual(["prepare-input", "global-after"]);
@@ -1243,7 +1257,8 @@ describe("hook integration with registry", () => {
     // Verify full error was persisted to file
     const fullPath = result.meta!.fullOutputPath as string;
     const fileContent = await readFile(fullPath, "utf-8");
-    expect(fileContent).toBe(longErrorMessage);
+    expect(fileContent).toContain("TOOL_AFTER_HOOK_FAILED");
+    expect(fileContent).toContain("ERROR: [REDACTED:SECRET]");
   });
 
   // 3. Permission guard runs before executor without mutating input
@@ -1302,5 +1317,95 @@ describe("hook integration with registry", () => {
     const fileContent = await readFile(fullPath, "utf-8");
     const expectedContent = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\n" + "X".repeat(200);
     expect(fileContent).toBe(expectedContent);
+  });
+
+  test("redaction precedes truncation, audit, logger, and persisted full output", async () => {
+    const registry = createRegistry();
+    const events: AuditEvent[] = [];
+    const logger = makeLogger();
+    const rawSecret = "sk_test_1234567890abcdef";
+    const output = [
+      "line1",
+      "line2",
+      "line3",
+      "line4",
+      "line5",
+      `line6 secret=${rawSecret}`,
+    ].join("\n");
+
+    const desc = makeDescriptor("echo");
+    desc.execute = async () => output;
+    registry.register(desc);
+    const auditSink = (event: AuditEvent): void => { events.push(event); };
+    registry.globalHooks.after.push(createRedactionHook());
+    registry.globalHooks.after.push(createOutputTruncator({ outputDir: join(tmpRoot, "redact-truncate"), maxBytes: 20, maxLines: 3 }));
+    registry.globalHooks.after.push(createAuditHook({ sink: auditSink }));
+    registry.globalHooks.after.push(createExecutionLogger(logger));
+
+    const result = await registry.execute(
+      makeToolCall({ input: { msg: `token=${rawSecret}` } }),
+      makeContext({ input: { msg: `token=${rawSecret}` } }),
+    );
+
+    expect(result.output).not.toContain(rawSecret);
+    expect(result.output).toContain("[Output truncated; full output saved to:");
+    const fullPath = result.meta!.fullOutputPath as string;
+    const fileContent = await readFile(fullPath, "utf-8");
+    expect(fileContent).toContain(REDACTION_MARKER);
+    expect(fileContent).not.toContain(rawSecret);
+    expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(events)).not.toContain(rawSecret);
+    const loggerMeta = (logger.info as ReturnType<typeof mock>).mock.calls[0][1] as Record<string, unknown>;
+    expect(JSON.stringify(loggerMeta)).toContain(REDACTION_MARKER);
+    expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
+  });
+
+  test("schema parse errors and before-hook reparse errors run global after hooks", async () => {
+    const registry = createRegistry();
+    const after = mock(async (result) => ({ ...result, output: `${result.output}\nAFTER` }));
+    registry.register(makeDescriptor("echo"));
+    registry.globalHooks.after.push(after);
+
+    const parseError = await registry.execute(
+      makeToolCall({ input: { bad: 1 } }),
+      makeContext({ input: { bad: 1 } }),
+    );
+
+    registry.globalHooks.before.push(async () => ({ bad: true }));
+    const reparseError = await registry.execute(makeToolCall(), makeContext());
+
+    expect(parseError.output).toContain("AFTER");
+    expect(reparseError.output).toContain("AFTER");
+    expect(after).toHaveBeenCalledTimes(2);
+  });
+
+  test("redacts guard denial and confirmation prompt before callback and result", async () => {
+    const registry = createRegistry();
+    const rawSecret = "sk_test_1234567890abcdef";
+    registry.register(makeDescriptor("echo"));
+    registry.globalHooks.after.push(createRedactionHook());
+
+    registry.globalGuards.push(async () => ({ outcome: "ask", prompt: `approve token=${rawSecret}` }));
+    const confirmPermission = mock(async (request) => {
+      expect(JSON.stringify(request)).not.toContain(rawSecret);
+      expect(JSON.stringify(request)).toContain(REDACTION_MARKER);
+      return "deny" as const;
+    });
+
+    const denied = await registry.execute(
+      makeToolCall({ input: { msg: `token=${rawSecret}` } }),
+      makeContext({ input: { msg: `token=${rawSecret}` }, confirmPermission }),
+    );
+
+    expect(denied.output).not.toContain(rawSecret);
+    expect(confirmPermission).toHaveBeenCalledTimes(1);
+
+    const denyRegistry = createRegistry();
+    denyRegistry.register(makeDescriptor("echo"));
+    denyRegistry.globalHooks.after.push(createRedactionHook());
+    denyRegistry.globalGuards.push(async () => ({ outcome: "deny", reason: `blocked secret=${rawSecret}` }));
+    const result = await denyRegistry.execute(makeToolCall(), makeContext());
+    expect(result.output).toContain(`blocked secret=${REDACTION_MARKER}`);
+    expect(result.output).not.toContain(rawSecret);
   });
 });

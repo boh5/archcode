@@ -5,6 +5,7 @@ import { createStore } from "zustand/vanilla";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import {
   BusyError,
+  InvalidTodoStateError,
   type CompletedToolPart,
   type ErrorToolPart,
   type ReasoningPart,
@@ -12,10 +13,18 @@ import {
   type SessionStoreState,
   type StoredMessage,
   type StoredPart,
+  type StoredTodo,
   type StreamEvent,
   type TextPart,
   type ToolPart,
 } from "./types";
+
+const TODO_STATUSES = new Set<StoredTodo["status"]>([
+  "pending",
+  "in_progress",
+  "completed",
+  "cancelled",
+]);
 
 const sessionRegistry = new Map<string, StoreApi<SessionStoreState>>();
 
@@ -40,6 +49,7 @@ export function createSessionStore(
     createdAt: Date.now(),
     messages: [],
     steps: [],
+    todos: [],
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},
@@ -357,6 +367,11 @@ function reduceStreamEvent(
       };
     }
 
+    case "todo-write": {
+      validateTodos(event.todos);
+      return { todos: [...event.todos] };
+    }
+
     case "step-start": {
       // Each model call step needs its own assistant message;
       // resetting on step > 0 prevents merging multi-step responses
@@ -424,6 +439,24 @@ function reduceStreamEvent(
         ],
       };
     }
+  }
+}
+
+function validateTodos(todos: readonly StoredTodo[]): void {
+  let inProgressCount = 0;
+
+  for (const todo of todos) {
+    if (!TODO_STATUSES.has(todo.status)) {
+      throw new InvalidTodoStateError(`todo "${todo.id}" has invalid status "${String(todo.status)}"`);
+    }
+
+    if (todo.status === "in_progress") {
+      inProgressCount += 1;
+    }
+  }
+
+  if (inProgressCount > 1) {
+    throw new InvalidTodoStateError("only one todo can be in_progress");
   }
 }
 

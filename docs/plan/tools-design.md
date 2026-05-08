@@ -6,9 +6,9 @@
 
 ## 背景
 
-Specra 已实现统一 Tools 基础框架（`defineTool` + `ToolRegistry` + Hooks 系统），尚无具体内置工具。本文档基于对 Claude Code、OpenCode、oh-my-openagent、pi-mono 的调研，制定工具系统建设方案。
+Specra 已实现统一 Tools 基础框架（`defineTool` + `ToolRegistry` + Hooks 系统），Tier 0 权限基础设施和 Tier 1 七个基石工具（`file_read`、`file_write`、`file_edit`、`grep`、`glob`、`git_status`、`git_diff`）均已实现。本文档基于对 Claude Code、OpenCode、oh-my-openagent、pi-mono 的调研，制定工具系统建设方案。
 
-核心架构优势：Hooks 系统（global + per-tool before/after 管道）比竞品更灵活，Hard Guards 作为 before hook 注入实现三档安全判定。
+核心架构优势：Hooks 系统（global + per-tool before/after 管道）比竞品更灵活，Hard Guards 作为独立的 `GuardHook` 阶段实现三档安全判定，不复用 `BeforeHook` 通道。
 
 ---
 
@@ -161,7 +161,7 @@ export const reviewerAgent = defineAgent({
 
 #### 交付策略
 
-一次性交付。allowedTools 控制 LLM schema + runtime 镜像检查；Hard Guards 作为 `before` hook 注入，三档判定逻辑在代码中实现。Host confirmation 回调注入 `ToolExecutionContext`，不依赖 `ask_user` 工具。
+一次性交付。allowedTools 控制 LLM schema + runtime 镜像检查；Hard Guards 作为独立的 `GuardHook` 阶段执行（不复用 `BeforeHook` 通道），三档判定逻辑在代码中实现。Host confirmation 回调注入 `ToolExecutionContext`，不依赖 `ask_user` 工具。
 
 ---
 
@@ -185,7 +185,7 @@ export const reviewerAgent = defineAgent({
 |------|------|----------|
 | **bash** | shell 执行 | timeout + cwd 限制 + dangerous command confirmation + secret redaction |
 | **todo_write** | 任务跟踪 | pending / in_progress / completed / cancelled |
-| **lsp_diagnostics** | 编译反馈 | typecheck 或 LSP 诊断 |
+| **lsp_diagnostics** | 编译反馈 | **已推迟**：推迟至后续独立的 diagnostics/LSP 计划，不在当前 Tier 2 计划中实现 |
 | **ask_user** | 用户交互 | agent 主动向用户澄清需求；与 Hard Guards 权限 confirmation 独立 |
 
 ### Tier 3: Advanced / Search
@@ -277,10 +277,18 @@ global after hook 覆盖常见 secret pattern（`.env`、Bearer token、private 
 
 **不做**: `bash`、MCP、interactive_bash
 
-### Phase 2: 体验 + 任务管理
+### Phase 2: 体验 + 任务管理（当前实施中）
 
-- `bash`, `todo_write`, `lsp_diagnostics`, `ask_user`
-- Doom 循环检测, error recovery, secret redaction, audit trail
+- `bash`（fresh process per call，无持久 shell/session cwd/env/alias，无后台进程）
+- `todo_write`（store-backed session-only，全量替换，不写 workspace 文件）
+- `ask_user`（与权限 confirmation 独立，一次一个 pending question）
+- Doom 循环检测（连续 3 次相同 normalized tool call → 阻断执行）
+- error recovery（结构化可操作错误反馈，无自动重试）
+- secret redaction（redaction-first 输出管道：redaction → truncation → audit → logger）
+- audit trail v1（最小化 injectable-sink 结构化事件，无数据库/query UI/raw output 存储）
+- PathValidator 集中化（workspace 路径校验统一模块）
+- **不做**: `lsp_diagnostics`（推迟至后续独立计划）、permission modes、MCP、interactive_bash、persistent shell、background process
+- **实施期间不 commit**，最终验证通过后经用户审查再统一 commit
 
 ### Phase 3: 高级搜索
 

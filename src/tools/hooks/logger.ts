@@ -9,13 +9,14 @@ const defaultLogger: Logger = {
 export function createExecutionLogger(logger?: Logger): AfterHook {
   const log = logger ?? defaultLogger;
 
-  return async (
+  return async function executionLoggerAfterHook(
     result: ToolExecutionResult,
     ctx: ToolExecutionContext,
-  ): Promise<void> => {
+  ): Promise<void> {
     const meta: Record<string, unknown> = {
       toolName: ctx.toolName,
       toolCallId: ctx.toolCallId,
+      input: ctx.redactedInput,
       isError: result.isError,
       outputSize: result.output.length,
       durationMs: ctx.durationMs,

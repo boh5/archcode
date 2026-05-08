@@ -1,7 +1,8 @@
-import { realpathSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { resolveAndValidatePath } from "../security/path-validator";
 import type {
   AfterHook,
   GuardDecision,
@@ -14,53 +15,7 @@ import type {
 
 const MAX_SNAPSHOTS = 1024;
 
-// ─── Path resolution ───
-
-/**
- * Resolve a file path against workspaceRoot, follow symlinks,
- * and check whether the result stays within the workspace boundary.
- *
- * When the file does not exist, `realpathSync.native()` falls back
- * to the unresolvable absolute path so callers can still do
- * boundary / snapshot checks.
- */
-/**
- * Walk up the directory tree from `p` until we find an existing ancestor,
- * resolve its real path via `realpathSync.native()`, then append the
- * non-existent tail.  Handles the case where a prefix of the path contains
- * a symlink (e.g. `/var` → `/private/var` on macOS).
- */
-function tryResolveChain(p: string): string {
-  try {
-    return realpathSync.native(p);
-  } catch {
-    const parent = path.dirname(p);
-    if (parent === p) return p;
-    return path.join(tryResolveChain(parent), path.basename(p));
-  }
-}
-
-export function resolveAndValidatePath(
-  inputPath: string,
-  workspaceRoot: string,
-): { resolved: string; isWithinWorkspace: boolean } {
-  const absolutePath = path.resolve(workspaceRoot, inputPath);
-  let resolved: string;
-  try {
-    resolved = realpathSync.native(absolutePath);
-  } catch {
-    resolved = tryResolveChain(absolutePath);
-  }
-  let workspaceReal: string;
-  try {
-    workspaceReal = realpathSync.native(path.resolve(workspaceRoot));
-  } catch {
-    workspaceReal = path.resolve(workspaceRoot);
-  }
-  const isWithinWorkspace =
-    resolved === workspaceReal || resolved.startsWith(workspaceReal + path.sep);
-  return { resolved, isWithinWorkspace };
-}
+export { resolveAndValidatePath } from "../security/path-validator";
 
 // ─── After hook — record read snapshot ───
 

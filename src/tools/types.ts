@@ -27,6 +27,8 @@ export interface ToolExecutionContext {
   toolName: string;
   toolCallId: string;
   input: unknown;
+  redactedInput?: unknown;
+  permissionOutcome?: "allow" | "deny" | "ask";
   step: number;
   abort: AbortSignal;
   agentName?: string;
@@ -35,6 +37,7 @@ export interface ToolExecutionContext {
   allowedTools: ReadonlySet<string>;
   workspaceRoot: string;
   confirmPermission?: ToolConfirmationCallback;
+  askUser?: AskUserCallback;
 }
 
 // ─── Logger ───
@@ -82,6 +85,18 @@ export type ToolConfirmationCallback = (
   request: ToolConfirmationRequest,
 ) => Promise<"approve" | "deny" | "timeout">;
 
+// ─── Ask User ───
+
+export interface AskUserRequest {
+  toolName: string;
+  toolCallId: string;
+  question: string;
+}
+
+export type AskUserCallback = (
+  request: AskUserRequest,
+) => Promise<{ answer: string } | { isError: true; reason: string }>;
+
 export type PermissionErrorCode =
   | "TOOL_UNKNOWN"
   | "TOOL_NOT_ALLOWED"
@@ -98,7 +113,7 @@ export type PermissionErrorCode =
 
 // ─── Descriptor ───
 
-export interface ToolDescriptor<I = any> {
+export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult = string> {
   name: string;
   description: string;
   inputSchema: ZodTypeAny;
@@ -109,8 +124,10 @@ export interface ToolDescriptor<I = any> {
   };
   prepareInput?: (raw: unknown, ctx: ToolExecutionContext) => MaybePromise<unknown>;
   guards?: GuardHook[];
-  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<string>;
+  execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<O>;
 }
+
+export type AnyToolDescriptor = ToolDescriptor<any, string | ToolExecutionResult>;
 
 // ─── Tool Call ───
 
