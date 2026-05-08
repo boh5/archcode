@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { GuardDecision, PermissionErrorCode, ToolExecutionResult } from "../types";
-import { combineGuardDecisions, createPermissionErrorResult } from "./permission.js";
+import { combineGuardDecisions, createPermissionErrorResult } from "./permission";
 
 function decision(outcome: GuardDecision["outcome"], reason?: string): GuardDecision {
   return { outcome, reason };

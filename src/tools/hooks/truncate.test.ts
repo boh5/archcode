@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
-import { createOutputTruncator } from "./truncate.js";
+import { createOutputTruncator } from "./truncate";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 const OUTPUT_DIR = join(TMP_DIR, "tool-output");

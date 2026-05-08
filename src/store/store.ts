@@ -43,6 +43,7 @@ export function createSessionStore(
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},
+    readSnapshots: new Map(),
     append: (event: StreamEvent) => {
       set((state) => reduceStreamEvent(state, event));
     },

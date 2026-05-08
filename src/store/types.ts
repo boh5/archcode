@@ -240,6 +240,8 @@ export interface SessionStoreState {
   streamingReasoning?: StreamingReasoningState;
   streamingTools: Record<string, StreamingToolState>;
 
+  readSnapshots: Map<string, number>;
+
   // Methods
   append: (event: StreamEvent) => void;
   toModelMessages: () => ModelMessage[];

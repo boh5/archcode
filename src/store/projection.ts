@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import type { StoredMessage } from "./types.js";
+import type { StoredMessage } from "./types";
 
 export function toModelMessagesFromStoredMessages(
   messages: StoredMessage[],

@@ -3,18 +3,18 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { createRegistry } from "./registry.js";
-import type { ToolRegistry } from "./registry.js";
-import { ResolvedToolSet } from "./registry.js";
+import { createRegistry } from "./registry";
+import type { ToolRegistry } from "./registry";
+import { ResolvedToolSet } from "./registry";
 import type {
   ToolDescriptor,
   Logger,
   ToolExecutionContext,
   ToolCallLike,
-} from "./types.js";
-import { DuplicateToolError } from "./types.js";
-import { createExecutionLogger } from "./hooks/logger.js";
-import { createOutputTruncator } from "./hooks/truncate.js";
+} from "./types";
+import { DuplicateToolError } from "./types";
+import { createExecutionLogger } from "./hooks/logger";
+import { createOutputTruncator } from "./hooks/truncate";
 
 
 // ─── Test helpers ───
@@ -723,6 +723,7 @@ describe("ToolRegistry", () => {
           toolCallId: "call-1",
           input: { msg: "hello" },
           description: "Tool: echo",
+          reason: "needs approval",
         });
         order.push("confirm");
         return "approve" as const;

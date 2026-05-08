@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { toModelMessagesFromStoredMessages } from "./projection.js";
-import type { StoredMessage, StoredPart } from "./types.js";
+import { toModelMessagesFromStoredMessages } from "./projection";
+import type { StoredMessage, StoredPart } from "./types";
 
 let idCounter = 0;
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from "bun:test";
 import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
-import { createExecutionLogger } from "./logger.js";
+import { createExecutionLogger } from "./logger";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {

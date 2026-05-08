@@ -10,12 +10,12 @@ import type {
   GuardHook,
   GuardDecision,
   PermissionErrorCode,
-} from "./types.js";
-import { DuplicateToolError } from "./types.js";
+} from "./types";
+import { DuplicateToolError } from "./types";
 import {
   combineGuardDecisions,
   createPermissionErrorResult,
-} from "./hooks/permission.js";
+} from "./hooks/permission";
 
 export class ToolRegistry {
   private _descriptors: Map<string, ToolDescriptor>;
@@ -243,6 +243,7 @@ export class ToolRegistry {
         toolCallId: ctx.toolCallId,
         input,
         description: descriptor.description,
+        reason: decision.prompt ?? decision.reason,
       });
 
       if (confirmation === "approve") {

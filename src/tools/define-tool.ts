@@ -7,7 +7,7 @@ import type {
   BeforeHook,
   AfterHook,
   GuardHook,
-} from "./types.js";
+} from "./types";
 
 interface DefineToolConfig<T extends z.ZodTypeAny> {
   name: string;

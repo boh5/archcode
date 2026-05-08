@@ -188,14 +188,22 @@ describe("TestAgent", () => {
       expect((callArgs.system as string).length).toBeGreaterThan(0);
     });
 
-    test("passes explicit empty allowedTools until built-ins exist", async () => {
+    test("passes all registered tool names as allowedTools to query loop", async () => {
       const streamFn = setupMockStreamText("ok");
 
       const agent = makeTestAgent();
       await agent.run("test");
 
       const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
-      expect("tools" in callArgs).toBe(false);
+      expect("tools" in callArgs).toBe(true);
+      const toolNames = Object.keys(callArgs.tools as Record<string, unknown>);
+      expect(toolNames).toContain("file_read");
+      expect(toolNames).toContain("file_write");
+      expect(toolNames).toContain("file_edit");
+      expect(toolNames).toContain("grep");
+      expect(toolNames).toContain("glob");
+      expect(toolNames).toContain("git_status");
+      expect(toolNames).toContain("git_diff");
     });
 
     test("propagates confirmation callback to query loop tool context", async () => {

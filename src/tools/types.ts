@@ -62,6 +62,7 @@ export type AfterHook = (
 export type GuardDecision = {
   outcome: "allow" | "deny" | "ask";
   reason?: string;
+  prompt?: string;
 };
 
 export type GuardHook = (
@@ -74,6 +75,7 @@ export interface ToolConfirmationRequest {
   toolCallId: string;
   input: unknown;
   description: string;
+  reason?: string;
 }
 
 export type ToolConfirmationCallback = (
@@ -88,7 +90,11 @@ export type PermissionErrorCode =
   | "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"
   | "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE"
   | "TOOL_PERMISSION_CONFIRMATION_FAILED"
-  | "TOOL_PREPARE_INPUT_FAILED";
+  | "TOOL_PREPARE_INPUT_FAILED"
+  | "TOOL_FILE_OUTSIDE_WORKSPACE"
+  | "TOOL_FILE_ALREADY_EXISTS"
+  | "TOOL_FILE_NOT_READ_FIRST"
+  | "TOOL_FILE_WRITE_CONFLICT";
 
 // ─── Descriptor ───
 

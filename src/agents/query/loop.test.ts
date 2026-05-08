@@ -1016,11 +1016,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use tools",
     );
 
+    // With parallel execution, openTool (no guards) runs while askTool awaits
+    // confirmation, so openTool executes before askTool.
     expect(events).toEqual([
       "guard:askTool",
       "confirm:askTool",
-      "execute:askTool",
       "execute:openTool",
+      "execute:askTool",
     ]);
     expect(confirmPermission).toHaveBeenCalledTimes(1);
     expect(assistantMessages(store)[0].parts).toEqual([
@@ -1075,9 +1077,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use tools",
     );
 
+    // With parallel execution of concurrencySafe tools (safeTool
+    // and sensitiveReadTool), sensitiveReadTool's guard fires during the
+    // synchronous phase before safeTool's execute microtask. Confirm/execute
+    // ordering within each tool remains intact. destructiveTool is serial.
     expect(events).toEqual([
-      "execute:safeTool",
       "ask:sensitiveReadTool",
+      "execute:safeTool",
       "confirm-start:sensitiveReadTool",
       "confirm-end:sensitiveReadTool",
       "execute:sensitiveReadTool",

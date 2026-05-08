@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { defineTool } from "./define-tool.js";
+import { defineTool } from "./define-tool";
 import type {
   ToolDescriptor,
   ToolExecutionContext,
   GuardHook,
   GuardDecision,
-} from "./types.js";
+} from "./types";
 
 // Minimal mock for ToolExecutionContext
 function mockCtx(): ToolExecutionContext {

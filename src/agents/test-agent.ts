@@ -78,18 +78,18 @@ export class TestAgent implements Agent {
 
     this.running = true;
     try {
-      const result = await runQueryLoop(
-        {
-          model: this.modelInfo.model,
-          toolRegistry: this.toolRegistry,
-          // Default allowed tools is empty until built-in tool definitions or
-          // agent definitions exist to pull tool lists from.
-          allowedTools: [],
-          confirmPermission: confirmPermission ?? this.confirmPermission,
-          abort,
-          systemPrompt: DEFAULT_SYSTEM_PROMPT,
-          store: this.store,
-        },
+    const allToolNames = this.toolRegistry.getAll().map((d) => d.name);
+
+    const result = await runQueryLoop(
+      {
+        model: this.modelInfo.model,
+        toolRegistry: this.toolRegistry,
+        allowedTools: allToolNames,
+        confirmPermission: confirmPermission ?? this.confirmPermission,
+        abort,
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        store: this.store,
+      },
         userMessage,
       );
       return { text: result.text, steps: result.steps };

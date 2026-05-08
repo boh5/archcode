@@ -3,8 +3,9 @@ import type { StreamTextResult, ToolSet } from "ai";
 import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StreamEvent } from "../../store/types";
-import type { ToolExecutionContext } from "../../tools/index";
+import type { ToolExecutionContext, ToolCallLike } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import { partitionToolCalls } from "../../tools/concurrency/partition";
 import type { QueryLoopOptions, QueryLoopResult } from "./types";
 
 const DEFAULT_MAX_STEPS = 50;
@@ -175,21 +176,45 @@ async function executeToolCalls(
   workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
 ): Promise<void> {
-  for (const toolCall of toolCalls) {
-    const ctx: ToolExecutionContext = {
-      store,
-      toolName: toolCall.toolName,
-      toolCallId: toolCall.toolCallId,
-      input: toolCall.input,
-      step,
-      abort,
-      startedAt: Date.now(),
-      allowedTools: new Set(allowedTools),
-      workspaceRoot,
-      ...(confirmPermission ? { confirmPermission } : {}),
-    };
-    const result = await registry.execute(toolCall, ctx);
-    appendToolResult(store, toolCall, result.output, result.isError);
+  const batches = partitionToolCalls(toolCalls, registry);
+
+  for (const batch of batches) {
+    if (batch.type === "parallel") {
+      await Promise.all(
+        batch.calls.map(async (toolCall) => {
+          const ctx: ToolExecutionContext = {
+            store,
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+            step,
+            abort,
+            startedAt: Date.now(),
+            allowedTools: new Set(allowedTools),
+            workspaceRoot,
+            ...(confirmPermission ? { confirmPermission } : {}),
+          };
+          const result = await registry.execute(toolCall, ctx);
+          appendToolResult(store, toolCall, result.output, result.isError);
+        }),
+      );
+    } else {
+      const toolCall = batch.call;
+      const ctx: ToolExecutionContext = {
+        store,
+        toolName: toolCall.toolName,
+        toolCallId: toolCall.toolCallId,
+        input: toolCall.input,
+        step,
+        abort,
+        startedAt: Date.now(),
+        allowedTools: new Set(allowedTools),
+        workspaceRoot,
+        ...(confirmPermission ? { confirmPermission } : {}),
+      };
+      const result = await registry.execute(toolCall, ctx);
+      appendToolResult(store, toolCall, result.output, result.isError);
+    }
   }
 }
 
