@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { inputReducer, handleConfirmationInput } from "./UserInput";
+import { inputReducer, handleConfirmationInput, parseAnswer } from "./UserInput";
 import type { InputAction, InputState } from "./UserInput";
+import type { AskUserQuestion } from "../tools/types";
 
 describe("handleConfirmationInput", () => {
   test("y resolves approve", () => {
@@ -98,5 +99,171 @@ describe("inputReducer", () => {
       state = inputReducer(state, { type: "type", char });
     }
     expect(state).toEqual({ text: "world" });
+  });
+});
+
+describe("parseAnswer", () => {
+  const singleChoiceQuestion: AskUserQuestion = {
+    question: "Which file?",
+    header: "File",
+    options: [
+      { label: "src/main.ts", description: "Main entry point" },
+      { label: "src/utils.ts", description: "Utility functions" },
+    ],
+    custom: true,
+  };
+
+  const multiChoiceQuestion: AskUserQuestion = {
+    question: "What features?",
+    header: "Features",
+    multiple: true,
+    options: [
+      { label: "Dark mode", description: "Dark color scheme" },
+      { label: "Compact", description: "Compact layout" },
+      { label: "Animations", description: "Smooth transitions" },
+    ],
+    custom: true,
+  };
+
+  const noOptionsQuestion: AskUserQuestion = {
+    question: "What is your name?",
+    header: "Name",
+    options: [],
+    custom: true,
+  };
+
+  const noCustomQuestion: AskUserQuestion = {
+    question: "Pick one",
+    header: "Choice",
+    custom: false,
+    options: [
+      { label: "Option A", description: "First option" },
+      { label: "Option B", description: "Second option" },
+    ],
+  };
+
+  const noCustomMultiQuestion: AskUserQuestion = {
+    question: "Pick multiple",
+    header: "Choices",
+    custom: false,
+    multiple: true,
+    options: [
+      { label: "Red", description: "Color red" },
+      { label: "Blue", description: "Color blue" },
+      { label: "Green", description: "Color green" },
+    ],
+  };
+
+  // Single choice tests
+  test("selects option by number for single choice", () => {
+    const result = parseAnswer("1", singleChoiceQuestion);
+    expect(result).toEqual(["src/main.ts"]);
+  });
+
+  test("selects second option by number", () => {
+    const result = parseAnswer("2", singleChoiceQuestion);
+    expect(result).toEqual(["src/utils.ts"]);
+  });
+
+  test("returns free text when input is not a number", () => {
+    const result = parseAnswer("my-custom-file.ts", singleChoiceQuestion);
+    expect(result).toEqual(["my-custom-file.ts"]);
+  });
+
+  // Bug fix: single-choice should NOT parse "1,2" as multi-select
+  test("returns free text for comma-separated numbers in single-choice", () => {
+    const result = parseAnswer("1,2", singleChoiceQuestion);
+    expect(result).toEqual(["1,2"]);
+  });
+
+  // Multi choice tests
+  test("selects multiple options by comma-separated numbers for multi-choice", () => {
+    const result = parseAnswer("1,3", multiChoiceQuestion);
+    expect(result).toEqual(["Dark mode", "Animations"]);
+  });
+
+  test("selects all options by comma-separated numbers", () => {
+    const result = parseAnswer("1,2,3", multiChoiceQuestion);
+    expect(result).toEqual(["Dark mode", "Compact", "Animations"]);
+  });
+
+  test("falls back to free text for non-multiple question when number is out of range", () => {
+    const result = parseAnswer("99", singleChoiceQuestion);
+    expect(result).toEqual(["99"]);
+  });
+
+  test("falls back to comma-separated text for multiple question when not all numbers", () => {
+    const result = parseAnswer("hello, world", multiChoiceQuestion);
+    expect(result).toEqual(["hello", "world"]);
+  });
+
+  test("handles single text input for multiple question", () => {
+    const result = parseAnswer("custom answer", multiChoiceQuestion);
+    expect(result).toEqual(["custom answer"]);
+  });
+
+  test("selects single option by number for multiple question", () => {
+    const result = parseAnswer("2", multiChoiceQuestion);
+    expect(result).toEqual(["Compact"]);
+  });
+
+  // No-options question (custom only)
+  test("returns free text for no-options question", () => {
+    const result = parseAnswer("Alice", noOptionsQuestion);
+    expect(result).toEqual(["Alice"]);
+  });
+
+  // custom: false tests
+  test("selects option by number when custom is false", () => {
+    const result = parseAnswer("1", noCustomQuestion);
+    expect(result).toEqual(["Option A"]);
+  });
+
+  test("returns empty array for invalid number when custom is false", () => {
+    const result = parseAnswer("99", noCustomQuestion);
+    expect(result).toEqual([]);
+  });
+
+  test("returns empty array for free text when custom is false (single)", () => {
+    const result = parseAnswer("hello", noCustomQuestion);
+    expect(result).toEqual([]);
+  });
+
+  test("returns empty array for comma-separated numbers in single-choice when custom is false", () => {
+    const result = parseAnswer("1,2", noCustomQuestion);
+    expect(result).toEqual([]);
+  });
+
+  test("selects multiple by comma-separated numbers when custom is false (multi)", () => {
+    const result = parseAnswer("1,3", noCustomMultiQuestion);
+    expect(result).toEqual(["Red", "Green"]);
+  });
+
+  test("returns empty array for free text when custom is false (multi)", () => {
+    const result = parseAnswer("red, blue", noCustomMultiQuestion);
+    expect(result).toEqual([]);
+  });
+
+  // Edge cases
+  test("returns empty array for empty input", () => {
+    const result = parseAnswer("", singleChoiceQuestion);
+    expect(result).toEqual([]);
+  });
+
+  test("returns empty array for whitespace-only input", () => {
+    const result = parseAnswer("   ", singleChoiceQuestion);
+    expect(result).toEqual([]);
+  });
+
+  test("trims whitespace from input before parsing number", () => {
+    const result = parseAnswer("  1  ", singleChoiceQuestion);
+    expect(result).toEqual(["src/main.ts"]);
+  });
+
+  test("handles spaces around commas in multi-select", () => {
+    const result = parseAnswer("1, 3", multiChoiceQuestion);
+    // "1, 3" does not match /^\d+(?:,\d+)*$/ because of space after comma
+    // so it falls back to comma-separated text
+    expect(result).toEqual(["1", "3"]);
   });
 });

@@ -14,7 +14,10 @@ export type {
   ToolConfirmationRequest,
   ToolConfirmationCallback,
   PermissionErrorCode,
+  AskUserQuestionOption,
+  AskUserQuestion,
   AskUserRequest,
+  AskUserAnswer,
   AskUserCallback,
 } from "./types";
 

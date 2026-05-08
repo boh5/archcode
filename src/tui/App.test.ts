@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
-import type { AskUserRequest, ToolConfirmationRequest } from "../tools/index";
+import type { AskUserAnswer, AskUserRequest, ToolConfirmationRequest } from "../tools/index";
 import { shouldSubmit, createConfirmationCallback, createAskUserCallback } from "./App";
 import type { PendingConfirmation, PendingAskUser } from "./App";
 
@@ -221,6 +221,35 @@ describe("createConfirmationCallback", () => {
 });
 
 describe("createAskUserCallback", () => {
+  const SINGLE_QUESTION = {
+    question: "Which file should I edit?",
+    header: "File",
+    options: [{ label: "Type your own answer", description: "Enter a custom response" }],
+    custom: true,
+  };
+
+  const MULTI_QUESTIONS = [
+    {
+      question: "Which file should I edit?",
+      header: "File",
+      options: [
+        { label: "src/main.ts", description: "Main entry point" },
+        { label: "src/utils.ts", description: "Utility functions" },
+      ],
+      custom: true,
+    },
+    {
+      question: "What style do you prefer?",
+      header: "Style",
+      options: [
+        { label: "Dark mode", description: "Dark color scheme" },
+        { label: "Light mode", description: "Light color scheme" },
+      ],
+      multiple: true,
+      custom: true,
+    },
+  ];
+
   test("stores pending ask_user request and resolves on answer", async () => {
     let pending: PendingAskUser | null = null;
     const setPending = (p: PendingAskUser | null) => {
@@ -232,19 +261,21 @@ describe("createAskUserCallback", () => {
     const request: AskUserRequest = {
       toolName: "ask_user",
       toolCallId: "tc-ask-1",
-      question: "Which file should I edit?",
+      questions: [SINGLE_QUESTION],
     };
 
     const promise = callback(request);
 
     expect(pending).not.toBeNull();
     expect(pending!.request.toolName).toBe("ask_user");
-    expect(pending!.request.question).toBe("Which file should I edit?");
+    expect(pending!.request.questions).toEqual([SINGLE_QUESTION]);
+    expect(pending!.currentIndex).toBe(0);
+    expect(pending!.answers).toEqual([]);
 
-    pending!.resolve({ answer: "src/main.ts" });
+    pending!.resolve({ answers: [["src/main.ts"]] });
 
     const result = await promise;
-    expect(result).toEqual({ answer: "src/main.ts" });
+    expect(result).toEqual({ answers: [["src/main.ts"]] });
   });
 
   test("resolves with error result when cancelled", async () => {
@@ -258,7 +289,7 @@ describe("createAskUserCallback", () => {
     const request: AskUserRequest = {
       toolName: "ask_user",
       toolCallId: "tc-ask-2",
-      question: "Continue?",
+      questions: [SINGLE_QUESTION],
     };
 
     const promise = callback(request);
@@ -280,12 +311,12 @@ describe("createAskUserCallback", () => {
     const request1: AskUserRequest = {
       toolName: "ask_user",
       toolCallId: "tc-ask-3",
-      question: "First question?",
+      questions: [SINGLE_QUESTION],
     };
     const request2: AskUserRequest = {
       toolName: "ask_user",
       toolCallId: "tc-ask-4",
-      question: "Second question?",
+      questions: [SINGLE_QUESTION],
     };
 
     const promise1 = callback(request1);
@@ -298,9 +329,9 @@ describe("createAskUserCallback", () => {
 
     expect(pending!.request.toolCallId).toBe("tc-ask-3");
 
-    pending!.resolve({ answer: "first answer" });
+    pending!.resolve({ answers: [["first answer"]] });
     const result1 = await promise1;
-    expect(result1).toEqual({ answer: "first answer" });
+    expect(result1).toEqual({ answers: [["first answer"]] });
   });
 
   test("clearing pending after resolve does not affect already-resolved promise", async () => {
@@ -314,14 +345,14 @@ describe("createAskUserCallback", () => {
     const promise = callback({
       toolName: "ask_user",
       toolCallId: "tc-ask-5",
-      question: "test?",
+      questions: [SINGLE_QUESTION],
     });
 
-    pending!.resolve({ answer: "yes" });
+    pending!.resolve({ answers: [["yes"]] });
     setPending(null);
 
     const result = await promise;
-    expect(result).toEqual({ answer: "yes" });
+    expect(result).toEqual({ answers: [["yes"]] });
   });
 
   test("ask_user callback is distinct from confirmation callback", async () => {
@@ -343,7 +374,7 @@ describe("createAskUserCallback", () => {
     const askRequest: AskUserRequest = {
       toolName: "ask_user",
       toolCallId: "tc-ask-6",
-      question: "Which branch?",
+      questions: MULTI_QUESTIONS,
     };
 
     const confirmPromise = confirmCallback(confirmRequest);
@@ -355,11 +386,79 @@ describe("createAskUserCallback", () => {
     expect(pendingAskUser!.request.toolName).toBe("ask_user");
 
     pendingConfirmation!.resolve("approve");
-    pendingAskUser!.resolve({ answer: "main" });
+    pendingAskUser!.resolve({ answers: [["src/main.ts"], ["Dark mode"]] });
 
     const confirmResult = await confirmPromise;
     const askResult = await askPromise;
     expect(confirmResult).toBe("approve");
-    expect(askResult).toEqual({ answer: "main" });
+    expect(askResult).toEqual({ answers: [["src/main.ts"], ["Dark mode"]] });
+  });
+
+  test("initializes with currentIndex zero and empty answers array", () => {
+    let pending: PendingAskUser | null = null;
+    const setPending = (p: PendingAskUser | null) => {
+      pending = p;
+    };
+    const getPending = () => pending;
+
+    const callback = createAskUserCallback(setPending, getPending);
+    callback({
+      toolName: "ask_user",
+      toolCallId: "tc-ask-7",
+      questions: MULTI_QUESTIONS,
+    });
+
+    expect(pending).not.toBeNull();
+    expect(pending!.currentIndex).toBe(0);
+    expect(pending!.answers).toEqual([]);
+  });
+
+  test("resolves with error and clears pending on abort signal", async () => {
+    let pending: PendingAskUser | null = null;
+    const setPending = (p: PendingAskUser | null) => {
+      pending = p;
+    };
+    const getPending = () => pending;
+    const controller = new AbortController();
+
+    const callback = createAskUserCallback(setPending, getPending);
+    const request: AskUserRequest = {
+      toolName: "ask_user",
+      toolCallId: "tc-ask-abort",
+      questions: [SINGLE_QUESTION],
+      abortSignal: controller.signal,
+    };
+
+    const promise = callback(request);
+
+    expect(pending).not.toBeNull();
+
+    controller.abort();
+
+    const result = await promise;
+    expect(result).toEqual({ isError: true, reason: "Cancelled" });
+    expect(pending).toBeNull();
+  });
+
+  test("resolves with error immediately on already-aborted signal", async () => {
+    let pending: PendingAskUser | null = null;
+    const setPending = (p: PendingAskUser | null) => {
+      pending = p;
+    };
+    const getPending = () => pending;
+    const controller = new AbortController();
+    controller.abort();
+
+    const callback = createAskUserCallback(setPending, getPending);
+    const request: AskUserRequest = {
+      toolName: "ask_user",
+      toolCallId: "tc-ask-pre-abort",
+      questions: [SINGLE_QUESTION],
+      abortSignal: controller.signal,
+    };
+
+    const result = await callback(request);
+    expect(result).toEqual({ isError: true, reason: "Cancelled" });
+    expect(pending).toBeNull();
   });
 });

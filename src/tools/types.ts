@@ -90,15 +90,31 @@ export type ToolConfirmationCallback = (
 
 // ─── Ask User ───
 
+export interface AskUserQuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface AskUserQuestion {
+  question: string;
+  header: string;
+  options: AskUserQuestionOption[];
+  multiple?: boolean;
+  custom: boolean;
+}
+
 export interface AskUserRequest {
   toolName: string;
   toolCallId: string;
-  question: string;
+  questions: AskUserQuestion[];
+  abortSignal?: AbortSignal;
 }
+
+export type AskUserAnswer = string[];
 
 export type AskUserCallback = (
   request: AskUserRequest,
-) => Promise<{ answer: string } | { isError: true; reason: string }>;
+) => Promise<{ answers: AskUserAnswer[] } | { isError: true; reason: string }>;
 
 export type PermissionErrorCode =
   | "TOOL_UNKNOWN"

@@ -1,7 +1,43 @@
 import { describe, expect, test } from "bun:test";
 import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
-import type { AskUserCallback, ToolExecutionContext } from "../types";
+import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
+
+const SINGLE_QUESTION: AskUserQuestion = {
+  question: "What is your name?",
+  header: "Name",
+  options: [{ label: "Type your own answer", description: "Enter a custom response" }],
+  custom: true,
+};
+
+const CUSTOM_ONLY_QUESTION: AskUserQuestion = {
+  question: "What is your name?",
+  header: "Name",
+  options: [],
+  custom: true,
+};
+
+const MULTI_QUESTIONS: AskUserQuestion[] = [
+  {
+    question: "Which file should I edit?",
+    header: "File",
+    options: [
+      { label: "src/main.ts", description: "Main entry point" },
+      { label: "src/utils.ts", description: "Utility functions" },
+    ],
+    custom: true,
+  },
+  {
+    question: "What style do you prefer?",
+    header: "Style",
+    multiple: true,
+    options: [
+      { label: "Dark mode", description: "Dark color scheme" },
+      { label: "Compact", description: "Compact layout" },
+    ],
+    custom: true,
+  },
+];
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -18,43 +54,174 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   };
 }
 
-describe("askUserTool", () => {
-  test("schema accepts valid input with question", () => {
-    const result = AskUserInputSchema.safeParse({ question: "What is your name?" });
+describe("AskUserInputSchema", () => {
+  test("accepts valid input with single question", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [SINGLE_QUESTION],
+    });
     expect(result.success).toBe(true);
   });
 
-  test("schema rejects empty question", () => {
-    const result = AskUserInputSchema.safeParse({ question: "" });
+  test("accepts valid input with multiple questions", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: MULTI_QUESTIONS,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts question with multiple flag", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, multiple: true }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts question with custom flag", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, custom: false }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("defaults custom to true when omitted", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [SINGLE_QUESTION],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions[0].custom).toBe(true);
+    }
+  });
+
+  test("accepts question with no options (custom only)", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [CUSTOM_ONLY_QUESTION],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("defaults empty options array when options omitted", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ question: "Name?", header: "Name" }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.questions[0].options).toEqual([]);
+    }
+  });
+
+  test("rejects empty questions array", () => {
+    const result = AskUserInputSchema.safeParse({ questions: [] });
     expect(result.success).toBe(false);
   });
 
-  test("schema rejects missing question", () => {
-    const result = AskUserInputSchema.safeParse({});
+  test("rejects question with empty question text", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, question: "" }],
+    });
     expect(result.success).toBe(false);
   });
 
-  test("schema rejects extra fields", () => {
-    const result = AskUserInputSchema.safeParse({ question: "hi", extra: true });
+  test("rejects question with empty header", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, header: "" }],
+    });
     expect(result.success).toBe(false);
   });
 
+  test("rejects question with header exceeding 30 chars", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, header: "a".repeat(31) }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects option missing label", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, options: [{ description: "no label" } as any] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects option missing description", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, options: [{ label: "no desc" } as any] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects extra fields in top-level schema (strict mode)", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [SINGLE_QUESTION],
+      extra: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects extra fields in question schema (strict mode)", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, extraField: "nope" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects extra fields in option schema (strict mode)", () => {
+    const result = AskUserInputSchema.safeParse({
+      questions: [{ ...SINGLE_QUESTION, options: [{ label: "Yes", description: "Ok", extra: "nope" }] }],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("executeAskUser", () => {
   test("returns isError when askUser callback is missing", async () => {
     const ctx = makeCtx({ askUser: undefined });
-    const result = await executeAskUser({ question: "Hello?" }, ctx);
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
-    const parsed1 = JSON.parse(result.output);
-    expect(parsed1.message).toBe("ask_user is not available");
-    expect(parsed1.code).toBe("TOOL_CANCELLED");
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("ask_user is not available");
+    expect(parsed.code).toBe("TOOL_CANCELLED");
     expect(result.isError).toBe(true);
   });
 
-  test("returns user answer as tool result", async () => {
-    const askUser: AskUserCallback = async () => ({ answer: "my answer" });
+  test("returns answers as tool result for single question", async () => {
+    const askUser: AskUserCallback = async () => ({ answers: [["my answer"]] });
     const ctx = makeCtx({ askUser });
-    const result = await executeAskUser({ question: "What is your name?" }, ctx);
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
     expect(result).toEqual({ output: "my answer", isError: false });
+  });
+
+  test("returns structured answers for multiple questions", async () => {
+    const askUser: AskUserCallback = async () => ({
+      answers: [["src/main.ts"], ["Dark mode", "Compact"]],
+    });
+    const ctx = makeCtx({ askUser });
+    const result = await executeAskUser({ questions: MULTI_QUESTIONS }, ctx);
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("File: src/main.ts");
+    expect(result.output).toContain("Style: Dark mode, Compact");
+  });
+
+  test("returns isError when callback answers length mismatches questions", async () => {
+    const askUser: AskUserCallback = async () => ({ answers: [["only one answer"]] });
+    const ctx = makeCtx({ askUser });
+    const result = await executeAskUser({ questions: MULTI_QUESTIONS }, ctx);
+
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toContain("expected 2");
+    expect(result.isError).toBe(true);
+  });
+
+  test("returns isError when callback answers contain empty array", async () => {
+    const askUser: AskUserCallback = async () => ({ answers: [[], ["ok"]] });
+    const ctx = makeCtx({ askUser });
+    const result = await executeAskUser({ questions: MULTI_QUESTIONS }, ctx);
+
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toContain("empty answer for question 1");
+    expect(result.isError).toBe(true);
   });
 
   test("returns isError when user cancels", async () => {
@@ -63,11 +230,11 @@ describe("askUserTool", () => {
       reason: "Cancelled",
     });
     const ctx = makeCtx({ askUser });
-    const result = await executeAskUser({ question: "Continue?" }, ctx);
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
-    const parsed3 = JSON.parse(result.output);
-    expect(parsed3.message).toBe("Cancelled");
-    expect(parsed3.code).toBe("TOOL_CANCELLED");
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("Cancelled");
+    expect(parsed.code).toBe("TOOL_CANCELLED");
     expect(result.isError).toBe(true);
   });
 
@@ -77,24 +244,24 @@ describe("askUserTool", () => {
       reason: "Another question is already pending",
     });
     const ctx = makeCtx({ askUser });
-    const result = await executeAskUser({ question: "Another?" }, ctx);
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
-    const parsed4 = JSON.parse(result.output);
-    expect(parsed4.message).toBe("Another question is already pending");
-    expect(parsed4.code).toBe("TOOL_CANCELLED");
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("Another question is already pending");
+    expect(parsed.code).toBe("TOOL_CANCELLED");
     expect(result.isError).toBe(true);
   });
 
   test("returns isError when AbortSignal is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();
-    const askUser: AskUserCallback = async () => ({ answer: "should not reach" });
+    const askUser: AskUserCallback = async () => ({ answers: [["should not reach"]] });
     const ctx = makeCtx({ askUser, abort: controller.signal });
-    const result = await executeAskUser({ question: "Hello?" }, ctx);
+    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
-    const parsed5 = JSON.parse(result.output);
-    expect(parsed5.message).toBe("ask_user was aborted");
-    expect(parsed5.code).toBe("TOOL_CANCELLED");
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("ask_user was aborted");
+    expect(parsed.code).toBe("TOOL_CANCELLED");
     expect(result.isError).toBe(true);
   });
 
@@ -103,35 +270,37 @@ describe("askUserTool", () => {
     const askUser: AskUserCallback = () => new Promise(() => {});
     const ctx = makeCtx({ askUser, abort: controller.signal });
 
-    const pending = executeAskUser({ question: "Still there?" }, ctx);
+    const pending = executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
     controller.abort();
 
     const result = await pending;
-    const parsed6 = JSON.parse(result.output);
-    expect(parsed6.message).toBe("ask_user was aborted");
-    expect(parsed6.code).toBe("TOOL_CANCELLED");
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("ask_user was aborted");
+    expect(parsed.code).toBe("TOOL_CANCELLED");
     expect(result.isError).toBe(true);
   });
 
-  test("passes correct request to askUser callback", async () => {
+  test("passes correct request to askUser callback including abortSignal", async () => {
     let capturedRequest: Parameters<AskUserCallback>[0] | undefined;
     const askUser: AskUserCallback = async (req) => {
       capturedRequest = req;
-      return { answer: "yes" };
+      return { answers: [["yes"]] };
     };
-    const ctx = makeCtx({ askUser, toolName: "ask_user", toolCallId: "call-42" });
-    await executeAskUser({ question: "Proceed?" }, ctx);
+    const signal = new AbortController().signal;
+    const ctx = makeCtx({ askUser, toolName: "ask_user", toolCallId: "call-42", abort: signal });
+    await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
 
     expect(capturedRequest!).toEqual({
       toolName: "ask_user",
       toolCallId: "call-42",
-      question: "Proceed?",
+      questions: [SINGLE_QUESTION],
+      abortSignal: signal,
     });
   });
 
   test("registry rejects schema-invalid input", async () => {
     const registry = createRegistry([askUserTool]);
-    const ctx = makeCtx({ askUser: async () => ({ answer: "no" }) });
+    const ctx = makeCtx({ askUser: async () => ({ answers: [["no"]] }) });
     const result = await registry.execute(
       { toolName: "ask_user", toolCallId: "call-1", input: {} },
       ctx,
@@ -142,10 +311,10 @@ describe("askUserTool", () => {
 
   test("tool not allowed when not in allowedTools set", async () => {
     const registry = createRegistry([askUserTool]);
-    const askUser: AskUserCallback = async () => ({ answer: "nope" });
+    const askUser: AskUserCallback = async () => ({ answers: [["nope"]] });
     const ctx = makeCtx({ askUser, allowedTools: new Set(["other_tool"]) });
     const result = await registry.execute(
-      { toolName: "ask_user", toolCallId: "call-1", input: { question: "Hello?" } },
+      { toolName: "ask_user", toolCallId: "call-1", input: { questions: [SINGLE_QUESTION] } },
       ctx,
     );
 

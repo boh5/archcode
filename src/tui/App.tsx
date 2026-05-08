@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
 import type { Agent, AgentRunOptions } from "../agents/test-agent";
-import type { AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
+import type { AskUserAnswer, AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";
 
@@ -17,7 +17,9 @@ export interface PendingConfirmation {
 
 export interface PendingAskUser {
   request: AskUserRequest;
-  resolve: (result: { answer: string } | { isError: true; reason: string }) => void;
+  currentIndex: number;
+  answers: AskUserAnswer[];
+  resolve: (result: { answers: AskUserAnswer[] } | { isError: true; reason: string }) => void;
 }
 
 export function shouldSubmit(text: string): boolean {
@@ -43,8 +45,22 @@ export function createAskUserCallback(
     if (existing) {
       return { isError: true, reason: "Another question is already pending" };
     }
-    return new Promise<{ answer: string } | { isError: true; reason: string }>((resolve) => {
-      setPending({ request, resolve });
+    return new Promise<{ answers: AskUserAnswer[] } | { isError: true; reason: string }>((resolve) => {
+      setPending({ request, currentIndex: 0, answers: [], resolve });
+
+      if (request.abortSignal) {
+        if (request.abortSignal.aborted) {
+          resolve({ isError: true, reason: "Cancelled" });
+          setPending(null);
+          return;
+        }
+        const onAbort = () => {
+          resolve({ isError: true, reason: "Cancelled" });
+          setPending(null);
+          request.abortSignal!.removeEventListener("abort", onAbort);
+        };
+        request.abortSignal.addEventListener("abort", onAbort, { once: true });
+      }
     });
   };
 }
@@ -60,6 +76,12 @@ export function App({ agent }: AppProps) {
   const runningRef = useRef(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [pendingAskUser, setPendingAskUser] = useState<PendingAskUser | null>(null);
+  const pendingAskUserRef = useRef<PendingAskUser | null>(null);
+
+  const setPendingAskUserWithRef = useCallback((pending: PendingAskUser | null) => {
+    pendingAskUserRef.current = pending;
+    setPendingAskUser(pending);
+  }, []);
 
   const confirmPermission = useMemo(
     () => createConfirmationCallback(setPendingConfirmation),
@@ -67,8 +89,8 @@ export function App({ agent }: AppProps) {
   );
 
   const askUser = useMemo(
-    () => createAskUserCallback(setPendingAskUser, () => pendingAskUser),
-    [setPendingAskUser, pendingAskUser],
+    () => createAskUserCallback(setPendingAskUserWithRef, () => pendingAskUserRef.current),
+    [setPendingAskUserWithRef],
   );
 
   const handleConfirm = (result: "approve" | "deny") => {
@@ -78,17 +100,24 @@ export function App({ agent }: AppProps) {
     }
   };
 
-  const handleAskUserAnswer = (answer: string) => {
-    if (pendingAskUser) {
-      pendingAskUser.resolve({ answer });
-      setPendingAskUser(null);
+  const handleAskUserAnswer = (answer: string[]) => {
+    if (!pendingAskUser) return;
+    const { request, currentIndex, answers, resolve } = pendingAskUser;
+    const newAnswers = [...answers, answer];
+    const nextIndex = currentIndex + 1;
+
+    if (nextIndex >= request.questions.length) {
+      resolve({ answers: newAnswers });
+      setPendingAskUserWithRef(null);
+    } else {
+      setPendingAskUserWithRef({ request, currentIndex: nextIndex, answers: newAnswers, resolve });
     }
   };
 
   const handleAskUserCancel = () => {
     if (pendingAskUser) {
       pendingAskUser.resolve({ isError: true, reason: "Cancelled" });
-      setPendingAskUser(null);
+      setPendingAskUserWithRef(null);
     }
   };
 
@@ -126,6 +155,7 @@ export function App({ agent }: AppProps) {
           onSubmit={handleSubmit}
           isRunning={isRunning}
           askUserRequest={pendingAskUser.request}
+          askUserCurrentIndex={pendingAskUser.currentIndex}
           onAskUserAnswer={handleAskUserAnswer}
           onAskUserCancel={handleAskUserCancel}
         />

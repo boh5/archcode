@@ -1168,7 +1168,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   });
 
   test("passes askUser callback to tool execution context", async () => {
-    const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+    const askUser = mock(async () => ({ answers: [["yes"]] }) as { answers: string[][] }) as AskUserCallback;
     let contextAskUser: ToolExecutionContext["askUser"];
     const registry = createTestRegistry(async (_, ctx) => {
       contextAskUser = ctx.askUser;

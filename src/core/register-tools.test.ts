@@ -111,8 +111,8 @@ describe("registerBuiltinTools", () => {
       },
       {
         name: "ask_user",
-        input: { question: "Continue?" },
-        ctx: { askUser: async () => ({ answer: "yes" }) },
+        input: { questions: [{ question: "Continue?", header: "Confirm", options: [{ label: "Yes", description: "Proceed" }] }] },
+        ctx: { askUser: async () => ({ answers: [["Yes"]] }) },
       },
     ] as const;
 

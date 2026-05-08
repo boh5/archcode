@@ -1,21 +1,49 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { AskUserQuestionOption, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
 
 // ─── Input Schema ───
 
+const AskUserQuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string(),
+}).strict();
+
+const AskUserQuestionSchema = z.object({
+  question: z.string().min(1),
+  header: z.string().min(1).max(30),
+  options: z.array(AskUserQuestionOptionSchema).optional().default([]),
+  multiple: z.boolean().optional(),
+  custom: z.boolean().optional().default(true),
+}).strict();
+
 export const AskUserInputSchema = z
   .object({
-    question: z.string().min(1),
+    questions: z.array(AskUserQuestionSchema).min(1),
   })
   .strict();
 
-type AskUserInput = z.infer<typeof AskUserInputSchema>;
+export type AskUserInput = z.infer<typeof AskUserInputSchema>;
 
 type AskUserResult = Awaited<ReturnType<NonNullable<ToolExecutionContext["askUser"]>>>;
 
 // ─── Execute Logic ───
+
+function formatAnswers(answers: string[][], questions: AskUserInput["questions"]): string {
+  if (questions.length === 1) {
+    const answer = answers[0];
+    if (!answer || answer.length === 0) return "";
+    return answer.join(", ");
+  }
+
+  const lines = questions.map((q, i) => {
+    const answer = answers[i];
+    if (!answer || answer.length === 0) return `${q.header}: `;
+    return `${q.header}: ${answer.join(", ")}`;
+  });
+  return lines.join("\n");
+}
 
 export async function executeAskUser(
   input: AskUserInput,
@@ -36,7 +64,8 @@ export async function executeAskUser(
       ctx.askUser({
         toolName: ctx.toolName,
         toolCallId: ctx.toolCallId,
-        question: input.question,
+        questions: input.questions,
+        abortSignal: ctx.abort,
       }),
       abortRace.promise,
     ]);
@@ -49,8 +78,24 @@ export async function executeAskUser(
     abortRace.cleanup();
   }
 
-  if ("answer" in result) {
-    return { output: result.answer, isError: false };
+  if ("answers" in result) {
+    // Validate answers length matches questions
+    if (result.answers.length !== input.questions.length) {
+      return createToolErrorResult({
+        kind: "cancelled",
+        message: `ask_user received ${result.answers.length} answers but expected ${input.questions.length}`,
+      });
+    }
+    // Validate no empty answers
+    const emptyIndex = result.answers.findIndex((a) => a.length === 0);
+    if (emptyIndex !== -1) {
+      return createToolErrorResult({
+        kind: "cancelled",
+        message: `ask_user received empty answer for question ${emptyIndex + 1}`,
+      });
+    }
+    const output = formatAnswers(result.answers, input.questions);
+    return { output, isError: false };
   }
 
   return createToolErrorResult({ kind: "cancelled", message: result.reason });
@@ -85,7 +130,7 @@ function rejectOnAbort(signal: AbortSignal): { promise: Promise<never>; cleanup:
 export const askUserTool = defineTool({
   name: "ask_user",
   description:
-    "Asks the user a question and returns their answer. Use this tool when you need clarification or additional information from the user to proceed with a task. Only one question can be pending at a time.",
+    "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on implementation choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\n- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n- Set `custom: false` if the user must choose from the provided options only\n- The `options` array is optional when `custom` is true (free text only)",
   inputSchema: AskUserInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },
   execute: async (input: AskUserInput, ctx: ToolExecutionContext) => {

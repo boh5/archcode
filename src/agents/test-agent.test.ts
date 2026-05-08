@@ -425,7 +425,7 @@ describe("TestAgent", () => {
 
   describe("askUser callback", () => {
     test("passes askUser callback to tool execution context via options object", async () => {
-      const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+      const askUser = mock(async () => ({ answers: [["yes"]] }) as { answers: string[][] }) as AskUserCallback;
       let contextAskUser: ToolExecutionContext["askUser"];
       const providerRegistry = createProviderRegistry(makeMockConfig().provider);
       const toolRegistry = createToolRegistry();
@@ -478,8 +478,8 @@ describe("TestAgent", () => {
     });
 
     test("run() options.askUser overrides constructor askUser", async () => {
-      const constructorAskUser = mock(async () => ({ answer: "constructor" }) as { answer: string }) as AskUserCallback;
-      const runAskUser = mock(async () => ({ answer: "runtime" }) as { answer: string }) as AskUserCallback;
+      const constructorAskUser = mock(async () => ({ answers: [["constructor"]] }) as { answers: string[][] }) as AskUserCallback;
+      const runAskUser = mock(async () => ({ answers: [["runtime"]] }) as { answers: string[][] }) as AskUserCallback;
       let contextAskUser: ToolExecutionContext["askUser"];
       const providerRegistry = createProviderRegistry(makeMockConfig().provider);
       const toolRegistry = createToolRegistry();
@@ -515,7 +515,7 @@ describe("TestAgent", () => {
     });
 
     test("run() falls back to constructor askUser when not provided in options", async () => {
-      const constructorAskUser = mock(async () => ({ answer: "constructor" }) as { answer: string }) as AskUserCallback;
+      const constructorAskUser = mock(async () => ({ answers: [["constructor"]] }) as { answers: string[][] }) as AskUserCallback;
       let contextAskUser: ToolExecutionContext["askUser"];
       const providerRegistry = createProviderRegistry(makeMockConfig().provider);
       const toolRegistry = createToolRegistry();
@@ -551,7 +551,7 @@ describe("TestAgent", () => {
 
     test("askUser is separate from confirmPermission in tool context", async () => {
       const confirmPermission = mock(async () => "approve" as const);
-      const askUser = mock(async () => ({ answer: "yes" }) as { answer: string }) as AskUserCallback;
+      const askUser = mock(async () => ({ answers: [["yes"]] }) as { answers: string[][] }) as AskUserCallback;
       let contextConfirm: ToolExecutionContext["confirmPermission"];
       let contextAskUser: ToolExecutionContext["askUser"];
       const providerRegistry = createProviderRegistry(makeMockConfig().provider);
