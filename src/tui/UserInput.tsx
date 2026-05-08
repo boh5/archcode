@@ -106,7 +106,7 @@ export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm,
   if (confirmationRequest) {
     return (
       <Box marginTop={1} flexDirection="column">
-        <Text color="yellow">{confirmationRequest.description}</Text>
+        <Text color="yellow">{confirmationRequest.reason ?? confirmationRequest.description}</Text>
         <Text dimColor>Allow? [y/n]</Text>
       </Box>
     );
