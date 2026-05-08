@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { StoreApi } from "zustand";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
+import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
+import type { PromptContext, PromptEnv } from "../prompt/index";
 import { createSessionStore } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
@@ -30,8 +32,6 @@ export interface AgentResult {
   readonly steps: number;
 }
 
-const DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant.";
-
 export class NoModelsConfiguredError extends Error {
   constructor() {
     super("No models configured in .specra.json");
@@ -51,6 +51,17 @@ export interface TestAgentOptions {
   readonly toolRegistry: ToolRegistry;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
+  readonly workspaceRoot?: string;
+}
+
+function buildEnv(workspaceRoot: string): PromptEnv {
+  return {
+    platform: process.platform,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    locale: Intl.DateTimeFormat().resolvedOptions().locale,
+    cwd: workspaceRoot,
+    date: new Date().toISOString().slice(0, 10),
+  };
 }
 
 export class TestAgent implements Agent {
@@ -60,6 +71,9 @@ export class TestAgent implements Agent {
   private modelInfo: ModelInfo;
   private confirmPermission: ToolConfirmationCallback | undefined;
   private askUserDefault: AskUserCallback | undefined;
+  private workspaceRoot: string;
+  private agentsMd: string | undefined;
+  private agentsMdLoaded = false;
   private running = false;
 
   constructor(options: TestAgentOptions) {
@@ -75,6 +89,13 @@ export class TestAgent implements Agent {
 
     this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
     this.store = createSessionStore(randomUUID());
+    this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+  }
+
+  private async ensureAgentsMd(): Promise<void> {
+    if (this.agentsMdLoaded) return;
+    this.agentsMd = (await loadAgentsMd(this.workspaceRoot)) ?? undefined;
+    this.agentsMdLoaded = true;
   }
 
   async run(
@@ -107,24 +128,34 @@ export class TestAgent implements Agent {
 
     this.running = true;
     try {
-    const allToolNames = this.toolRegistry.getAll().map((d) => d.name);
+      await this.ensureAgentsMd();
+      const allToolNames = this.toolRegistry.getAll().map((d) => d.name);
 
-    const result = await runQueryLoop(
-      {
-        model: this.modelInfo.model,
-        toolRegistry: this.toolRegistry,
+      const ctx: PromptContext = {
         allowedTools: allToolNames,
-        confirmPermission: confirm,
-        askUser,
-        abort,
-        systemPrompt: DEFAULT_SYSTEM_PROMPT,
-        store: this.store,
-      },
+        workspaceRoot: this.workspaceRoot,
+        agentId: "default",
+        agentsMd: this.agentsMd,
+        env: buildEnv(this.workspaceRoot),
+      };
+
+      const systemPrompt = buildSystemPrompt(ctx);
+
+      const result = await runQueryLoop(
+        {
+          model: this.modelInfo.model,
+          toolRegistry: this.toolRegistry,
+          allowedTools: allToolNames,
+          confirmPermission: confirm,
+          askUser,
+          abort,
+          systemPrompt,
+          store: this.store,
+        },
         userMessage,
       );
       return { text: result.text, steps: result.steps };
     } catch (error) {
-      // Don't pollute an active session's store with loop-error on BusyError
       if (!(error instanceof BusyError)) {
         this.store.getState().append({
           type: "loop-error",

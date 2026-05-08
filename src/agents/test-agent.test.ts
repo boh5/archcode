@@ -176,7 +176,7 @@ describe("TestAgent", () => {
       expect(userMessages.length).toBe(1);
     });
 
-    test("passes hardcoded system prompt to runQueryLoop", async () => {
+    test("passes assembled system prompt to runQueryLoop", async () => {
       const streamFn = setupMockStreamText("ok");
 
       const agent = makeTestAgent();
@@ -185,7 +185,11 @@ describe("TestAgent", () => {
       const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
       expect(callArgs.system).toBeDefined();
       expect(typeof callArgs.system).toBe("string");
-      expect((callArgs.system as string).length).toBeGreaterThan(0);
+      const systemPrompt = callArgs.system as string;
+      expect(systemPrompt).toContain("Specra");
+      expect(systemPrompt).toContain("## Tools");
+      expect(systemPrompt).toContain("## Environment");
+      expect(systemPrompt).toContain("## Guidelines");
     });
 
     test("passes all registered tool names as allowedTools to query loop", async () => {
