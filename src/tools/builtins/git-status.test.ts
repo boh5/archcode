@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { parseGitStatusOutput, gitStatusTool } from "./git-status";
-import type { ToolExecutionContext } from "../types";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 function exec(cmd: string, args: string[], cwd: string): void {
   const result = Bun.spawnSync([cmd, ...args], { cwd });
@@ -104,14 +105,17 @@ describe("gitStatusTool", () => {
 
     expect(result).toContain(" M tracked.txt");
     expect(result).toContain("?? untracked.txt");
-    expect(result.split("\n").length).toBe(2);
+    expect((result as string).split("\n").length).toBe(2);
   });
 
   test("handles git command failure (non-git directory)", async () => {
     const nonGitDir = mkdtempSync(join(tmpdir(), "git-status-non-repo-"));
     try {
       const ctx = mockCtx(nonGitDir);
-      await expect(gitStatusTool.execute({}, ctx)).rejects.toThrow();
+      const result = (await gitStatusTool.execute({}, ctx)) as ToolExecutionResult;
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("execution");
+      expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     } finally {
       rmSync(nonGitDir, { recursive: true, force: true });
     }
@@ -121,6 +125,9 @@ describe("gitStatusTool", () => {
     const ac = new AbortController();
     ac.abort();
     const ctx = mockCtx(tmpDir, { abort: ac.signal });
-    await expect(gitStatusTool.execute({}, ctx)).rejects.toThrow();
+    const result = (await gitStatusTool.execute({}, ctx)) as ToolExecutionResult;
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("execution");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
   });
 });

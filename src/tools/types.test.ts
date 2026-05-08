@@ -151,9 +151,22 @@ describe("GuardDecision", () => {
     expect(decision.reason).toBe("not allowed");
   });
 
+  test("accepts optional structured error kind and code", () => {
+    const decision: GuardDecision = {
+      outcome: "deny",
+      reason: "outside workspace",
+      errorKind: "workspace",
+      errorCode: "TOOL_FILE_OUTSIDE_WORKSPACE",
+    };
+    expect(decision.errorKind).toBe("workspace");
+    expect(decision.errorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+  });
+
   test("accepts ask outcome without reason", () => {
     const decision: GuardDecision = { outcome: "ask" };
     expect(decision.outcome).toBe("ask");
+    expect(decision.errorKind).toBeUndefined();
+    expect(decision.errorCode).toBeUndefined();
   });
 });
 

@@ -1,5 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
+import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
 
 // ─── Utility ───
@@ -66,6 +67,8 @@ export type GuardDecision = {
   outcome: "allow" | "deny" | "ask";
   reason?: string;
   prompt?: string;
+  errorKind?: ToolErrorKind;
+  errorCode?: string;
 };
 
 export type GuardHook = (

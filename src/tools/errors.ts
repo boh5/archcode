@@ -26,10 +26,19 @@ export type ToolErrorKind =
   | "workspace"
   | "edit-no-match"
   | "edit-ambiguous"
-  | "edit-overlap";
+  | "edit-overlap"
+  | "file-not-found"
+  | "file-permission-denied"
+  | "file-already-exists"
+  | "file-too-large"
+  | "edit-identical"
+  | "grep-error"
+  | "glob-error"
+  | "todo-validation";
 
 export interface FormattedToolError {
   name?: string;
+  kind?: ToolErrorKind;
   code?: string;
   message: string;
   details?: unknown;
@@ -74,11 +83,21 @@ const HINTS: Record<ToolErrorKind, string> = {
   "edit-no-match": "Re-read the file and retry with an oldString that exactly matches the current content.",
   "edit-ambiguous": "Retry with more surrounding context so oldString matches exactly one location.",
   "edit-overlap": "Split or adjust edits so each oldString targets a non-overlapping section.",
+  "file-not-found": "The file does not exist; check the path and create the file first if needed.",
+  "file-permission-denied": "Permission denied; check file permissions or use a different path.",
+  "file-already-exists": "The file already exists; use file_edit to modify it instead of file_write.",
+  "file-too-large": "The file is too large to read; use offset and limit to read in chunks.",
+  "edit-identical": "oldString and newString are identical; provide a meaningful change.",
+  "grep-error": "The search command failed; check the pattern and try again.",
+  "glob-error": "The file listing command failed; check the pattern and try again.",
+  "todo-validation": "Invalid todo input; check for duplicate IDs or multiple in_progress items.",
 };
 
 export function formatToolError(options: FormatToolErrorOptions): FormattedToolError {
   const message = redactString(resolveMessage(options));
-  const code = redactString(options.code ?? extractCode(message) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED");
+  const rawCode = options.code ?? extractCode(message) ?? codeFromKind(options.kind) ?? "TOOL_EXECUTION_FAILED";
+  const kind = options.kind ?? kindFromCode(rawCode) ?? kindFromMessage(message);
+  const code = redactString(rawCode);
   const rawName = options.name ?? (options.error !== undefined ? safeErrorName(options.error) : undefined);
   const name = rawName ? redactString(rawName) : undefined;
   const hint = redactString(options.hint ?? resolveHint(options, message, code));
@@ -86,6 +105,7 @@ export function formatToolError(options: FormatToolErrorOptions): FormattedToolE
 
   return {
     ...(name ? { name } : {}),
+    ...(kind ? { kind } : {}),
     ...(code ? { code } : {}),
     message,
     ...(details !== undefined ? { details: redactValue(details) } : {}),
@@ -150,6 +170,18 @@ export function inferToolErrorKindFromResult(
 
   if (result.meta?.timedOut === true) return "bash-timeout";
   if (result.meta?.aborted === true) return "bash-aborted";
+
+  const toolError = result.meta?.[TOOL_ERROR_META_KEY];
+  if (toolError && typeof toolError === "object") {
+    if ("kind" in toolError && typeof toolError.kind === "string") {
+      return toolError.kind as ToolErrorKind;
+    }
+    if ("code" in toolError && typeof toolError.code === "string") {
+      const kind = kindFromCode(toolError.code);
+      if (kind) return kind;
+    }
+  }
+
   if (typeof result.meta?.exitCode === "number" && result.meta.exitCode !== 0) return "bash-nonzero";
 
   const code = extractCode(output);
@@ -214,6 +246,11 @@ function resolveHint(
 }
 
 function kindFromMessage(message: string): ToolErrorKind | undefined {
+  if (/file not found/i.test(message)) return "file-not-found";
+  if (/permission denied/i.test(message)) return "file-permission-denied";
+  if (/already exists/i.test(message)) return "file-already-exists";
+  if (/too large/i.test(message)) return "file-too-large";
+  if (/identical/i.test(message)) return "edit-identical";
   if (/oldString.*not found|no match/i.test(message)) return "edit-no-match";
   if (/multiple matches|ambiguous/i.test(message)) return "edit-ambiguous";
   if (/overlapping edits/i.test(message)) return "edit-overlap";
@@ -223,18 +260,18 @@ function kindFromMessage(message: string): ToolErrorKind | undefined {
   return undefined;
 }
 
-function kindFromCode(code: string): ToolErrorKind | undefined {
+export function kindFromCode(code: string): ToolErrorKind | undefined {
   switch (code) {
-    case "TOOL_BASH_NONZERO_EXIT":
-      return "bash-nonzero";
-    case "TOOL_BASH_TIMEOUT":
-      return "bash-timeout";
-    case "TOOL_BASH_ABORTED":
-      return "bash-aborted";
     case "TOOL_UNKNOWN":
       return "unknown-tool";
     case "TOOL_PREPARE_INPUT_FAILED":
       return "prepare-input";
+    case "TOOL_INPUT_SCHEMA_INVALID":
+    case "TOOL_SCHEMA_INVALID_INPUT":
+      return "schema";
+    case "TOOL_BEFORE_HOOK_SCHEMA_INVALID":
+    case "TOOL_BEFORE_HOOK_INVALID_INPUT":
+      return "before-hook-schema";
     case "TOOL_NOT_ALLOWED":
       return "not-allowed";
     case "TOOL_PERMISSION_DENIED":
@@ -247,6 +284,18 @@ function kindFromCode(code: string): ToolErrorKind | undefined {
       return "permission-confirmation-unavailable";
     case "TOOL_PERMISSION_CONFIRMATION_FAILED":
       return "permission-confirmation-failed";
+    case "TOOL_EXECUTION_FAILED":
+      return "execution";
+    case "TOOL_AFTER_HOOK_FAILED":
+      return "after-hook";
+    case "TOOL_BASH_NONZERO_EXIT":
+      return "bash-nonzero";
+    case "TOOL_BASH_TIMEOUT":
+      return "bash-timeout";
+    case "TOOL_BASH_ABORTED":
+      return "bash-aborted";
+    case "TOOL_CANCELLED":
+      return "cancelled";
     case "TOOL_FILE_NOT_READ_FIRST":
       return "read-before-write";
     case "TOOL_FILE_WRITE_CONFLICT":
@@ -260,17 +309,49 @@ function kindFromCode(code: string): ToolErrorKind | undefined {
       return "edit-ambiguous";
     case "TOOL_EDIT_OVERLAP":
       return "edit-overlap";
+    case "TOOL_FILE_NOT_FOUND":
+      return "file-not-found";
+    case "TOOL_FILE_PERMISSION_DENIED":
+      return "file-permission-denied";
+    case "TOOL_FILE_ALREADY_EXISTS":
+      return "file-already-exists";
+    case "TOOL_FILE_TOO_LARGE":
+      return "file-too-large";
+    case "TOOL_EDIT_IDENTICAL":
+      return "edit-identical";
+    case "TOOL_GREP_ERROR":
+      return "grep-error";
+    case "TOOL_GLOB_ERROR":
+      return "glob-error";
+    case "TOOL_TODO_VALIDATION":
+      return "todo-validation";
     default:
       return undefined;
   }
 }
 
-function codeFromKind(kind: ToolErrorKind | undefined): string | undefined {
+export function codeFromKind(kind: ToolErrorKind | undefined): string | undefined {
   switch (kind) {
+    case "unknown-tool":
+      return "TOOL_UNKNOWN";
+    case "prepare-input":
+      return "TOOL_PREPARE_INPUT_FAILED";
     case "schema":
       return "TOOL_SCHEMA_INVALID_INPUT";
     case "before-hook-schema":
       return "TOOL_BEFORE_HOOK_INVALID_INPUT";
+    case "not-allowed":
+      return "TOOL_NOT_ALLOWED";
+    case "permission-denied":
+      return "TOOL_PERMISSION_DENIED";
+    case "permission-confirmation-denied":
+      return "TOOL_PERMISSION_CONFIRMATION_DENIED";
+    case "permission-confirmation-timeout":
+      return "TOOL_PERMISSION_CONFIRMATION_TIMEOUT";
+    case "permission-confirmation-unavailable":
+      return "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE";
+    case "permission-confirmation-failed":
+      return "TOOL_PERMISSION_CONFIRMATION_FAILED";
     case "execution":
       return "TOOL_EXECUTION_FAILED";
     case "after-hook":
@@ -283,6 +364,34 @@ function codeFromKind(kind: ToolErrorKind | undefined): string | undefined {
       return "TOOL_BASH_ABORTED";
     case "cancelled":
       return "TOOL_CANCELLED";
+    case "read-before-write":
+      return "TOOL_FILE_NOT_READ_FIRST";
+    case "write-conflict":
+      return "TOOL_FILE_WRITE_CONFLICT";
+    case "workspace":
+      return "TOOL_FILE_OUTSIDE_WORKSPACE";
+    case "edit-no-match":
+      return "TOOL_EDIT_NO_MATCH";
+    case "edit-ambiguous":
+      return "TOOL_EDIT_AMBIGUOUS_MATCH";
+    case "edit-overlap":
+      return "TOOL_EDIT_OVERLAP";
+    case "file-not-found":
+      return "TOOL_FILE_NOT_FOUND";
+    case "file-permission-denied":
+      return "TOOL_FILE_PERMISSION_DENIED";
+    case "file-already-exists":
+      return "TOOL_FILE_ALREADY_EXISTS";
+    case "file-too-large":
+      return "TOOL_FILE_TOO_LARGE";
+    case "edit-identical":
+      return "TOOL_EDIT_IDENTICAL";
+    case "grep-error":
+      return "TOOL_GREP_ERROR";
+    case "glob-error":
+      return "TOOL_GLOB_ERROR";
+    case "todo-validation":
+      return "TOOL_TODO_VALIDATION";
     default:
       return undefined;
   }

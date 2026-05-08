@@ -20,7 +20,9 @@ import {
 import { redactString, redactValue } from "./hooks/redact";
 import {
   createToolErrorResult,
+  extractCode,
   inferToolErrorKindFromResult,
+  kindFromCode,
   normalizeToolErrorResult,
 } from "./errors";
 
@@ -242,6 +244,20 @@ export class ToolRegistry {
     }
 
     if (decision.outcome === "deny") {
+      const extractedCode = extractCode(decision.reason ?? "");
+      const code = decision.errorCode ?? extractedCode ?? "TOOL_PERMISSION_DENIED";
+      if (decision.errorKind || decision.errorCode || extractedCode) {
+        return createToolErrorResult({
+          kind: decision.errorKind ?? kindFromCode(code) ?? "permission-denied",
+          code,
+          message: decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
+          meta: {
+            permissionErrorCode: code,
+            skippedExecution: true,
+          },
+        });
+      }
+
       return createPermissionErrorResult(
         "TOOL_PERMISSION_DENIED",
         decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
@@ -340,6 +356,8 @@ function redactDecision(decision: GuardDecision): GuardDecision {
     outcome: decision.outcome,
     ...(decision.reason ? { reason: redactString(decision.reason) } : {}),
     ...(decision.prompt ? { prompt: redactString(decision.prompt) } : {}),
+    ...(decision.errorKind ? { errorKind: decision.errorKind } : {}),
+    ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
   };
 }
 

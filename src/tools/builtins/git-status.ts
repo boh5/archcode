@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
+import type { ToolExecutionResult } from "../types";
 
 const GitStatusInputSchema = z.object({}).strict();
 
@@ -59,17 +61,22 @@ export const gitStatusTool = defineTool({
     "Shows the working tree status. Returns a list of changed files with status indicators (M=modified, A=added, D=deleted, ??=untracked).",
   inputSchema: GitStatusInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
-  execute: async (_input, ctx) => {
+  execute: async (_input, ctx): Promise<string | ToolExecutionResult> => {
     try {
       const result = await runGitStatus(ctx.workspaceRoot, ctx.abort);
       if (result.exitCode !== 0) {
-        throw new Error(result.output);
+        return createToolErrorResult({
+          kind: "execution",
+          message: result.output || `git status exited with code ${result.exitCode}`,
+        });
       }
       return result.output;
     } catch (e) {
-      throw new Error(
-        `Failed to run git status: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      return createToolErrorResult({
+        kind: "execution",
+        error: e instanceof Error ? e : new Error(String(e)),
+        message: `Failed to run git status: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   },
 });

@@ -1,5 +1,6 @@
 import type { GuardDecision, PermissionErrorCode, ToolExecutionResult } from "../types";
-import { createToolErrorResult } from "../errors";
+import type { ToolErrorKind } from "../errors";
+import { createToolErrorResult, kindFromCode } from "../errors";
 
 /**
  * Compose multiple guard decisions with priority: deny > ask > allow.
@@ -21,8 +22,10 @@ export function createPermissionErrorResult(
   code: PermissionErrorCode,
   message: string,
   meta?: Record<string, unknown>,
+  kindOverride?: ToolErrorKind,
 ): ToolExecutionResult {
   return createToolErrorResult({
+    kind: kindOverride ?? kindFromCode(code) ?? "permission-denied",
     code,
     message,
     meta: {
@@ -32,5 +35,3 @@ export function createPermissionErrorResult(
     },
   });
 }
-
-

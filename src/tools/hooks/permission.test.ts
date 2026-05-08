@@ -61,6 +61,60 @@ describe("combineGuardDecisions", () => {
     ]);
     expect(result).toEqual({ outcome: "deny", reason: "this is the reason" });
   });
+
+  it("preserves errorKind and errorCode from a deny decision", () => {
+    const result = combineGuardDecisions([
+      decision("allow"),
+      {
+        outcome: "deny",
+        reason: "outside workspace",
+        errorKind: "workspace",
+        errorCode: "TOOL_FILE_OUTSIDE_WORKSPACE",
+      },
+    ]);
+    expect(result).toEqual({
+      outcome: "deny",
+      reason: "outside workspace",
+      errorKind: "workspace",
+      errorCode: "TOOL_FILE_OUTSIDE_WORKSPACE",
+    });
+  });
+
+  it("preserves errorKind and errorCode from an ask decision", () => {
+    const result = combineGuardDecisions([
+      decision("allow"),
+      {
+        outcome: "ask",
+        prompt: "confirm write",
+        errorKind: "file-already-exists",
+        errorCode: "TOOL_FILE_ALREADY_EXISTS",
+      },
+    ]);
+    expect(result).toEqual({
+      outcome: "ask",
+      prompt: "confirm write",
+      errorKind: "file-already-exists",
+      errorCode: "TOOL_FILE_ALREADY_EXISTS",
+    });
+  });
+
+  it("keeps deny as the winning decision when ask has no structured error fields", () => {
+    const result = combineGuardDecisions([
+      decision("ask", "confirm first"),
+      {
+        outcome: "deny",
+        reason: "must read before write",
+        errorKind: "read-before-write",
+        errorCode: "TOOL_FILE_NOT_READ_FIRST",
+      },
+    ]);
+    expect(result).toEqual({
+      outcome: "deny",
+      reason: "must read before write",
+      errorKind: "read-before-write",
+      errorCode: "TOOL_FILE_NOT_READ_FIRST",
+    });
+  });
 });
 
 describe("createPermissionErrorResult", () => {
@@ -91,6 +145,17 @@ describe("createPermissionErrorResult", () => {
   it("sets meta.skippedExecution to true", () => {
     const result = createPermissionErrorResult("TOOL_PERMISSION_DENIED", "denied");
     expect(result.meta?.skippedExecution).toBe(true);
+  });
+
+  it("uses a kind override when provided", () => {
+    const result = createPermissionErrorResult(
+      "TOOL_PERMISSION_DENIED",
+      "outside workspace",
+      undefined,
+      "workspace",
+    );
+    expect(parseOutput(result).kind).toBe("workspace");
+    expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
   });
 
   it("passes through additional meta properties", () => {

@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
-import type { ToolExecutionContext } from "../types";
+import { createToolErrorResult } from "../errors";
+import type { ToolExecutionResult } from "../types";
 import {
   createReadSnapshotAfterHook,
   createSensitiveFileGuard,
@@ -58,21 +59,29 @@ export const fileReadTool = defineTool({
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   guards: [createWorkspaceGuard(), createSensitiveFileGuard()],
   hooks: { after: [createReadSnapshotAfterHook()] },
-  execute: async (input, ctx) => {
+  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved, isWithinWorkspace } = resolveAndValidatePath(
       input.path,
       ctx.workspaceRoot,
     );
 
     if (!isWithinWorkspace) {
-      throw new Error(`Path "${input.path}" is outside the workspace [TOOL_FILE_OUTSIDE_WORKSPACE]`);
+      return createToolErrorResult({
+        kind: "workspace",
+        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+        message: `Path "${input.path}" is outside the workspace`,
+      });
     }
 
     try {
       const fileStat = await stat(resolved);
       const size = fileStat.size;
       if (size > 10 * 1024 * 1024) {
-        throw new Error(`File is too large to display (${(size / 1024 / 1024).toFixed(1)} MB). Use offset and limit to read in chunks.`);
+        return createToolErrorResult({
+          kind: "file-too-large",
+          code: "TOOL_FILE_TOO_LARGE",
+          message: `File is too large to display (${(size / 1024 / 1024).toFixed(1)} MB). Use offset and limit to read in chunks.`,
+        });
       }
 
       const buffer = await readFile(resolved);
@@ -93,13 +102,24 @@ export const fileReadTool = defineTool({
       if (typeof error === "object" && error !== null && "code" in error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
-          throw new Error(`File not found: ${input.path} [TOOL_FILE_NOT_FOUND]`);
+          return createToolErrorResult({
+            kind: "file-not-found",
+            code: "TOOL_FILE_NOT_FOUND",
+            message: `File not found: ${input.path}`,
+          });
         }
         if (code === "EACCES" || code === "EPERM") {
-          throw new Error(`Permission denied: ${input.path} [TOOL_FILE_PERMISSION_DENIED]`);
+          return createToolErrorResult({
+            kind: "file-permission-denied",
+            code: "TOOL_FILE_PERMISSION_DENIED",
+            message: `Permission denied: ${input.path}`,
+          });
         }
       }
-      throw error;
+      return createToolErrorResult({
+        kind: "execution",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   },
 });

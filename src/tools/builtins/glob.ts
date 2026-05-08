@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
 import { createRipgrepService } from "../ripgrep/service";
 import type { RipgrepService } from "../ripgrep/service";
 import { createWorkspaceGuard } from "../hooks/read-snapshot";
+import type { ToolExecutionResult } from "../types";
 
 // ─── Schema ───
 
@@ -34,8 +36,9 @@ export const globTool = defineTool({
     concurrencySafe: true,
   },
   guards: [createWorkspaceGuard()],
-  async execute(input, ctx) {
-    const rgPath = await rgService.ensure();
+  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+    try {
+      const rgPath = await rgService.ensure();
 
     const args: string[] = [
       "--files",
@@ -63,9 +66,14 @@ export const globTool = defineTool({
     ]);
 
     if (exitCode >= 2) {
-      return stderr
-        ? `rg exited with code ${exitCode}: ${stderr}`
-        : `rg exited with code ${exitCode}`;
+      return createToolErrorResult({
+        kind: "glob-error",
+        code: "TOOL_GLOB_ERROR",
+        message: stderr
+          ? `rg exited with code ${exitCode}: ${stderr}`
+          : `rg exited with code ${exitCode}`,
+        meta: { exitCode },
+      });
     }
 
     const files = stdout.split("\n").filter((line) => line.trim().length > 0);
@@ -77,6 +85,14 @@ export const globTool = defineTool({
     const truncated = files.length > 100;
     const result = files.slice(0, 100).join("\n");
 
-    return truncated ? `${result}\n[Output truncated: showing first 100 of ${files.length} files]` : result;
+      return truncated ? `${result}\n[Output truncated: showing first 100 of ${files.length} files]` : result;
+    } catch (error) {
+      return createToolErrorResult({
+        kind: "glob-error",
+        code: "TOOL_GLOB_ERROR",
+        error: error instanceof Error ? error : new Error(String(error)),
+        message: `glob failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   },
 });

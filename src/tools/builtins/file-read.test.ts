@@ -17,6 +17,7 @@ import { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
 import { fileReadTool } from "./file-read";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-read");
@@ -139,13 +140,12 @@ describe("fileReadTool", () => {
   });
 
   test("returns error for non-existent files", async () => {
-    try {
-      await fileReadTool.execute({ path: "missing.txt" }, makeCtx());
-      expect.unreachable("Should have thrown");
-    } catch (error) {
-      expect((error as Error).message).toContain("File not found");
-      expect((error as Error).message).toContain("[TOOL_FILE_NOT_FOUND]");
-    }
+    const result = (await fileReadTool.execute({ path: "missing.txt" }, makeCtx())) as ToolExecutionResult;
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("file-not-found");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.output).toContain("File not found");
   });
 
   test("returns error for permission denied", async () => {
@@ -153,10 +153,11 @@ describe("fileReadTool", () => {
     await chmod(filePath, 0o000);
 
     try {
-      await fileReadTool.execute({ path: "denied.txt" }, makeCtx());
-      expect.unreachable("Should have thrown");
-    } catch (error) {
-      expect((error as Error).message).toContain("Permission denied");
+      const result = (await fileReadTool.execute({ path: "denied.txt" }, makeCtx())) as ToolExecutionResult;
+
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("file-permission-denied");
+      expect(result.output).toContain("Permission denied");
     } finally {
       await chmod(filePath, 0o600);
     }
@@ -208,7 +209,7 @@ describe("fileReadTool", () => {
     const ctx = makeCtx({ store, input: { path: "snapshot.txt" } });
     const output = await fileReadTool.execute({ path: "snapshot.txt" }, ctx);
 
-    await runAfterHooks({ output, isError: false }, ctx);
+    await runAfterHooks({ output: output as string, isError: false }, ctx);
 
     const resolved = await realpath(filePath);
     const fileStat = await stat(filePath);

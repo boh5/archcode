@@ -1,5 +1,6 @@
 import type { AfterHook, ToolExecutionResult } from "../types";
-import { isStructuredToolError } from "../errors";
+import { inferToolErrorKindFromResult, isStructuredToolError } from "../errors";
+import type { ToolErrorKind } from "../errors";
 
 interface NudgeRule {
   patterns: RegExp[];
@@ -34,6 +35,21 @@ const NUDGE_RULES: NudgeRule[] = [
   },
 ];
 
+const NUDGE_BY_KIND: Partial<Record<ToolErrorKind, string>> = {
+  "read-before-write":
+    "You must read the file first using file_read before editing it.",
+  "write-conflict":
+    "The file was modified externally since you last read it. Re-read the file to get the current content before editing.",
+  "edit-no-match":
+    "The oldString was not found in the file. This can happen if the file was modified since you last read it, or if the text contains whitespace differences. Try re-reading the file and using the exact text content.",
+  "edit-ambiguous":
+    "The oldString matched multiple locations in the file. Provide more surrounding context to make the match unique.",
+  "edit-overlap":
+    "The edits overlap with each other. Ensure each oldString targets a non-overlapping section of the file.",
+  "edit-identical":
+    "oldString and newString are identical; change newString or skip this edit.",
+};
+
 const FALLBACK_NUDGE =
   "The edit failed. Try re-reading the file and ensuring your oldString exactly matches the current content.";
 
@@ -57,7 +73,20 @@ export function createEditErrorRecoveryHook(): AfterHook {
     }
 
     if (isStructuredToolError(result)) {
-      return result;
+      const kind = inferToolErrorKindFromResult(result);
+      if (!kind) {
+        return result;
+      }
+
+      const nudge = NUDGE_BY_KIND[kind];
+      if (!nudge) {
+        return result;
+      }
+
+      return {
+        ...result,
+        output: `${result.output}${SEPARATOR}${nudge}`,
+      };
     }
 
     const nudge = findNudge(result.output);

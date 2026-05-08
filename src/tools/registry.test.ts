@@ -682,6 +682,51 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(order).toEqual(["global-guard", "per-tool-guard", "global-after"]);
     });
 
+    test("guard deny uses guard-provided structured error kind and code", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.guards = [async () => ({
+        outcome: "deny",
+        reason: "must read before write",
+        errorKind: "read-before-write",
+        errorCode: "TOOL_FILE_NOT_READ_FIRST",
+      })];
+      registry.register(desc);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      const toolError = result.meta?.[TOOL_ERROR_META_KEY] as Record<string, unknown>;
+      expect(result.isError).toBe(true);
+      expect(output.kind).toBe("read-before-write");
+      expect(output.code).toBe("TOOL_FILE_NOT_READ_FIRST");
+      expect(toolError.kind).toBe("read-before-write");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_FILE_NOT_READ_FIRST");
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(desc.execute).not.toHaveBeenCalled();
+    });
+
+    test("guard deny without structured fields falls back to generic permission denial", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.guards = [async () => ({ outcome: "deny", reason: "blocked" })];
+      registry.register(desc);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      const output = JSON.parse(result.output) as Record<string, unknown>;
+      expect(result.isError).toBe(true);
+      expect(output.kind).toBe("permission-denied");
+      expect(output.code).toBe("TOOL_PERMISSION_DENIED");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(desc.execute).not.toHaveBeenCalled();
+    });
+
     test("guard deny skips before executor per-tool after and still runs global after", async () => {
       const order: string[] = [];
       const desc = makeSpiedDescriptor("sensitiveReadTool");

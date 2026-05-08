@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
 import { createRipgrepService } from "../ripgrep/service";
 import type { RipgrepService } from "../ripgrep/service";
 import { createWorkspaceGuard } from "../hooks/read-snapshot";
 import { buildFileListArgs, buildCountArgs, buildSearchArgs, formatSearchResult, parseRgOutput } from "../ripgrep/search";
+import type { ToolExecutionResult } from "../types";
 
 // ─── Schema ───
 
@@ -37,9 +39,10 @@ export const grepTool = defineTool({
     concurrencySafe: true,
   },
   guards: [createWorkspaceGuard()],
-  async execute(input, ctx) {
-    const rgPath = await rgService.ensure();
-    const outputMode = input.output_mode ?? "content";
+  async execute(input, ctx): Promise<string | ToolExecutionResult> {
+    try {
+      const rgPath = await rgService.ensure();
+      const outputMode = input.output_mode ?? "content";
 
     if (outputMode === "files_with_matches") {
       const args = buildFileListArgs(input.pattern, input.include, input.path);
@@ -58,9 +61,14 @@ export const grepTool = defineTool({
       ]);
 
       if (exitCode >= 2) {
-        return stderr
-          ? `rg exited with code ${exitCode}: ${stderr}`
-          : `rg exited with code ${exitCode}`;
+        return createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: stderr
+            ? `rg exited with code ${exitCode}: ${stderr}`
+            : `rg exited with code ${exitCode}`,
+          meta: { exitCode },
+        });
       }
 
       const lines = stdout.trim().split("\n").filter(Boolean);
@@ -94,9 +102,14 @@ export const grepTool = defineTool({
       ]);
 
       if (exitCode >= 2) {
-        return stderr
-          ? `rg exited with code ${exitCode}: ${stderr}`
-          : `rg exited with code ${exitCode}`;
+        return createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: stderr
+            ? `rg exited with code ${exitCode}: ${stderr}`
+            : `rg exited with code ${exitCode}`,
+          meta: { exitCode },
+        });
       }
 
       const lines = stdout.trim().split("\n").filter(Boolean);
@@ -138,9 +151,14 @@ export const grepTool = defineTool({
     ]);
 
     if (exitCode >= 2) {
-      return stderr
-        ? `rg exited with code ${exitCode}: ${stderr}`
-        : `rg exited with code ${exitCode}`;
+      return createToolErrorResult({
+        kind: "grep-error",
+        code: "TOOL_GREP_ERROR",
+        message: stderr
+          ? `rg exited with code ${exitCode}: ${stderr}`
+          : `rg exited with code ${exitCode}`,
+        meta: { exitCode },
+      });
     }
 
     const result = parseRgOutput(stdout, 100);
@@ -155,6 +173,14 @@ export const grepTool = defineTool({
       return `${formatted}\n[Output truncated: showing first 100 matches]`;
     }
 
-    return formatted;
+      return formatted;
+    } catch (error) {
+      return createToolErrorResult({
+        kind: "grep-error",
+        code: "TOOL_GREP_ERROR",
+        error: error instanceof Error ? error : new Error(String(error)),
+        message: `grep failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   },
 });

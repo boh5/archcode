@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import {
+  type FormattedToolError,
   REDACTION_MARKER,
   TOOL_ERROR_META_KEY,
+  type ToolErrorKind,
+  type ToolExecutionResult,
   createToolErrorResult,
   extractCode,
   formatToolError,
@@ -10,6 +13,51 @@ import {
   isStructuredToolError,
   normalizeToolErrorResult,
 } from "./index";
+import { codeFromKind, kindFromCode } from "./errors";
+
+const ALL_TOOL_ERROR_KINDS = [
+  "unknown-tool",
+  "prepare-input",
+  "schema",
+  "before-hook-schema",
+  "not-allowed",
+  "permission-denied",
+  "permission-confirmation-denied",
+  "permission-confirmation-timeout",
+  "permission-confirmation-unavailable",
+  "permission-confirmation-failed",
+  "execution",
+  "after-hook",
+  "bash-nonzero",
+  "bash-timeout",
+  "bash-aborted",
+  "cancelled",
+  "read-before-write",
+  "write-conflict",
+  "workspace",
+  "edit-no-match",
+  "edit-ambiguous",
+  "edit-overlap",
+  "file-not-found",
+  "file-permission-denied",
+  "file-already-exists",
+  "file-too-large",
+  "edit-identical",
+  "grep-error",
+  "glob-error",
+  "todo-validation",
+] as const satisfies readonly ToolErrorKind[];
+
+const NEW_TOOL_ERROR_KINDS = [
+  "edit-overlap",
+  "file-not-found",
+  "file-permission-denied",
+  "file-already-exists",
+  "file-too-large",
+  "edit-identical",
+  "grep-error",
+  "glob-error",
+] as const satisfies readonly ToolErrorKind[];
 
 class NamedFailure extends Error {
   constructor(message: string) {
@@ -24,6 +72,20 @@ function parseOutput(output: string): Record<string, unknown> {
 
 function expectString(value: unknown): asserts value is string {
   expect(typeof value).toBe("string");
+}
+
+function expectToolError(
+  result: ToolExecutionResult,
+  expected: { kind: ToolErrorKind; code: string; messageIncludes?: string },
+) {
+  expect(result.isError).toBe(true);
+  expect(inferToolErrorKindFromResult(result)).toBe(expected.kind);
+  const toolError = result.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError | undefined;
+  expect(toolError?.kind).toBe(expected.kind);
+  expect(toolError?.code).toBe(expected.code);
+  if (expected.messageIncludes) {
+    expect(toolError?.message).toContain(expected.messageIncludes);
+  }
 }
 
 describe("tool error formatter", () => {
@@ -108,5 +170,134 @@ describe("tool error formatter", () => {
     expect(extractCode("Use file_read first [TOOL_FILE_NOT_READ_FIRST]")).toBe(
       "TOOL_FILE_NOT_READ_FIRST",
     );
+  });
+
+  test("recognizes all new ToolErrorKind values", () => {
+    expect(NEW_TOOL_ERROR_KINDS).toEqual([
+      "edit-overlap",
+      "file-not-found",
+      "file-permission-denied",
+      "file-already-exists",
+      "file-too-large",
+      "edit-identical",
+      "grep-error",
+      "glob-error",
+    ]);
+  });
+
+  test("round-trips every ToolErrorKind through canonical codes", () => {
+    expect(ALL_TOOL_ERROR_KINDS).toHaveLength(30);
+
+    for (const kind of ALL_TOOL_ERROR_KINDS) {
+      const code = codeFromKind(kind);
+
+      expect(code).toBeDefined();
+      expectString(code);
+      expect(kindFromCode(code)).toBe(kind);
+    }
+  });
+
+  test("stores kind and code on structured tool error results", () => {
+    const result = createToolErrorResult({
+      kind: "file-not-found",
+      code: "TOOL_FILE_NOT_FOUND",
+      message: "test",
+    });
+
+    expectToolError(result, {
+      kind: "file-not-found",
+      code: "TOOL_FILE_NOT_FOUND",
+      messageIncludes: "test",
+    });
+  });
+
+  test("infers structured toolError kind and code before generic exitCode", () => {
+    const byKind: ToolExecutionResult = {
+      output: "structured edit error",
+      isError: true,
+      meta: {
+        exitCode: 1,
+        [TOOL_ERROR_META_KEY]: {
+          kind: "edit-no-match",
+          message: "oldString not found",
+          hint: "retry with exact content",
+        },
+      },
+    };
+    const byCode: ToolExecutionResult = {
+      output: "structured edit error",
+      isError: true,
+      meta: {
+        exitCode: 1,
+        [TOOL_ERROR_META_KEY]: {
+          code: "TOOL_EDIT_NO_MATCH",
+          message: "oldString not found",
+          hint: "retry with exact content",
+        },
+      },
+    };
+
+    expect(inferToolErrorKindFromResult(byKind)).toBe("edit-no-match");
+    expect(inferToolErrorKindFromResult(byCode)).toBe("edit-no-match");
+  });
+
+  test("keeps grep and glob structured errors distinct from bash nonzero", () => {
+    const grepResult = createToolErrorResult({
+      kind: "grep-error",
+      message: "grep failed",
+      meta: { exitCode: 2 },
+    });
+    const globResult = createToolErrorResult({
+      kind: "glob-error",
+      message: "glob failed",
+      meta: { exitCode: 2 },
+    });
+
+    expectToolError(grepResult, { kind: "grep-error", code: "TOOL_GREP_ERROR" });
+    expectToolError(globResult, { kind: "glob-error", code: "TOOL_GLOB_ERROR" });
+  });
+
+  test("infers file and edit kinds from message heuristics", () => {
+    const cases = [
+      { message: "file not found at path", kind: "file-not-found" },
+      { message: "permission denied while reading", kind: "file-permission-denied" },
+      { message: "target already exists", kind: "file-already-exists" },
+      { message: "file is too large to read", kind: "file-too-large" },
+      { message: "oldString and newString are identical", kind: "edit-identical" },
+    ] as const satisfies readonly { message: string; kind: ToolErrorKind }[];
+
+    for (const { message, kind } of cases) {
+      const formatted = formatToolError({ message, code: "" });
+
+      expect(formatted.kind).toBe(kind);
+      expect(formatted.message).toContain(message);
+    }
+  });
+
+  test("falls back to regex extraction when structured metadata is absent", () => {
+    const result: ToolExecutionResult = {
+      output: "Edit failed [TOOL_EDIT_AMBIGUOUS_MATCH]",
+      isError: true,
+      meta: {},
+    };
+
+    expect(inferToolErrorKindFromResult(result)).toBe("edit-ambiguous");
+  });
+
+  test("provides hint coverage for every ToolErrorKind", () => {
+    for (const kind of ALL_TOOL_ERROR_KINDS) {
+      const formatted = formatToolError({ kind, message: `message for ${kind}` });
+
+      expectString(formatted.hint);
+      expect(formatted.hint.length).toBeGreaterThan(0);
+    }
+
+    expect(formatToolError({ kind: "file-not-found" }).hint).toContain("does not exist");
+    expect(formatToolError({ kind: "file-permission-denied" }).hint).toContain("Permission denied");
+    expect(formatToolError({ kind: "file-already-exists" }).hint).toContain("already exists");
+    expect(formatToolError({ kind: "file-too-large" }).hint).toContain("too large");
+    expect(formatToolError({ kind: "edit-identical" }).hint).toContain("identical");
+    expect(formatToolError({ kind: "grep-error" }).hint).toContain("search command failed");
+    expect(formatToolError({ kind: "glob-error" }).hint).toContain("file listing command failed");
   });
 });

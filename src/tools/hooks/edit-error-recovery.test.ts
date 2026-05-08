@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import {
+  createToolErrorResult,
+  inferToolErrorKindFromResult,
+  isStructuredToolError,
+  TOOL_ERROR_META_KEY,
+} from "../errors";
 import { createEditErrorRecoveryHook } from "./edit-error-recovery";
 
 function makeCtx(
@@ -65,6 +71,63 @@ describe("createEditErrorRecoveryHook", () => {
     expect(returned!.output).toContain(
       "You must read the file first using file_read before editing it.",
     );
+  });
+
+  test("appends kind-based nudge for structured edit errors", async () => {
+    const hook = createEditErrorRecoveryHook();
+    const result = createToolErrorResult({
+      kind: "edit-no-match",
+      code: "TOOL_EDIT_NO_MATCH",
+      message: "oldString not found in file",
+    });
+    const ctx = makeCtx();
+
+    const returned = await hook(result, ctx);
+    expect(returned).not.toBeUndefined();
+    expect(returned!.output).toContain(
+      "The oldString was not found in the file.",
+    );
+    expect(returned!.meta?.[TOOL_ERROR_META_KEY]).toEqual(
+      result.meta?.[TOOL_ERROR_META_KEY],
+    );
+    expect(isStructuredToolError(returned!)).toBe(true);
+    expect(inferToolErrorKindFromResult(returned!)).toBe("edit-no-match");
+  });
+
+  test("returns structured errors without mapped nudges as-is", async () => {
+    const hook = createEditErrorRecoveryHook();
+    const result = createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_EXECUTION_FAILED",
+      message: "Unexpected edit failure",
+    });
+    const ctx = makeCtx();
+
+    const returned = await hook(result, ctx);
+    expect(returned).toBe(result);
+    expect(returned!.output).not.toContain("\n---\n");
+    expect(isStructuredToolError(returned!)).toBe(true);
+    expect(inferToolErrorKindFromResult(returned!)).toBe("execution");
+  });
+
+  test("appends kind-based nudge for structured identical edit errors", async () => {
+    const hook = createEditErrorRecoveryHook();
+    const result = createToolErrorResult({
+      kind: "edit-identical",
+      code: "TOOL_EDIT_IDENTICAL",
+      message: "oldString and newString are identical",
+    });
+    const ctx = makeCtx();
+
+    const returned = await hook(result, ctx);
+    expect(returned).not.toBeUndefined();
+    expect(returned!.output).toContain(
+      "oldString and newString are identical; change newString or skip this edit.",
+    );
+    expect(returned!.meta?.[TOOL_ERROR_META_KEY]).toEqual(
+      result.meta?.[TOOL_ERROR_META_KEY],
+    );
+    expect(isStructuredToolError(returned!)).toBe(true);
   });
 
   test("appends nudge for TOOL_FILE_WRITE_CONFLICT error", async () => {

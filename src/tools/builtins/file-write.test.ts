@@ -17,8 +17,9 @@ import {
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { ToolRegistry } from "../registry";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileWriteTool } from "./file-write";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-write");
@@ -121,22 +122,22 @@ describe("fileWriteTool", () => {
 
     expect(decision.outcome).toBe("deny");
     expect(decision.reason).toContain("already exists");
-    expect(decision.reason).toContain("[TOOL_FILE_ALREADY_EXISTS]");
+    expect(decision.errorKind).toBe("file-already-exists");
+    expect(decision.errorCode).toBe("TOOL_FILE_ALREADY_EXISTS");
   });
 
   test("execute returns an error when the file already exists", async () => {
     await writeWorkspaceFile("execute-existing.txt", "old");
 
-    try {
-      await fileWriteTool.execute(
-        { path: "execute-existing.txt", content: "new" },
-        makeCtx(),
-      );
-      expect.unreachable("Should have thrown");
-    } catch (error) {
-      expect((error as Error).message).toContain("already exists");
-      expect((error as Error).message).toContain("[TOOL_FILE_ALREADY_EXISTS]");
-    }
+    const result = (await fileWriteTool.execute(
+      { path: "execute-existing.txt", content: "new" },
+      makeCtx(),
+    )) as ToolExecutionResult;
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.output).toContain("already exists");
 
     const content = await readFile(join(testDir, "execute-existing.txt"), "utf8");
     expect(content).toBe("old");
@@ -238,8 +239,12 @@ describe("fileWriteTool", () => {
     );
     const failed = results.filter(
       (r) =>
-        r.status === "rejected" &&
-        (r.reason as Error).message.includes("already exists"),
+        r.status === "fulfilled" &&
+        typeof r.value === "object" &&
+        r.value !== null &&
+        "isError" in r.value &&
+        r.value.isError === true &&
+        (r.value as ToolExecutionResult).output.includes("already exists"),
     );
     expect(succeeded).toHaveLength(1);
     expect(failed).toHaveLength(1);
@@ -272,6 +277,7 @@ describe("fileWriteTool", () => {
     });
 
     expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
     expect(result.output).toContain("already exists");
     const content = await readFile(join(testDir, "registry-existing.txt"), "utf8");
     expect(content).toBe("old");

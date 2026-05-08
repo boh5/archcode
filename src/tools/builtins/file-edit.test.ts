@@ -17,9 +17,10 @@ import {
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { inferToolErrorKindFromResult, TOOL_ERROR_META_KEY } from "../errors";
 import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
 import { ToolRegistry } from "../registry";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileEditTool } from "./file-edit";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-edit");
@@ -102,6 +103,15 @@ async function executeThroughRegistry(
   );
 }
 
+function expectToolErrorKind(
+  result: ToolExecutionResult,
+  kind: NonNullable<ReturnType<typeof inferToolErrorKindFromResult>>,
+): void {
+  expect(result.isError).toBe(true);
+  expect(inferToolErrorKindFromResult(result)).toBe(kind);
+  expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+}
+
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
   await mkdir(testDir, { recursive: true });
@@ -169,8 +179,8 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("[TOOL_EDIT_NO_MATCH]");
+    expectToolErrorKind(result, "edit-no-match");
+    expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
   });
 
   test("returns error when oldString matches multiple locations", async () => {
@@ -182,8 +192,8 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("[TOOL_EDIT_AMBIGUOUS_MATCH]");
+    expectToolErrorKind(result, "edit-ambiguous");
+    expect(result.output).toContain("TOOL_EDIT_AMBIGUOUS_MATCH");
   });
 
   test("returns error for overlapping edits", async () => {
@@ -201,8 +211,8 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("[TOOL_EDIT_OVERLAP]");
+    expectToolErrorKind(result, "edit-overlap");
+    expect(result.output).toContain("TOOL_EDIT_OVERLAP");
   });
 
   test("returns error when oldString and newString are identical", async () => {
@@ -214,8 +224,27 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
+    expectToolErrorKind(result, "edit-identical");
     expect(result.output).toContain("oldString and newString are identical");
+  });
+
+  test("returns file-not-found error when target file is missing", async () => {
+    await writeWorkspaceFile("missing-file.txt", "before\n");
+    const store = await createReadStore(join(testDir, "missing-file.txt"));
+    await rm(join(testDir, "missing-file.txt"), { force: true });
+
+    const result = await fileEditTool.execute(
+      {
+        path: "missing-file.txt",
+        edits: [{ oldString: "before", newString: "after" }],
+      },
+      makeCtx({ store }),
+    );
+
+    expect(typeof result).not.toBe("string");
+    const errorResult = result as ToolExecutionResult;
+    expectToolErrorKind(errorResult, "file-not-found");
+    expect(errorResult.output).toContain("TOOL_FILE_NOT_FOUND");
   });
 
   test("fuzzy match handles whitespace, smart quotes, dashes, and line endings", async () => {
@@ -253,7 +282,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
+    expectToolErrorKind(result, "read-before-write");
     expect(result.output).toContain("not been read first");
   });
 
@@ -286,7 +315,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
+    expectToolErrorKind(result, "write-conflict");
     expect(result.output).toContain("modified since it was read");
   });
 
@@ -296,7 +325,7 @@ describe("fileEditTool", () => {
       makeCtx(),
     );
 
-    expect(result.isError).toBe(true);
+    expectToolErrorKind(result, "workspace");
     expect(result.output).toContain("outside workspace");
   });
 
@@ -341,7 +370,7 @@ describe("fileEditTool", () => {
     expect(await readFile(join(testDir, "queue.txt"), "utf8")).toBe("1 two 3");
   });
 
-  test("after error recovery hook appends cognitive nudge", async () => {
+  test("after error recovery hook appends nudge while preserving structured edit errors", async () => {
     await writeWorkspaceFile("nudge.txt", "actual\n");
     const ctx = await makeReadCtx("nudge.txt");
 
@@ -350,9 +379,10 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(result.isError).toBe(true);
+    expectToolErrorKind(result, "edit-no-match");
     expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
-    expect(result.output).toContain("Re-read the file");
+    expect(result.output).toContain("---");
+    expect(result.output).toContain("The oldString was not found in the file.");
   });
 
   test("refreshes read snapshot after successful edit", async () => {

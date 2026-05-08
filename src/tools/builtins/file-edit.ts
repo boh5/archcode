@@ -5,6 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
 import { createEditErrorRecoveryHook } from "../hooks/edit-error-recovery";
 import {
   createReadBeforeEditGuard,
@@ -12,7 +13,7 @@ import {
   refreshReadSnapshot,
   resolveAndValidatePath,
 } from "../hooks/read-snapshot";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -39,16 +40,51 @@ interface EditMatch {
   end: number;
 }
 
+// ─── Result Type ───
+
+type EditMatchFailureKind =
+  | "edit-no-match"
+  | "edit-ambiguous"
+  | "edit-overlap"
+  | "edit-identical";
+
+interface EditMatchSuccess {
+  ok: true;
+  match: EditMatch;
+}
+
+interface EditMatchFailure {
+  ok: false;
+  kind: EditMatchFailureKind;
+  code: string;
+  message: string;
+}
+
+type EditMatchResult = EditMatchSuccess | EditMatchFailure;
+
+function editMatchOk(match: EditMatch): EditMatchSuccess {
+  return { ok: true, match };
+}
+
+function editMatchFail(
+  kind: EditMatchFailureKind,
+  code: string,
+  message: string,
+): EditMatchFailure {
+  return { ok: false, kind, code, message };
+}
+
+function editFailToResult(failure: EditMatchFailure): ToolExecutionResult {
+  return createToolErrorResult({
+    kind: failure.kind,
+    code: failure.code,
+    message: failure.message,
+  });
+}
+
 interface NormalizedMapping {
   text: string;
   originalOffsets: number[];
-}
-
-class EditError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "EditError";
-  }
 }
 
 // ─── Input Compatibility ───
@@ -124,7 +160,7 @@ function findOriginalMatchEnd(
   originalContent: string,
   normalizedOldString: string,
   start: number,
-): number {
+): number | null {
   let normalized = "";
   let index = start;
 
@@ -147,80 +183,112 @@ function findOriginalMatchEnd(
   }
 
   if (normalized !== normalizedOldString) {
-    throw new EditError(
-      `Unable to map fuzzy match back to original content. [TOOL_EDIT_NO_MATCH]`,
-    );
+    return null;
   }
 
   return index;
 }
 
-function findExactMatch(content: string, oldString: string): EditMatch | string {
+function findExactMatch(content: string, oldString: string): EditMatchResult {
   const start = content.indexOf(oldString);
-  if (start === -1) return "not-found";
+  if (start === -1) {
+    return editMatchFail(
+      "edit-no-match",
+      "TOOL_EDIT_NO_MATCH",
+      `oldString not found in file: "${oldString.substring(0, 80)}..."`,
+    );
+  }
 
   const secondMatch = content.indexOf(oldString, start + 1);
   if (secondMatch !== -1) {
-    return `oldString matched multiple locations. Provide more surrounding context to make the match unique: "${oldString.substring(0, 80)}...". [TOOL_EDIT_AMBIGUOUS_MATCH]`;
+    return editMatchFail(
+      "edit-ambiguous",
+      "TOOL_EDIT_AMBIGUOUS_MATCH",
+      `oldString matched multiple locations. Provide more surrounding context to make the match unique: "${oldString.substring(0, 80)}..."`,
+    );
   }
 
-  return { oldString, newString: "", start, end: start + oldString.length };
+  return editMatchOk({ oldString, newString: "", start, end: start + oldString.length });
 }
 
-function findFuzzyMatch(content: string, oldString: string): EditMatch | string {
+function findFuzzyMatch(content: string, oldString: string): EditMatchResult {
   const normalized = normalizeWithMapping(content);
   const normalizedOldString = normalizeForFuzzyMatch(oldString);
   const startInNormalized = normalized.text.indexOf(normalizedOldString);
 
   if (startInNormalized === -1) {
-    return `oldString not found in file: "${oldString.substring(0, 80)}..." [TOOL_EDIT_NO_MATCH]. Re-read the file to get the current content before editing.`;
+    return editMatchFail(
+      "edit-no-match",
+      "TOOL_EDIT_NO_MATCH",
+      `oldString not found in file: "${oldString.substring(0, 80)}..." Re-read the file to get the current content before editing.`,
+    );
   }
 
   const secondMatch = normalized.text.indexOf(normalizedOldString, startInNormalized + 1);
   if (secondMatch !== -1) {
-    return `oldString matched multiple locations. Provide more surrounding context to make the match unique: "${oldString.substring(0, 80)}...". [TOOL_EDIT_AMBIGUOUS_MATCH]`;
+    return editMatchFail(
+      "edit-ambiguous",
+      "TOOL_EDIT_AMBIGUOUS_MATCH",
+      `oldString matched multiple locations. Provide more surrounding context to make the match unique: "${oldString.substring(0, 80)}..."`,
+    );
   }
 
   const start = normalized.originalOffsets[startInNormalized];
   if (start === undefined) {
-    return `oldString not found in file: "${oldString.substring(0, 80)}..." [TOOL_EDIT_NO_MATCH]. Re-read the file to get the current content before editing.`;
+    return editMatchFail(
+      "edit-no-match",
+      "TOOL_EDIT_NO_MATCH",
+      `oldString not found in file: "${oldString.substring(0, 80)}..." Re-read the file to get the current content before editing.`,
+    );
   }
 
-  return {
-    oldString,
-    newString: "",
-    start,
-    end: findOriginalMatchEnd(content, normalizedOldString, start),
-  };
+  const end = findOriginalMatchEnd(content, normalizedOldString, start);
+  if (end === null) {
+    return editMatchFail(
+      "edit-no-match",
+      "TOOL_EDIT_NO_MATCH",
+      "Unable to map fuzzy match back to original content. [TOOL_EDIT_NO_MATCH]",
+    );
+  }
+
+  return editMatchOk({ oldString, newString: "", start, end });
 }
 
-function findEditMatches(content: string, edits: FileEditInput["edits"]): EditMatch[] {
+function findEditMatches(
+  content: string,
+  edits: FileEditInput["edits"],
+): EditMatch[] | EditMatchFailure {
   const matches: EditMatch[] = [];
 
   for (const edit of edits) {
     if (edit.oldString === edit.newString) {
-      throw new EditError(
-        `oldString and newString are identical for edit in "${edit.oldString.substring(0, 50)}..." [TOOL_EDIT_IDENTICAL]`,
+      return editMatchFail(
+        "edit-identical",
+        "TOOL_EDIT_IDENTICAL",
+        `oldString and newString are identical for edit in "${edit.oldString.substring(0, 50)}..."`,
       );
     }
 
-    let match = findExactMatch(content, edit.oldString);
-    if (match === "not-found") {
-      match = findFuzzyMatch(content, edit.oldString);
+    const exactResult = findExactMatch(content, edit.oldString);
+    let result: EditMatchResult;
+    if (!exactResult.ok && exactResult.kind === "edit-no-match") {
+      result = findFuzzyMatch(content, edit.oldString);
+    } else {
+      result = exactResult;
     }
 
-    if (typeof match === "string") {
-      throw new EditError(match);
-    }
+    if (!result.ok) return result;
 
-    matches.push({ ...match, newString: edit.newString });
+    matches.push({ ...result.match, newString: edit.newString });
   }
 
   const sorted = [...matches].sort((a, b) => a.start - b.start);
   for (let index = 1; index < sorted.length; index++) {
     if (sorted[index].start < sorted[index - 1].end) {
-      throw new EditError(
-        "Overlapping edits detected. Ensure each oldString targets a non-overlapping section. [TOOL_EDIT_OVERLAP]",
+      return editMatchFail(
+        "edit-overlap",
+        "TOOL_EDIT_OVERLAP",
+        "Overlapping edits detected. Ensure each oldString targets a non-overlapping section.",
       );
     }
   }
@@ -249,22 +317,6 @@ async function cleanupTempFile(tmpPath: string): Promise<void> {
   }
 }
 
-function toEditError(error: unknown, filePath: string): EditError {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return new EditError(`File not found: ${filePath} [TOOL_EDIT_NO_MATCH]`);
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      return new EditError(`Permission denied: ${filePath}`);
-    }
-  }
-
-  if (error instanceof EditError) return error;
-  const message = error instanceof Error ? error.message : String(error);
-  return new EditError(`Failed to edit file ${filePath}: ${message}`);
-}
-
 // ─── Tool Definition ───
 
 export const fileEditTool = defineTool({
@@ -276,44 +328,70 @@ export const fileEditTool = defineTool({
   prepareInput: prepareEditInput,
   guards: [createWorkspaceGuard(), createReadBeforeEditGuard()],
   hooks: { after: [createEditErrorRecoveryHook()] },
-  execute: async (input, ctx) => {
+  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
     if (!isWithinWorkspace) {
-      throw new EditError(`"${resolvedPath}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`);
+      return createToolErrorResult({
+        kind: "workspace",
+        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+        message: `"${resolvedPath}" is outside workspace "${ctx.workspaceRoot}"`,
+      });
     }
 
     try {
-      return await sharedMutationQueue.enqueue(resolvedPath, async () => {
+      const result = await sharedMutationQueue.enqueue(resolvedPath, async () => {
         if (!existsSync(resolvedPath) || !statSync(resolvedPath).isFile()) {
-          throw new EditError(`File not found: ${input.path} [TOOL_EDIT_NO_MATCH]`);
+          return createToolErrorResult({
+            kind: "file-not-found",
+            code: "TOOL_FILE_NOT_FOUND",
+            message: `File not found: ${input.path}`,
+          });
         }
 
         const content = await readFile(resolvedPath, "utf8");
-        const matches = findEditMatches(content, input.edits);
+        const matchResult = findEditMatches(content, input.edits);
+        if (!Array.isArray(matchResult)) {
+          return editFailToResult(matchResult);
+        }
+        const matches = matchResult;
+
         const modified = applyEdits(content, matches);
         const tmpPath = `${resolvedPath}.tmp.${randomUUID()}`;
 
-        await writeFile(tmpPath, modified);
-
         try {
+          await writeFile(tmpPath, modified);
           await rename(tmpPath, resolvedPath);
         } catch (error) {
           await cleanupTempFile(tmpPath);
-          throw error;
+          return createToolErrorResult({
+            kind: "execution",
+            error: error instanceof Error ? error : new Error(String(error)),
+          });
         }
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.workspaceRoot);
         return `Successfully applied ${matches.length} edit(s) to ${input.path}`;
       });
+
+      return result;
     } catch (error) {
-      throw toEditError(error, input.path);
+      return createToolErrorResult({
+        kind: "execution",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   },
 });
 
 export const __testing = {
   applyEdits,
+  editFailToResult,
+  editMatchFail,
+  editMatchOk,
+  findExactMatch,
   findEditMatches,
+  findFuzzyMatch,
+  findOriginalMatchEnd,
   normalizeForFuzzyMatch,
   prepareEditInput,
 };

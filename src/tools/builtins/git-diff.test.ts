@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
 import { gitDiffTool, buildArgs } from "./git-diff";
-import type { ToolExecutionContext } from "../types";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Helpers ───
 
@@ -116,15 +117,20 @@ describe("gitDiffTool", () => {
     expect(result).toBe(diffOutput);
   });
 
-  test("throws on git command failure", async () => {
+  test("returns structured error on git command failure", async () => {
     // @ts-expect-error — Bun.spawn is mutable in test environment
     Bun.spawn = mock((_cmd: string[], _opts?: Record<string, unknown>) =>
       mockSpawnResult("", "fatal: not a git repository", 128),
     );
 
-    await expect(gitDiffTool.execute({ staged: false }, mockCtx())).rejects.toThrow(
-      /Git diff failed/,
-    );
+    const result = (await gitDiffTool.execute(
+      { staged: false },
+      mockCtx(),
+    )) as ToolExecutionResult;
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("execution");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.output).toContain("Git diff failed");
   });
 
   test("returns helpful message for empty diff (no changes)", async () => {

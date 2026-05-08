@@ -6,7 +6,8 @@ import type { StoreApi } from "zustand";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { createRegistry } from "../registry";
-import type { ToolExecutionContext } from "../types";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "todo-write");
@@ -159,6 +160,8 @@ describe("todoWriteTool", () => {
     );
 
     expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("todo-validation");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     expect(result.output).toContain("Only one todo");
 
     const after = store.getState().todos;
@@ -178,20 +181,19 @@ describe("todoWriteTool", () => {
 
     const before = store.getState().todos;
 
-    try {
-      await todoWriteTool.execute(
-        {
-          todos: [
-            { id: "dup", content: "first", status: "pending" },
-            { id: "dup", content: "second", status: "pending" },
-          ],
-        },
-        ctx,
-      );
-      expect.unreachable("Should have thrown");
-    } catch (err) {
-      expect((err as Error).message).toContain("Duplicate todo IDs");
-    }
+    const result = (await todoWriteTool.execute(
+      {
+        todos: [
+          { id: "dup", content: "first", status: "pending" },
+          { id: "dup", content: "second", status: "pending" },
+        ],
+      },
+      ctx,
+    )) as ToolExecutionResult;
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("todo-validation");
+    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.output).toContain("Duplicate todo IDs");
 
     const after = store.getState().todos;
     expect(after).toEqual(before);

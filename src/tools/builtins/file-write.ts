@@ -5,13 +5,14 @@ import path from "node:path";
 import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
 import {
   createSensitiveFileGuard,
   createWorkspaceGuard,
   refreshReadSnapshot,
   resolveAndValidatePath,
 } from "../hooks/read-snapshot";
-import type { GuardDecision, GuardHook, ToolExecutionContext } from "../types";
+import type { GuardDecision, GuardHook, ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -34,7 +35,9 @@ function createFileExistsGuard(): GuardHook {
     if (existsSync(resolved)) {
       return {
         outcome: "deny",
-        reason: `File "${resolved}" already exists. Use file_edit to modify existing files. [TOOL_FILE_ALREADY_EXISTS]`,
+        reason: `File "${resolved}" already exists. Use file_edit to modify existing files.`,
+        errorKind: "file-already-exists",
+        errorCode: "TOOL_FILE_ALREADY_EXISTS",
       };
     }
 
@@ -59,16 +62,24 @@ export const fileWriteTool = defineTool({
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   guards: [createWorkspaceGuard(), createFileExistsGuard(), createSensitiveFileGuard()],
-  execute: async (input, ctx) => {
+  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
     if (!isWithinWorkspace) {
-      throw new Error(`"${resolvedPath}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`);
+      return createToolErrorResult({
+        kind: "workspace",
+        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
+        message: `"${resolvedPath}" is outside workspace "${ctx.workspaceRoot}"`,
+      });
     }
 
     try {
       return await sharedMutationQueue.enqueue(resolvedPath, async () => {
         if (existsSync(resolvedPath)) {
-          throw new Error(`File "${resolvedPath}" already exists. Use file_edit to modify existing files. [TOOL_FILE_ALREADY_EXISTS]`);
+          return createToolErrorResult({
+            kind: "file-already-exists",
+            code: "TOOL_FILE_ALREADY_EXISTS",
+            message: `File "${resolvedPath}" already exists. Use file_edit to modify existing files.`,
+          });
         }
 
         const parentDir = path.dirname(resolvedPath);
@@ -88,7 +99,10 @@ export const fileWriteTool = defineTool({
         return `File written to ${input.path}`;
       });
     } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
+      return createToolErrorResult({
+        kind: "execution",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   },
 });

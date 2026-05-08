@@ -1,7 +1,9 @@
 import { describe, expect, test, mock, beforeEach, afterEach, beforeAll } from "bun:test";
+import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { RipgrepNotFoundError } from "../ripgrep/service";
+import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
-import type { ToolDescriptor, ToolExecutionContext } from "../types";
+import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Helpers ───
 
@@ -37,6 +39,21 @@ function createMockRgService(overrides?: Partial<RipgrepService>): RipgrepServic
   };
 }
 
+function expectToolError(
+  result: unknown,
+  expected: { kind: ToolErrorKind; code: string; messageIncludes?: string },
+) {
+  const r = result as ToolExecutionResult;
+  expect(r.isError).toBe(true);
+  expect(inferToolErrorKindFromResult(r)).toBe(expected.kind);
+  const toolError = r.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError | undefined;
+  expect(toolError?.kind).toBe(expected.kind);
+  expect(toolError?.code).toBe(expected.code);
+  if (expected.messageIncludes) {
+    expect(r.output).toContain(expected.messageIncludes);
+  }
+}
+
 // ─── Fixtures ───
 
 const sampleNdjson = [
@@ -49,7 +66,7 @@ const originalSpawn = Bun.spawn;
 // ─── Tests ───
 
 describe("grep tool", () => {
-  let tool: ToolDescriptor;
+  let tool: ToolDescriptor<any, string | ToolExecutionResult>;
   let setRgService: (svc: RipgrepService) => void;
   let mockSpawn: ReturnType<typeof mock>;
 
@@ -97,7 +114,12 @@ describe("grep tool", () => {
     });
     setRgService(failing);
 
-    expect(tool.execute({ pattern: "foo" }, createMockCtx())).rejects.toThrow(RipgrepNotFoundError);
+    const result = await tool.execute({ pattern: "foo" }, createMockCtx());
+    expectToolError(result, {
+      kind: "grep-error",
+      code: "TOOL_GREP_ERROR",
+      messageIncludes: "grep failed: rg not found",
+    });
   });
 
   test("handles spawn error exit code >= 2", async () => {
@@ -109,8 +131,12 @@ describe("grep tool", () => {
     }));
 
     const result = await tool.execute({ pattern: "[" }, createMockCtx());
-    expect(result).toContain("rg exited with code 2");
-    expect(result).toContain("parse error: invalid pattern");
+    expectToolError(result, {
+      kind: "grep-error",
+      code: "TOOL_GREP_ERROR",
+      messageIncludes: "rg exited with code 2",
+    });
+    expect((result as unknown as ToolExecutionResult).output).toContain("parse error: invalid pattern");
   });
 
   test("handles spawn throw gracefully", async () => {
@@ -118,7 +144,12 @@ describe("grep tool", () => {
       throw new Error("ENOENT: spawn rg ENOENT");
     });
 
-    expect(tool.execute({ pattern: "foo" }, createMockCtx())).rejects.toThrow(/ENOENT/);
+    const result = await tool.execute({ pattern: "foo" }, createMockCtx());
+    expectToolError(result, {
+      kind: "grep-error",
+      code: "TOOL_GREP_ERROR",
+      messageIncludes: "ENOENT",
+    });
   });
 
   test("formats output in files_with_matches mode", async () => {

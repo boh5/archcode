@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
+import type { ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -28,7 +30,7 @@ export const gitDiffTool = defineTool({
     "Shows changes in the working directory (unstaged) or staging area (staged). Returns unified diff output.",
   inputSchema: GitDiffInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
-  execute: async (input, ctx) => {
+  execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const args = buildArgs(input.staged);
 
     try {
@@ -47,7 +49,10 @@ export const gitDiffTool = defineTool({
       ]);
 
       if (exitCode !== 0) {
-        throw new Error(`Git diff failed:\n${stderr}`);
+        return createToolErrorResult({
+          kind: "execution",
+          message: `Git diff failed:\n${stderr}`,
+        });
       }
 
       if (!stdout.trim()) {
@@ -56,10 +61,10 @@ export const gitDiffTool = defineTool({
 
       return stdout;
     } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error(String(error));
+      return createToolErrorResult({
+        kind: "execution",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   },
 });

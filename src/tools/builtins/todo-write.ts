@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
+import { createToolErrorResult } from "../errors";
+import type { ToolExecutionResult } from "../types";
 
 // ─── Constants ───
 
@@ -67,7 +69,7 @@ export const todoWriteTool = defineTool({
     "Replaces the full todo list with the given items. Each todo has content, status, and an optional id. If no id is provided, one is generated automatically.",
   inputSchema: TodoWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: true },
-  execute: (input, ctx) => {
+  execute: (input, ctx): string | ToolExecutionResult => {
     // 1. Generate deterministic IDs for items without id
     const todos = input.todos.map((todo, index) => ({
       ...todo,
@@ -84,13 +86,21 @@ export const todoWriteTool = defineTool({
       idSet.add(todo.id);
     }
     if (duplicates.size > 0) {
-      throw new Error(`Duplicate todo IDs: ${[...duplicates].join(", ")}`);
+      return createToolErrorResult({
+        kind: "todo-validation",
+        code: "TOOL_TODO_VALIDATION",
+        message: `Duplicate todo IDs: ${[...duplicates].join(", ")}`,
+      });
     }
 
     // 3. Check for >1 in_progress (store also validates, but this gives a clean error)
     const inProgressCount = todos.filter((t) => t.status === "in_progress").length;
     if (inProgressCount > 1) {
-      throw new Error("Only one todo can be in_progress");
+      return createToolErrorResult({
+        kind: "todo-validation",
+        code: "TOOL_TODO_VALIDATION",
+        message: "Only one todo can be in_progress",
+      });
     }
 
     // 4. Append to store (handles full-list replacement)
