@@ -4,7 +4,9 @@ import { randomUUID } from "node:crypto";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
-import { shouldSubmit } from "./App";
+import type { ToolConfirmationRequest } from "../tools/index";
+import { shouldSubmit, createConfirmationCallback } from "./App";
+import type { PendingConfirmation } from "./App";
 
 interface MockRound {
   finishReason: string;
@@ -66,6 +68,7 @@ describe("App orchestration", () => {
       {
         model: DUMMY_MODEL,
         toolRegistry: createRegistry([]),
+        allowedTools: [],
         store,
       },
       "Hi App",
@@ -99,6 +102,7 @@ describe("App orchestration", () => {
       {
         model: DUMMY_MODEL,
         toolRegistry: createRegistry([]),
+        allowedTools: [],
         store,
       },
       "trigger error",
@@ -108,5 +112,110 @@ describe("App orchestration", () => {
     const errorStep = steps.find((s) => s.error !== undefined);
     expect(errorStep).toBeDefined();
     expect(errorStep!.error).toContain("stream exploded");
+  });
+});
+
+describe("createConfirmationCallback", () => {
+  test("stores pending request and resolves on approve", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+
+    const callback = createConfirmationCallback(setPending);
+    const request: ToolConfirmationRequest = {
+      toolName: "bash",
+      toolCallId: "tc-1",
+      input: { command: "rm -rf /" },
+      description: "Run destructive shell command",
+    };
+
+    const promise = callback(request);
+
+    expect(pending).not.toBeNull();
+    expect(pending!.request.toolName).toBe("bash");
+    expect(pending!.request.description).toBe("Run destructive shell command");
+
+    pending!.resolve("approve");
+
+    const result = await promise;
+    expect(result).toBe("approve");
+  });
+
+  test("stores pending request and resolves on deny", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+
+    const callback = createConfirmationCallback(setPending);
+    const request: ToolConfirmationRequest = {
+      toolName: "write",
+      toolCallId: "tc-2",
+      input: { path: "/etc/hosts" },
+      description: "Write to system file",
+    };
+
+    const promise = callback(request);
+
+    expect(pending).not.toBeNull();
+    expect(pending!.request.toolName).toBe("write");
+
+    pending!.resolve("deny");
+
+    const result = await promise;
+    expect(result).toBe("deny");
+  });
+
+  test("clearing pending after resolve does not affect already-resolved promise", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+
+    const callback = createConfirmationCallback(setPending);
+    const promise = callback({
+      toolName: "test",
+      toolCallId: "tc-3",
+      input: {},
+      description: "test",
+    });
+
+    pending!.resolve("approve");
+    setPending(null);
+
+    const result = await promise;
+    expect(result).toBe("approve");
+  });
+
+  test("only one pending request at a time", async () => {
+    const pendingHistory: Array<PendingConfirmation | null> = [];
+    const setPending = (p: PendingConfirmation | null) => {
+      pendingHistory.push(p);
+    };
+
+    const callback = createConfirmationCallback(setPending);
+
+    const promise1 = callback({
+      toolName: "first",
+      toolCallId: "tc-a",
+      input: {},
+      description: "first request",
+    });
+
+    pendingHistory[0]!.resolve("deny");
+
+    await promise1;
+
+    const promise2 = callback({
+      toolName: "second",
+      toolCallId: "tc-b",
+      input: {},
+      description: "second request",
+    });
+
+    pendingHistory[pendingHistory.length - 1]!.resolve("approve");
+    const result2 = await promise2;
+    expect(result2).toBe("approve");
   });
 });

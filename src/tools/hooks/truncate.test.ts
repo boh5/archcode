@@ -17,6 +17,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     durationMs: overrides.durationMs ?? 42,
+    allowedTools: new Set<string>(),
+    workspaceRoot: "/tmp",
     ...overrides,
   };
 }

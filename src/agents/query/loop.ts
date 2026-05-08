@@ -1,5 +1,6 @@
 import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
+import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState, StreamEvent } from "../../store/types";
 import type { ToolExecutionContext } from "../../tools/index";
@@ -31,12 +32,14 @@ export async function runQueryLoop(
   const {
     model,
     toolRegistry,
-    agentTools,
+    allowedTools,
+    confirmPermission,
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
   } = options;
   const abort = options.abort ?? new AbortController().signal;
+  let resolvedWorkspaceRoot = options.workspaceRoot;
 
   let steps = 0;
   let lastText = "";
@@ -50,7 +53,7 @@ export async function runQueryLoop(
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
       const messages = store.getState().toModelMessages();
-      const resolved = toolRegistry.resolveForAgent(agentTools);
+      const resolved = toolRegistry.resolveForAgent(allowedTools);
 
       const result = _streamText({
         model,
@@ -70,7 +73,17 @@ export async function runQueryLoop(
       if (finishReason !== "tool-calls") break;
 
       const toolCalls = await result.toolCalls;
-      await executeToolCalls(toolCalls, toolRegistry, store, steps, abort);
+      resolvedWorkspaceRoot ??= await realpath(process.cwd());
+      await executeToolCalls(
+        toolCalls,
+        toolRegistry,
+        store,
+        steps,
+        abort,
+        allowedTools,
+        resolvedWorkspaceRoot,
+        confirmPermission,
+      );
       steps++;
     }
 
@@ -158,6 +171,9 @@ async function executeToolCalls(
   store: StoreApi<SessionStoreState>,
   step: number,
   abort: AbortSignal,
+  allowedTools: readonly string[],
+  workspaceRoot: string,
+  confirmPermission: QueryLoopOptions["confirmPermission"],
 ): Promise<void> {
   for (const toolCall of toolCalls) {
     const ctx: ToolExecutionContext = {
@@ -168,6 +184,9 @@ async function executeToolCalls(
       step,
       abort,
       startedAt: Date.now(),
+      allowedTools: new Set(allowedTools),
+      workspaceRoot,
+      ...(confirmPermission ? { confirmPermission } : {}),
     };
     const result = await registry.execute(toolCall, ctx);
     appendToolResult(store, toolCall, result.output, result.isError);

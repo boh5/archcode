@@ -1,6 +1,46 @@
 import { describe, expect, test } from "bun:test";
-import { inputReducer } from "./UserInput";
+import { inputReducer, handleConfirmationInput } from "./UserInput";
 import type { InputAction, InputState } from "./UserInput";
+
+describe("handleConfirmationInput", () => {
+  test("y resolves approve", () => {
+    expect(handleConfirmationInput("y", { escape: false })).toBe("approve");
+  });
+
+  test("Y resolves approve", () => {
+    expect(handleConfirmationInput("Y", { escape: false })).toBe("approve");
+  });
+
+  test("n resolves deny", () => {
+    expect(handleConfirmationInput("n", { escape: false })).toBe("deny");
+  });
+
+  test("N resolves deny", () => {
+    expect(handleConfirmationInput("N", { escape: false })).toBe("deny");
+  });
+
+  test("Escape resolves deny", () => {
+    expect(handleConfirmationInput("", { escape: true })).toBe("deny");
+  });
+
+  test("other input returns null (ignored)", () => {
+    expect(handleConfirmationInput("a", { escape: false })).toBeNull();
+    expect(handleConfirmationInput("1", { escape: false })).toBeNull();
+    expect(handleConfirmationInput(" ", { escape: false })).toBeNull();
+  });
+
+  test("Ctrl+C resolves deny", () => {
+    expect(handleConfirmationInput("", { ctrlC: true })).toBe("deny");
+  });
+
+  test("ctrlC takes priority over input", () => {
+    expect(handleConfirmationInput("y", { ctrlC: true })).toBe("deny");
+  });
+
+  test("escape takes priority over input", () => {
+    expect(handleConfirmationInput("y", { escape: true })).toBe("deny");
+  });
+});
 
 describe("inputReducer", () => {
   test("supports the initial empty state shape", () => {

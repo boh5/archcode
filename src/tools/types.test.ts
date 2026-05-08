@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type {
   MaybePromise,
-  ToolCapabilities,
+  ToolTraits,
   ToolExecutionResult,
   ToolExecutionContext,
   Logger,
@@ -9,6 +9,11 @@ import type {
   AfterHook,
   ToolDescriptor,
   ToolCallLike,
+  GuardDecision,
+  GuardHook,
+  ToolConfirmationRequest,
+  ToolConfirmationCallback,
+  PermissionErrorCode,
 } from "./types";
 import { DuplicateToolError } from "./types";
 
@@ -34,18 +39,18 @@ describe("DuplicateToolError", () => {
 
 // ─── Compile-time type assertions ───
 
-test("ToolCapabilities requires all fields at compile time", () => {
+test("ToolTraits requires all fields at compile time", () => {
   // @ts-expect-error — missing `readOnly`
-  const _bad1: ToolCapabilities = { destructive: false, concurrencySafe: true };
+  const _bad1: ToolTraits = { destructive: false, concurrencySafe: true };
 
   // @ts-expect-error — missing `destructive`
-  const _bad2: ToolCapabilities = { readOnly: true, concurrencySafe: false };
+  const _bad2: ToolTraits = { readOnly: true, concurrencySafe: false };
 
   // @ts-expect-error — missing `concurrencySafe`
-  const _bad3: ToolCapabilities = { readOnly: true, destructive: false };
+  const _bad3: ToolTraits = { readOnly: true, destructive: false };
 
   // Valid — all fields present
-  const _good: ToolCapabilities = {
+  const _good: ToolTraits = {
     readOnly: true,
     destructive: false,
     concurrencySafe: true,
@@ -112,7 +117,7 @@ test("BeforeHook and AfterHook accept void return", () => {
 });
 
 test("ToolDescriptor requires all fields", () => {
-  // @ts-expect-error — missing `capabilities`
+  // @ts-expect-error — missing `traits`
   const _bad: ToolDescriptor = {
     name: "test",
     description: "A test tool",
@@ -125,9 +130,148 @@ test("ToolDescriptor requires all fields", () => {
     name: "test",
     description: "A test tool",
     inputSchema: {} as any,
-    capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+    traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (_input, _ctx) => "ok",
   };
 
   expect(_good.name).toBe("test");
+});
+
+// ─── New Permission Types ───
+
+describe("GuardDecision", () => {
+  test("accepts allow outcome", () => {
+    const decision: GuardDecision = { outcome: "allow" };
+    expect(decision.outcome).toBe("allow");
+  });
+
+  test("accepts deny outcome with reason", () => {
+    const decision: GuardDecision = { outcome: "deny", reason: "not allowed" };
+    expect(decision.outcome).toBe("deny");
+    expect(decision.reason).toBe("not allowed");
+  });
+
+  test("accepts ask outcome without reason", () => {
+    const decision: GuardDecision = { outcome: "ask" };
+    expect(decision.outcome).toBe("ask");
+  });
+});
+
+describe("GuardHook", () => {
+  test("is a function returning MaybePromise<GuardDecision>", () => {
+    const hook: GuardHook = async (_input, _ctx) => {
+      return { outcome: "allow" };
+    };
+    expect(typeof hook).toBe("function");
+  });
+});
+
+describe("ToolConfirmationRequest", () => {
+  test("has all required fields", () => {
+    const request: ToolConfirmationRequest = {
+      toolName: "file_write",
+      toolCallId: "call_1",
+      input: { path: "/tmp/test.txt" },
+      description: "Write to /tmp/test.txt",
+    };
+    expect(request.toolName).toBe("file_write");
+    expect(request.toolCallId).toBe("call_1");
+    expect(request.description).toBe("Write to /tmp/test.txt");
+  });
+});
+
+describe("ToolConfirmationCallback", () => {
+  test("returns a promise with approval result", async () => {
+    const cb: ToolConfirmationCallback = async (_request) => "approve";
+    const result = await cb({
+      toolName: "test",
+      toolCallId: "call_1",
+      input: {},
+      description: "test",
+    });
+    expect(result).toBe("approve");
+  });
+});
+
+describe("PermissionErrorCode", () => {
+  test("includes all expected error codes", () => {
+    const codes: PermissionErrorCode[] = [
+      "TOOL_UNKNOWN",
+      "TOOL_NOT_ALLOWED",
+      "TOOL_PERMISSION_DENIED",
+      "TOOL_PERMISSION_CONFIRMATION_DENIED",
+      "TOOL_PERMISSION_CONFIRMATION_TIMEOUT",
+      "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE",
+      "TOOL_PERMISSION_CONFIRMATION_FAILED",
+      "TOOL_PREPARE_INPUT_FAILED",
+    ];
+    expect(codes).toHaveLength(8);
+    expect(codes).toContain("TOOL_UNKNOWN");
+    expect(codes).toContain("TOOL_PREPARE_INPUT_FAILED");
+  });
+});
+
+// ─── Extended ToolExecutionContext ───
+
+test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
+  const ctx: ToolExecutionContext = {
+    store: {} as any,
+    toolName: "test",
+    toolCallId: "call_1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    agentName: "agent",
+    startedAt: Date.now(),
+    durationMs: 10,
+    allowedTools: new Set(["echo"]),
+    workspaceRoot: "/tmp/workspace",
+  };
+  expect(ctx.allowedTools.has("echo")).toBe(true);
+  expect(ctx.workspaceRoot).toBe("/tmp/workspace");
+});
+
+test("ToolExecutionContext confirmPermission is optional", () => {
+  const ctx: ToolExecutionContext = {
+    store: {} as any,
+    toolName: "test",
+    toolCallId: "call_1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set(),
+    workspaceRoot: "/tmp",
+  };
+  expect(ctx.confirmPermission).toBeUndefined();
+});
+
+// ─── Extended ToolDescriptor ───
+
+test("ToolDescriptor accepts prepareInput and guards", () => {
+  const _desc: ToolDescriptor = {
+    name: "test",
+    description: "A test tool",
+    inputSchema: {} as any,
+    traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    prepareInput: async (raw, _ctx) => raw,
+    guards: [
+      async (_input, _ctx) => ({ outcome: "allow" as const }),
+    ],
+    execute: async (_input, _ctx) => "ok",
+  };
+  expect(_desc.prepareInput).toBeDefined();
+  expect(_desc.guards).toHaveLength(1);
+});
+
+test("ToolDescriptor prepareInput and guards are optional", () => {
+  const _desc: ToolDescriptor = {
+    name: "test",
+    description: "A test tool",
+    inputSchema: {} as any,
+    traits: { readOnly: true, destructive: false, concurrencySafe: true },
+    execute: async (_input, _ctx) => "ok",
+  };
+  expect(_desc.prepareInput).toBeUndefined();
+  expect(_desc.guards).toBeUndefined();
 });

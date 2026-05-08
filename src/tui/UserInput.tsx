@@ -1,5 +1,6 @@
 import { useReducer } from "react";
 import { Box, Text, useInput } from "ink";
+import type { ToolConfirmationRequest } from "../tools/index";
 
 export interface InputState {
   text: string;
@@ -14,6 +15,19 @@ export type InputAction =
 export interface UserInputProps {
   onSubmit: (text: string) => void | Promise<void>;
   isRunning: boolean;
+  confirmationRequest?: ToolConfirmationRequest | null;
+  onConfirm?: (result: "approve" | "deny") => void;
+}
+
+export function handleConfirmationInput(
+  input: string,
+  key: { escape?: boolean; ctrlC?: boolean },
+): "approve" | "deny" | null {
+  if (key.escape) return "deny";
+  if (key.ctrlC) return "deny";
+  if (input === "y" || input === "Y") return "approve";
+  if (input === "n" || input === "N") return "deny";
+  return null;
 }
 
 export function inputReducer(state: InputState, action: InputAction): InputState {
@@ -29,10 +43,18 @@ export function inputReducer(state: InputState, action: InputAction): InputState
   }
 }
 
-export function UserInput({ onSubmit, isRunning }: UserInputProps) {
+export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm }: UserInputProps) {
   const [state, dispatch] = useReducer(inputReducer, { text: "" });
 
   useInput((input, key) => {
+    if (confirmationRequest) {
+      const result = handleConfirmationInput(input, key);
+      if (result && onConfirm) {
+        onConfirm(result);
+      }
+      return;
+    }
+
     if (isRunning) return;
 
     if (key.return) {
@@ -53,6 +75,15 @@ export function UserInput({ onSubmit, isRunning }: UserInputProps) {
       }
     }
   });
+
+  if (confirmationRequest) {
+    return (
+      <Box marginTop={1} flexDirection="column">
+        <Text color="yellow">{confirmationRequest.description}</Text>
+        <Text dimColor>Allow? [y/n]</Text>
+      </Box>
+    );
+  }
 
   return (
     <Box marginTop={1} flexDirection="column">

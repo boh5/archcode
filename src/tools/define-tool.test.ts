@@ -4,6 +4,8 @@ import { defineTool } from "./define-tool.js";
 import type {
   ToolDescriptor,
   ToolExecutionContext,
+  GuardHook,
+  GuardDecision,
 } from "./types.js";
 
 // Minimal mock for ToolExecutionContext
@@ -16,6 +18,8 @@ function mockCtx(): ToolExecutionContext {
     step: 1,
     abort: new AbortController().signal,
     startedAt: Date.now(),
+    allowedTools: new Set(),
+    workspaceRoot: "/tmp",
   };
 }
 
@@ -27,7 +31,7 @@ describe("defineTool", () => {
       name: "file_read",
       description: "Read file contents",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,
@@ -40,7 +44,7 @@ describe("defineTool", () => {
     expect(descriptor.name).toBe("file_read");
     expect(descriptor.description).toBe("Read file contents");
     expect(descriptor.inputSchema).toBe(schema);
-    expect(descriptor.capabilities).toEqual({
+    expect(descriptor.traits).toEqual({
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
@@ -58,7 +62,7 @@ describe("defineTool", () => {
       name: "file_read",
       description: "Read file",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,
@@ -92,7 +96,7 @@ describe("defineTool", () => {
       name: "compute",
       description: "Compute something",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: false,
@@ -119,7 +123,7 @@ describe("defineTool", () => {
       name: "echo",
       description: "Echo input",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,
@@ -140,7 +144,7 @@ describe("defineTool", () => {
       name: "fail_tool",
       description: "Always fails",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,
@@ -162,7 +166,7 @@ describe("defineTool", () => {
       name: "type_check",
       description: "Type safety check",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,
@@ -174,6 +178,136 @@ describe("defineTool", () => {
     });
   });
 
+  test("preserves prepareInput function", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const prepareInput = async (
+      raw: unknown,
+      _ctx: ToolExecutionContext,
+    ) => {
+      if (typeof raw === "object" && raw !== null && "path" in raw) {
+        return { path: String((raw as any).path) };
+      }
+      return raw;
+    };
+
+    const descriptor = defineTool({
+      name: "file_read",
+      description: "Read file",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      prepareInput,
+      async execute(input, _ctx) {
+        return `read: ${input.path}`;
+      },
+    });
+
+    expect(descriptor.prepareInput).toBe(prepareInput);
+    expect(typeof descriptor.prepareInput!).toBe("function");
+
+    const result = descriptor.prepareInput!({ path: "test.txt" }, mockCtx());
+    expect(result).resolves.toEqual({ path: "test.txt" });
+  });
+
+  test("preserves guards array", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const guardHook: GuardHook = async (
+      _input: unknown,
+      _ctx: ToolExecutionContext,
+    ): Promise<GuardDecision> => {
+      return { outcome: "allow" };
+    };
+
+    const descriptor = defineTool({
+      name: "file_read",
+      description: "Read file",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      guards: [guardHook],
+      async execute(input, _ctx) {
+        return `read: ${input.path}`;
+      },
+    });
+
+    expect(descriptor.guards).toHaveLength(1);
+    expect(descriptor.guards![0]).toBe(guardHook);
+  });
+
+  test("preserves both prepareInput and guards with hooks", () => {
+    const schema = z.object({ x: z.number() }).strict();
+
+    const prepareInput = async (
+      raw: unknown,
+      _ctx: ToolExecutionContext,
+    ) => {
+      if (typeof raw === "object" && raw !== null && "x" in raw) {
+        return { x: Number((raw as any).x) };
+      }
+      return raw;
+    };
+
+    const guardHook: GuardHook = async (
+      _input: unknown,
+      _ctx: ToolExecutionContext,
+    ): Promise<GuardDecision> => {
+      return { outcome: "allow" };
+    };
+
+    const beforeFn = async (_input: unknown, _ctx: ToolExecutionContext) => {
+      return { x: 42 };
+    };
+
+    const descriptor = defineTool({
+      name: "compute",
+      description: "Compute",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: false,
+      },
+      hooks: { before: [beforeFn] },
+      prepareInput,
+      guards: [guardHook],
+      async execute(input, _ctx) {
+        return `result: ${input.x}`;
+      },
+    });
+
+    expect(descriptor.prepareInput).toBe(prepareInput);
+    expect(descriptor.guards).toHaveLength(1);
+    expect(descriptor.guards![0]).toBe(guardHook);
+    expect(descriptor.hooks?.before).toHaveLength(1);
+    expect(typeof descriptor.execute).toBe("function");
+
+    const minimal = defineTool({
+      name: "minimal",
+      description: "Minimal",
+      inputSchema: schema,
+      traits: {
+        readOnly: false,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      async execute(input, _ctx) {
+        return `ok ${input.x}`;
+      },
+    });
+
+    expect(minimal.prepareInput).toBeUndefined();
+    expect(minimal.guards).toBeUndefined();
+    expect(minimal.hooks).toBeUndefined();
+  });
+
   test("returns a value assignable to ToolDescriptor", () => {
     const schema = z.object({ url: z.string() }).strict();
 
@@ -181,7 +315,7 @@ describe("defineTool", () => {
       name: "fetch",
       description: "Fetch URL",
       inputSchema: schema,
-      capabilities: {
+      traits: {
         readOnly: true,
         destructive: false,
         concurrencySafe: true,

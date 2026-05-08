@@ -6,9 +6,9 @@ import type { ZodTypeAny } from "zod";
 
 export type MaybePromise<T> = T | Promise<T>;
 
-// ─── Capabilities ───
+// ─── Traits ───
 
-export interface ToolCapabilities {
+export interface ToolTraits {
   readOnly: boolean;
   destructive: boolean;
   concurrencySafe: boolean;
@@ -32,6 +32,9 @@ export interface ToolExecutionContext {
   agentName?: string;
   startedAt: number;
   durationMs?: number;
+  allowedTools: ReadonlySet<string>;
+  workspaceRoot: string;
+  confirmPermission?: ToolConfirmationCallback;
 }
 
 // ─── Logger ───
@@ -54,17 +57,52 @@ export type AfterHook = (
   ctx: ToolExecutionContext,
 ) => MaybePromise<ToolExecutionResult | void>;
 
+// ─── Guards & Permissions ───
+
+export type GuardDecision = {
+  outcome: "allow" | "deny" | "ask";
+  reason?: string;
+};
+
+export type GuardHook = (
+  input: unknown,
+  ctx: ToolExecutionContext,
+) => MaybePromise<GuardDecision>;
+
+export interface ToolConfirmationRequest {
+  toolName: string;
+  toolCallId: string;
+  input: unknown;
+  description: string;
+}
+
+export type ToolConfirmationCallback = (
+  request: ToolConfirmationRequest,
+) => Promise<"approve" | "deny" | "timeout">;
+
+export type PermissionErrorCode =
+  | "TOOL_UNKNOWN"
+  | "TOOL_NOT_ALLOWED"
+  | "TOOL_PERMISSION_DENIED"
+  | "TOOL_PERMISSION_CONFIRMATION_DENIED"
+  | "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"
+  | "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE"
+  | "TOOL_PERMISSION_CONFIRMATION_FAILED"
+  | "TOOL_PREPARE_INPUT_FAILED";
+
 // ─── Descriptor ───
 
 export interface ToolDescriptor<I = any> {
   name: string;
   description: string;
   inputSchema: ZodTypeAny;
-  capabilities: ToolCapabilities;
+  traits: ToolTraits;
   hooks?: {
     before?: BeforeHook[];
     after?: AfterHook[];
   };
+  prepareInput?: (raw: unknown, ctx: ToolExecutionContext) => MaybePromise<unknown>;
+  guards?: GuardHook[];
   execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<string>;
 }
 

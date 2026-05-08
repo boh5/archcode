@@ -6,11 +6,16 @@ import { createSessionStore } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
+import type { ToolConfirmationCallback } from "../tools/index";
 import { runQueryLoop } from "./query/loop";
 
 export interface Agent {
   readonly store: StoreApi<SessionStoreState>;
-  run(userMessage: string, abort?: AbortSignal): Promise<AgentResult>;
+  run(
+    userMessage: string,
+    abort?: AbortSignal,
+    confirmPermission?: ToolConfirmationCallback,
+  ): Promise<AgentResult>;
 }
 
 export interface AgentResult {
@@ -37,6 +42,7 @@ export class AgentRunningError extends Error {
 export interface TestAgentOptions {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
+  readonly confirmPermission?: ToolConfirmationCallback;
 }
 
 export class TestAgent implements Agent {
@@ -44,11 +50,13 @@ export class TestAgent implements Agent {
   private providerRegistry: ProviderRegistry;
   private toolRegistry: ToolRegistry;
   private modelInfo: ModelInfo;
+  private confirmPermission: ToolConfirmationCallback | undefined;
   private running = false;
 
   constructor(options: TestAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
+    this.confirmPermission = options.confirmPermission;
 
     const modelIds = this.providerRegistry.modelIds;
     if (modelIds.length === 0) {
@@ -59,7 +67,11 @@ export class TestAgent implements Agent {
     this.store = createSessionStore(randomUUID());
   }
 
-  async run(userMessage: string, abort?: AbortSignal): Promise<AgentResult> {
+  async run(
+    userMessage: string,
+    abort?: AbortSignal,
+    confirmPermission?: ToolConfirmationCallback,
+  ): Promise<AgentResult> {
     if (this.running) {
       throw new AgentRunningError();
     }
@@ -70,8 +82,10 @@ export class TestAgent implements Agent {
         {
           model: this.modelInfo.model,
           toolRegistry: this.toolRegistry,
-          // TODO: define allowed tool names once builtin tools are implemented
-          agentTools: [],
+          // Default allowed tools is empty until built-in tool definitions or
+          // agent definitions exist to pull tool lists from.
+          allowedTools: [],
+          confirmPermission: confirmPermission ?? this.confirmPermission,
           abort,
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           store: this.store,

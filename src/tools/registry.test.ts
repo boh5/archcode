@@ -11,12 +11,11 @@ import type {
   Logger,
   ToolExecutionContext,
   ToolCallLike,
-  ToolExecutionResult,
 } from "./types.js";
 import { DuplicateToolError } from "./types.js";
 import { createExecutionLogger } from "./hooks/logger.js";
 import { createOutputTruncator } from "./hooks/truncate.js";
-import { createPermissionGuard } from "./hooks/permission.js";
+
 
 // ─── Test helpers ───
 
@@ -25,7 +24,7 @@ function makeDescriptor(name: string): ToolDescriptor {
     name,
     description: `Tool: ${name}`,
     inputSchema: z.object({ msg: z.string() }).strict(),
-    capabilities: {
+    traits: {
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
@@ -117,6 +116,7 @@ describe("ToolRegistry", () => {
     test("initializes to empty arrays", () => {
       expect(registry.globalHooks.before).toEqual([]);
       expect(registry.globalHooks.after).toEqual([]);
+      expect(registry.globalGuards).toEqual([]);
     });
   });
 
@@ -134,6 +134,8 @@ describe("ToolRegistry", () => {
       step: 0,
       abort: ac.signal,
       startedAt: 0,
+      allowedTools: new Set(["echo"]),
+      workspaceRoot: "/tmp",
       ...overrides,
     };
   }
@@ -150,6 +152,13 @@ describe("ToolRegistry", () => {
   }
 
   describe("execute()", () => {
+    function makeSpiedDescriptor(name: string): ToolDescriptor & { execute: ReturnType<typeof mock> } {
+      return {
+        ...makeDescriptor(name),
+        execute: mock(async (input: unknown) => `echo: ${(input as { msg: string }).msg}`),
+      };
+    }
+
     // 1. Unknown tool returns error result (no throw)
     test("unknown tool returns error result, no throw", async () => {
       const ctx = makeContext({ toolName: "missing" });
@@ -160,6 +169,23 @@ describe("ToolRegistry", () => {
       expect(result.isError).toBe(true);
       expect(result.output).toContain("missing");
       expect(result.output).toContain("not registered");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_UNKNOWN");
+      expect(result.meta?.skippedExecution).toBe(true);
+    });
+
+    test("unknown tool returns TOOL_UNKNOWN even when explicitly allowed", async () => {
+      registry.register(makeSpiedDescriptor("safeTool"));
+      const ctx = makeContext({
+        toolName: "missingTool",
+        allowedTools: new Set(["safeTool", "missingTool"]),
+      });
+      const call = makeToolCall({ toolName: "missingTool" });
+
+      const result = await registry.execute(call, ctx);
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_UNKNOWN");
+      expect(result.meta?.skippedExecution).toBe(true);
     });
 
     // 2. Invalid input returns error result (no throw)
@@ -192,13 +218,13 @@ describe("ToolRegistry", () => {
         name: "crash",
         description: "always crashes",
         inputSchema: z.object({}).strict(),
-        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
         async execute() {
           throw new Error("BOOM");
         },
       };
       registry.register(desc);
-      const ctx = makeContext({ toolName: "crash" });
+      const ctx = makeContext({ toolName: "crash", allowedTools: new Set(["crash"]) });
       const call = makeToolCall({ toolName: "crash", input: {} });
 
       const result = await registry.execute(call, ctx);
@@ -365,6 +391,11 @@ describe("ToolRegistry", () => {
     test("hook ordering is correct", async () => {
       const order: string[] = [];
 
+      registry.globalGuards.push(async () => {
+        order.push("global-guard");
+        return { outcome: "allow" };
+      });
+
       registry.globalHooks.before.push(async () => {
         order.push("global-before");
       });
@@ -383,6 +414,16 @@ describe("ToolRegistry", () => {
           },
         ],
       };
+      desc.prepareInput = async (raw) => {
+        order.push("prepare-input");
+        return raw;
+      };
+      desc.guards = [
+        async () => {
+          order.push("per-tool-guard");
+          return { outcome: "allow" };
+        },
+      ];
       desc.execute = async (input) => {
         order.push("executor");
         return `echo: ${(input as { msg: string }).msg}`;
@@ -400,6 +441,9 @@ describe("ToolRegistry", () => {
       await registry.execute(call, ctx);
 
       expect(order).toEqual([
+        "prepare-input",
+        "global-guard",
+        "per-tool-guard",
         "global-before",
         "per-tool-before",
         "executor",
@@ -417,7 +461,7 @@ describe("ToolRegistry", () => {
         name: "capture",
         description: "captures ctx",
         inputSchema: z.object({}).strict(),
-        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
         async execute(_input, ctx) {
           capturedCtx = ctx;
           return "ok";
@@ -431,6 +475,7 @@ describe("ToolRegistry", () => {
         toolCallId: "my-call-id",
         step: 5,
         abort: ac.signal,
+        allowedTools: new Set(["capture"]),
       });
       const call = makeToolCall({
         toolName: "capture",
@@ -458,7 +503,7 @@ describe("ToolRegistry", () => {
         name: "check-abort",
         description: "checks abort signal",
         inputSchema: z.object({}).strict(),
-        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
         async execute(_input, ctx) {
           capturedSignal = ctx.abort;
           return "ok";
@@ -470,6 +515,7 @@ describe("ToolRegistry", () => {
       const ctx = makeContext({
         toolName: "check-abort",
         abort: ac.signal,
+        allowedTools: new Set(["check-abort"]),
       });
       const call = makeToolCall({ toolName: "check-abort", input: {} });
 
@@ -497,7 +543,7 @@ describe("ToolRegistry", () => {
         name: "crash",
         description: "crashes",
         inputSchema: z.object({}).strict(),
-        capabilities: { readOnly: true, destructive: false, concurrencySafe: true },
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
         async execute() {
           throw new Error("bang");
         },
@@ -506,9 +552,430 @@ describe("ToolRegistry", () => {
       await expect(
         registry.execute(
           makeToolCall({ toolName: "crash", input: {} }),
-          makeContext({ toolName: "crash" }),
+          makeContext({ toolName: "crash", allowedTools: new Set(["crash"]) }),
         ),
       ).resolves.toBeDefined();
+    });
+
+    test("prepareInput runs before parse and failure returns permission error through global after only", async () => {
+      const order: string[] = [];
+      const desc = makeDescriptor("echo");
+      desc.prepareInput = async () => {
+        order.push("prepare-input");
+        throw new Error("prepare failed");
+      };
+      desc.hooks = {
+        before: [async () => order.push("per-tool-before")],
+        after: [async (result) => {
+          order.push("per-tool-after");
+          return result;
+        }],
+      };
+      desc.execute = async () => {
+        order.push("executor");
+        return "ok";
+      };
+      registry.register(desc);
+      registry.globalHooks.before.push(async () => {
+        order.push("global-before");
+      });
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return { ...result, output: `${result.output} wrapped` };
+      });
+
+      const result = await registry.execute(makeToolCall(), makeContext());
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("prepare failed wrapped");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(order).toEqual(["prepare-input", "global-after"]);
+    });
+
+    test("registered but disallowed tool skips execution and runs global after only", async () => {
+      const order: string[] = [];
+      const desc = makeDescriptor("echo");
+      desc.hooks = {
+        before: [async () => order.push("per-tool-before")],
+        after: [async (result) => {
+          order.push("per-tool-after");
+          return result;
+        }],
+      };
+      desc.execute = async () => {
+        order.push("executor");
+        return "ok";
+      };
+      registry.register(desc);
+      registry.globalHooks.before.push(async () => {
+        order.push("global-before");
+      });
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const result = await registry.execute(makeToolCall(), makeContext({ allowedTools: new Set() }));
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_NOT_ALLOWED");
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(order).toEqual(["global-after"]);
+    });
+
+    test("registered destructiveTool not in allowedTools returns TOOL_NOT_ALLOWED and skips executor spy", async () => {
+      const desc = makeSpiedDescriptor("destructiveTool");
+      desc.traits = { readOnly: false, destructive: true, concurrencySafe: false };
+      registry.register(desc);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "destructiveTool" }),
+        makeContext({ toolName: "destructiveTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_NOT_ALLOWED");
+      expect(desc.execute).not.toHaveBeenCalled();
+    });
+
+    test("guard deny uses stable permission metadata and skips hooks plus executor", async () => {
+      const order: string[] = [];
+      const desc = makeDescriptor("echo");
+      desc.guards = [async () => {
+        order.push("per-tool-guard");
+        return { outcome: "allow" };
+      }];
+      desc.hooks = { before: [async () => order.push("per-tool-before")] };
+      desc.execute = async () => {
+        order.push("executor");
+        return "ok";
+      };
+      registry.register(desc);
+      registry.globalGuards.push(async () => {
+        order.push("global-guard");
+        return { outcome: "deny", reason: "blocked" };
+      });
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const result = await registry.execute(makeToolCall(), makeContext());
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("blocked");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(order).toEqual(["global-guard", "per-tool-guard", "global-after"]);
+    });
+
+    test("guard deny skips before executor per-tool after and still runs global after", async () => {
+      const order: string[] = [];
+      const desc = makeSpiedDescriptor("sensitiveReadTool");
+      desc.hooks = {
+        before: [async () => order.push("per-tool-before")],
+        after: [async (result) => {
+          order.push("per-tool-after");
+          return result;
+        }],
+      };
+      desc.guards = [async () => {
+        order.push("descriptor-guard");
+        return { outcome: "deny", reason: "sensitive read denied" };
+      }];
+      registry.register(desc);
+      registry.globalHooks.before.push(async () => order.push("global-before"));
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "sensitiveReadTool" }),
+        makeContext({ toolName: "sensitiveReadTool", allowedTools: new Set(["sensitiveReadTool"]) }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+      expect(desc.execute).not.toHaveBeenCalled();
+      expect(order).toEqual(["descriptor-guard", "global-after"]);
+    });
+
+    test("ask decision calls confirmation callback and approval continues", async () => {
+      const order: string[] = [];
+      registry.globalGuards.push(async () => {
+        order.push("global-guard");
+        return { outcome: "ask", reason: "needs approval" };
+      });
+      registry.globalHooks.before.push(async () => {
+        order.push("global-before");
+      });
+      const desc = makeDescriptor("echo");
+      desc.execute = async () => {
+        order.push("executor");
+        return "approved";
+      };
+      registry.register(desc);
+      const confirmPermission = mock(async (request) => {
+        expect(request).toEqual({
+          toolName: "echo",
+          toolCallId: "call-1",
+          input: { msg: "hello" },
+          description: "Tool: echo",
+        });
+        order.push("confirm");
+        return "approve" as const;
+      });
+
+      const result = await registry.execute(makeToolCall(), makeContext({ confirmPermission }));
+
+      expect(result).toEqual({ output: "approved", isError: false });
+      expect(confirmPermission).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["global-guard", "confirm", "global-before", "executor"]);
+    });
+
+    test("guard ask approve runs before hooks and executor for safeTool", async () => {
+      const order: string[] = [];
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.guards = [async () => {
+        order.push("descriptor-guard");
+        return { outcome: "ask", reason: "confirm safe tool" };
+      }];
+      desc.hooks = {
+        before: [async () => {
+          order.push("per-tool-before");
+        }],
+      };
+      desc.execute = mock(async () => {
+        order.push("executor");
+        return "approved";
+      });
+      registry.register(desc);
+      registry.globalHooks.before.push(async () => {
+        order.push("global-before");
+      });
+      const confirmPermission = mock(async () => {
+        order.push("confirm");
+        return "approve" as const;
+      });
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]), confirmPermission }),
+      );
+
+      expect(result).toEqual({ output: "approved", isError: false });
+      expect(desc.execute).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["descriptor-guard", "confirm", "global-before", "per-tool-before", "executor"]);
+    });
+
+    test.each([
+      ["deny", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
+      ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
+    ] as const)("confirmation %s returns %s and skips execution", async (decision, code) => {
+      const order: string[] = [];
+      registry.register({
+        ...makeDescriptor("echo"),
+        execute: async () => {
+          order.push("executor");
+          return "nope";
+        },
+      });
+      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ confirmPermission: async () => decision }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe(code);
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(order).toEqual(["global-after"]);
+    });
+
+    test("ask decision without confirmation callback returns unavailable", async () => {
+      registry.register(makeDescriptor("echo"));
+      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+
+      const result = await registry.execute(makeToolCall(), makeContext());
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE");
+      expect(result.meta?.skippedExecution).toBe(true);
+    });
+
+    test("confirmation rejection returns failed permission result", async () => {
+      registry.register(makeDescriptor("echo"));
+      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ confirmPermission: async () => { throw new Error("ui failed"); } }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("ui failed");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_FAILED");
+      expect(result.meta?.skippedExecution).toBe(true);
+    });
+
+    test("descriptor with no guards defaults to allow when global guards allow", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      registry.register(desc);
+      registry.globalGuards.push(async () => ({ outcome: "allow" }));
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool", input: { msg: "open" } }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result).toEqual({ output: "echo: open", isError: false });
+      expect(desc.execute).toHaveBeenCalledTimes(1);
+    });
+
+    test("no global guards and no descriptor guards defaults to allow", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      registry.register(desc);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool", input: { msg: "open" } }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result).toEqual({ output: "echo: open", isError: false });
+      expect(desc.execute).toHaveBeenCalledTimes(1);
+    });
+
+    test("safeParse failure preserves existing non-permission error behavior", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      registry.register(desc);
+      const globalAfter = mock(async (result) => result);
+      registry.globalHooks.after.push(globalAfter);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool", input: { bad: 1 } }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("invalid_type");
+      expect(result.meta).toBeUndefined();
+      expect(desc.execute).not.toHaveBeenCalled();
+      expect(globalAfter).not.toHaveBeenCalled();
+    });
+
+    test("global after hook throwing on permission denied preserves current global-after semantics", async () => {
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.guards = [async () => ({ outcome: "deny", reason: "blocked" })];
+      registry.register(desc);
+      const secondAfter = mock(async (result) => result);
+      registry.globalHooks.after.push(async () => {
+        throw new Error("global after denied failure");
+      });
+      registry.globalHooks.after.push(secondAfter);
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result).toEqual({ output: "global after denied failure", isError: true });
+      expect(desc.execute).not.toHaveBeenCalled();
+      expect(secondAfter).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([
+      ["deny", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
+      ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
+      ["unavailable", "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE"],
+      ["failed", "TOOL_PERMISSION_CONFIRMATION_FAILED"],
+    ] as const)("guard ask %s returns %s and skips execution", async (scenario, code) => {
+      const desc = makeSpiedDescriptor("sensitiveReadTool");
+      desc.guards = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
+      registry.register(desc);
+
+      const confirmPermission =
+        scenario === "deny"
+          ? mock(async () => "deny" as const)
+          : scenario === "timeout"
+            ? mock(async () => "timeout" as const)
+            : scenario === "failed"
+              ? mock(async () => { throw new Error("confirmation failed"); })
+              : undefined;
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "sensitiveReadTool" }),
+        makeContext({
+          toolName: "sensitiveReadTool",
+          allowedTools: new Set(["sensitiveReadTool"]),
+          ...(confirmPermission ? { confirmPermission } : {}),
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe(code);
+      expect(result.meta?.skippedExecution).toBe(true);
+      expect(desc.execute).not.toHaveBeenCalled();
+    });
+
+    test("prepareInput failure returns TOOL_PREPARE_INPUT_FAILED and runs global after", async () => {
+      const order: string[] = [];
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.prepareInput = async () => {
+        order.push("prepare-input");
+        throw new Error("bad mirror input");
+      };
+      registry.register(desc);
+      registry.globalHooks.after.push(async (result) => {
+        order.push("global-after");
+        return result;
+      });
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({ toolName: "safeTool", allowedTools: new Set(["safeTool"]) }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe("bad mirror input");
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PREPARE_INPUT_FAILED");
+      expect(desc.execute).not.toHaveBeenCalled();
+      expect(order).toEqual(["prepare-input", "global-after"]);
+    });
+
+    test("global guards run before descriptor guards", async () => {
+      const order: string[] = [];
+      registry.globalGuards.push(async () => {
+        order.push("global-guard-1");
+        return { outcome: "allow" };
+      });
+      registry.globalGuards.push(async () => {
+        order.push("global-guard-2");
+        return { outcome: "ask", reason: "global ask" };
+      });
+      const desc = makeSpiedDescriptor("safeTool");
+      desc.guards = [async () => {
+        order.push("descriptor-guard");
+        return { outcome: "allow" };
+      }];
+      registry.register(desc);
+
+      await registry.execute(
+        makeToolCall({ toolName: "safeTool" }),
+        makeContext({
+          toolName: "safeTool",
+          allowedTools: new Set(["safeTool"]),
+          confirmPermission: async () => "approve",
+        }),
+      );
+
+      expect(order).toEqual(["global-guard-1", "global-guard-2", "descriptor-guard"]);
     });
   });
 });
@@ -695,6 +1162,8 @@ describe("hook integration with registry", () => {
       step: 0,
       abort: ac.signal,
       startedAt: 0,
+      allowedTools: new Set(["echo"]),
+      workspaceRoot: "/tmp",
       ...overrides,
     };
   }
@@ -780,7 +1249,14 @@ describe("hook integration with registry", () => {
   test("permission guard runs before executor without mutating input", async () => {
     const registry = createRegistry();
     registry.register(makeDescriptor("echo"));
-    registry.globalHooks.before.push(createPermissionGuard());
+    const order: string[] = [];
+    registry.globalGuards.push(async () => {
+      order.push("guard");
+      return { outcome: "allow" };
+    });
+    registry.globalHooks.before.push(async () => {
+      order.push("before");
+    });
 
     const ctx = makeContext();
     const call = makeToolCall({ input: { msg: "hello" } });
@@ -789,6 +1265,7 @@ describe("hook integration with registry", () => {
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("echo: hello");
+    expect(order).toEqual(["guard", "before"]);
   });
 
   // 4. Truncator handles large successful output, preserves isError false

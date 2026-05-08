@@ -1,12 +1,14 @@
 import { describe, expect, test, mock, afterEach } from "bun:test";
+import { z } from "zod";
 import type { SpecraConfig } from "../config/index";
 import { createRegistry as createProviderRegistry } from "../provider/index";
-import { createRegistry as createToolRegistry } from "../tools/index";
+import { createRegistry as createToolRegistry, defineTool } from "../tools/index";
 import { registerBuiltinTools } from "../core/index";
 import { TestAgent } from "./test-agent";
 import { AgentRunningError, NoModelsConfiguredError } from "./test-agent";
 import type { Agent, AgentResult } from "./test-agent";
 import { __setStreamTextForTest } from "./query/loop";
+import type { ToolConfirmationCallback, ToolExecutionContext } from "../tools/index";
 
 function makeMockConfig(): SpecraConfig {
   return {
@@ -53,6 +55,15 @@ function makeTestAgent(): TestAgent {
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry);
   return new TestAgent({ providerRegistry, toolRegistry });
+}
+
+function makeTestAgentWithConfirmation(
+  confirmPermission: ToolConfirmationCallback,
+): TestAgent {
+  const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+  const toolRegistry = createToolRegistry();
+  registerBuiltinTools(toolRegistry);
+  return new TestAgent({ providerRegistry, toolRegistry, confirmPermission });
 }
 
 function makeEmptyModelTestAgent(): TestAgent {
@@ -175,6 +186,123 @@ describe("TestAgent", () => {
       expect(callArgs.system).toBeDefined();
       expect(typeof callArgs.system).toBe("string");
       expect((callArgs.system as string).length).toBeGreaterThan(0);
+    });
+
+    test("passes explicit empty allowedTools until built-ins exist", async () => {
+      const streamFn = setupMockStreamText("ok");
+
+      const agent = makeTestAgent();
+      await agent.run("test");
+
+      const callArgs = streamFn.mock.calls[0][0] as Record<string, unknown>;
+      expect("tools" in callArgs).toBe(false);
+    });
+
+    test("propagates confirmation callback to query loop tool context", async () => {
+      const confirmPermission = mock(async () => "approve" as const);
+      let contextConfirmPermission: ToolExecutionContext["confirmPermission"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextConfirmPermission = ctx.confirmPermission;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission });
+      await agent.run("test");
+
+      expect(contextConfirmPermission).toBe(confirmPermission);
+    });
+
+    test("run() confirmPermission parameter overrides constructor callback", async () => {
+      const constructorCallback = mock(async () => "deny" as const);
+      const runCallback = mock(async () => "approve" as const);
+      let contextConfirmPermission: ToolExecutionContext["confirmPermission"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextConfirmPermission = ctx.confirmPermission;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
+      await agent.run("test", undefined, runCallback);
+
+      expect(contextConfirmPermission).toBe(runCallback);
+      expect(constructorCallback).not.toHaveBeenCalled();
+    });
+
+    test("run() falls back to constructor callback when no run-time callback provided", async () => {
+      const constructorCallback = mock(async () => "approve" as const);
+      let contextConfirmPermission: ToolExecutionContext["confirmPermission"];
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      toolRegistry.register(
+        defineTool({
+          name: "echo",
+          description: "Echo test tool",
+          inputSchema: z.object({}).strict(),
+          traits: { readOnly: true, destructive: false, concurrencySafe: true },
+          execute: async () => "ok",
+        }),
+      );
+      toolRegistry.globalHooks.after.push((result, ctx) => {
+        contextConfirmPermission = ctx.confirmPermission;
+        return result;
+      });
+      const fn = mock(() => ({
+        fullStream: (async function* () {
+          yield { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} };
+        })(),
+        finishReason: Promise.resolve("tool-calls"),
+        text: Promise.resolve(""),
+        toolCalls: Promise.resolve([{ toolCallId: "tc-1", toolName: "echo", input: {} }]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      }));
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+
+      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
+      await agent.run("test");
+
+      expect(contextConfirmPermission).toBe(constructorCallback);
     });
 
     test("records loop-error in store when streamText fails", async () => {
