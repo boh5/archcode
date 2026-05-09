@@ -1,10 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import type { z } from "zod";
 import type { ToolCallLike } from "../types";
-import type { ToolCallBatch } from "./partition";
 import { partitionToolCalls } from "./partition";
 import { createRegistry } from "../registry";
 import type { ToolDescriptor } from "../types";
+import { adaptMcpTool } from "../../mcp/tool-adapter";
+import type { McpClient } from "../../mcp/client";
 
 function makeToolDescriptor(
   name: string,
@@ -25,6 +25,12 @@ function makeToolDescriptor(
 
 function makeCall(toolName: string, toolCallId?: string): ToolCallLike {
   return { toolCallId: toolCallId ?? toolName, toolName, input: {} };
+}
+
+function makeMcpClient(): McpClient {
+  return {
+    callTool: async () => ({ content: [] }),
+  } as unknown as McpClient;
 }
 
 describe("partitionToolCalls", () => {
@@ -119,5 +125,53 @@ describe("partitionToolCalls", () => {
       expect(result[0].calls[0].input).toEqual({});
       expect(result[0].calls[1].input).toEqual({});
     }
+  });
+
+  test("MCP adapter traits make read-only tools parallel and destructive tools serial", () => {
+    const readDescriptor = adaptMcpTool(
+      { name: "read", annotations: { readOnlyHint: true } },
+      "docs",
+      makeMcpClient(),
+      [],
+    );
+    const otherReadDescriptor = adaptMcpTool(
+      { name: "lookup" },
+      "docs",
+      makeMcpClient(),
+      [],
+    );
+    const destructiveDescriptor = adaptMcpTool(
+      { name: "delete", annotations: { destructiveHint: true } },
+      "docs",
+      makeMcpClient(),
+      [],
+    );
+    const mcpRegistry = createRegistry([
+      readDescriptor,
+      otherReadDescriptor,
+      destructiveDescriptor,
+    ]);
+    const calls = [
+      makeCall("mcp__docs__read", "read-1"),
+      makeCall("mcp__docs__lookup", "read-2"),
+      makeCall("mcp__docs__delete", "delete-1"),
+      makeCall("mcp__docs__read", "read-3"),
+    ];
+
+    expect(readDescriptor.traits).toMatchObject({
+      readOnly: true,
+      destructive: false,
+      concurrencySafe: true,
+    });
+    expect(destructiveDescriptor.traits).toMatchObject({
+      readOnly: false,
+      destructive: true,
+      concurrencySafe: false,
+    });
+    expect(partitionToolCalls(calls, mcpRegistry)).toEqual([
+      { type: "parallel", calls: [calls[0], calls[1]] },
+      { type: "serial", call: calls[2] },
+      { type: "parallel", calls: [calls[3]] },
+    ]);
   });
 });

@@ -30,3 +30,17 @@ export {
   providerOptionsSchema,
   providersConfigSchema,
 } from "./provider";
+export {
+  type McpConfig,
+  type McpServerConfig,
+  type McpTransport,
+  type ResolvedMcpConfig,
+  type ResolvedMcpServerConfig,
+  McpConfigError,
+  McpConfigEnvError,
+  resolveMcpConfig,
+  mcpConfigSchema,
+  mcpServerConfigSchema,
+  mcpServerNameSchema,
+  mcpTransportSchema,
+} from "./mcp";
