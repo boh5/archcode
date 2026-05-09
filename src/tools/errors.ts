@@ -37,7 +37,12 @@ export type ToolErrorKind =
   | "todo-validation"
   | "lsp-error"
   | "lsp-timeout"
-  | "lsp-server-not-found";
+  | "lsp-server-not-found"
+  | "webfetch-invalid-url"
+  | "webfetch-timeout"
+  | "webfetch-http-error"
+  | "webfetch-size-exceeded"
+  | "webfetch-content-type-unsupported";
 
 export interface FormattedToolError {
   name?: string;
@@ -97,6 +102,11 @@ const HINTS: Record<ToolErrorKind, string> = {
   "lsp-error": "The LSP operation failed; check the server status and retry.",
   "lsp-timeout": "The LSP operation timed out; retry or check if the language server is responsive.",
   "lsp-server-not-found": "No language server is available for this file type; ensure a compatible server is configured.",
+  "webfetch-invalid-url": "The URL is invalid; ensure it starts with http:// or https:// and contains no credentials.",
+  "webfetch-timeout": "The request timed out; try again with a longer timeout or a different URL.",
+  "webfetch-http-error": "The server returned an error status; check the URL and try again.",
+  "webfetch-size-exceeded": "The response body exceeds the maximum allowed size; try a different URL or reduce maxLength.",
+  "webfetch-content-type-unsupported": "The content type is not supported; only HTML, JSON, and plain text can be fetched.",
 };
 
 export function formatToolError(options: FormatToolErrorOptions): FormattedToolError {
@@ -263,6 +273,11 @@ function kindFromMessage(message: string): ToolErrorKind | undefined {
   if (/not been read first/i.test(message)) return "read-before-write";
   if (/modified since it was read|write conflict/i.test(message)) return "write-conflict";
   if (/outside workspace/i.test(message)) return "workspace";
+  if (/invalid url/i.test(message)) return "webfetch-invalid-url";
+  if (/timed out|timeout/i.test(message) && /fetch|request|url/i.test(message)) return "webfetch-timeout";
+  if (/http error|status \d{3}/i.test(message)) return "webfetch-http-error";
+  if (/size exceeded|too large/i.test(message) && /fetch|response|body/i.test(message)) return "webfetch-size-exceeded";
+  if (/content.type unsupported|unsupported content/i.test(message)) return "webfetch-content-type-unsupported";
   return undefined;
 }
 
@@ -337,6 +352,16 @@ export function kindFromCode(code: string): ToolErrorKind | undefined {
       return "lsp-timeout";
     case "TOOL_LSP_SERVER_NOT_FOUND":
       return "lsp-server-not-found";
+    case "TOOL_WEBFETCH_INVALID_URL":
+      return "webfetch-invalid-url";
+    case "TOOL_WEBFETCH_TIMEOUT":
+      return "webfetch-timeout";
+    case "TOOL_WEBFETCH_HTTP_ERROR":
+      return "webfetch-http-error";
+    case "TOOL_WEBFETCH_SIZE_EXCEEDED":
+      return "webfetch-size-exceeded";
+    case "TOOL_WEBFETCH_CONTENT_TYPE_UNSUPPORTED":
+      return "webfetch-content-type-unsupported";
     default:
       return undefined;
   }
@@ -410,6 +435,16 @@ export function codeFromKind(kind: ToolErrorKind | undefined): string | undefine
       return "TOOL_LSP_TIMEOUT";
     case "lsp-server-not-found":
       return "TOOL_LSP_SERVER_NOT_FOUND";
+    case "webfetch-invalid-url":
+      return "TOOL_WEBFETCH_INVALID_URL";
+    case "webfetch-timeout":
+      return "TOOL_WEBFETCH_TIMEOUT";
+    case "webfetch-http-error":
+      return "TOOL_WEBFETCH_HTTP_ERROR";
+    case "webfetch-size-exceeded":
+      return "TOOL_WEBFETCH_SIZE_EXCEEDED";
+    case "webfetch-content-type-unsupported":
+      return "TOOL_WEBFETCH_CONTENT_TYPE_UNSUPPORTED";
     default:
       return undefined;
   }

@@ -11,6 +11,7 @@ export { bashTool, BashInputSchema, runBashCommand } from "./bash";
 export { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 export { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 export { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool, createLspToolDescriptors } from "./lsp";
+export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./web-fetch";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -23,6 +24,7 @@ import { bashTool } from "./bash";
 import { todoWriteTool } from "./todo-write";
 import { askUserTool } from "./ask-user";
 import { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool } from "./lsp";
+import { webFetchTool } from "./web-fetch";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -40,5 +42,6 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     lspGotoDefinitionTool,
     lspFindReferencesTool,
     lspSymbolsTool,
+    webFetchTool,
   ];
 }
