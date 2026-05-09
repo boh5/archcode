@@ -1,0 +1,253 @@
+import { createLspClient, LspError, type LspClient } from "./client";
+import { createLspTransport, type StdioLspTransportOptions } from "./transport";
+
+export interface PoolKey {
+  workspaceRoot: string;
+  serverId: string;
+}
+
+export interface LspClientPoolOptions {
+  idleTimeoutMs?: number;
+  crashWindowMs?: number;
+  crashThreshold?: number;
+}
+
+export interface PoolEntry {
+  client: LspClient | null;
+  refCount: number;
+  initializePromise: Promise<LspClient> | null;
+  idleTimer: Timer | null;
+  crashTimestamps: number[];
+}
+
+export interface TimerFns {
+  setTimeout: (handler: () => void, timeout: number) => Timer;
+  clearTimeout: (timer: Timer) => void;
+}
+
+const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
+const DEFAULT_CRASH_WINDOW_MS = 300_000;
+const DEFAULT_CRASH_THRESHOLD = 3;
+
+let timerFns: TimerFns = {
+  setTimeout: (handler, timeout) => setTimeout(handler, timeout),
+  clearTimeout: (timer) => clearTimeout(timer),
+};
+
+let lspClientPoolForTest: LspClientPool | undefined;
+
+export function setTimerFnsForTest(fns: TimerFns | undefined): void {
+  timerFns = fns ?? {
+    setTimeout: (handler, timeout) => setTimeout(handler, timeout),
+    clearTimeout: (timer) => clearTimeout(timer),
+  };
+}
+
+export function setLspClientPoolForTest(pool: LspClientPool | undefined): void {
+  lspClientPoolForTest = pool;
+}
+
+export function getLspClientPool(): LspClientPool {
+  if (lspClientPoolForTest) return lspClientPoolForTest;
+  return defaultPool;
+}
+
+export function createLspClientPool(options?: LspClientPoolOptions): LspClientPool {
+  return new LspClientPool(options);
+}
+
+export class LspClientPool {
+  private readonly idleTimeoutMs: number;
+  private readonly crashWindowMs: number;
+  private readonly crashThreshold: number;
+  private readonly entries = new Map<string, PoolEntry>();
+  private readonly crashHistory = new Map<string, number[]>();
+  private readonly shutdownKeys = new Set<string>();
+
+  constructor(options: LspClientPoolOptions = {}) {
+    this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.crashWindowMs = options.crashWindowMs ?? DEFAULT_CRASH_WINDOW_MS;
+    this.crashThreshold = options.crashThreshold ?? DEFAULT_CRASH_THRESHOLD;
+  }
+
+  async acquire(key: PoolKey, serverOptions: StdioLspTransportOptions): Promise<LspClient> {
+    const id = poolKeyToString(key);
+    this.assertNotCrashLooping(id, key);
+
+    const existing = this.entries.get(id);
+    if (existing) {
+      existing.refCount += 1;
+      this.clearIdleTimer(existing);
+      try {
+        return existing.client ?? await existing.initializePromise!;
+      } catch (error) {
+        this.releaseRefAfterFailedAcquire(id, existing);
+        throw error;
+      }
+    }
+
+    const entry: PoolEntry = {
+      client: null,
+      refCount: 1,
+      initializePromise: null,
+      idleTimer: null,
+      crashTimestamps: this.currentCrashTimestamps(id),
+    };
+    this.entries.set(id, entry);
+
+    const transport = createLspTransport(serverOptions);
+    entry.initializePromise = (async () => {
+      const client = createLspClient({ transport, workspaceRoot: key.workspaceRoot, timeouts: serverOptions.timeouts });
+      try {
+        await client.initialize(key.workspaceRoot);
+        entry.client = client;
+        this.watchForCrash(id, key, entry, transport);
+        return client;
+      } catch (error) {
+        await ignoreErrors(client.shutdown());
+        this.entries.delete(id);
+        throw error;
+      }
+    })();
+
+    try {
+      return await entry.initializePromise;
+    } finally {
+      entry.initializePromise = null;
+    }
+  }
+
+  release(key: PoolKey): void {
+    const id = poolKeyToString(key);
+    const entry = this.entries.get(id);
+    if (!entry) return;
+
+    try {
+      if (entry.refCount > 0) {
+        entry.refCount -= 1;
+      }
+    } finally {
+      if (entry.refCount === 0 && !entry.idleTimer) {
+        entry.idleTimer = timerFns.setTimeout(() => {
+          void this.shutdownAndEvict(id, entry);
+        }, this.idleTimeoutMs);
+      }
+    }
+  }
+
+  async disposeAll(): Promise<void> {
+    const entries = [...this.entries.entries()];
+    this.entries.clear();
+
+    await Promise.all(entries.map(async ([id, entry]) => {
+      this.clearIdleTimer(entry);
+      this.shutdownKeys.add(id);
+      const client = entry.client ?? await entry.initializePromise?.catch(() => null) ?? null;
+      if (client) await ignoreErrors(client.shutdown());
+      this.shutdownKeys.delete(id);
+    }));
+  }
+
+  getRefCountForTest(key: PoolKey): number {
+    return this.entries.get(poolKeyToString(key))?.refCount ?? 0;
+  }
+
+  hasEntryForTest(key: PoolKey): boolean {
+    return this.entries.has(poolKeyToString(key));
+  }
+
+  private async shutdownAndEvict(id: string, entry: PoolEntry): Promise<void> {
+    if (this.entries.get(id) !== entry || entry.refCount > 0) return;
+
+    this.entries.delete(id);
+    this.clearIdleTimer(entry);
+    this.shutdownKeys.add(id);
+    try {
+      const client = entry.client ?? await entry.initializePromise?.catch(() => null) ?? null;
+      if (client) await ignoreErrors(client.shutdown());
+    } finally {
+      this.shutdownKeys.delete(id);
+    }
+  }
+
+  private watchForCrash(id: string, key: PoolKey, entry: PoolEntry, transport: unknown): void {
+    const exited = getExitedPromise(transport);
+    if (!exited) return;
+
+    exited.then((code) => {
+      if (code === 0 || this.shutdownKeys.has(id)) return;
+      if (this.entries.get(id) !== entry) return;
+
+      this.entries.delete(id);
+      this.clearIdleTimer(entry);
+      this.recordCrash(id, key);
+    }).catch(() => {
+      if (this.shutdownKeys.has(id) || this.entries.get(id) !== entry) return;
+      this.entries.delete(id);
+      this.clearIdleTimer(entry);
+      this.recordCrash(id, key);
+    });
+  }
+
+  private recordCrash(id: string, key: PoolKey): void {
+    const crashes = [...this.currentCrashTimestamps(id), Date.now()];
+    this.crashHistory.set(id, crashes);
+    if (crashes.length >= this.crashThreshold) {
+      this.crashHistory.set(id, crashes);
+    }
+  }
+
+  private assertNotCrashLooping(id: string, key: PoolKey): void {
+    const crashes = this.currentCrashTimestamps(id);
+    this.crashHistory.set(id, crashes);
+    if (crashes.length < this.crashThreshold) return;
+
+    throw new LspError({
+      code: -32000,
+      message: `LSP server "${key.serverId}" for workspace "${key.workspaceRoot}" crashed ${crashes.length} times within ${this.crashWindowMs}ms. The server may be misconfigured or incompatible; inspect its command, arguments, and logs before retrying.`,
+    });
+  }
+
+  private currentCrashTimestamps(id: string): number[] {
+    const cutoff = Date.now() - this.crashWindowMs;
+    return (this.crashHistory.get(id) ?? []).filter((timestamp) => timestamp >= cutoff);
+  }
+
+  private releaseRefAfterFailedAcquire(id: string, entry: PoolEntry): void {
+    if (this.entries.get(id) !== entry) return;
+    if (entry.refCount > 0) entry.refCount -= 1;
+    if (entry.refCount === 0) this.entries.delete(id);
+  }
+
+  private clearIdleTimer(entry: PoolEntry): void {
+    if (!entry.idleTimer) return;
+    timerFns.clearTimeout(entry.idleTimer);
+    entry.idleTimer = null;
+  }
+}
+
+function poolKeyToString(key: PoolKey): string {
+  return `${key.workspaceRoot}::${key.serverId}`;
+}
+
+function getExitedPromise(transport: unknown): Promise<number> | undefined {
+  if (!isRecord(transport)) return undefined;
+  const exited = transport.exited;
+  return exited && typeof exited === "object" && typeof (exited as Promise<number>).then === "function"
+    ? exited as Promise<number>
+    : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+async function ignoreErrors(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch {
+    // Pool cleanup must be best-effort.
+  }
+}
+
+const defaultPool = new LspClientPool();

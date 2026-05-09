@@ -60,7 +60,7 @@ function makeLogger(): Logger & { info: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers Tier 1 and Tier 2 builtins without lsp_diagnostics", () => {
+  it("registers all 14 builtins including 4 LSP tools", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -75,8 +75,11 @@ describe("registerBuiltinTools", () => {
       "bash",
       "todo_write",
       "ask_user",
+      "lsp_diagnostics",
+      "lsp_goto_definition",
+      "lsp_find_references",
+      "lsp_symbols",
     ]);
-    expect(names).not.toContain("lsp_diagnostics");
   });
 
   it("registers global after hooks in redaction, truncation, audit, logger order", () => {

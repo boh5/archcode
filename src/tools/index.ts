@@ -107,5 +107,9 @@ export {
   bashTool,
   todoWriteTool,
   askUserTool,
+  lspDiagnosticsTool,
+  lspGotoDefinitionTool,
+  lspFindReferencesTool,
+  lspSymbolsTool,
   createBuiltinToolDescriptors,
 } from "./builtins";

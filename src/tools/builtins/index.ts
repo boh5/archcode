@@ -10,6 +10,7 @@ export { gitDiffTool, buildArgs as buildGitDiffArgs } from "./git-diff";
 export { bashTool, BashInputSchema, runBashCommand } from "./bash";
 export { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 export { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
+export { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool, createLspToolDescriptors } from "./lsp";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -21,6 +22,7 @@ import { gitDiffTool } from "./git-diff";
 import { bashTool } from "./bash";
 import { todoWriteTool } from "./todo-write";
 import { askUserTool } from "./ask-user";
+import { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool } from "./lsp";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -34,5 +36,9 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     bashTool,
     todoWriteTool,
     askUserTool,
+    lspDiagnosticsTool,
+    lspGotoDefinitionTool,
+    lspFindReferencesTool,
+    lspSymbolsTool,
   ];
 }

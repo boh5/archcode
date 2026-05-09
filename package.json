@@ -17,6 +17,9 @@
     "ai": "^6.0.174",
     "ink": "^7.0.1",
     "react": "^19.2.5",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-languageserver-types": "^3.17.5",
     "zod": "^4.4.2",
     "zustand": "^5.0.13"
   },

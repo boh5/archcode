@@ -34,7 +34,10 @@ export type ToolErrorKind =
   | "edit-identical"
   | "grep-error"
   | "glob-error"
-  | "todo-validation";
+  | "todo-validation"
+  | "lsp-error"
+  | "lsp-timeout"
+  | "lsp-server-not-found";
 
 export interface FormattedToolError {
   name?: string;
@@ -91,6 +94,9 @@ const HINTS: Record<ToolErrorKind, string> = {
   "grep-error": "The search command failed; check the pattern and try again.",
   "glob-error": "The file listing command failed; check the pattern and try again.",
   "todo-validation": "Invalid todo input; check for duplicate IDs or multiple in_progress items.",
+  "lsp-error": "The LSP operation failed; check the server status and retry.",
+  "lsp-timeout": "The LSP operation timed out; retry or check if the language server is responsive.",
+  "lsp-server-not-found": "No language server is available for this file type; ensure a compatible server is configured.",
 };
 
 export function formatToolError(options: FormatToolErrorOptions): FormattedToolError {
@@ -325,6 +331,12 @@ export function kindFromCode(code: string): ToolErrorKind | undefined {
       return "glob-error";
     case "TOOL_TODO_VALIDATION":
       return "todo-validation";
+    case "TOOL_LSP_ERROR":
+      return "lsp-error";
+    case "TOOL_LSP_TIMEOUT":
+      return "lsp-timeout";
+    case "TOOL_LSP_SERVER_NOT_FOUND":
+      return "lsp-server-not-found";
     default:
       return undefined;
   }
@@ -392,6 +404,12 @@ export function codeFromKind(kind: ToolErrorKind | undefined): string | undefine
       return "TOOL_GLOB_ERROR";
     case "todo-validation":
       return "TOOL_TODO_VALIDATION";
+    case "lsp-error":
+      return "TOOL_LSP_ERROR";
+    case "lsp-timeout":
+      return "TOOL_LSP_TIMEOUT";
+    case "lsp-server-not-found":
+      return "TOOL_LSP_SERVER_NOT_FOUND";
     default:
       return undefined;
   }
