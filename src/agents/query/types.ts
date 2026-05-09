@@ -17,6 +17,7 @@ export interface QueryLoopOptions {
   systemPrompt?: string;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
+  onRunEnd?: (state: Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos">) => Promise<void>;
 }
 
 export interface QueryLoopResult {

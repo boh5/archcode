@@ -4,7 +4,7 @@ import type { ModelMessage, streamText as aiStreamText } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import { createSessionStore } from "../../store/store";
-import type { SessionStoreState, StoredMessage } from "../../store/types";
+import type { SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
@@ -1473,5 +1473,51 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(fn).toHaveBeenCalledTimes(1);
     expect(result.text).toBe("custom");
+  });
+
+  describe("onRunEnd callback", () => {
+    test("is called after run-end with correct state shape", async () => {
+      const store = createStore();
+      const todos: StoredTodo[] = [{ id: "todo-1", content: "test", status: "pending" }];
+      store.getState().append({ type: "todo-write", todos });
+      createMockStreamText([{ text: "Hello" }]);
+
+      let capturedState: unknown;
+      const onRunEnd = mock(async (state: Parameters<NonNullable<QueryLoopOptions["onRunEnd"]>>[0]) => {
+        capturedState = state;
+      });
+
+      await runQueryLoop(makeOptions({ store, onRunEnd }), "Hi");
+
+      expect(onRunEnd).toHaveBeenCalledTimes(1);
+      const state = capturedState as Record<string, unknown>;
+      expect(state).toHaveProperty("sessionId");
+      expect(typeof state.sessionId).toBe("string");
+      expect(state).toHaveProperty("createdAt");
+      expect(typeof state.createdAt).toBe("number");
+      expect(state).toHaveProperty("messages");
+      expect(Array.isArray(state.messages)).toBe(true);
+      expect(state).toHaveProperty("steps");
+      expect(Array.isArray(state.steps)).toBe(true);
+      expect(state).toHaveProperty("todos");
+      expect(Array.isArray(state.todos)).toBe(true);
+      expect((state.todos as Array<unknown>).length).toBeGreaterThan(0);
+    });
+
+    test("callback throw does not prevent loop completion", async () => {
+      const store = createStore();
+      createMockStreamText([{ text: "Still works" }]);
+
+      const onRunEnd = mock(async () => {
+        throw new Error("callback error");
+      });
+
+      const result = await runQueryLoop(makeOptions({ store, onRunEnd }), "Hi");
+
+      expect(result).toEqual({ text: "Still works", steps: 0 });
+      expect(store.getState().isRunning).toBe(false);
+      const steps = store.getState().steps;
+      expect(steps[0]).toMatchObject({ step: 0, finishReason: "stop" });
+    });
   });
 });

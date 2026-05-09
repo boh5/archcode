@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createSessionStore } from "./store";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
 import type { SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
 
@@ -345,6 +346,68 @@ describe("session transcript serialization", () => {
     expect("events" in parsed).toBe(false);
     expect(parsed.todos).toEqual(sampleTodos());
   });
+
+  test("loadSessionTranscript resets all runtime-only fields", async () => {
+    const sessionId = uniqueSessionId("runtime-fields");
+
+    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const state = loaded.getState();
+
+    expect(state.isRunning).toBe(false);
+    expect(state.isStreamingModel).toBe(false);
+    expect(state.streamingText).toBeUndefined();
+    expect(state.streamingReasoning).toBeUndefined();
+    expect(state.streamingTools).toEqual({});
+    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentAssistantMessageId).toBeUndefined();
+  });
+
+  test("loadSessionTranscript preserves persistent fields", async () => {
+    const sessionId = uniqueSessionId("persistent-fields");
+    const originalMessages = sampleMessages();
+    const originalSteps = sampleSteps();
+    const originalTodos = sampleTodos();
+
+    await saveSessionTranscript(
+      persistedState(sessionId, originalMessages, originalSteps, originalTodos),
+      TMP_DIR,
+    );
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const loadedState = loaded.getState();
+
+    expect(loadedState.sessionId).toBe(sessionId);
+    expect(loadedState.createdAt).toBe(99);
+    expect(loadedState.messages).toEqual(originalMessages);
+    expect(loadedState.steps).toEqual(originalSteps);
+    expect(loadedState.todos).toEqual(originalTodos);
+  });
+
+  test("append works after load", async () => {
+    const sessionId = uniqueSessionId("append-after-load-v2");
+
+    await saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    loaded.getState().append({ type: "run-start", runId: "append-work-run" });
+    loaded.getState().append({ type: "user-message", content: "appended after load" });
+
+    const state = loaded.getState();
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]?.role).toBe("user");
+    expect(state.messages[0]?.runId).toBe("append-work-run");
+  });
+
+  test("loadSessionTranscript resets readSnapshots to empty Map", async () => {
+    const sessionId = uniqueSessionId("read-snapshots");
+
+    const store = createSessionStore(sessionId);
+    store.setState({ readSnapshots: new Map([["file.ts", 456]]) });
+
+    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().readSnapshots.size).toBe(0);
+  });
 });
 
 describe("getAssistantText", () => {
@@ -382,5 +445,51 @@ describe("getAssistantText", () => {
     const messages: StoredMessage[] = [allPartVariantsMessage()];
 
     expect(getAssistantText(messages)).toBe("done");
+  });
+});
+
+describe("saveSessionTranscript error handling", () => {
+  test("throws on readonly directory", async () => {
+    const sessionId = uniqueSessionId("readonly-save");
+    const readonlyDir = join(TMP_DIR, "readonly-save-test");
+    await mkdir(readonlyDir, { recursive: true });
+    await chmod(readonlyDir, 0o444);
+
+    try {
+      await expect(
+        saveSessionTranscript(persistedState(sessionId), readonlyDir),
+      ).rejects.toThrow();
+    } finally {
+      await chmod(readonlyDir, 0o755).catch(() => {});
+      await rm(readonlyDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  test("throws on invalid path", async () => {
+    const sessionId = uniqueSessionId("invalid-path-save");
+
+    await expect(
+      saveSessionTranscript(persistedState(sessionId), "/dev/null/impossible"),
+    ).rejects.toThrow();
+  });
+
+  test("error messages contain useful context about the path", async () => {
+    const sessionId = uniqueSessionId("error-context");
+    const readonlyDir = join(TMP_DIR, "error-context-test");
+    await mkdir(readonlyDir, { recursive: true });
+    await chmod(readonlyDir, 0o444);
+
+    try {
+      const error = await saveSessionTranscript(
+        persistedState(sessionId),
+        readonlyDir,
+      ).catch((e: unknown) => e as Error);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(readonlyDir);
+    } finally {
+      await chmod(readonlyDir, 0o755).catch(() => {});
+      await rm(readonlyDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 });

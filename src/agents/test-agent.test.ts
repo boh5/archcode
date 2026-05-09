@@ -1,4 +1,6 @@
-import { describe, expect, test, mock, afterEach } from "bun:test";
+import { describe, expect, test, mock, afterAll, afterEach, beforeAll } from "bun:test";
+import { join } from "node:path";
+import { mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
 import type { SpecraConfig } from "../config/index";
 import { createRegistry as createProviderRegistry } from "../provider/index";
@@ -552,6 +554,56 @@ describe("TestAgent", () => {
 
       expect(contextAskUser).toBe(constructorAskUser);
     });
+
+describe("session persistence", () => {
+  const TEST_TMP = join(import.meta.dir, "__test_tmp__", "session-persistence");
+
+  beforeAll(async () => {
+    await mkdir(TEST_TMP, { recursive: true });
+  });
+
+  afterAll(async () => {
+    await rm(TEST_TMP, { recursive: true, force: true });
+  });
+
+  test("saves session transcript to JSON file on run completion", async () => {
+    setupMockStreamText("Hello from persisted agent");
+
+    const agent = makeTestAgent();
+    const sessionId = agent.store.getState().sessionId;
+
+    const origEnvDir = process.env.SPECRA_SESSIONS_DIR;
+    process.env.SPECRA_SESSIONS_DIR = TEST_TMP;
+
+    try {
+      const result = await agent.run("test message");
+      expect(result.text).toBe("Hello from persisted agent");
+
+      const filePath = join(TEST_TMP, `${sessionId}.json`);
+      const file = Bun.file(filePath);
+      expect(await file.exists()).toBe(true);
+
+      const content = JSON.parse(await file.text());
+
+      expect(content.sessionId).toBe(sessionId);
+      expect(typeof content.createdAt).toBe("number");
+      expect(content.createdAt).toBeGreaterThan(0);
+      expect(Array.isArray(content.messages)).toBe(true);
+      expect(content.messages.length).toBeGreaterThan(0);
+      expect(Array.isArray(content.steps)).toBe(true);
+      expect(Array.isArray(content.todos)).toBe(true);
+      expect(content.streamingText).toBeUndefined();
+      expect(content.streamingReasoning).toBeUndefined();
+      expect(content.streamingTools).toBeUndefined();
+      expect(content.readSnapshots).toBeUndefined();
+      expect(content.isRunning).toBeUndefined();
+      expect(content.currentRunId).toBeUndefined();
+    } finally {
+      process.env.SPECRA_SESSIONS_DIR = origEnvDir;
+    }
+  });
+
+});
 
     test("askUser is separate from confirmPermission in tool context", async () => {
       const confirmPermission = mock(async () => "approve" as const);

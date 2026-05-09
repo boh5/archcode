@@ -37,4 +37,5 @@ export {
   saveSessionTranscript,
   loadSessionTranscript,
 } from "./helpers";
+export { getSessionsDir } from "./sessions-dir";
 export { toModelMessagesFromStoredMessages } from "./projection";

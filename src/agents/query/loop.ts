@@ -63,6 +63,7 @@ export async function runQueryLoop(
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
+    onRunEnd,
   } = options;
   const abort = options.abort ?? new AbortController().signal;
   let resolvedWorkspaceRoot = options.workspaceRoot;
@@ -139,6 +140,15 @@ export async function runQueryLoop(
       status: failed ? "failed" : "completed",
       ...(failed ? { error: "Run failed" } : {}),
     });
+
+    if (onRunEnd) {
+      try {
+        const { sessionId, createdAt, messages, steps, todos } = store.getState();
+        await onRunEnd({ sessionId, createdAt, messages, steps, todos });
+      } catch (err) {
+        console.warn("onRunEnd callback failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
   }
 }
 

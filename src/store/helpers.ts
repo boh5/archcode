@@ -143,7 +143,11 @@ export async function saveSessionTranscript(
   state: Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos">,
   dir: string,
 ): Promise<void> {
-  await mkdir(dir, { recursive: true });
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (err) {
+    throw new Error(`Failed to create sessions directory "${dir}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
 
   const data: SessionFile = {
     sessionId: state.sessionId,
@@ -157,8 +161,17 @@ export async function saveSessionTranscript(
   const finalPath = join(dir, `${state.sessionId}.json`);
   const tmpPath = join(dir, `${state.sessionId}.json.tmp`);
 
-  await Bun.write(tmpPath, json);
-  await rename(tmpPath, finalPath);
+  try {
+    await Bun.write(tmpPath, json);
+  } catch (err) {
+    throw new Error(`Failed to write session transcript to "${tmpPath}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+
+  try {
+    await rename(tmpPath, finalPath);
+  } catch (err) {
+    throw new Error(`Failed to rename session transcript from "${tmpPath}" to "${finalPath}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
 }
 
 export async function loadSessionTranscript(
@@ -189,6 +202,7 @@ export async function loadSessionTranscript(
     streamingText: undefined,
     streamingReasoning: undefined,
     streamingTools: {},
+    readSnapshots: new Map(),
   });
 
   return store;

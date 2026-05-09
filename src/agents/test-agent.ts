@@ -9,6 +9,8 @@ import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
 import { runQueryLoop } from "./query/loop";
+import { saveSessionTranscript } from "../store/helpers";
+import { getSessionsDir } from "../store/sessions-dir";
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
@@ -150,6 +152,10 @@ export class TestAgent implements Agent {
           abort,
           systemPrompt,
           store: this.store,
+          onRunEnd: async (state) => {
+            const sessionsDir = getSessionsDir();
+            await saveSessionTranscript(state, sessionsDir);
+          },
         },
         userMessage,
       );
