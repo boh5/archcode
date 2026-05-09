@@ -7,9 +7,16 @@ const TOKEN_PATTERN = /\b(?:sk|pk|ghp|github_pat|xox[baprs]|AKIA|ASIA|SG)_[A-Za-
 const ASSIGNMENT_PATTERN = /\b([A-Za-z0-9_-]*(?:api[_-]?key|auth|authorization|bearer|client[_-]?secret|credential|pass(?:word)?|secret|token)[A-Za-z0-9_-]*\s*[=:]\s*)([^\s&;,]+)/gi;
 
 export function redactString(value: string): string {
-  return value
-    .replace(ASSIGNMENT_PATTERN, `$1${REDACTION_MARKER}`)
-    .replace(TOKEN_PATTERN, REDACTION_MARKER);
+  // First replace assignment patterns (key=value where key contains sensitive words)
+  let result = value.replace(ASSIGNMENT_PATTERN, `$1${REDACTION_MARKER}`);
+  // Then replace token patterns, but skip segments that look like file paths
+  // (containing / which is rare in actual tokens but common in paths)
+  result = result.replace(TOKEN_PATTERN, (match, offset) => {
+    // If the match contains a / it's likely a file path segment, not a token
+    if (match.includes("/")) return match;
+    return REDACTION_MARKER;
+  });
+  return result;
 }
 
 export function redactValue<T>(value: T, seen = new WeakSet<object>()): T {
