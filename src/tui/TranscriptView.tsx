@@ -24,6 +24,54 @@ interface RenderBlock {
   bold?: boolean;
 }
 
+// ─── Todo ───
+
+interface TodoItemInput {
+  id?: string;
+  content: string;
+  status: string;
+}
+
+function extractTodoItems(input: unknown): TodoItemInput[] {
+  if (input == null || typeof input !== "object") return [];
+  const todos = (input as Record<string, unknown>).todos;
+  if (!Array.isArray(todos)) return [];
+  return todos.filter(
+    (item): item is TodoItemInput =>
+      item != null && typeof item === "object" && typeof item.content === "string",
+  );
+}
+
+function formatTodoStatusIcon(status: string): string {
+  switch (status) {
+    case "completed":
+      return "✓";
+    case "in_progress":
+      return "◉";
+    case "cancelled":
+      return "✕";
+    default:
+      return "○";
+  }
+}
+
+function formatTodoItem(todo: TodoItemInput): string {
+  return `  ${formatTodoStatusIcon(todo.status)} ${todo.content}`;
+}
+
+function getTodoColor(status: string): "green" | "yellow" | "gray" | undefined {
+  switch (status) {
+    case "completed":
+      return "green";
+    case "in_progress":
+      return "yellow";
+    case "cancelled":
+      return "gray";
+    default:
+      return undefined;
+  }
+}
+
 export function formatUserMessage(content: string): string {
   return `> ${content}`;
 }
@@ -168,7 +216,40 @@ function messagePartsContainTool(messages: StoredMessage[], toolCallId: string):
   return false;
 }
 
+function renderTodoWritePart(part: ToolPart): RenderBlock[] {
+  switch (part.state) {
+    case "pending":
+      return [{ id: part.id, content: "⚙ Updating todos...", color: "yellow" }];
+    case "running":
+      return [{ id: part.id, content: "⚙ Updating todos...", color: "yellow" }];
+    case "completed": {
+      const todos = extractTodoItems(part.input);
+      const blocks: RenderBlock[] = [
+        { id: part.id, content: "# Todos", color: "yellow", bold: true },
+      ];
+      for (let i = 0; i < todos.length; i++) {
+        const todo = todos[i];
+        blocks.push({
+          id: `${part.id}:todo:${todo.id ?? i}`,
+          content: formatTodoItem(todo),
+          color: getTodoColor(todo.status),
+        });
+      }
+      return blocks;
+    }
+    case "error":
+      return [
+        { id: part.id, content: formatToolCall(part.toolName), color: "yellow" },
+        { id: `${part.id}:result`, content: formatToolResult(part.errorMessage, true), color: "red" },
+      ];
+  }
+}
+
 function renderToolPart(part: ToolPart): RenderBlock[] {
+  if (part.toolName === "todo_write") {
+    return renderTodoWritePart(part);
+  }
+
   const blocks: RenderBlock[] = [];
 
   switch (part.state) {

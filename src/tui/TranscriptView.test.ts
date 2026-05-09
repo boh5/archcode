@@ -361,3 +361,148 @@ describe("buildRenderBlocks", () => {
     expect(blocks[0].content).toBe("⚙ readFile");
   });
 });
+
+describe("todo_write tool rendering", () => {
+  test("pending todo_write renders updating message", () => {
+    const msg = makeAssistantMessage([
+      makePendingToolPart({ toolName: "todo_write" }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("⚙ Updating todos...");
+    expect(blocks[0].color).toBe("yellow");
+  });
+
+  test("running todo_write renders updating message", () => {
+    const msg = makeAssistantMessage([
+      makeRunningToolPart({ toolName: "todo_write", input: { todos: [] } }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("⚙ Updating todos...");
+    expect(blocks[0].color).toBe("yellow");
+  });
+
+  test("completed todo_write renders todo list with status icons", () => {
+    const todos = [
+      { id: "todo-1", content: "Fix auth bug", status: "in_progress" },
+      { id: "todo-2", content: "Write tests", status: "pending" },
+      { id: "todo-3", content: "Update docs", status: "completed" },
+      { id: "todo-4", content: "Remove old API", status: "cancelled" },
+    ];
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: { todos },
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(5);
+    expect(blocks[0].content).toBe("# Todos");
+    expect(blocks[0].color).toBe("yellow");
+    expect(blocks[0].bold).toBe(true);
+    expect(blocks[1].content).toBe("  ◉ Fix auth bug");
+    expect(blocks[1].color).toBe("yellow");
+    expect(blocks[2].content).toBe("  ○ Write tests");
+    expect(blocks[2].color).toBeUndefined();
+    expect(blocks[3].content).toBe("  ✓ Update docs");
+    expect(blocks[3].color).toBe("green");
+    expect(blocks[4].content).toBe("  ✕ Remove old API");
+    expect(blocks[4].color).toBe("gray");
+  });
+
+  test("completed todo_write with empty todos renders header only", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: { todos: [] },
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("# Todos");
+  });
+
+  test("completed todo_write with missing input renders header only", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: {},
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("# Todos");
+  });
+
+  test("completed todo_write with null input renders header only", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: null,
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("# Todos");
+  });
+
+  test("completed todo_write with malformed todos array ignores bad entries", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: {
+          todos: [
+            { id: "1", content: "Valid todo", status: "pending" },
+            { status: "completed" },
+            null,
+            "not an object",
+            { id: "2", content: "Another valid", status: "in_progress" },
+          ],
+        },
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].content).toBe("# Todos");
+    expect(blocks[1].content).toBe("  ○ Valid todo");
+    expect(blocks[2].content).toBe("  ◉ Another valid");
+  });
+
+  test("completed todo_write with non-array todos renders header only", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({
+        toolName: "todo_write",
+        input: { todos: "not an array" },
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("# Todos");
+  });
+
+  test("error todo_write renders error blocks", () => {
+    const msg = makeAssistantMessage([
+      makeErrorToolPart({
+        toolName: "todo_write",
+        errorMessage: "Only one todo can be in_progress",
+      }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].content).toBe("⚙ todo_write");
+    expect(blocks[0].color).toBe("yellow");
+    expect(blocks[1].content).toBe("✗ Only one todo can be in_progress");
+    expect(blocks[1].color).toBe("red");
+  });
+
+  test("non-todo_write tool still renders normally", () => {
+    const msg = makeAssistantMessage([
+      makeCompletedToolPart({ toolName: "file_read", output: "file contents" }),
+    ]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].content).toBe("⚙ file_read");
+    expect(blocks[1].content).toBe("✓ file contents");
+  });
+});
