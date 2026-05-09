@@ -7,7 +7,33 @@ import type {
   McpToolLike,
   McpTransportLike,
 } from "./client";
+import { BUILTIN_MCP_SERVERS } from "./builtin-servers";
 import { McpManager } from "./manager";
+
+// ─── Builtin Servers ──────────────────────────────────────────────────────────
+
+describe("BUILTIN_MCP_SERVERS", () => {
+  test("contains context7, grep.app, and exa", () => {
+    const names = Object.keys(BUILTIN_MCP_SERVERS).sort();
+    expect(names).toEqual(["context7", "exa", "grep.app"]);
+  });
+
+  test("each server has required ResolvedMcpServerConfig fields", () => {
+    for (const [name, config] of Object.entries(BUILTIN_MCP_SERVERS)) {
+      expect(config.transport).toBe("http");
+      expect(config.url).toStartWith("https://");
+      expect(config.timeout).toBeGreaterThan(0);
+      expect(config.headers).toBeUndefined();
+    }
+  });
+
+  test("server names pass MCP name validation", () => {
+    for (const name of Object.keys(BUILTIN_MCP_SERVERS)) {
+      expect(name).toMatch(/^[A-Za-z0-9_.-]+$/);
+      expect(name).not.toContain("__");
+    }
+  });
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -205,6 +231,48 @@ describe("McpManager discovery", () => {
     expect(result.warnings[0]).toMatchObject({ serverName: "failing" });
     expect(result.warnings[0].message).toContain(REDACTION_MARKER);
     expect(result.warnings[0].message).not.toContain(secret);
+  });
+
+  test("public server URL (no auth headers) is not redacted in error messages", async () => {
+    const publicUrl = "https://public.example.test/mcp";
+    const failing = makeFakeServer([], {
+      connect: mock(async () => {
+        throw new Error(`connection refused: ${publicUrl}`);
+      }),
+    });
+    const manager = managerWithClientRoutes(
+      {},
+      { public: makeConfig({ url: publicUrl }) },
+      { public: failing },
+    );
+
+    const result = await manager.discover();
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].message).toContain(publicUrl);
+    expect(result.warnings[0].message).not.toContain(REDACTION_MARKER);
+  });
+
+  test("server with auth headers has its URL redacted", async () => {
+    const authUrl = "https://private.example.test/mcp";
+    const secret = "Bearer secret-token";
+    const failing = makeFakeServer([], {
+      connect: mock(async () => {
+        throw new Error(`connection refused: ${authUrl}`);
+      }),
+    });
+    const manager = managerWithClientRoutes(
+      {},
+      { private: makeConfig({ url: authUrl, headers: { Authorization: secret } }) },
+      { private: failing },
+    );
+
+    const result = await manager.discover();
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].message).not.toContain(authUrl);
+    expect(result.warnings[0].message).not.toContain(secret);
+    expect(result.warnings[0].message).toContain(REDACTION_MARKER);
   });
 
   test("empty tool list is skipped and warning is recorded", async () => {

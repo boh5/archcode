@@ -18,6 +18,7 @@ import { createAuditHook, type AuditEvent } from "./hooks/audit";
 import { createRedactionHook, REDACTION_MARKER } from "./hooks/redact";
 import { createOutputTruncator } from "./hooks/truncate";
 import { TOOL_ERROR_META_KEY } from "./errors";
+import { jsonSchema } from "ai";
 
 
 // ─── Test helpers ───
@@ -1162,6 +1163,44 @@ describe("ResolvedToolSet", () => {
     test("returns empty object for empty descriptor list", () => {
       const empty = new ResolvedToolSet([]);
       expect(empty.toAITools()).toEqual({});
+    });
+
+    test("prefers aiInputSchema over inputSchema when set", () => {
+      const zodSchema = z.object({ msg: z.string() });
+      const aiSchema = jsonSchema({
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      });
+
+      const dualDesc: ToolDescriptor = {
+        name: "mcp__ctx7__resolve",
+        description: "Resolve context",
+        inputSchema: zodSchema,
+        aiInputSchema: aiSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async () => "ok",
+      };
+
+      const aiTools = new ResolvedToolSet([dualDesc]).toAITools();
+
+      expect(aiTools["mcp__ctx7__resolve"].inputSchema).toBe(aiSchema);
+    });
+
+    test("falls back to inputSchema when aiInputSchema is undefined", () => {
+      const zodSchema = z.object({ msg: z.string() });
+      const builtinDesc: ToolDescriptor = {
+        name: "echo",
+        description: "Echo tool",
+        inputSchema: zodSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async () => "ok",
+      };
+
+      const aiTools = new ResolvedToolSet([builtinDesc]).toAITools();
+
+      // When aiInputSchema is undefined, inputSchema (Zod) is used
+      expect(aiTools["echo"].inputSchema).toBe(zodSchema);
     });
   });
 });

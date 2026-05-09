@@ -1,3 +1,4 @@
+import type { Schema as AiSchema } from "ai";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { ToolErrorKind } from "./errors";
@@ -130,12 +131,43 @@ export type PermissionErrorCode =
   | "TOOL_FILE_NOT_READ_FIRST"
   | "TOOL_FILE_WRITE_CONFLICT";
 
+// ─── AI Tool Schema ───
+
+/**
+ * Schema type accepted by AI SDK's `streamText({ tools })` for tool input
+ * definitions. This can be a Zod schema (for builtin tools) or an AI SDK
+ * `Schema` object (for MCP tools whose inputSchema comes from JSON Schema).
+ *
+ * When `aiInputSchema` is set on a `ToolDescriptor`, it takes precedence over
+ * `inputSchema` when presenting the tool to the LLM. This allows MCP tools to
+ * expose their real JSON Schema parameter definitions to the model while still
+ * using a loose Zod schema for Specra's internal validation pipeline.
+ */
+export type AiToolInputSchema = ZodTypeAny | AiSchema<unknown>;
+
 // ─── Descriptor ───
 
 export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult = string> {
   name: string;
   description: string;
+  /**
+   * Zod schema used by Specra's internal validation pipeline (`safeParse`).
+   * For builtin tools this is a precise schema; for MCP tools it's a loose
+   * `z.object({}).catchall(z.unknown())` that accepts any object — real
+   * validation is delegated to the MCP server.
+   */
   inputSchema: ZodTypeAny;
+  /**
+   * Optional schema for the LLM. When set, this is used instead of
+   * `inputSchema` when presenting the tool definition to the AI model via
+   * `toAITools()`. This allows MCP tools to expose their real JSON Schema
+   * parameter definitions so the model knows what arguments to pass, while
+   * keeping the loose Zod `inputSchema` for Specra's execution pipeline.
+   *
+   * Builtin tools leave this undefined — their Zod `inputSchema` serves both
+   * roles.
+   */
+  aiInputSchema?: AiToolInputSchema;
   traits: ToolTraits;
   hooks?: {
     before?: BeforeHook[];

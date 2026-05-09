@@ -155,9 +155,13 @@ function collectMcpSecrets(
     for (const server of Object.values(servers)) {
       if (server.headers) {
         secrets.push(...Object.values(server.headers));
+        // Only redact URL when server has auth headers — URL may contain
+        // embedded credentials (e.g. tokens in query params) that should not
+        // leak into error messages alongside the auth headers.
+        secrets.push(server.url);
       }
-      // Include the full URL as a secret so URL-embedded tokens are redacted
-      secrets.push(server.url);
+      // Public servers without auth headers have no secrets to redact;
+      // their URLs are safe to show in error messages.
     }
   }
   return secrets;

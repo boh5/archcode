@@ -181,6 +181,27 @@ describe("createSpecraRuntime", () => {
     expect(runtime.warnings[0].message).not.toContain(secret);
   });
 
+  test("public server URL without auth headers is not redacted in warnings", async () => {
+    const publicUrl = "https://public.example.test/mcp";
+    const configPath = await writeConfig(
+      makeConfig({
+        servers: {
+          public: { transport: "http", url: publicUrl },
+        },
+      }),
+    );
+    const manager = makeFakeMcpManager(new Error(`connection refused: ${publicUrl}`));
+
+    const runtime = await createSpecraRuntime({
+      configPath,
+      mcpManagerFactory: () => manager,
+    });
+
+    expect(runtime.warnings).toHaveLength(1);
+    expect(runtime.warnings[0].message).toContain(publicUrl);
+    expect(runtime.warnings[0].message).not.toContain(REDACTION_MARKER);
+  });
+
   test("records a duplicate MCP descriptor warning and still constructs the agent", async () => {
     const configPath = await writeConfig(makeConfig({ servers: {} }));
     const duplicateBuiltin = makeMcpDescriptor("file_read");

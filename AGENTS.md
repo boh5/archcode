@@ -59,6 +59,19 @@ streamText → toolCalls → partitionToolCalls (parallel vs serial) → guards 
 }
 ```
 
+## MCP (Model Context Protocol)
+
+- HTTP Streamable MCP only (no stdio, SSE, WebSocket, OAuth for MVP).
+- Built-in servers (code-defined in `src/mcp/builtin-servers.ts`):
+  - **context7** (`https://mcp.context7.com/mcp`) — library documentation lookup. Free without key (basic rate limits); higher limits with a free key from context7.com/dashboard.
+  - **grep.app** (`https://mcp.grep.app`) — code search across million+ GitHub repos. Free, no auth required.
+  - **exa** (`https://mcp.exa.ai/mcp`) — web search and content extraction. Free without key (~150 calls/day, 3 QPS); higher limits with an API key.
+- User-configured servers live under `.specra.json` → `mcp.servers` (optional key).
+- MCP tools are discovered before `TestAgent.run()` and registered as normal `ToolDescriptor`s via `defineTool()`.
+- Tool name format: `mcp__{server}__{tool}` (e.g., `mcp__grep-app__searchCode`).
+- Config schema: `src/config/mcp.ts` with strict Zod validation, env expansion (`${VAR}`, `${VAR:-default}`).
+- Failed MCP discovery does not crash the CLI; tools from failed servers are skipped with a warning.
+
 ## Key Dependencies
 
 - `ai` + `@ai-sdk/openai-compatible` — LLM calls via Vercel AI SDK. `streamText` is the core API.

@@ -75,6 +75,50 @@ describe("adaptMcpTool descriptor", () => {
     expect(typeof descriptor.execute).toBe("function");
   });
 
+  test("aiInputSchema is set from MCP inputSchema for LLM visibility", () => {
+    const descriptor = adaptMcpTool(
+      {
+        name: "resolve-library-id",
+        description: "Resolve a library ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            libraryName: { type: "string", description: "Library name" },
+            limit: { type: "number" },
+          },
+          required: ["libraryName"],
+        },
+      },
+      "context7",
+      makeMcpClient({ content: [] }),
+      [],
+    );
+
+    // inputSchema remains the loose Zod schema for Specra's validation pipeline
+    expect(descriptor.inputSchema).toBeInstanceOf(z.ZodObject);
+
+    // aiInputSchema carries the real JSON Schema for the LLM
+    expect(descriptor.aiInputSchema).toBeDefined();
+    // jsonSchema() returns an AI SDK Schema object with a jsonSchema property
+    const schema = descriptor.aiInputSchema as { jsonSchema: unknown };
+    expect(schema).toHaveProperty("jsonSchema");
+    const json = schema.jsonSchema as Record<string, unknown>;
+    expect(json).toHaveProperty("properties");
+    expect(json).toHaveProperty("required");
+  });
+
+  test("aiInputSchema falls back to empty object schema when MCP inputSchema is undefined", () => {
+    const descriptor = adaptMcpTool(
+      { name: "lookup" },
+      "docs",
+      makeMcpClient({ content: [] }),
+      [],
+    );
+
+    // aiInputSchema should still be defined, with an empty object schema
+    expect(descriptor.aiInputSchema).toBeDefined();
+  });
+
   test("uses an English fallback description when missing", () => {
     const descriptor = adaptMcpTool(
       { name: "lookup" },

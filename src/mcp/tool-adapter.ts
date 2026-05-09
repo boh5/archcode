@@ -1,3 +1,4 @@
+import { jsonSchema } from "ai";
 import { z } from "zod";
 import { defineTool } from "../tools/define-tool";
 import { createToolErrorResult } from "../tools/errors";
@@ -28,6 +29,7 @@ export function adaptMcpTool(
     name: toMcpToolRegistryName(serverName, toolName),
     description: mcpTool.description ?? fallbackDescription(serverName, toolName),
     inputSchema: mcpToolInputSchema,
+    aiInputSchema: jsonSchema(mcpTool.inputSchema as Record<string, unknown>),
     traits: traitsFromAnnotations(mcpTool.annotations),
     async execute(input): Promise<ToolExecutionResult> {
       try {

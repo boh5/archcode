@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type {
+  AiToolInputSchema,
   ToolTraits,
   ToolDescriptor,
   ToolExecutionContext,
@@ -14,6 +15,7 @@ interface DefineToolConfig<T extends z.ZodTypeAny, O extends string | ToolExecut
   name: string;
   description: string;
   inputSchema: T;
+  aiInputSchema?: AiToolInputSchema;
   traits: ToolTraits;
   hooks?: {
     before?: BeforeHook[];
@@ -31,6 +33,7 @@ export function defineTool<T extends z.ZodTypeAny, O extends string | ToolExecut
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
+    ...(config.aiInputSchema !== undefined ? { aiInputSchema: config.aiInputSchema } : {}),
     traits: config.traits,
     hooks: config.hooks,
     prepareInput: config.prepareInput,

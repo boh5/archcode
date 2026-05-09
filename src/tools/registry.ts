@@ -2,6 +2,7 @@ import type { ZodTypeAny } from "zod";
 import type {
   ToolDescriptor,
   AnyToolDescriptor,
+  AiToolInputSchema,
   Logger,
   BeforeHook,
   AfterHook,
@@ -380,16 +381,16 @@ export class ResolvedToolSet {
     return this.descriptors.find((d) => d.name === name);
   }
 
-  toAITools(): Record<string, { description: string; inputSchema: ZodTypeAny }> {
+  toAITools(): Record<string, { description: string; inputSchema: AiToolInputSchema }> {
     const result: Record<
       string,
-      { description: string; inputSchema: ZodTypeAny }
+      { description: string; inputSchema: AiToolInputSchema }
     > = {};
 
     for (const desc of this.descriptors) {
       result[desc.name] = {
         description: desc.description,
-        inputSchema: desc.inputSchema,
+        inputSchema: desc.aiInputSchema ?? desc.inputSchema,
       };
     }
 

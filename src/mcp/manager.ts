@@ -185,10 +185,15 @@ function collectSecrets(
   const secrets: string[] = [];
   for (const servers of serverGroups) {
     for (const config of Object.values(servers)) {
-      if (!config.headers) continue;
-      secrets.push(...Object.values(config.headers));
-      // Include the full URL as a secret so URL-embedded tokens are redacted
-      secrets.push(config.url);
+      if (config.headers) {
+        secrets.push(...Object.values(config.headers));
+        // Only redact URL when server has auth headers — URL may contain
+        // embedded credentials (e.g. tokens in query params) that should not
+        // leak into error messages alongside the auth headers.
+        secrets.push(config.url);
+      }
+      // Public servers without auth headers have no secrets to redact;
+      // their URLs are safe to show in error messages.
     }
   }
   return secrets;
