@@ -39,6 +39,7 @@ function createMockStore(
     isStreamingModel: false,
     streamingTools: {},
     readSnapshots: new Map(snapshots),
+    runCount: 0,
     append: () => {},
     toModelMessages: () => [],
   };

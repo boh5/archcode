@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelMessage, streamText as aiStreamText } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
+import type { ModelInfo } from "../../provider/model";
 import { createSessionStore } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { __setStreamTextForTest, runQueryLoop } from "./loop";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 
@@ -43,7 +44,17 @@ interface MockRound {
 const dummyModel = {
   modelId: "mock-model",
   provider: "mock-provider",
-} as unknown as LanguageModelV3;
+};
+
+const dummyModelInfo = {
+  model: dummyModel,
+  displayName: "Mock Model",
+  limit: { context: 1000, output: 100 },
+  modalities: { input: ["text"], output: ["text"] },
+  providerId: "mock-provider",
+  modelId: "mock-model",
+  qualifiedId: "mock-provider:mock-model",
+} as unknown as ModelInfo;
 
 const testToolSchema = z.object({ message: z.string().optional() }).strict();
 
@@ -127,7 +138,7 @@ function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   return {
-    model: dummyModel,
+    modelInfo: dummyModelInfo,
     toolRegistry: createRegistry(),
     store: createStore(),
     allowedTools: [],
@@ -929,102 +940,104 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
-  describe("reminder continuation integration", () => {
-    test("auto-inject reminder appears once then is consumed", async () => {
+  describe("query loop hooks", () => {
+    test("beforeModelCall auto-inject hook adds reminder once then consumes it", async () => {
       const store = createStore();
       store.getState().append({ type: "reminder", reminder: autoInjectReminder("auto-once") });
       const streamFn = createMockStreamText([{ text: "First" }, { text: "Second" }]);
 
-      await runQueryLoop(makeOptions({ store }), "First question");
-      await runQueryLoop(makeOptions({ store }), "Second question");
+      await runQueryLoop(
+        makeOptions({ store, hooks: { beforeModelCall: [createAutoInjectReminderHook()] } }),
+        "First question",
+      );
+      await runQueryLoop(
+        makeOptions({ store, hooks: { beforeModelCall: [createAutoInjectReminderHook()] } }),
+        "Second question",
+      );
 
       expect(JSON.stringify(streamCallMessages(streamFn, 0))).toContain("Reminder auto-once");
       expect(JSON.stringify(streamCallMessages(streamFn, 1))).not.toContain("Reminder auto-once");
       expect(store.getState().reminders[0].consumedAt).toEqual(expect.any(Number));
     });
 
-    test("auto-inject reminder is consumed before streamText failure", async () => {
+    test("hooks execute in registration order", async () => {
       const store = createStore();
-      const events = captureEvents(store);
-      store.getState().append({ type: "reminder", reminder: autoInjectReminder("before-fail") });
-      const fn = mock(() => {
-        const reminder = store.getState().reminders.find((item) => item.id === "before-fail");
-        expect(reminder?.consumedAt).toEqual(expect.any(Number));
-        throw new Error("model failed");
-      });
-      __setStreamTextForTest(fn as unknown as typeof aiStreamText);
-
-      await runQueryLoop(makeOptions({ store }), "Hi");
-
-      expect(events.findIndex((event) => event.type === "reminder-consumed"))
-        .toBeLessThan(events.findIndex((event) => event.type === "loop-error"));
-      expect(store.getState().reminders[0].consumedAt).toEqual(expect.any(Number));
-    });
-
-    test("stagnation detection triggers continuation at count 3", async () => {
-      const store = createStore();
-      store.getState().append({ type: "todo-write", todos: [pendingTodo()] });
-      createMockStreamText([
-        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
-        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} }] },
-        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: {} }] },
-        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-4", toolName: "echo", input: {} }] },
-        { text: "Done" },
-      ]);
+      const order: string[] = [];
+      createMockStreamText([{ text: "ok" }]);
 
       await runQueryLoop(
-        makeOptions({ store, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
-        "Continue todos",
-      );
-
-      expect(store.getState().reminders.filter((reminder) => reminder.source.type === "todo_continuation"))
-        .toHaveLength(1);
-      expect(store.getState().reminders[0].content).toContain("Task todo-1");
-    });
-
-    test("loop-end fallback triggers for completed and max_steps with pending todos", async () => {
-      const completedStore = createStore();
-      completedStore.getState().append({ type: "todo-write", todos: [pendingTodo("completed-case")] });
-      createMockStreamText([{ text: "Done" }]);
-
-      await runQueryLoop(makeOptions({ store: completedStore }), "Hi");
-
-      expect(completedStore.getState().reminders).toHaveLength(1);
-      expect(completedStore.getState().reminders[0].content).toContain("Task completed-case");
-
-      const maxStepsStore = createStore();
-      maxStepsStore.getState().append({ type: "todo-write", todos: [pendingTodo("max-case")] });
-      createMockStreamText([
-        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-max", toolName: "echo", input: {} }] },
-      ]);
-
-      await runQueryLoop(
-        makeOptions({ store: maxStepsStore, maxSteps: 1, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelCall: [async () => { order.push("before-1"); }, async () => { order.push("before-2"); }],
+            afterStepEnd: [async () => { order.push("step-1"); }, async () => { order.push("step-2"); }],
+            afterLoopEnd: [async () => { order.push("loop-1"); }, async () => { order.push("loop-2"); }],
+          },
+        }),
         "Hi",
       );
 
-      expect(maxStepsStore.getState().reminders).toHaveLength(1);
-      expect(maxStepsStore.getState().reminders[0].content).toContain("Task max-case");
+      expect(order).toEqual(["before-1", "before-2", "step-1", "step-2", "loop-1", "loop-2"]);
     });
 
-    test("loop-end fallback does not trigger for failed or aborted", async () => {
-      const failedStore = createStore();
-      failedStore.getState().append({ type: "todo-write", todos: [pendingTodo("failed-case")] });
-      __setStreamTextForTest(mock(() => { throw new Error("boom"); }) as unknown as typeof aiStreamText);
+    test("hook errors are logged and the loop continues", async () => {
+      const store = createStore();
+      const warn = mock(() => {});
+      const originalWarn = console.warn;
+      console.warn = warn;
+      createMockStreamText([{ text: "Still works" }]);
 
-      await runQueryLoop(makeOptions({ store: failedStore }), "Hi");
+      try {
+        const result = await runQueryLoop(
+          makeOptions({
+            store,
+            hooks: {
+              beforeModelCall: [
+                async () => { throw new Error("before failed"); },
+                async ({ messages }) => { messages.push({ role: "user", content: "after error" }); },
+              ],
+            },
+          }),
+          "Hi",
+        );
 
-      expect(failedStore.getState().reminders).toHaveLength(0);
+        expect(result).toEqual({ text: "Still works", steps: 0 });
+      } finally {
+        console.warn = originalWarn;
+      }
 
-      const abortedStore = createStore();
+      expect(warn).toHaveBeenCalledWith("Loop hook failed:", "before failed");
+      expect(store.getState().isRunning).toBe(false);
+    });
+
+    test("hooks receive correct context", async () => {
+      const store = createStore();
       const abortController = new AbortController();
-      abortController.abort();
-      abortedStore.getState().append({ type: "todo-write", todos: [pendingTodo("aborted-case")] });
-      __setStreamTextForTest(mock(() => { throw new Error("aborted"); }) as unknown as typeof aiStreamText);
+      const contexts: unknown[] = [];
+      createMockStreamText([{ text: "ok" }]);
 
-      await runQueryLoop(makeOptions({ store: abortedStore, abort: abortController.signal }), "Hi");
+      await runQueryLoop(
+        makeOptions({
+          store,
+          abort: abortController.signal,
+          hooks: {
+            beforeModelCall: [async (ctx) => { contexts.push(ctx); }],
+            afterStepEnd: [async (ctx) => { contexts.push(ctx); }],
+            afterLoopEnd: [async (ctx) => { contexts.push(ctx); }],
+          },
+        }),
+        "Hi",
+      );
 
-      expect(abortedStore.getState().reminders).toHaveLength(0);
+      expect(contexts).toHaveLength(3);
+      for (const context of contexts as Array<{ store: unknown; modelInfo: unknown; abort: unknown }>) {
+        expect(context.store).toBe(store);
+        expect(context.modelInfo).toBe(dummyModelInfo);
+        expect(context.abort).toBe(abortController.signal);
+      }
+      expect("messages" in (contexts[0] as Record<string, unknown>)).toBe(true);
+      expect("messages" in (contexts[1] as Record<string, unknown>)).toBe(false);
+      expect("messages" in (contexts[2] as Record<string, unknown>)).toBe(false);
     });
 
     test("RunEndEvent uses max_steps status when step limit is reached", async () => {
@@ -1043,32 +1056,73 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(runEnd?.status).toBe("max_steps");
     });
 
-    test("continuationCount prevents exceeding 10 injected continuations", async () => {
+    test("beforeModelCall receives mutable messages for the current model call only", async () => {
       const store = createStore();
-      store.getState().append({ type: "todo-write", todos: [pendingTodo("limit-case")] });
-      const registry = createTestRegistry(async () => {
-        store.setState({
-          reminders: store.getState().reminders.map((reminder) =>
-            reminder.source.type === "todo_continuation"
-              ? { ...reminder, createdAt: 0 }
-              : reminder,
-          ),
-        });
-        return "ok";
-      });
-      const rounds = Array.from({ length: 14 }, (_, index) => ({
-        finishReason: "tool-calls",
-        chunks: [{ type: "tool-call" as const, toolCallId: `tc-${index}`, toolName: "echo", input: { message: String(index) } }],
-      }));
-      createMockStreamText(rounds);
+      const streamFn = createMockStreamText([{ text: "ok" }]);
 
       await runQueryLoop(
-        makeOptions({ store, maxSteps: 14, toolRegistry: registry, allowedTools: ["echo"] }),
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelCall: [
+              async ({ messages }) => {
+                messages.push({ role: "user", content: "ephemeral reminder" });
+              },
+            ],
+          },
+        }),
         "Hi",
       );
 
-      expect(store.getState().reminders.filter((reminder) => reminder.source.type === "todo_continuation"))
-        .toHaveLength(10);
+      expect(streamCallMessages(streamFn, 0)).toEqual([
+        { role: "user", content: "Hi" },
+        { role: "user", content: "ephemeral reminder" },
+      ]);
+      expect(store.getState().messages).toHaveLength(2);
+      expect(JSON.stringify(store.getState().messages)).not.toContain("ephemeral reminder");
+    });
+
+    test("afterStepEnd sees store changes from the completed step", async () => {
+      const store = createStore();
+      let stepSnapshot: unknown;
+      createMockStreamText([{ text: "Answer", finishReason: "length", usage: { totalTokens: 42 } }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            afterStepEnd: [async ({ store: ctxStore }) => { stepSnapshot = ctxStore.getState().steps.at(-1); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(stepSnapshot).toMatchObject({
+        step: 0,
+        finishReason: "length",
+        usage: { totalTokens: 42 },
+        completedAt: expect.any(Number),
+      });
+    });
+
+    test("afterLoopEnd fires from finally on failure", async () => {
+      const store = createStore();
+      const statuses: Array<unknown> = [];
+      __setStreamTextForTest(mock(() => { throw new Error("model failed"); }) as unknown as typeof aiStreamText);
+
+      const result = await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            afterLoopEnd: [async ({ store: ctxStore }) => { statuses.push(ctxStore.getState().isRunning); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(result).toEqual({ text: "", steps: 0 });
+      expect(statuses).toEqual([false]);
+      expect(store.getState().steps.at(-1)).toMatchObject({ step: 0, error: "model failed" });
     });
   });
 
@@ -1645,49 +1699,4 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(result.text).toBe("custom");
   });
 
-  describe("onRunEnd callback", () => {
-    test("is called after run-end with correct state shape", async () => {
-      const store = createStore();
-      const todos: StoredTodo[] = [{ id: "todo-1", content: "test", status: "pending" }];
-      store.getState().append({ type: "todo-write", todos });
-      createMockStreamText([{ text: "Hello" }]);
-
-      let capturedState: unknown;
-      const onRunEnd = mock(async (state: Parameters<NonNullable<QueryLoopOptions["onRunEnd"]>>[0]) => {
-        capturedState = state;
-      });
-
-      await runQueryLoop(makeOptions({ store, onRunEnd }), "Hi");
-
-      expect(onRunEnd).toHaveBeenCalledTimes(1);
-      const state = capturedState as Record<string, unknown>;
-      expect(state).toHaveProperty("sessionId");
-      expect(typeof state.sessionId).toBe("string");
-      expect(state).toHaveProperty("createdAt");
-      expect(typeof state.createdAt).toBe("number");
-      expect(state).toHaveProperty("messages");
-      expect(Array.isArray(state.messages)).toBe(true);
-      expect(state).toHaveProperty("steps");
-      expect(Array.isArray(state.steps)).toBe(true);
-      expect(state).toHaveProperty("todos");
-      expect(Array.isArray(state.todos)).toBe(true);
-      expect((state.todos as Array<unknown>).length).toBeGreaterThan(0);
-    });
-
-    test("callback throw does not prevent loop completion", async () => {
-      const store = createStore();
-      createMockStreamText([{ text: "Still works" }]);
-
-      const onRunEnd = mock(async () => {
-        throw new Error("callback error");
-      });
-
-      const result = await runQueryLoop(makeOptions({ store, onRunEnd }), "Hi");
-
-      expect(result).toEqual({ text: "Still works", steps: 0 });
-      expect(store.getState().isRunning).toBe(false);
-      const steps = store.getState().steps;
-      expect(steps[0]).toMatchObject({ step: 0, finishReason: "stop" });
-    });
-  });
 });

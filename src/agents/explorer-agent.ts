@@ -10,6 +10,7 @@ import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "..
 import { AgentRunningError, NoModelsConfiguredError } from "./orchestrator-agent";
 import type { Agent, AgentResult, AgentRunOptions } from "./orchestrator-agent";
 import { runQueryLoop } from "./query/loop";
+import { createAutoInjectReminderHook, createTodoContinuationHook } from "./query/hooks";
 import { getToolsForDepth } from "./tool-filter";
 
 export const EXPLORER_READ_ONLY_TOOLS = [
@@ -132,7 +133,7 @@ export class ExplorerAgent implements Agent {
 
       const result = await runQueryLoop(
         {
-          model: this.modelInfo.model,
+          modelInfo: this.modelInfo,
           toolRegistry: this.toolRegistry,
           allowedTools,
           workspaceRoot: this.workspaceRoot,
@@ -142,6 +143,10 @@ export class ExplorerAgent implements Agent {
           systemPrompt,
           store: this.store,
           currentDepth: this.depth,
+          hooks: {
+            beforeModelCall: [createAutoInjectReminderHook()],
+            afterStepEnd: [createTodoContinuationHook()],
+          },
         },
         userMessage,
       );

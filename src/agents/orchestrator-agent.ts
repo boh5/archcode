@@ -10,8 +10,7 @@ import type { ToolRegistry } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
 import { createAgentRegistry } from "./agent-registry";
 import { runQueryLoop } from "./query/loop";
-import { saveSessionTranscript } from "../store/helpers";
-import { getSessionsDir } from "../store/sessions-dir";
+import { createAutoInjectReminderHook, createTodoContinuationHook, createTranscriptSaveHook } from "./query/hooks";
 import { SubAgentManager } from "./sub-agent-manager";
 
 export interface AgentRunOptions {
@@ -154,7 +153,7 @@ export class OrchestratorAgent implements Agent {
 
       const result = await runQueryLoop(
         {
-          model: this.modelInfo.model,
+          modelInfo: this.modelInfo,
           toolRegistry: this.toolRegistry,
           allowedTools: allToolNames,
           confirmPermission: confirm,
@@ -164,9 +163,10 @@ export class OrchestratorAgent implements Agent {
           store: this.store,
           subAgentManager: this.subAgentManager,
           currentDepth: 0,
-          onRunEnd: async (state) => {
-            const sessionsDir = getSessionsDir();
-            await saveSessionTranscript(state, sessionsDir);
+          hooks: {
+            beforeModelCall: [createAutoInjectReminderHook()],
+            afterStepEnd: [createTodoContinuationHook({ subAgentManager: this.subAgentManager })],
+            afterLoopEnd: [createTranscriptSaveHook()],
           },
         },
         userMessage,

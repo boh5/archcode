@@ -287,6 +287,7 @@ export interface SessionStoreState {
   subAgentDescriptions: Map<string, string>;
 
   // Running state
+  runCount: number;
   isRunning: boolean;
   isStreamingModel: boolean;
   currentRunId?: string;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
-import type { Reminder, StoredMessage, StoredPart } from "./types";
+import type { StoredMessage, StoredPart } from "./types";
 import { REDACTION_MARKER } from "../tools/hooks/redact";
 
 let idCounter = 0;
@@ -104,23 +104,6 @@ function storedMessage(role: StoredMessage["role"], parts: StoredPart[]): Stored
   };
 }
 
-function reminder(options: {
-  id?: string;
-  delivery?: Reminder["delivery"];
-  content?: string;
-  createdAt?: number;
-  consumedAt?: number | null;
-} = {}): Reminder {
-  return {
-    id: options.id ?? nextId("reminder"),
-    source: { type: "todo_continuation", pendingTodos: [] },
-    delivery: options.delivery ?? "auto_inject",
-    content: options.content ?? "Remember the constraint.",
-    createdAt: options.createdAt ?? idCounter,
-    consumedAt: options.consumedAt ?? null,
-  };
-}
-
 describe("toModelMessagesFromStoredMessages", () => {
   test("returns empty ModelMessage array for empty stored messages", () => {
     expect(toModelMessagesFromStoredMessages([])).toEqual([]);
@@ -134,17 +117,18 @@ describe("toModelMessagesFromStoredMessages", () => {
     ]);
   });
 
-  test("returns the same projection when reminders are empty", () => {
-    const messages = [storedMessage("user", [textPart("hello")])];
-
-    expect(toModelMessagesFromStoredMessages(messages, [])).toEqual([
-      { role: "user", content: "hello" },
-    ]);
-  });
-
   test("has no todo-specific projection path", () => {
     expect(toModelMessagesFromStoredMessages([])).toEqual([]);
     expect(JSON.stringify(toModelMessagesFromStoredMessages([]))).not.toContain("todo");
+  });
+
+  test("returns pure message projection with no reminder injection", () => {
+    const messages = [storedMessage("user", [textPart("hello")])];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(projected).toEqual([{ role: "user", content: "hello" }]);
+    expect(JSON.stringify(projected)).not.toContain("<system-reminder>");
   });
 
   test("projects a user message with completed text to a single user ModelMessage", () => {
@@ -483,82 +467,5 @@ describe("toModelMessagesFromStoredMessages", () => {
         ],
       },
     ]);
-  });
-
-  test("appends one unconsumed auto-inject reminder as a synthetic user message", () => {
-    const messages = [storedMessage("user", [textPart("hello")])];
-
-    expect(
-      toModelMessagesFromStoredMessages(messages, [
-        reminder({ content: "Check the latest background task.", createdAt: 20 }),
-      ]),
-    ).toEqual([
-      { role: "user", content: "hello" },
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "<system-reminder>\nCheck the latest background task.\n</system-reminder>",
-          },
-        ],
-      },
-    ]);
-  });
-
-  test("appends multiple auto-inject reminders ordered by createdAt", () => {
-    expect(
-      toModelMessagesFromStoredMessages([], [
-        reminder({ id: "later", content: "Later reminder.", createdAt: 30 }),
-        reminder({ id: "earlier", content: "Earlier reminder.", createdAt: 10 }),
-        reminder({ id: "middle", content: "Middle reminder.", createdAt: 20 }),
-      ]),
-    ).toEqual([
-      {
-        role: "user",
-        content: [{ type: "text", text: "<system-reminder>\nEarlier reminder.\n</system-reminder>" }],
-      },
-      {
-        role: "user",
-        content: [{ type: "text", text: "<system-reminder>\nMiddle reminder.\n</system-reminder>" }],
-      },
-      {
-        role: "user",
-        content: [{ type: "text", text: "<system-reminder>\nLater reminder.\n</system-reminder>" }],
-      },
-    ]);
-  });
-
-  test("does not inject on-demand reminders", () => {
-    expect(
-      toModelMessagesFromStoredMessages([], [
-        reminder({ delivery: "on_demand", content: "Wait for explicit demand.", createdAt: 10 }),
-      ]),
-    ).toEqual([]);
-  });
-
-  test("does not inject consumed auto-inject reminders", () => {
-    expect(
-      toModelMessagesFromStoredMessages([], [
-        reminder({ content: "Already injected.", createdAt: 10, consumedAt: 11 }),
-      ]),
-    ).toEqual([]);
-  });
-
-  test("does not mutate input message or reminder arrays", () => {
-    const messages = [storedMessage("user", [textPart("hello")])];
-    const reminders = [
-      reminder({ id: "later", content: "Later reminder.", createdAt: 30 }),
-      reminder({ id: "earlier", content: "Earlier reminder.", createdAt: 10 }),
-      reminder({ id: "consumed", content: "Consumed reminder.", createdAt: 20, consumedAt: 21 }),
-    ];
-    const originalMessages = structuredClone(messages);
-    const originalReminders = structuredClone(reminders);
-
-    toModelMessagesFromStoredMessages(messages, reminders);
-
-    expect(messages).toEqual(originalMessages);
-    expect(reminders).toEqual(originalReminders);
-    expect(reminders.map((item) => item.id)).toEqual(["later", "earlier", "consumed"]);
   });
 });

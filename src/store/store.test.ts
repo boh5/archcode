@@ -89,6 +89,27 @@ describe("createSessionStore", () => {
   });
 });
 
+describe("runCount", () => {
+  test("initial runCount is 0", () => {
+    const store = createFreshStore("runCount-init");
+    expect(store.getState().runCount).toBe(0);
+  });
+
+  test("after run-start event, runCount is 1", () => {
+    const store = createFreshStore("runCount-after-start");
+    store.getState().append({ type: "run-start" });
+    expect(store.getState().runCount).toBe(1);
+  });
+
+  test("after two run-start events (with run-end between), runCount is 2", () => {
+    const store = createFreshStore("runCount-two-runs");
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "run-start" });
+    expect(store.getState().runCount).toBe(2);
+  });
+});
+
 describe("reminder events", () => {
   test("reminder event creates reminder with consumedAt null", () => {
     const store = createFreshStore("reminder-create");

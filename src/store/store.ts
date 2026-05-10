@@ -57,11 +57,12 @@ export function createSessionStore(
     isStreamingModel: false,
     streamingTools: {},
     readSnapshots: new Map(),
+    runCount: 0,
     append: (event: StreamEvent) => {
       set((state) => reduceStreamEvent(state, event));
     },
     toModelMessages: (): ModelMessage[] =>
-      toModelMessagesFromStoredMessages(get().messages, get().reminders),
+      toModelMessagesFromStoredMessages(get().messages),
   }));
 
   sessionRegistry.set(sessionId, store);
@@ -92,6 +93,7 @@ function reduceStreamEvent(
         streamingText: undefined,
         streamingReasoning: undefined,
         streamingTools: {},
+        runCount: state.runCount + 1,
       };
     }
 

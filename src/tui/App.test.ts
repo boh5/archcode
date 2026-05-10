@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { ModelInfo } from "../provider/model";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
@@ -42,6 +43,15 @@ function setupMockStreamText(rounds: MockRound[]) {
 }
 
 const DUMMY_MODEL = { modelId: "mock", provider: "mock" } as unknown as LanguageModelV3;
+const DUMMY_MODEL_INFO = {
+  model: DUMMY_MODEL,
+  displayName: "Mock Model",
+  limit: { context: 1000, output: 100 },
+  modalities: { input: ["text"], output: ["text"] },
+  providerId: "mock",
+  modelId: "mock",
+  qualifiedId: "mock:mock",
+} as unknown as ModelInfo;
 
 describe("App orchestration", () => {
   test("shouldSubmit skips empty input", () => {
@@ -65,7 +75,7 @@ describe("App orchestration", () => {
 
     await runQueryLoop(
       {
-        model: DUMMY_MODEL,
+        modelInfo: DUMMY_MODEL_INFO,
         toolRegistry: createRegistry([]),
         allowedTools: [],
         store,
@@ -99,7 +109,7 @@ describe("App orchestration", () => {
 
     await runQueryLoop(
       {
-        model: DUMMY_MODEL,
+        modelInfo: DUMMY_MODEL_INFO,
         toolRegistry: createRegistry([]),
         allowedTools: [],
         store,

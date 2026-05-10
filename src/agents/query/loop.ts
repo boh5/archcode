@@ -8,12 +8,6 @@ import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/hooks/redact";
-import {
-  checkStagnation,
-  computeTodoHash,
-  isLoopEndAllowed,
-  shouldInjectContinuationReminder,
-} from "./todo-continuation";
 
 const DEFAULT_MAX_STEPS = 50;
 
@@ -62,17 +56,16 @@ export async function runQueryLoop(
   userMessage: string,
 ): Promise<QueryLoopResult> {
   const {
-    model,
+    modelInfo,
     toolRegistry,
     allowedTools,
     confirmPermission,
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
-    subAgentManager,
     currentDepth,
-    onRunEnd,
   } = options;
+  const { beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
   let resolvedWorkspaceRoot = options.workspaceRoot;
 
@@ -80,9 +73,6 @@ export async function runQueryLoop(
   let lastText = "";
   let failed = false;
   let runEndStatus: RunEndEvent["status"] = "completed";
-  let lastTodoHash: string | null = null;
-  let stagnationCount = 0;
-  let continuationCount = 0;
   const doomTracker = new DoomTracker();
 
   store.getState().append({ type: "run-start" });
@@ -93,11 +83,11 @@ export async function runQueryLoop(
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
       const messages = store.getState().toModelMessages();
-      consumeAutoInjectReminders(store);
+      await runHooks(beforeModelCall, { store, modelInfo, abort, messages });
       const resolved = toolRegistry.resolveForAgent(allowedTools);
 
       const result = _streamText({
-        model,
+        model: modelInfo.model,
         messages,
         abortSignal: abort,
         ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
@@ -110,6 +100,7 @@ export async function runQueryLoop(
       lastText = await result.text;
 
       store.getState().append({ type: "step-end", step: steps, finishReason, usage });
+      await runHooks(afterStepEnd, { store, modelInfo, abort });
 
       if (finishReason !== "tool-calls") break;
 
@@ -125,33 +116,10 @@ export async function runQueryLoop(
         resolvedWorkspaceRoot,
         confirmPermission,
         options.askUser,
-        subAgentManager,
+        options.subAgentManager,
         currentDepth,
         doomTracker,
       );
-
-      const stagnationResult = checkStagnation(
-        computeTodoHash(store.getState().todos),
-        lastTodoHash,
-        stagnationCount,
-      );
-      lastTodoHash = stagnationResult.newHash;
-      stagnationCount = stagnationResult.newCount;
-
-      if (stagnationResult.isStagnant) {
-        const checkResult = shouldInjectContinuationReminder(
-          store.getState(),
-          Date.now(),
-          continuationCount,
-          subAgentManager,
-          { stagnationCount: stagnationResult.newCount, trigger: "stagnation" },
-        );
-
-        if (checkResult.should) {
-          store.getState().append({ type: "reminder", reminder: checkResult.reminder });
-          continuationCount++;
-        }
-      }
 
       steps++;
     }
@@ -180,49 +148,28 @@ export async function runQueryLoop(
       runEndStatus = "aborted";
     }
 
-    if (isLoopEndAllowed(runEndStatus) && !failed) {
-      const checkResult = shouldInjectContinuationReminder(
-        store.getState(),
-        Date.now(),
-        continuationCount,
-        subAgentManager,
-        { trigger: "loop_end" },
-      );
-
-      if (checkResult.should) {
-        store.getState().append({ type: "reminder", reminder: checkResult.reminder });
-        continuationCount++;
-      }
-    }
-
     store.getState().append({
       type: "run-end",
       status: runEndStatus,
       ...(failed ? { error: "Run failed" } : {}),
     });
-
-    if (onRunEnd) {
-      try {
-        const { sessionId, createdAt, messages, steps, todos } = store.getState();
-        await onRunEnd({ sessionId, createdAt, messages, steps, todos });
-      } catch (err) {
-        console.warn("onRunEnd callback failed:", err instanceof Error ? err.message : String(err));
-      }
-    }
+    await runHooks(afterLoopEnd, { store, modelInfo, abort });
   }
 }
 
-function consumeAutoInjectReminders(store: StoreApi<SessionStoreState>): void {
-  const unconsumedAutoInject = store.getState().reminders.filter(
-    (reminder) => reminder.delivery === "auto_inject" && reminder.consumedAt === null,
-  );
+async function runHooks<T>(
+  hooks: Array<(ctx: T) => Promise<void>> | undefined,
+  ctx: T,
+): Promise<void> {
+  if (!hooks?.length) return;
 
-  if (unconsumedAutoInject.length === 0) return;
-
-  store.getState().append({
-    type: "reminder-consumed",
-    reminderIds: unconsumedAutoInject.map((reminder) => reminder.id),
-  });
+  for (const hook of hooks) {
+    try {
+      await hook(ctx);
+    } catch (err) {
+      console.warn("Loop hook failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
 }
 
 async function consumeFullStream(

@@ -407,6 +407,7 @@ function createMockStore(): StoreApi<SessionStoreState> {
     isStreamingModel: false,
     streamingTools: {},
     readSnapshots: new Map(),
+    runCount: 0,
     append: () => {},
     toModelMessages: () => [],
   };
