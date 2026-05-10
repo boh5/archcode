@@ -1,9 +1,10 @@
 import type { ModelMessage } from "ai";
-import type { StoredMessage } from "./types";
+import type { Reminder, StoredMessage } from "./types";
 import { redactValue } from "../tools/hooks/redact";
 
 export function toModelMessagesFromStoredMessages(
   messages: StoredMessage[],
+  reminders?: Reminder[],
 ): ModelMessage[] {
   const modelMessages: ModelMessage[] = [];
 
@@ -78,6 +79,26 @@ export function toModelMessagesFromStoredMessages(
     if (toolContent.length > 0) {
       modelMessages.push({ role: "tool", content: toolContent });
     }
+  }
+
+  if (reminders === undefined || reminders.length === 0) {
+    return modelMessages;
+  }
+
+  const injectedReminders = reminders
+    .filter((reminder) => reminder.delivery === "auto_inject" && reminder.consumedAt === null)
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  for (const reminder of injectedReminders) {
+    modelMessages.push({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: `<system-reminder>\n${reminder.content}\n</system-reminder>`,
+        },
+      ],
+    });
   }
 
   return modelMessages;

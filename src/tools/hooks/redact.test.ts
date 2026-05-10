@@ -58,10 +58,10 @@ describe("redaction hook", () => {
   it("does not redact file paths that resemble base64 tokens", () => {
     expect(
       redactString(
-        "Symbols: Interface Agent (/Users/bo/Developer/AI/specra/src/agents/test-agent.ts:19:1)",
+        "Symbols: Interface Agent (/Users/bo/Developer/AI/specra/src/agents/orchestrator-agent.ts:19:1)",
       ),
     ).toBe(
-      "Symbols: Interface Agent (/Users/bo/Developer/AI/specra/src/agents/test-agent.ts:19:1)",
+      "Symbols: Interface Agent (/Users/bo/Developer/AI/specra/src/agents/orchestrator-agent.ts:19:1)",
     );
 
     expect(redactString("path=/home/user/project/src/secret-handler.ts:42:5")).toBe(

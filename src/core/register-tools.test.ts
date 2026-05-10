@@ -60,7 +60,7 @@ function makeLogger(): Logger & { info: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 15 builtins including 4 LSP tools", () => {
+  it("registers all 18 builtins including 4 LSP tools", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -80,6 +80,9 @@ describe("registerBuiltinTools", () => {
       "lsp_find_references",
       "lsp_symbols",
       "web_fetch",
+      "wait_for_reminder",
+      "delegate",
+      "background_output",
     ]);
   });
 

@@ -8,6 +8,7 @@ import type {
   StreamingTextState,
   StreamingReasoningState,
   StreamingToolState,
+  Reminder,
 } from "../store/types";
 
 export interface TranscriptViewProps {
@@ -15,6 +16,7 @@ export interface TranscriptViewProps {
   streamingText?: StreamingTextState;
   streamingReasoning?: StreamingReasoningState;
   streamingTools: Record<string, StreamingToolState>;
+  reminders?: Reminder[];
 }
 
 interface RenderBlock {
@@ -22,9 +24,9 @@ interface RenderBlock {
   content: string;
   color?: "gray" | "yellow" | "red" | "green";
   bold?: boolean;
+  _sortKey?: number;
+  _sortTieBreaker?: number;
 }
-
-// ─── Todo ───
 
 interface TodoItemInput {
   id?: string;
@@ -125,6 +127,7 @@ export function buildRenderBlocks(
   streamingText?: StreamingTextState,
   streamingReasoning?: StreamingReasoningState,
   streamingTools: Record<string, StreamingToolState> = {},
+  reminders?: Reminder[],
 ): RenderBlock[] {
   const blocks: RenderBlock[] = [];
 
@@ -134,6 +137,8 @@ export function buildRenderBlocks(
         id: message.id,
         content: formatUserMessage(getUserTextContent(message.parts)),
         color: "gray",
+        _sortKey: message.createdAt,
+        _sortTieBreaker: 0,
       });
       continue;
     }
@@ -144,11 +149,15 @@ export function buildRenderBlocks(
           blocks.push({
             id: part.id,
             content: formatTextPart(part.text),
+            _sortKey: message.createdAt,
+            _sortTieBreaker: 0,
           });
         } else if (isStreamingTextMatch(part, streamingText)) {
           blocks.push({
             id: `${part.id}:streaming`,
             content: formatStreamingText(streamingText!),
+            _sortKey: message.createdAt,
+            _sortTieBreaker: 0,
           });
         }
         continue;
@@ -159,11 +168,15 @@ export function buildRenderBlocks(
           blocks.push({
             id: part.id,
             content: formatReasoningPart(part.text),
+            _sortKey: message.createdAt,
+            _sortTieBreaker: 0,
           });
         } else if (isStreamingReasoningMatch(part, streamingReasoning)) {
           blocks.push({
             id: `${part.id}:streaming`,
             content: formatReasoningPart(streamingReasoning!.text),
+            _sortKey: message.createdAt,
+            _sortTieBreaker: 0,
           });
         }
         continue;
@@ -171,7 +184,9 @@ export function buildRenderBlocks(
 
       if (part.type === "tool") {
         const toolBlocks = renderToolPart(part);
-        blocks.push(...toolBlocks);
+        for (const tb of toolBlocks) {
+          blocks.push({ ...tb, _sortKey: message.createdAt, _sortTieBreaker: 0 });
+        }
         continue;
       }
     }
@@ -181,13 +196,17 @@ export function buildRenderBlocks(
     blocks.push({
       id: `streaming-text:orphan`,
       content: formatStreamingText(streamingText),
+      _sortKey: streamingText.messageId ? 0 : 0,
+      _sortTieBreaker: 0,
     });
   }
 
   if (streamingReasoning && !blocks.some((b) => b.id === `${streamingReasoning.partId}:streaming`)) {
     blocks.push({
       id: `streaming-reasoning:orphan`,
-      content: formatReasoningPart(streamingReasoning.text),
+      content: formatReasoningPart(streamingReasoning!.text),
+      _sortKey: 0,
+      _sortTieBreaker: 0,
     });
   }
 
@@ -198,11 +217,32 @@ export function buildRenderBlocks(
         id: `streaming-tool:${toolCallId}`,
         content: formatToolCall(streamingTool.toolName),
         color: "yellow",
+        _sortKey: 0,
+        _sortTieBreaker: 0,
       });
     }
   }
 
-  return blocks;
+  if (reminders && reminders.length > 0) {
+    const reminderBlocks: (RenderBlock & { _sortKey: number; _sortTieBreaker: number })[] = reminders.map(
+      (reminder) => ({
+        id: `reminder:${reminder.id}`,
+        content: `💬 ${reminder.content}${reminder.consumedAt !== null ? " [handled]" : ""}`,
+        color: "gray" as const,
+        _sortKey: reminder.createdAt,
+        _sortTieBreaker: 1,
+      }),
+    );
+
+    blocks.push(...reminderBlocks);
+    blocks.sort((a, b) => {
+      const keyDiff = (a._sortKey ?? 0) - (b._sortKey ?? 0);
+      if (keyDiff !== 0) return keyDiff;
+      return (a._sortTieBreaker ?? 0) - (b._sortTieBreaker ?? 0);
+    });
+  }
+
+  return blocks.map(({ _sortKey: _, _sortTieBreaker: __, ...rest }) => rest);
 }
 
 function messagePartsContainTool(messages: StoredMessage[], toolCallId: string): boolean {
@@ -305,10 +345,11 @@ export function TranscriptView({
   streamingText,
   streamingReasoning,
   streamingTools,
+  reminders,
 }: TranscriptViewProps) {
   return (
     <Box flexDirection="column">
-      {buildRenderBlocks(messages, streamingText, streamingReasoning, streamingTools).map(
+      {buildRenderBlocks(messages, streamingText, streamingReasoning, streamingTools, reminders).map(
         (block) => (
           <Text key={block.id} color={block.color} bold={block.bold}>
             {block.content}

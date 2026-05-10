@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSessionStore } from "./store";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
-import type { SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
+import type { Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -23,7 +23,18 @@ function sessionFilePath(sessionId: string): string {
 }
 
 async function writeSessionFile(sessionId: string, data: unknown): Promise<void> {
-  await Bun.write(sessionFilePath(sessionId), JSON.stringify(data, null, 2));
+  await Bun.write(
+    sessionFilePath(sessionId),
+    JSON.stringify(
+      data,
+      (_key, value: unknown) => {
+        if (value instanceof Set) return Array.from(value);
+        if (value instanceof Map) return Array.from(value.entries());
+        return value;
+      },
+      2,
+    ),
+  );
 }
 
 function textPart(id: string, text: string, completedAt?: number): StoredPart {
@@ -93,8 +104,68 @@ function sampleTodos(): StoredTodo[] {
   ];
 }
 
-function persistedState(sessionId: string, messages = sampleMessages(), steps = sampleSteps(), todos = sampleTodos()): Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos"> {
-  return { sessionId, createdAt: 99, messages, steps, todos };
+function sampleReminders(): Reminder[] {
+  return [
+    {
+      id: "reminder-1",
+      source: {
+        type: "todo_continuation",
+        pendingTodos: [{ id: "pending-todo", content: "resume this", status: "pending", createdAt: 500 }],
+      },
+      delivery: "auto_inject",
+      content: "Continue pending todo",
+      payload: { reason: "test" },
+      createdAt: 600,
+      consumedAt: null,
+      targetSessionId: "target-session",
+    },
+    {
+      id: "reminder-2",
+      source: { type: "subagent_completed", sessionId: "child-1" },
+      delivery: "on_demand",
+      sessionId: "parent-session",
+      terminalState: "done",
+      content: "Child completed",
+      createdAt: 610,
+      consumedAt: 620,
+    },
+  ];
+}
+
+type PersistedSessionState = Pick<
+  SessionStoreState,
+  | "sessionId"
+  | "createdAt"
+  | "messages"
+  | "steps"
+  | "todos"
+  | "reminders"
+  | "childSessionIds"
+  | "parentSessionId"
+  | "subAgentDescriptions"
+>;
+
+function persistedState(
+  sessionId: string,
+  messages = sampleMessages(),
+  steps = sampleSteps(),
+  todos = sampleTodos(),
+  reminders: Reminder[] = [],
+  childSessionIds = new Set<string>(),
+  parentSessionId: string | undefined = undefined,
+  subAgentDescriptions = new Map<string, string>(),
+): PersistedSessionState {
+  return {
+    sessionId,
+    createdAt: 99,
+    messages,
+    steps,
+    todos,
+    reminders,
+    childSessionIds,
+    parentSessionId,
+    subAgentDescriptions,
+  };
 }
 
 describe("session transcript serialization", () => {
@@ -146,6 +217,72 @@ describe("session transcript serialization", () => {
     const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
 
     expect(loaded.getState().todos).toEqual([]);
+  });
+
+  test("save/load roundtrips reminders", async () => {
+    const sessionId = uniqueSessionId("reminders-roundtrip");
+    const reminders = sampleReminders();
+
+    await saveSessionTranscript(
+      persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), reminders),
+      TMP_DIR,
+    );
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().reminders).toEqual(reminders);
+  });
+
+  test("load defaults missing reminder persistence fields", async () => {
+    const sessionId = uniqueSessionId("missing-reminder-fields");
+    const {
+      reminders: _reminders,
+      childSessionIds: _childSessionIds,
+      parentSessionId: _parentSessionId,
+      subAgentDescriptions: _subAgentDescriptions,
+      ...legacyState
+    } = persistedState(sessionId);
+    await writeSessionFile(sessionId, legacyState);
+
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const state = loaded.getState();
+
+    expect(state.reminders).toEqual([]);
+    expect(state.childSessionIds).toEqual(new Set());
+    expect(state.parentSessionId).toBeUndefined();
+    expect(state.subAgentDescriptions).toEqual(new Map());
+  });
+
+  test("save/load serializes child session Set and sub-agent description Map", async () => {
+    const sessionId = uniqueSessionId("set-map-roundtrip");
+    const childSessionIds = new Set(["child-1", "child-2"]);
+    const subAgentDescriptions = new Map([
+      ["child-1", "QA agent"],
+      ["child-2", "Reviewer agent"],
+    ]);
+    const state = persistedState(
+      sessionId,
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      sampleReminders(),
+      childSessionIds,
+      "parent-1",
+      subAgentDescriptions,
+    );
+
+    await saveSessionTranscript(state, TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(parsed.childSessionIds).toEqual(["child-1", "child-2"]);
+    expect(parsed.subAgentDescriptions).toEqual([
+      ["child-1", "QA agent"],
+      ["child-2", "Reviewer agent"],
+    ]);
+    expect(loaded.getState().childSessionIds).toEqual(childSessionIds);
+    expect(loaded.getState().subAgentDescriptions).toEqual(subAgentDescriptions);
+    expect(loaded.getState().parentSessionId).toBe("parent-1");
   });
 
   test("loaded store preserves methods and can continue appending", async () => {
@@ -342,9 +479,21 @@ describe("session transcript serialization", () => {
     const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
-    expect(Object.keys(parsed).sort()).toEqual(["createdAt", "messages", "sessionId", "steps", "todos"]);
+    expect(Object.keys(parsed).sort()).toEqual([
+      "childSessionIds",
+      "createdAt",
+      "messages",
+      "reminders",
+      "sessionId",
+      "steps",
+      "subAgentDescriptions",
+      "todos",
+    ]);
     expect("events" in parsed).toBe(false);
     expect(parsed.todos).toEqual(sampleTodos());
+    expect(parsed.reminders).toEqual([]);
+    expect(parsed.childSessionIds).toEqual([]);
+    expect(parsed.subAgentDescriptions).toEqual([]);
   });
 
   test("loadSessionTranscript resets all runtime-only fields", async () => {
@@ -381,6 +530,37 @@ describe("session transcript serialization", () => {
     expect(loadedState.messages).toEqual(originalMessages);
     expect(loadedState.steps).toEqual(originalSteps);
     expect(loadedState.todos).toEqual(originalTodos);
+  });
+
+  test("load rejects unknown reminder fields", async () => {
+    const sessionId = uniqueSessionId("unknown-reminder-field");
+    const [reminder] = sampleReminders();
+    if (!reminder) throw new Error("Expected sample reminder");
+
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      reminders: [{ ...reminder, extra: true }],
+    });
+
+    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("load rejects unknown reminder source fields", async () => {
+    const sessionId = uniqueSessionId("unknown-reminder-source-field");
+    const [reminder] = sampleReminders();
+    if (!reminder) throw new Error("Expected sample reminder");
+
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      reminders: [
+        {
+          ...reminder,
+          source: { ...reminder.source, extra: true },
+        },
+      ],
+    });
+
+    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("append works after load", async () => {

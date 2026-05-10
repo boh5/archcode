@@ -12,6 +12,9 @@ export { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
 export { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 export { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool, createLspToolDescriptors } from "./lsp";
 export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./web-fetch";
+export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder } from "./wait-for-reminder";
+export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
+export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -25,6 +28,9 @@ import { todoWriteTool } from "./todo-write";
 import { askUserTool } from "./ask-user";
 import { lspDiagnosticsTool, lspGotoDefinitionTool, lspFindReferencesTool, lspSymbolsTool } from "./lsp";
 import { webFetchTool } from "./web-fetch";
+import { waitForReminderTool } from "./wait-for-reminder";
+import { delegateTool } from "./delegate";
+import { backgroundOutputTool } from "./background-output";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -43,5 +49,8 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     lspFindReferencesTool,
     lspSymbolsTool,
     webFetchTool,
+    waitForReminderTool,
+    delegateTool,
+    backgroundOutputTool,
   ];
 }

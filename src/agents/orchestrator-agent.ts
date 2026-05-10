@@ -8,9 +8,11 @@ import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
+import { createAgentRegistry } from "./agent-registry";
 import { runQueryLoop } from "./query/loop";
 import { saveSessionTranscript } from "../store/helpers";
 import { getSessionsDir } from "../store/sessions-dir";
+import { SubAgentManager } from "./sub-agent-manager";
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
@@ -47,7 +49,7 @@ export class AgentRunningError extends Error {
   }
 }
 
-export interface TestAgentOptions {
+export interface OrchestratorAgentOptions {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly confirmPermission?: ToolConfirmationCallback;
@@ -65,7 +67,7 @@ function buildEnv(workspaceRoot: string): PromptEnv {
   };
 }
 
-export class TestAgent implements Agent {
+export class OrchestratorAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   private providerRegistry: ProviderRegistry;
   private toolRegistry: ToolRegistry;
@@ -76,8 +78,9 @@ export class TestAgent implements Agent {
   private agentsMd: string | undefined;
   private agentsMdLoaded = false;
   private running = false;
+  private subAgentManager: SubAgentManager;
 
-  constructor(options: TestAgentOptions) {
+  constructor(options: OrchestratorAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
     this.confirmPermission = options.confirmPermission;
@@ -91,6 +94,13 @@ export class TestAgent implements Agent {
     this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
     this.store = createSessionStore(crypto.randomUUID());
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+    this.subAgentManager = new SubAgentManager({
+      parentStore: this.store,
+      providerRegistry: this.providerRegistry,
+      toolRegistry: this.toolRegistry,
+      workspaceRoot: this.workspaceRoot,
+      registry: createAgentRegistry(),
+    });
   }
 
   private async ensureAgentsMd(): Promise<void> {
@@ -152,6 +162,8 @@ export class TestAgent implements Agent {
           abort,
           systemPrompt,
           store: this.store,
+          subAgentManager: this.subAgentManager,
+          currentDepth: 0,
           onRunEnd: async (state) => {
             const sessionsDir = getSessionsDir();
             await saveSessionTranscript(state, sessionsDir);

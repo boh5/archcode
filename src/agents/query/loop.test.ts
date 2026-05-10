@@ -4,7 +4,7 @@ import type { ModelMessage, streamText as aiStreamText } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import { createSessionStore } from "../../store/store";
-import type { SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
+import type { Reminder, RunEndEvent, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
@@ -96,6 +96,33 @@ function createPermissionBranchRegistry(
 
 function createStore(): StoreApi<SessionStoreState> {
   return createSessionStore(crypto.randomUUID());
+}
+
+function captureEvents(store: StoreApi<SessionStoreState>): StreamEvent[] {
+  const events: StreamEvent[] = [];
+  const append = store.getState().append;
+  store.setState({
+    append: (event) => {
+      events.push(event);
+      append(event);
+    },
+  });
+  return events;
+}
+
+function pendingTodo(id = "todo-1"): StoredTodo {
+  return { id, content: `Task ${id}`, status: "pending" };
+}
+
+function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder {
+  return {
+    id,
+    source: { type: "todo_continuation", pendingTodos: [pendingTodo()] },
+    delivery: "auto_inject",
+    content: `Reminder ${id}`,
+    createdAt,
+    consumedAt: null,
+  };
 }
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
@@ -899,6 +926,149 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(store.getState().steps.at(-1)).toMatchObject({
       step: 2,
       error: "Max steps (2) reached",
+    });
+  });
+
+  describe("reminder continuation integration", () => {
+    test("auto-inject reminder appears once then is consumed", async () => {
+      const store = createStore();
+      store.getState().append({ type: "reminder", reminder: autoInjectReminder("auto-once") });
+      const streamFn = createMockStreamText([{ text: "First" }, { text: "Second" }]);
+
+      await runQueryLoop(makeOptions({ store }), "First question");
+      await runQueryLoop(makeOptions({ store }), "Second question");
+
+      expect(JSON.stringify(streamCallMessages(streamFn, 0))).toContain("Reminder auto-once");
+      expect(JSON.stringify(streamCallMessages(streamFn, 1))).not.toContain("Reminder auto-once");
+      expect(store.getState().reminders[0].consumedAt).toEqual(expect.any(Number));
+    });
+
+    test("auto-inject reminder is consumed before streamText failure", async () => {
+      const store = createStore();
+      const events = captureEvents(store);
+      store.getState().append({ type: "reminder", reminder: autoInjectReminder("before-fail") });
+      const fn = mock(() => {
+        const reminder = store.getState().reminders.find((item) => item.id === "before-fail");
+        expect(reminder?.consumedAt).toEqual(expect.any(Number));
+        throw new Error("model failed");
+      });
+      __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+
+      await runQueryLoop(makeOptions({ store }), "Hi");
+
+      expect(events.findIndex((event) => event.type === "reminder-consumed"))
+        .toBeLessThan(events.findIndex((event) => event.type === "loop-error"));
+      expect(store.getState().reminders[0].consumedAt).toEqual(expect.any(Number));
+    });
+
+    test("stagnation detection triggers continuation at count 3", async () => {
+      const store = createStore();
+      store.getState().append({ type: "todo-write", todos: [pendingTodo()] });
+      createMockStreamText([
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} }] },
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-3", toolName: "echo", input: {} }] },
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-4", toolName: "echo", input: {} }] },
+        { text: "Done" },
+      ]);
+
+      await runQueryLoop(
+        makeOptions({ store, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
+        "Continue todos",
+      );
+
+      expect(store.getState().reminders.filter((reminder) => reminder.source.type === "todo_continuation"))
+        .toHaveLength(1);
+      expect(store.getState().reminders[0].content).toContain("Task todo-1");
+    });
+
+    test("loop-end fallback triggers for completed and max_steps with pending todos", async () => {
+      const completedStore = createStore();
+      completedStore.getState().append({ type: "todo-write", todos: [pendingTodo("completed-case")] });
+      createMockStreamText([{ text: "Done" }]);
+
+      await runQueryLoop(makeOptions({ store: completedStore }), "Hi");
+
+      expect(completedStore.getState().reminders).toHaveLength(1);
+      expect(completedStore.getState().reminders[0].content).toContain("Task completed-case");
+
+      const maxStepsStore = createStore();
+      maxStepsStore.getState().append({ type: "todo-write", todos: [pendingTodo("max-case")] });
+      createMockStreamText([
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-max", toolName: "echo", input: {} }] },
+      ]);
+
+      await runQueryLoop(
+        makeOptions({ store: maxStepsStore, maxSteps: 1, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
+        "Hi",
+      );
+
+      expect(maxStepsStore.getState().reminders).toHaveLength(1);
+      expect(maxStepsStore.getState().reminders[0].content).toContain("Task max-case");
+    });
+
+    test("loop-end fallback does not trigger for failed or aborted", async () => {
+      const failedStore = createStore();
+      failedStore.getState().append({ type: "todo-write", todos: [pendingTodo("failed-case")] });
+      __setStreamTextForTest(mock(() => { throw new Error("boom"); }) as unknown as typeof aiStreamText);
+
+      await runQueryLoop(makeOptions({ store: failedStore }), "Hi");
+
+      expect(failedStore.getState().reminders).toHaveLength(0);
+
+      const abortedStore = createStore();
+      const abortController = new AbortController();
+      abortController.abort();
+      abortedStore.getState().append({ type: "todo-write", todos: [pendingTodo("aborted-case")] });
+      __setStreamTextForTest(mock(() => { throw new Error("aborted"); }) as unknown as typeof aiStreamText);
+
+      await runQueryLoop(makeOptions({ store: abortedStore, abort: abortController.signal }), "Hi");
+
+      expect(abortedStore.getState().reminders).toHaveLength(0);
+    });
+
+    test("RunEndEvent uses max_steps status when step limit is reached", async () => {
+      const store = createStore();
+      const events = captureEvents(store);
+      createMockStreamText([
+        { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-limit", toolName: "echo", input: {} }] },
+      ]);
+
+      await runQueryLoop(
+        makeOptions({ store, maxSteps: 1, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
+        "Hi",
+      );
+
+      const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+      expect(runEnd?.status).toBe("max_steps");
+    });
+
+    test("continuationCount prevents exceeding 10 injected continuations", async () => {
+      const store = createStore();
+      store.getState().append({ type: "todo-write", todos: [pendingTodo("limit-case")] });
+      const registry = createTestRegistry(async () => {
+        store.setState({
+          reminders: store.getState().reminders.map((reminder) =>
+            reminder.source.type === "todo_continuation"
+              ? { ...reminder, createdAt: 0 }
+              : reminder,
+          ),
+        });
+        return "ok";
+      });
+      const rounds = Array.from({ length: 14 }, (_, index) => ({
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call" as const, toolCallId: `tc-${index}`, toolName: "echo", input: { message: String(index) } }],
+      }));
+      createMockStreamText(rounds);
+
+      await runQueryLoop(
+        makeOptions({ store, maxSteps: 14, toolRegistry: registry, allowedTools: ["echo"] }),
+        "Hi",
+      );
+
+      expect(store.getState().reminders.filter((reminder) => reminder.source.type === "todo_continuation"))
+        .toHaveLength(10);
     });
   });
 

@@ -6,7 +6,7 @@ import {
   type ResolvedMcpConfig,
   type ResolvedMcpServerConfig,
 } from "./config/mcp";
-import { TestAgent } from "./agents/test-agent";
+import { OrchestratorAgent } from "./agents/orchestrator-agent";
 import {
   createRegistry as createProviderRegistry,
   type Registry as ProviderRegistry,
@@ -35,7 +35,7 @@ export interface SpecraRuntimeOptions {
 }
 
 export interface SpecraRuntime {
-  agent: TestAgent;
+  agent: OrchestratorAgent;
   mcpManager: McpManager;
   toolRegistry: ToolRegistry;
   providerRegistry: ProviderRegistry;
@@ -99,7 +99,7 @@ export async function createSpecraRuntime(
       }
     }
 
-    const agent = new TestAgent({ providerRegistry, toolRegistry });
+    const agent = new OrchestratorAgent({ providerRegistry, toolRegistry });
     return { agent, mcpManager, toolRegistry, providerRegistry, warnings };
   } catch (err) {
     await closeMcpManagerBestEffort(mcpManager, recordWarning);

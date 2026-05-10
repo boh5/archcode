@@ -49,6 +49,10 @@ export function createSessionStore(
     messages: [],
     steps: [],
     todos: [],
+    reminders: [],
+    childSessionIds: new Set(),
+    parentSessionId: undefined,
+    subAgentDescriptions: new Map(),
     isRunning: false,
     isStreamingModel: false,
     streamingTools: {},
@@ -57,7 +61,7 @@ export function createSessionStore(
       set((state) => reduceStreamEvent(state, event));
     },
     toModelMessages: (): ModelMessage[] =>
-      toModelMessagesFromStoredMessages(get().messages),
+      toModelMessagesFromStoredMessages(get().messages, get().reminders),
   }));
 
   sessionRegistry.set(sessionId, store);
@@ -127,7 +131,6 @@ function reduceStreamEvent(
     }
 
     case "text-start": {
-      // If already streaming text, finalize the previous one first
       if (state.streamingText) {
         const flushedMessages = updateMessagePart(
             state.messages,
@@ -250,7 +253,6 @@ function reduceStreamEvent(
     }
 
     case "tool-input-start": {
-      // Skip duplicate tool-input-start for same toolCallId
       if (state.streamingTools[event.toolCallId]) return {};
 
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
@@ -371,9 +373,43 @@ function reduceStreamEvent(
       return { todos: [...event.todos] };
     }
 
+    case "reminder": {
+      if (state.reminders.some((reminder) => reminder.id === event.reminder.id)) {
+        return {};
+      }
+
+      if (isSubAgentReminder(event.reminder)) {
+        const hasTerminalReminder = state.reminders.some(
+          (reminder) =>
+            reminder.sessionId === event.reminder.sessionId &&
+            isSubAgentReminder(reminder),
+        );
+
+        if (hasTerminalReminder) return {};
+      }
+
+      return {
+        reminders: [...state.reminders, { ...event.reminder, consumedAt: null }],
+      };
+    }
+
+    case "reminder-consumed": {
+      const reminderIds = new Set(event.reminderIds);
+      let changed = false;
+
+      const reminders = state.reminders.map((reminder) => {
+        if (!reminderIds.has(reminder.id) || reminder.consumedAt !== null) {
+          return reminder;
+        }
+
+        changed = true;
+        return { ...reminder, consumedAt: timestamp };
+      });
+
+      return changed ? { reminders } : {};
+    }
+
     case "step-start": {
-      // Each model call step needs its own assistant message;
-      // resetting on step > 0 prevents merging multi-step responses
       const resetAssistantMessage = event.step > 0
         ? undefined
         : state.currentAssistantMessageId;
@@ -459,13 +495,16 @@ function validateTodos(todos: readonly StoredTodo[]): void {
   }
 }
 
+function isSubAgentReminder(reminder: { source: { type: string } }): boolean {
+  return reminder.source.type.startsWith("subagent_");
+}
+
 function settleIncompleteState(
   state: SessionStoreState,
   timestamp: number,
 ): StoredMessage[] {
   let messages = state.messages;
 
-  // Complete current assistant message if present
   if (state.currentAssistantMessageId) {
     messages = messages.map((message) =>
       message.id === state.currentAssistantMessageId
@@ -474,7 +513,6 @@ function settleIncompleteState(
     );
   }
 
-  // Persist streaming text into its part before clearing
   if (state.streamingText) {
     messages = updateMessagePart(
       messages,
@@ -487,7 +525,6 @@ function settleIncompleteState(
     );
   }
 
-  // Persist streaming reasoning into its part before clearing
   if (state.streamingReasoning) {
     messages = updateMessagePart(
       messages,
@@ -500,7 +537,6 @@ function settleIncompleteState(
     );
   }
 
-  // Settle any pending/running tool parts as error
   for (const toolCallId of Object.keys(state.streamingTools)) {
     const streamingTool = state.streamingTools[toolCallId];
     messages = updateMessagePart(
@@ -519,7 +555,6 @@ function settleIncompleteState(
     );
   }
 
-  // Also settle any pending/running tool parts not tracked in streamingTools
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {

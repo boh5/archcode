@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BusyError, InvalidTodoStateError, type ReasoningPart, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
+import { BusyError, InvalidTodoStateError, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, getSessionStore } from "./store";
 
 function uniqueSessionId(label: string): string {
@@ -8,6 +8,18 @@ function uniqueSessionId(label: string): string {
 
 function createFreshStore(label: string) {
   return createSessionStore(uniqueSessionId(label));
+}
+
+function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
+  return {
+    id: crypto.randomUUID(),
+    source: { type: "todo_continuation", pendingTodos: [] },
+    delivery: "auto_inject",
+    content: "remember this",
+    createdAt: Date.now(),
+    consumedAt: null,
+    ...overrides,
+  };
 }
 
 function onlyMessage(messages: StoredMessage[]): StoredMessage {
@@ -55,6 +67,12 @@ describe("createSessionStore", () => {
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
     expect(state.streamingTools).toEqual({});
+    expect(state.reminders).toEqual([]);
+    expect(state.childSessionIds).toBeInstanceOf(Set);
+    expect(state.childSessionIds.size).toBe(0);
+    expect(state.parentSessionId).toBeUndefined();
+    expect(state.subAgentDescriptions).toBeInstanceOf(Map);
+    expect(state.subAgentDescriptions.size).toBe(0);
     expect("events" in state).toBe(false);
   });
 
@@ -68,6 +86,86 @@ describe("createSessionStore", () => {
     expect(getSessionStore(sessionId)).toBeUndefined();
     const store = createSessionStore(sessionId);
     expect(getSessionStore(sessionId)).toBe(store);
+  });
+});
+
+describe("reminder events", () => {
+  test("reminder event creates reminder with consumedAt null", () => {
+    const store = createFreshStore("reminder-create");
+    const reminder = makeReminder({ id: "reminder-1", consumedAt: 123 });
+
+    store.getState().append({ type: "reminder", reminder });
+
+    expect(store.getState().reminders).toEqual([{ ...reminder, consumedAt: null }]);
+  });
+
+  test("duplicate reminder id is deduped", () => {
+    const store = createFreshStore("reminder-id-dedupe");
+    const first = makeReminder({ id: "same-id", content: "first" });
+    const duplicate = makeReminder({ id: "same-id", content: "duplicate" });
+
+    store.getState().append({ type: "reminder", reminder: first });
+    store.getState().append({ type: "reminder", reminder: duplicate });
+
+    expect(store.getState().reminders).toHaveLength(1);
+    expect(store.getState().reminders[0]?.content).toBe("first");
+  });
+
+  test("terminal subagent reminders are deduped by sessionId", () => {
+    const store = createFreshStore("reminder-terminal-dedupe");
+    const first = makeReminder({
+      id: "terminal-1",
+      sessionId: "child-1",
+      source: { type: "subagent_completed", sessionId: "child-1" },
+      content: "completed",
+    });
+    const duplicate = makeReminder({
+      id: "terminal-2",
+      sessionId: "child-1",
+      source: { type: "subagent_failed", sessionId: "child-1" },
+      content: "failed",
+    });
+
+    store.getState().append({ type: "reminder", reminder: first });
+    store.getState().append({ type: "reminder", reminder: duplicate });
+
+    expect(store.getState().reminders).toHaveLength(1);
+    expect(store.getState().reminders[0]?.id).toBe("terminal-1");
+  });
+
+  test("reminder-consumed marks reminder consumed", () => {
+    const store = createFreshStore("reminder-consume");
+    const reminder = makeReminder({ id: "consume-me" });
+
+    store.getState().append({ type: "reminder", reminder });
+    store.getState().append({ type: "reminder-consumed", reminderIds: ["consume-me"] });
+
+    expect(store.getState().reminders[0]?.consumedAt).toBeGreaterThan(0);
+  });
+
+  test("consuming unknown reminder id is an idempotent no-op", () => {
+    const store = createFreshStore("reminder-consume-unknown");
+    const reminder = makeReminder({ id: "known" });
+    store.getState().append({ type: "reminder", reminder });
+    const reminders = store.getState().reminders;
+
+    store.getState().append({ type: "reminder-consumed", reminderIds: ["unknown"] });
+
+    expect(store.getState().reminders).toBe(reminders);
+    expect(store.getState().reminders).toEqual([{ ...reminder, consumedAt: null }]);
+  });
+
+  test("re-consuming already consumed reminder preserves first consumedAt", () => {
+    const store = createFreshStore("reminder-reconsume");
+    const reminder = makeReminder({ id: "consume-once" });
+
+    store.getState().append({ type: "reminder", reminder });
+    store.getState().append({ type: "reminder-consumed", reminderIds: ["consume-once"] });
+    const firstConsumedAt = store.getState().reminders[0]?.consumedAt;
+
+    store.getState().append({ type: "reminder-consumed", reminderIds: ["consume-once"] });
+
+    expect(store.getState().reminders[0]?.consumedAt).toBe(firstConsumedAt);
   });
 });
 
@@ -606,8 +704,6 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
     store.getState().append({ type: "run-end", status: "completed" });
-
-    const run1Steps = store.getState().steps;
 
     // Run 2 with same step number
     store.getState().append({ type: "run-start" });

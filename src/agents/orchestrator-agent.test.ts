@@ -7,9 +7,9 @@ import { createRegistry as createProviderRegistry } from "../provider/index";
 import { createRegistry as createToolRegistry, defineTool } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionContext } from "../tools/index";
 import { registerBuiltinTools } from "../core/index";
-import { TestAgent } from "./test-agent";
-import { AgentRunningError, NoModelsConfiguredError } from "./test-agent";
-import type { Agent, AgentResult } from "./test-agent";
+import { OrchestratorAgent } from "./orchestrator-agent";
+import { AgentRunningError, NoModelsConfiguredError } from "./orchestrator-agent";
+import type { Agent, AgentResult } from "./orchestrator-agent";
 import { __setStreamTextForTest } from "./query/loop";
 
 function makeMockConfig(): SpecraConfig {
@@ -52,27 +52,27 @@ function makeEmptyModelConfig(): SpecraConfig {
   } as unknown as SpecraConfig;
 }
 
-function makeTestAgent(): TestAgent {
+function makeTestAgent(): OrchestratorAgent {
   const providerRegistry = createProviderRegistry(makeMockConfig().provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry);
-  return new TestAgent({ providerRegistry, toolRegistry });
+  return new OrchestratorAgent({ providerRegistry, toolRegistry });
 }
 
 function makeTestAgentWithConfirmation(
   confirmPermission: ToolConfirmationCallback,
-): TestAgent {
+): OrchestratorAgent {
   const providerRegistry = createProviderRegistry(makeMockConfig().provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry);
-  return new TestAgent({ providerRegistry, toolRegistry, confirmPermission });
+  return new OrchestratorAgent({ providerRegistry, toolRegistry, confirmPermission });
 }
 
-function makeEmptyModelTestAgent(): TestAgent {
+function makeEmptyModelTestAgent(): OrchestratorAgent {
   const providerRegistry = createProviderRegistry(makeEmptyModelConfig().provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry);
-  return new TestAgent({ providerRegistry, toolRegistry });
+  return new OrchestratorAgent({ providerRegistry, toolRegistry });
 }
 
 function setupMockStreamText(text: string, finishReason = "stop") {
@@ -101,7 +101,7 @@ function setupFailingStreamText(error: string) {
   return fn;
 }
 
-describe("TestAgent", () => {
+describe("OrchestratorAgent", () => {
   afterEach(() => {
     __setStreamTextForTest(
       (() => {
@@ -143,6 +143,53 @@ describe("TestAgent", () => {
 
       expect(result.text).toBe("Hello from agent");
       expect(result.steps).toBe(0);
+    });
+
+    test("passes SubAgentManager and root depth to delegate tools", async () => {
+      let callCount = 0;
+      const fn = mock(() => {
+        callCount += 1;
+        const shouldDelegate = callCount === 1;
+        return {
+          fullStream: (async function* () {
+            if (shouldDelegate) {
+              yield {
+                type: "tool-call",
+                toolCallId: "delegate-call",
+                toolName: "delegate",
+                input: { agent_type: "explore", prompt: "inspect", background: false },
+              };
+            }
+          })(),
+          finishReason: Promise.resolve(shouldDelegate ? "tool-calls" : "stop"),
+          text: Promise.resolve(shouldDelegate ? "" : "done"),
+          toolCalls: Promise.resolve(
+            shouldDelegate
+              ? [
+                  {
+                    toolCallId: "delegate-call",
+                    toolName: "delegate",
+                    input: { agent_type: "explore", prompt: "inspect", background: false },
+                  },
+                ]
+              : [],
+          ),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        };
+      });
+
+      __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+      const agent = makeTestAgent();
+
+      await agent.run("delegate");
+
+      const toolPart = agent.store.getState().messages.flatMap((message) => message.parts).find(
+        (part) => part.type === "tool" && part.toolName === "delegate",
+      );
+      expect(toolPart).toBeDefined();
+      expect(toolPart?.type === "tool" && toolPart.state === "completed" ? toolPart.output : "").not.toContain(
+        "SubAgentManager is not available",
+      );
     });
 
     test("appends user and assistant messages to store", async () => {
@@ -241,7 +288,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, confirmPermission });
       await agent.run("test");
 
       expect(contextConfirmPermission).toBe(confirmPermission);
@@ -277,7 +324,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
       await agent.run("test", undefined, runCallback);
 
       expect(contextConfirmPermission).toBe(runCallback);
@@ -313,7 +360,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, confirmPermission: constructorCallback });
       await agent.run("test");
 
       expect(contextConfirmPermission).toBe(constructorCallback);
@@ -407,7 +454,7 @@ describe("TestAgent", () => {
   });
 
   describe("Agent interface compliance", () => {
-    test("TestAgent implements Agent interface (store + run)", () => {
+    test("OrchestratorAgent implements Agent interface (store + run)", () => {
       setupMockStreamText("ok");
 
       const agent: Agent = makeTestAgent();
@@ -459,7 +506,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, askUser });
       await agent.run("test", { askUser });
 
       expect(contextAskUser).toBe(askUser);
@@ -513,7 +560,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
       await agent.run("test", { askUser: runAskUser });
 
       expect(contextAskUser).toBe(runAskUser);
@@ -549,7 +596,7 @@ describe("TestAgent", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, askUser: constructorAskUser });
       await agent.run("test");
 
       expect(contextAskUser).toBe(constructorAskUser);
@@ -637,7 +684,7 @@ describe("session persistence", () => {
       }));
       __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
 
-      const agent = new TestAgent({ providerRegistry, toolRegistry });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry });
       await agent.run("test", { confirmPermission, askUser });
 
       expect(contextConfirm).toBe(confirmPermission);

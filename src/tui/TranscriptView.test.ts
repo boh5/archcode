@@ -21,6 +21,7 @@ import type {
   RunningToolPart,
   CompletedToolPart,
   ErrorToolPart,
+  Reminder,
 } from "../store/types";
 
 const now = Date.now();
@@ -504,5 +505,143 @@ describe("todo_write tool rendering", () => {
     expect(blocks).toHaveLength(2);
     expect(blocks[0].content).toBe("⚙ file_read");
     expect(blocks[1].content).toBe("✓ file contents");
+  });
+});
+
+function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
+  return {
+    id: crypto.randomUUID(),
+    source: { type: "todo_continuation", pendingTodos: [] },
+    delivery: "auto_inject",
+    content: "Continue working",
+    createdAt: now,
+    consumedAt: null,
+    ...overrides,
+  };
+}
+
+describe("buildRenderBlocks with reminders", () => {
+  test("no reminders: backward compatible rendering", () => {
+    const msg = makeUserMessage([makeTextPart({ text: "hello", completedAt: now })]);
+    const blocks = buildRenderBlocks([msg]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("> hello");
+  });
+
+  test("undefined reminders: backward compatible rendering", () => {
+    const msg = makeUserMessage([makeTextPart({ text: "hello", completedAt: now })]);
+    const blocks = buildRenderBlocks([msg], undefined, undefined, {}, undefined);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("> hello");
+  });
+
+  test("empty reminders: backward compatible rendering", () => {
+    const msg = makeUserMessage([makeTextPart({ text: "hello", completedAt: now })]);
+    const blocks = buildRenderBlocks([msg], undefined, undefined, {}, []);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("> hello");
+  });
+
+  test("reminders merged with messages by timestamp", () => {
+    const t1 = 1000;
+    const t2 = 2000;
+    const t3 = 3000;
+
+    const msg1 = makeUserMessage([makeTextPart({ text: "first", completedAt: t1 })]);
+    msg1.createdAt = t1;
+    const msg2 = makeUserMessage([makeTextPart({ text: "third", completedAt: t3 })]);
+    msg2.createdAt = t3;
+
+    const reminder = makeReminder({ content: "second", createdAt: t2 });
+
+    const blocks = buildRenderBlocks([msg1, msg2], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].content).toBe("> first");
+    expect(blocks[1].content).toBe("💬 second");
+    expect(blocks[2].content).toBe("> third");
+  });
+
+  test("tie-breaker: same timestamp puts message before reminder", () => {
+    const t = 1000;
+    const msg = makeUserMessage([makeTextPart({ text: "message first", completedAt: t })]);
+    msg.createdAt = t;
+    const reminder = makeReminder({ content: "reminder second", createdAt: t });
+
+    const blocks = buildRenderBlocks([msg], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].content).toBe("> message first");
+    expect(blocks[1].content).toBe("💬 reminder second");
+  });
+
+  test("consumed reminders still visible with [handled] suffix", () => {
+    const reminder = makeReminder({
+      content: "Task completed",
+      consumedAt: 5000,
+    });
+
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("💬 Task completed [handled]");
+    expect(blocks[0].color).toBe("gray");
+  });
+
+  test("auto_inject reminders render", () => {
+    const reminder = makeReminder({
+      delivery: "auto_inject",
+      content: "Auto-injected reminder",
+    });
+
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("💬 Auto-injected reminder");
+  });
+
+  test("on_demand reminders render", () => {
+    const reminder = makeReminder({
+      delivery: "on_demand",
+      content: "On-demand reminder",
+    });
+
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].content).toBe("💬 On-demand reminder");
+  });
+
+  test("reminder block has gray color", () => {
+    const reminder = makeReminder({ content: "test" });
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [reminder]);
+    expect(blocks[0].color).toBe("gray");
+  });
+
+  test("reminder block id uses reminder: prefix", () => {
+    const reminder = makeReminder({ id: "rem-123" });
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [reminder]);
+    expect(blocks[0].id).toBe("reminder:rem-123");
+  });
+
+  test("multiple reminders sorted by createdAt", () => {
+    const r1 = makeReminder({ content: "late", createdAt: 3000 });
+    const r2 = makeReminder({ content: "early", createdAt: 1000 });
+    const r3 = makeReminder({ content: "mid", createdAt: 2000 });
+
+    const blocks = buildRenderBlocks([], undefined, undefined, {}, [r1, r2, r3]);
+    expect(blocks).toHaveLength(3);
+    expect(blocks[0].content).toBe("💬 early");
+    expect(blocks[1].content).toBe("💬 mid");
+    expect(blocks[2].content).toBe("💬 late");
+  });
+
+  test("reminders interleaved with assistant messages by timestamp", () => {
+    const t1 = 1000;
+    const t2 = 2000;
+
+    const msg = makeAssistantMessage([makeTextPart({ text: "response", completedAt: t2 })]);
+    msg.createdAt = t2;
+    const reminder = makeReminder({ content: "reminder", createdAt: t1 });
+
+    const blocks = buildRenderBlocks([msg], undefined, undefined, {}, [reminder]);
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0].content).toBe("💬 reminder");
+    expect(blocks[1].content).toBe("response");
   });
 });

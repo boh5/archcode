@@ -2,12 +2,18 @@ import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
 import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
-import type { SessionStoreState, StreamEvent } from "../../store/types";
+import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import type { ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/hooks/redact";
+import {
+  checkStagnation,
+  computeTodoHash,
+  isLoopEndAllowed,
+  shouldInjectContinuationReminder,
+} from "./todo-continuation";
 
 const DEFAULT_MAX_STEPS = 50;
 
@@ -63,6 +69,8 @@ export async function runQueryLoop(
     systemPrompt,
     maxSteps = DEFAULT_MAX_STEPS,
     store,
+    subAgentManager,
+    currentDepth,
     onRunEnd,
   } = options;
   const abort = options.abort ?? new AbortController().signal;
@@ -71,6 +79,10 @@ export async function runQueryLoop(
   let steps = 0;
   let lastText = "";
   let failed = false;
+  let runEndStatus: RunEndEvent["status"] = "completed";
+  let lastTodoHash: string | null = null;
+  let stagnationCount = 0;
+  let continuationCount = 0;
   const doomTracker = new DoomTracker();
 
   store.getState().append({ type: "run-start" });
@@ -81,6 +93,7 @@ export async function runQueryLoop(
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
       const messages = store.getState().toModelMessages();
+      consumeAutoInjectReminders(store);
       const resolved = toolRegistry.resolveForAgent(allowedTools);
 
       const result = _streamText({
@@ -112,12 +125,39 @@ export async function runQueryLoop(
         resolvedWorkspaceRoot,
         confirmPermission,
         options.askUser,
+        subAgentManager,
+        currentDepth,
         doomTracker,
       );
+
+      const stagnationResult = checkStagnation(
+        computeTodoHash(store.getState().todos),
+        lastTodoHash,
+        stagnationCount,
+      );
+      lastTodoHash = stagnationResult.newHash;
+      stagnationCount = stagnationResult.newCount;
+
+      if (stagnationResult.isStagnant) {
+        const checkResult = shouldInjectContinuationReminder(
+          store.getState(),
+          Date.now(),
+          continuationCount,
+          subAgentManager,
+          { stagnationCount: stagnationResult.newCount, trigger: "stagnation" },
+        );
+
+        if (checkResult.should) {
+          store.getState().append({ type: "reminder", reminder: checkResult.reminder });
+          continuationCount++;
+        }
+      }
+
       steps++;
     }
 
     if (steps >= maxSteps) {
+      runEndStatus = "max_steps";
       store.getState().append({
         type: "loop-error",
         step: steps,
@@ -128,6 +168,7 @@ export async function runQueryLoop(
     return { text: lastText, steps };
   } catch (err) {
     failed = true;
+    runEndStatus = abort.aborted ? "aborted" : "failed";
     store.getState().append({
       type: "loop-error",
       step: steps,
@@ -135,9 +176,28 @@ export async function runQueryLoop(
     });
     return { text: lastText, steps };
   } finally {
+    if (abort.aborted && !failed && runEndStatus === "completed") {
+      runEndStatus = "aborted";
+    }
+
+    if (isLoopEndAllowed(runEndStatus) && !failed) {
+      const checkResult = shouldInjectContinuationReminder(
+        store.getState(),
+        Date.now(),
+        continuationCount,
+        subAgentManager,
+        { trigger: "loop_end" },
+      );
+
+      if (checkResult.should) {
+        store.getState().append({ type: "reminder", reminder: checkResult.reminder });
+        continuationCount++;
+      }
+    }
+
     store.getState().append({
       type: "run-end",
-      status: failed ? "failed" : "completed",
+      status: runEndStatus,
       ...(failed ? { error: "Run failed" } : {}),
     });
 
@@ -150,6 +210,19 @@ export async function runQueryLoop(
       }
     }
   }
+}
+
+function consumeAutoInjectReminders(store: StoreApi<SessionStoreState>): void {
+  const unconsumedAutoInject = store.getState().reminders.filter(
+    (reminder) => reminder.delivery === "auto_inject" && reminder.consumedAt === null,
+  );
+
+  if (unconsumedAutoInject.length === 0) return;
+
+  store.getState().append({
+    type: "reminder-consumed",
+    reminderIds: unconsumedAutoInject.map((reminder) => reminder.id),
+  });
 }
 
 async function consumeFullStream(
@@ -214,6 +287,8 @@ async function executeToolCalls(
   workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
   askUser?: QueryLoopOptions["askUser"],
+  subAgentManager?: NonNullable<QueryLoopOptions["subAgentManager"]>,
+  currentDepth?: number,
   doomTracker?: DoomTracker,
 ): Promise<void> {
   const executableToolCalls: ToolCallArray = [];
@@ -245,6 +320,8 @@ async function executeToolCalls(
             workspaceRoot,
             ...(confirmPermission ? { confirmPermission } : {}),
             ...(askUser ? { askUser } : {}),
+            ...(subAgentManager ? { subAgentManager } : {}),
+            ...(currentDepth !== undefined ? { currentDepth } : {}),
           };
           const result = await registry.execute(toolCall, ctx);
           appendToolResult(store, toolCall, result.output, result.isError);
@@ -265,6 +342,8 @@ async function executeToolCalls(
         workspaceRoot,
         ...(confirmPermission ? { confirmPermission } : {}),
         ...(askUser ? { askUser } : {}),
+        ...(subAgentManager ? { subAgentManager } : {}),
+        ...(currentDepth !== undefined ? { currentDepth } : {}),
       };
       const result = await registry.execute(toolCall, ctx);
       appendToolResult(store, toolCall, result.output, result.isError);

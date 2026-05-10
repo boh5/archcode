@@ -11,6 +11,8 @@ import type {
   ToolExecutionResult,
 } from "./types";
 
+export type { ToolDescriptor } from "./types";
+
 interface DefineToolConfig<T extends z.ZodTypeAny, O extends string | ToolExecutionResult> {
   name: string;
   description: string;

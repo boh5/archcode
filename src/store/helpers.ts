@@ -13,6 +13,42 @@ const StoredTodoSchema = z.strictObject({
   updatedAt: z.number().optional(),
 });
 
+const ReminderSourceSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("todo_continuation"),
+    pendingTodos: z.array(StoredTodoSchema),
+  }),
+  z.strictObject({
+    type: z.literal("subagent_completed"),
+    sessionId: z.string(),
+  }),
+  z.strictObject({
+    type: z.literal("subagent_failed"),
+    sessionId: z.string(),
+  }),
+  z.strictObject({
+    type: z.literal("subagent_timed_out"),
+    sessionId: z.string(),
+  }),
+  z.strictObject({
+    type: z.literal("subagent_cancelled"),
+    sessionId: z.string(),
+  }),
+]);
+
+const ReminderSchema = z.strictObject({
+  id: z.string(),
+  source: ReminderSourceSchema,
+  delivery: z.enum(["auto_inject", "on_demand"]),
+  sessionId: z.string().optional(),
+  terminalState: z.string().optional(),
+  content: z.string(),
+  payload: z.unknown().optional(),
+  createdAt: z.number(),
+  consumedAt: z.number().nullable(),
+  targetSessionId: z.string().optional(),
+});
+
 const TextPartSchema = z.strictObject({
   type: z.literal("text"),
   id: z.string(),
@@ -119,9 +155,21 @@ const SessionFileSchema = z.strictObject({
       "Only one todo can be in_progress",
     )
     .optional(),
+  reminders: z.array(ReminderSchema).default([]),
+  childSessionIds: z.array(z.string()).default([]),
+  parentSessionId: z.string().optional(),
+  subAgentDescriptions: z.array(z.tuple([z.string(), z.string()])).default([]),
 });
 
 export type SessionFile = z.infer<typeof SessionFileSchema>;
+
+type PersistableSessionState = Pick<
+  SessionStoreState,
+  "sessionId" | "createdAt" | "messages" | "steps" | "todos"
+> & Partial<Pick<
+  SessionStoreState,
+  "reminders" | "childSessionIds" | "parentSessionId" | "subAgentDescriptions"
+>>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
   let text = "";
@@ -140,7 +188,7 @@ export function getAssistantText(messages: StoredMessage[]): string {
 }
 
 export async function saveSessionTranscript(
-  state: Pick<SessionStoreState, "sessionId" | "createdAt" | "messages" | "steps" | "todos">,
+  state: PersistableSessionState,
   dir: string,
 ): Promise<void> {
   try {
@@ -155,6 +203,10 @@ export async function saveSessionTranscript(
     messages: state.messages,
     steps: state.steps,
     todos: state.todos,
+    reminders: state.reminders ?? [],
+    childSessionIds: Array.from(state.childSessionIds ?? []),
+    subAgentDescriptions: Array.from(state.subAgentDescriptions ?? []),
+    ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -195,6 +247,10 @@ export async function loadSessionTranscript(
     messages: parsed.messages,
     steps: parsed.steps ?? [],
     todos: parsed.todos ?? [],
+    reminders: parsed.reminders,
+    childSessionIds: new Set(parsed.childSessionIds),
+    parentSessionId: parsed.parentSessionId,
+    subAgentDescriptions: new Map(parsed.subAgentDescriptions),
     isRunning: false,
     isStreamingModel: false,
     currentRunId: undefined,

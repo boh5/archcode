@@ -3,20 +3,16 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
-
-// ─── Utility ───
+import type { AgentType } from "../agents/agent-registry";
+import type { SubAgentRunHandle, CreateSubAgentOptions } from "../agents/sub-agent-manager";
 
 export type MaybePromise<T> = T | Promise<T>;
-
-// ─── Traits ───
 
 export interface ToolTraits {
   readOnly: boolean;
   destructive: boolean;
   concurrencySafe: boolean;
 }
-
-// ─── Execution ───
 
 export interface ToolExecutionResult {
   output: string;
@@ -40,17 +36,20 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
+  subAgentManager?: SubAgentManagerLike;
+  currentDepth?: number;
 }
 
-// ─── Logger ───
+export interface SubAgentManagerLike {
+  readonly activeCount: number;
+  createAgent(agentType: AgentType, prompt: string, options?: CreateSubAgentOptions): SubAgentRunHandle;
+}
 
 export interface Logger {
   debug?(message: string, meta?: Record<string, unknown>): void;
   info?(message: string, meta?: Record<string, unknown>): void;
   warn?(message: string, meta?: Record<string, unknown>): void;
 }
-
-// ─── Hooks ───
 
 export type BeforeHook = (
   input: unknown,
@@ -61,8 +60,6 @@ export type AfterHook = (
   result: ToolExecutionResult,
   ctx: ToolExecutionContext,
 ) => MaybePromise<ToolExecutionResult | void>;
-
-// ─── Guards & Permissions ───
 
 export type GuardDecision = {
   outcome: "allow" | "deny" | "ask";
@@ -88,8 +85,6 @@ export interface ToolConfirmationRequest {
 export type ToolConfirmationCallback = (
   request: ToolConfirmationRequest,
 ) => Promise<"approve" | "deny" | "timeout">;
-
-// ─── Ask User ───
 
 export interface AskUserQuestionOption {
   label: string;
@@ -131,8 +126,6 @@ export type PermissionErrorCode =
   | "TOOL_FILE_NOT_READ_FIRST"
   | "TOOL_FILE_WRITE_CONFLICT";
 
-// ─── AI Tool Schema ───
-
 /**
  * Schema type accepted by AI SDK's `streamText({ tools })` for tool input
  * definitions. This can be a Zod schema (for builtin tools) or an AI SDK
@@ -144,8 +137,6 @@ export type PermissionErrorCode =
  * using a loose Zod schema for Specra's internal validation pipeline.
  */
 export type AiToolInputSchema = ZodTypeAny | AiSchema<unknown>;
-
-// ─── Descriptor ───
 
 export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult = string> {
   name: string;
@@ -180,15 +171,11 @@ export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult 
 
 export type AnyToolDescriptor = ToolDescriptor<any, string | ToolExecutionResult>;
 
-// ─── Tool Call ───
-
 export interface ToolCallLike {
   toolCallId: string;
   toolName: string;
   input: unknown;
 }
-
-// ─── Errors ───
 
 export class DuplicateToolError extends Error {
   constructor(toolName: string) {

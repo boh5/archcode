@@ -1,4 +1,12 @@
-export type { Agent, AgentResult, TestAgentOptions } from "./test-agent";
-export { TestAgent, NoModelsConfiguredError, AgentRunningError } from "./test-agent";
+export type { Agent, AgentResult, OrchestratorAgentOptions } from "./orchestrator-agent";
+export { OrchestratorAgent, NoModelsConfiguredError, AgentRunningError } from "./orchestrator-agent";
+export type { ExplorerAgentOptions } from "./explorer-agent";
+export { ExplorerAgent, EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS } from "./explorer-agent";
 export type { QueryLoopOptions, QueryLoopResult } from "./query/types";
 export { runQueryLoop } from "./query/loop";
+export { AgentType, createAgentRegistry, createExplorerAgent } from "./agent-registry";
+export type { AgentCreateOptions, AgentFactory, AgentRegistry } from "./agent-registry";
+export { getToolsForDepth } from "./tool-filter";
+export { SubAgentError, ConcurrentLimitError, DepthLimitError } from "./errors";
+export { SubAgentManager, DEFAULT_SUB_AGENT_TIMEOUT_MS, MAX_CONCURRENT_SUB_AGENTS, MAX_SUB_AGENT_DEPTH } from "./sub-agent-manager";
+export type { CreateSubAgentOptions, SubAgentRunHandle, SubAgentManagerOptions, SubAgentTerminalStatus } from "./sub-agent-manager";

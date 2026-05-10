@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
-import type { Agent, AgentRunOptions } from "../agents/test-agent";
+import type { Agent, AgentRunOptions } from "../agents/orchestrator-agent";
 import type { AskUserAnswer, AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";
@@ -72,6 +72,7 @@ export function App({ agent }: AppProps) {
   const streamingTools = useStore(agent.store, (s) => s.streamingTools);
   const isRunning = useStore(agent.store, (s) => s.isRunning);
   const isStreamingModel = useStore(agent.store, (s) => s.isStreamingModel);
+  const reminders = useStore(agent.store, (s) => s.reminders);
 
   const runningRef = useRef(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
@@ -142,6 +143,7 @@ export function App({ agent }: AppProps) {
         streamingText={streamingText}
         streamingReasoning={streamingReasoning}
         streamingTools={streamingTools}
+        reminders={reminders}
       />
       {pendingConfirmation ? (
         <UserInput

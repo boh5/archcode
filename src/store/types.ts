@@ -1,7 +1,5 @@
 import type { ModelMessage } from "ai";
 
-// ─── Stream Events (Loop → Store inputs, no id/timestamp) ───
-
 export interface RunStartEvent {
   type: "run-start";
   runId?: string;
@@ -9,8 +7,43 @@ export interface RunStartEvent {
 
 export interface RunEndEvent {
   type: "run-end";
-  status: "completed" | "failed";
+  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out";
   error?: string;
+}
+
+export type ReminderSource =
+  | {
+      type: "todo_continuation";
+      pendingTodos: StoredTodo[];
+    }
+  | {
+      type: "subagent_completed";
+      sessionId: string;
+    }
+  | {
+      type: "subagent_failed";
+      sessionId: string;
+    }
+  | {
+      type: "subagent_timed_out";
+      sessionId: string;
+    }
+  | {
+      type: "subagent_cancelled";
+      sessionId: string;
+    };
+
+export interface Reminder {
+  id: string;
+  source: ReminderSource;
+  delivery: "auto_inject" | "on_demand";
+  sessionId?: string;
+  terminalState?: string;
+  content: string;
+  payload?: unknown;
+  createdAt: number;
+  consumedAt: number | null;
+  targetSessionId?: string;
 }
 
 export interface UserMessageEvent {
@@ -70,6 +103,16 @@ export interface TodoWriteEvent {
   todos: StoredTodo[];
 }
 
+export interface ReminderEvent {
+  type: "reminder";
+  reminder: Reminder;
+}
+
+export interface ReminderConsumedEvent {
+  type: "reminder-consumed";
+  reminderIds: string[];
+}
+
 export interface StepStartEvent {
   type: "step-start";
   step: number;
@@ -102,11 +145,11 @@ export type StreamEvent =
   | ToolCallEvent
   | ToolResultEvent
   | TodoWriteEvent
+  | ReminderEvent
+  | ReminderConsumedEvent
   | StepStartEvent
   | StepEndEvent
   | LoopErrorEvent;
-
-// ─── Session-only Todos ───
 
 export type StoredTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -117,8 +160,6 @@ export interface StoredTodo {
   createdAt?: number;
   updatedAt?: number;
 }
-
-// ─── Stored Parts (Persistent layer) ───
 
 export interface TextPart {
   type: "text";
@@ -190,8 +231,6 @@ export type ToolPart =
 
 export type StoredPart = TextPart | ReasoningPart | ToolPart;
 
-// ─── Stored Message ───
-
 export interface StoredMessage {
   id: string;
   role: "user" | "assistant";
@@ -200,8 +239,6 @@ export interface StoredMessage {
   completedAt?: number;
   runId?: string;
 }
-
-// ─── Step Info (Session-level non-conversation metadata) ───
 
 export interface StepInfo {
   id: string;
@@ -213,8 +250,6 @@ export interface StepInfo {
   usage?: unknown;
   error?: string;
 }
-
-// ─── Streaming Temporary State ───
 
 export interface StreamingTextState {
   messageId: string;
@@ -236,8 +271,6 @@ export interface StreamingToolState {
   input?: unknown;
 }
 
-// ─── Session Store State ───
-
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
@@ -248,6 +281,10 @@ export interface SessionStoreState {
 
   // Session-only state
   todos: StoredTodo[];
+  reminders: Reminder[];
+  childSessionIds: Set<string>;
+  parentSessionId?: string;
+  subAgentDescriptions: Map<string, string>;
 
   // Running state
   isRunning: boolean;
@@ -266,8 +303,6 @@ export interface SessionStoreState {
   append: (event: StreamEvent) => void;
   toModelMessages: () => ModelMessage[];
 }
-
-// ─── Errors ───
 
 export class BusyError extends Error {
   constructor(sessionId: string) {
