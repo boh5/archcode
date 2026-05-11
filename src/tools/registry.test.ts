@@ -131,7 +131,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
   ): ToolExecutionContext {
     const ac = new AbortController();
     return {
-      store: {} as ToolExecutionContext["store"],
+      store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
       toolName: "echo",
       toolCallId: "call-1",
       input: { msg: "hello" },
@@ -1254,7 +1254,7 @@ describe("hook integration with registry", () => {
   ): ToolExecutionContext {
     const ac = new AbortController();
     return {
-      store: {} as ToolExecutionContext["store"],
+      store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
       toolName: "echo",
       toolCallId: "call-1",
       input: { msg: "hello" },

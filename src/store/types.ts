@@ -51,6 +51,11 @@ export interface UserMessageEvent {
   content: string;
 }
 
+export interface SystemNoticeEvent {
+  type: "system-notice";
+  message: string;
+}
+
 export interface TextStartEvent {
   type: "text-start";
 }
@@ -96,6 +101,13 @@ export interface ToolResultEvent {
   toolName: string;
   output: string;
   isError: boolean;
+  meta?: Record<string, unknown>;
+}
+
+export interface CompactEvent {
+  type: "compact";
+  summary: string;
+  tailStartId: string;
 }
 
 export interface TodoWriteEvent {
@@ -135,6 +147,7 @@ export type StreamEvent =
   | RunStartEvent
   | RunEndEvent
   | UserMessageEvent
+  | SystemNoticeEvent
   | TextStartEvent
   | TextDeltaEvent
   | TextEndEvent
@@ -149,7 +162,8 @@ export type StreamEvent =
   | ReminderConsumedEvent
   | StepStartEvent
   | StepEndEvent
-  | LoopErrorEvent;
+  | LoopErrorEvent
+  | CompactEvent;
 
 export type StoredTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -208,6 +222,7 @@ export interface CompletedToolPart {
   createdAt: number;
   startedAt: number;
   endedAt: number;
+  meta?: Record<string, unknown>;
 }
 
 export interface ErrorToolPart {
@@ -221,6 +236,7 @@ export interface ErrorToolPart {
   createdAt: number;
   startedAt: number;
   endedAt: number;
+  meta?: Record<string, unknown>;
 }
 
 export type ToolPart =
@@ -229,7 +245,23 @@ export type ToolPart =
   | CompletedToolPart
   | ErrorToolPart;
 
-export type StoredPart = TextPart | ReasoningPart | ToolPart;
+export interface CompactionPart {
+  type: "compaction";
+  id: string;
+  summary: string;
+  tailStartId: string;
+  compactedAt: number;
+}
+
+export interface SystemNoticePart {
+  type: "system-notice";
+  id: string;
+  notice: string;
+  createdAt: number;
+  completedAt?: number;
+}
+
+export type StoredPart = TextPart | ReasoningPart | ToolPart | CompactionPart | SystemNoticePart;
 
 export interface StoredMessage {
   id: string;
@@ -238,6 +270,7 @@ export interface StoredMessage {
   createdAt: number;
   completedAt?: number;
   runId?: string;
+  compacted?: boolean;
 }
 
 export interface StepInfo {

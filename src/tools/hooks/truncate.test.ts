@@ -4,13 +4,18 @@ import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createRedactionHook, REDACTION_MARKER } from "./redact";
 import { createOutputTruncator } from "./truncate";
+import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 const OUTPUT_DIR = join(TMP_DIR, "tool-output");
 
+const TEST_SESSION_ID = "test-session";
+
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    store: {} as ToolExecutionContext["store"],
+    store: {
+      getState: () => ({ sessionId: TEST_SESSION_ID }),
+    } as ToolExecutionContext["store"],
     toolName: overrides.toolName ?? "bash",
     toolCallId: overrides.toolCallId ?? "call-abc-123",
     input: overrides.input ?? { command: "echo hello" },
@@ -77,9 +82,10 @@ describe("createOutputTruncator", () => {
     expect(typeof returned!.meta!.fullOutputPath).toBe("string");
     expect((returned!.meta!.fullOutputPath as string).startsWith(OUTPUT_DIR)).toBe(true);
 
-    const files = await readdir(OUTPUT_DIR);
+    const sessionDir = join(OUTPUT_DIR, TEST_SESSION_ID);
+    const files = await readdir(sessionDir);
     expect(files.length).toBe(1);
-    const savedContent = await Bun.file(join(OUTPUT_DIR, files[0]!)).text();
+    const savedContent = await Bun.file(join(sessionDir, files[0]!)).text();
     expect(savedContent).toBe(fullOutput);
   });
 
@@ -95,9 +101,10 @@ describe("createOutputTruncator", () => {
     expect(returned!.meta!.truncated).toBe(true);
     expect(typeof returned!.meta!.fullOutputPath).toBe("string");
 
-    const files = await readdir(OUTPUT_DIR);
+    const sessionDir = join(OUTPUT_DIR, TEST_SESSION_ID);
+    const files = await readdir(sessionDir);
     expect(files.length).toBe(1);
-    const savedContent = await Bun.file(join(OUTPUT_DIR, files[0]!)).text();
+    const savedContent = await Bun.file(join(sessionDir, files[0]!)).text();
     expect(savedContent).toBe(fullOutput);
   });
 
@@ -121,7 +128,8 @@ describe("createOutputTruncator", () => {
     expect(returned).toBeDefined();
     expect(returned!.meta!.truncated).toBe(true);
 
-    const files = await readdir(OUTPUT_DIR);
+    const sessionDir = join(OUTPUT_DIR, TEST_SESSION_ID);
+    const files = await readdir(sessionDir);
     expect(files.length).toBe(1);
   });
 
@@ -142,7 +150,8 @@ describe("createOutputTruncator", () => {
     const returned2 = await hook(makeResult({ output: bigOutput }), makeCtx({ toolCallId: "call-2" }));
 
     expect(returned1!.meta!.fullOutputPath).not.toBe(returned2!.meta!.fullOutputPath);
-    const files = await readdir(OUTPUT_DIR);
+    const sessionDir = join(OUTPUT_DIR, TEST_SESSION_ID);
+    const files = await readdir(sessionDir);
     expect(files.length).toBe(2);
   });
 
@@ -194,5 +203,55 @@ describe("createOutputTruncator", () => {
     const savedContent = await Bun.file(returned!.meta!.fullOutputPath as string).text();
     expect(savedContent).toContain(REDACTION_MARKER);
     expect(savedContent).not.toContain(rawSecret);
+  });
+
+  it("uses shared persistToolOutputValue for persistence", async () => {
+    const hook = createOutputTruncator({ outputDir: OUTPUT_DIR, maxBytes: 5, maxLines: 2000 });
+    const fullOutput = "X".repeat(100);
+    const result = makeResult({ output: fullOutput });
+    const ctx = makeCtx({ toolName: "bash", toolCallId: "call-shared" });
+
+    const returned = await hook(result, ctx);
+    const fullPath = returned!.meta!.fullOutputPath as string;
+
+    const directResult = await persistToolOutputValue(
+      fullOutput,
+      "bash",
+      "call-shared",
+      TEST_SESSION_ID,
+      { outputDir: OUTPUT_DIR },
+    );
+
+    expect(fullPath).toBe(directResult.fullPath);
+  });
+
+  it("sets fullOutputPath compatible with persistToolOutputValue format", async () => {
+    const hook = createOutputTruncator({ outputDir: OUTPUT_DIR, maxBytes: 5, maxLines: 2000 });
+    const result = makeResult({ output: "X".repeat(100) });
+    const ctx = makeCtx({ toolName: "memory_read", toolCallId: "call-mem" });
+
+    const returned = await hook(result, ctx);
+    const fullPath = returned!.meta!.fullOutputPath as string;
+
+    expect(fullPath).toContain(TEST_SESSION_ID);
+    expect(fullPath).toContain("memory_read");
+    expect(fullPath).toContain("call-mem");
+    expect(fullPath).toMatch(/-full\.txt$/);
+  });
+
+  it("truncates large memory_read output through shared path", async () => {
+    const hook = createOutputTruncator({ outputDir: OUTPUT_DIR, maxBytes: 100, maxLines: 5 });
+    const memoryContent = Array.from({ length: 100 }, (_, i) => `Memory line ${i + 1}`).join("\n");
+    const result = makeResult({ output: memoryContent });
+    const ctx = makeCtx({ toolName: "memory_read", toolCallId: "call-mem-large" });
+
+    const returned = await hook(result, ctx);
+
+    expect(returned).toBeDefined();
+    expect(returned!.meta!.truncated).toBe(true);
+    expect(typeof returned!.meta!.fullOutputPath).toBe("string");
+
+    const savedContent = await Bun.file(returned!.meta!.fullOutputPath as string).text();
+    expect(savedContent).toBe(memoryContent);
   });
 });

@@ -12,6 +12,7 @@ export type {
   ToolInputStartEvent,
   ToolCallEvent,
   ToolResultEvent,
+  CompactEvent,
   StepStartEvent,
   StepEndEvent,
   LoopErrorEvent,
@@ -22,6 +23,8 @@ export type {
   CompletedToolPart,
   ErrorToolPart,
   ToolPart,
+  CompactionPart,
+  SystemNoticePart,
   StoredPart,
   StoredMessage,
   StepInfo,
@@ -39,3 +42,4 @@ export {
 } from "./helpers";
 export { getSessionsDir } from "./sessions-dir";
 export { toModelMessagesFromStoredMessages } from "./projection";
+export type { ProjectionMode, ProjectionOptions } from "./projection";

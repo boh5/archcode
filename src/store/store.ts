@@ -5,6 +5,7 @@ import { toModelMessagesFromStoredMessages } from "./projection";
 import {
   BusyError,
   InvalidTodoStateError,
+  type CompactionPart,
   type CompletedToolPart,
   type ErrorToolPart,
   type ReasoningPart,
@@ -12,6 +13,7 @@ import {
   type SessionStoreState,
   type StoredMessage,
   type StoredPart,
+  type SystemNoticePart,
   type StoredTodo,
   type StreamEvent,
   type TextPart,
@@ -118,6 +120,26 @@ function reduceStreamEvent(
         type: "text",
         id: crypto.randomUUID(),
         text: event.content,
+        createdAt: timestamp,
+        completedAt: timestamp,
+      };
+      const message: StoredMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        parts: [part],
+        createdAt: timestamp,
+        completedAt: timestamp,
+        runId: state.currentRunId,
+      };
+
+      return { messages: [...state.messages, message] };
+    }
+
+    case "system-notice": {
+      const part: SystemNoticePart = {
+        type: "system-notice",
+        id: crypto.randomUUID(),
+        notice: event.message,
         createdAt: timestamp,
         completedAt: timestamp,
       };
@@ -364,7 +386,7 @@ function reduceStreamEvent(
           location.partId,
           (part) =>
             part.type === "tool"
-              ? toSettledToolPart(part, event.output, event.isError, timestamp)
+              ? toSettledToolPart(part, event.output, event.isError, timestamp, event.meta)
               : part,
         ),
         streamingTools,
@@ -476,6 +498,66 @@ function reduceStreamEvent(
           },
         ],
       };
+    }
+
+    case "compact": {
+      const { summary, tailStartId } = event;
+
+      const tailStartIndex = state.messages.findIndex((m) => m.id === tailStartId);
+      const compactUpTo = tailStartIndex === -1 ? state.messages.length : tailStartIndex;
+
+      const messages = state.messages.map((message, index) => {
+        if (index < compactUpTo) {
+          if (message.parts.some((p) => p.type === "compaction")) return message;
+          return { ...message, compacted: true };
+        }
+        return message;
+      });
+
+      const existingCompactionIndex = messages.findIndex((m) =>
+        m.parts.some((p) => p.type === "compaction"),
+      );
+
+      if (existingCompactionIndex !== -1) {
+        const existingMessage = messages[existingCompactionIndex]!;
+        const updatedParts: StoredPart[] = existingMessage.parts.map((part) => {
+          if (part.type === "compaction") {
+            return {
+              ...part,
+              summary,
+              tailStartId,
+              compactedAt: timestamp,
+            } satisfies CompactionPart;
+          }
+          return part;
+        });
+
+        messages[existingCompactionIndex] = {
+          ...existingMessage,
+          parts: updatedParts,
+          compacted: undefined,
+        };
+      } else {
+        const compactionPart: CompactionPart = {
+          type: "compaction",
+          id: crypto.randomUUID(),
+          summary,
+          tailStartId,
+          compactedAt: timestamp,
+        };
+
+        const syntheticMessage: StoredMessage = {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [compactionPart],
+          createdAt: timestamp,
+          completedAt: timestamp,
+        };
+
+        messages.splice(compactUpTo, 0, syntheticMessage);
+      }
+
+      return { messages };
     }
   }
 }
@@ -728,6 +810,7 @@ function toSettledToolPart(
   output: string,
   isError: boolean,
   timestamp: number,
+  meta?: Record<string, unknown>,
 ): CompletedToolPart | ErrorToolPart {
   const runningPart = toRunningToolPart(
     part,
@@ -741,6 +824,7 @@ function toSettledToolPart(
       state: "error",
       errorMessage: output,
       endedAt: timestamp,
+      ...(meta ? { meta } : {}),
     };
   }
 
@@ -749,5 +833,6 @@ function toSettledToolPart(
     state: "completed",
     output,
     endedAt: timestamp,
+    ...(meta ? { meta } : {}),
   };
 }

@@ -16,6 +16,7 @@ export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
+export { viewToolOutputTool } from "./view-tool-output";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -32,6 +33,7 @@ import { webFetchTool } from "./web-fetch";
 import { waitForReminderTool } from "./wait-for-reminder";
 import { delegateTool } from "./delegate";
 import { backgroundOutputTool } from "./background-output";
+import { viewToolOutputTool } from "./view-tool-output";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -53,5 +55,6 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     waitForReminderTool,
     delegateTool,
     backgroundOutputTool,
+    viewToolOutputTool,
   ];
 }

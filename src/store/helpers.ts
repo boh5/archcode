@@ -96,6 +96,7 @@ const CompletedToolPartSchema = z.strictObject({
   createdAt: z.number(),
   startedAt: z.number(),
   endedAt: z.number(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const ErrorToolPartSchema = z.strictObject({
@@ -109,6 +110,7 @@ const ErrorToolPartSchema = z.strictObject({
   createdAt: z.number(),
   startedAt: z.number(),
   endedAt: z.number(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const ToolPartSchema = z.discriminatedUnion("state", [
@@ -118,10 +120,28 @@ const ToolPartSchema = z.discriminatedUnion("state", [
   ErrorToolPartSchema,
 ]);
 
+const CompactionPartSchema = z.strictObject({
+  type: z.literal("compaction"),
+  id: z.string(),
+  summary: z.string(),
+  tailStartId: z.string(),
+  compactedAt: z.number(),
+});
+
+const SystemNoticePartSchema = z.strictObject({
+  type: z.literal("system-notice"),
+  id: z.string(),
+  notice: z.string(),
+  createdAt: z.number(),
+  completedAt: z.number().optional(),
+});
+
 const StoredPartSchema = z.discriminatedUnion("type", [
   TextPartSchema,
   ReasoningPartSchema,
   ToolPartSchema,
+  CompactionPartSchema,
+  SystemNoticePartSchema,
 ]);
 
 const StoredMessageSchema = z.strictObject({
@@ -131,6 +151,7 @@ const StoredMessageSchema = z.strictObject({
   createdAt: z.number(),
   completedAt: z.number().optional(),
   runId: z.string().optional(),
+  compacted: z.boolean().optional(),
 });
 
 const StepInfoSchema = z.strictObject({

@@ -65,7 +65,7 @@ export async function runQueryLoop(
     store,
     currentDepth,
   } = options;
-  const { beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
+  const { beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
   let resolvedWorkspaceRoot = options.workspaceRoot;
 
@@ -78,10 +78,16 @@ export async function runQueryLoop(
   store.getState().append({ type: "run-start" });
 
   try {
+    const commandResult = await maybeHandleCommand(options, userMessage, abort);
+    if (commandResult.handled) {
+      return { text: "", steps: 0 };
+    }
+
     store.getState().append({ type: "user-message", content: userMessage });
 
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
+      await runHooks(beforeModelBuild, { store, modelInfo, abort, systemPrompt });
       const messages = store.getState().toModelMessages();
       await runHooks(beforeModelCall, { store, modelInfo, abort, messages });
       const resolved = toolRegistry.resolveForAgent(allowedTools);
@@ -157,6 +163,33 @@ export async function runQueryLoop(
   }
 }
 
+async function maybeHandleCommand(
+  options: QueryLoopOptions,
+  userMessage: string,
+  abort: AbortSignal,
+): Promise<{ handled: boolean }> {
+  const { commandRegistry, store, modelInfo } = options;
+  const parsed = commandRegistry?.parse(userMessage);
+  if (!parsed) return { handled: false };
+
+  const descriptor = commandRegistry?.get(parsed.command);
+  if (!descriptor) {
+    store.getState().append({
+      type: "system-notice",
+      message: `Unknown command: /${parsed.command}`,
+    });
+    return { handled: true };
+  }
+
+  if (parsed.command === "compact" && parsed.args.trim() !== "") {
+    return { handled: false };
+  }
+
+  const result = await descriptor.handler({ store, modelInfo, abort }, parsed.args);
+  store.getState().append({ type: "system-notice", message: result.message });
+  return { handled: true };
+}
+
 async function runHooks<T>(
   hooks: Array<(ctx: T) => Promise<void>> | undefined,
   ctx: T,
@@ -167,6 +200,10 @@ async function runHooks<T>(
     try {
       await hook(ctx);
     } catch (err) {
+      // AbortError must propagate — user cancelled or signal fired
+      if ((err instanceof DOMException && err.name === "AbortError") || (err != null && typeof err === "object" && "name" in err && err.name === "AbortError")) {
+        throw err;
+      }
       console.warn("Loop hook failed:", err instanceof Error ? err.message : String(err));
     }
   }
@@ -242,7 +279,7 @@ async function executeToolCalls(
 
   for (const toolCall of toolCalls) {
     if (doomTracker?.check(toolCall)) {
-      appendToolResult(store, toolCall, DOOM_LOOP_MESSAGE, true);
+      appendToolResult(store, toolCall, DOOM_LOOP_MESSAGE, true, undefined);
     } else {
       executableToolCalls.push(toolCall);
     }
@@ -271,7 +308,7 @@ async function executeToolCalls(
             ...(currentDepth !== undefined ? { currentDepth } : {}),
           };
           const result = await registry.execute(toolCall, ctx);
-          appendToolResult(store, toolCall, result.output, result.isError);
+          appendToolResult(store, toolCall, result.output, result.isError, result.meta);
         }),
       );
     } else {
@@ -293,7 +330,7 @@ async function executeToolCalls(
         ...(currentDepth !== undefined ? { currentDepth } : {}),
       };
       const result = await registry.execute(toolCall, ctx);
-      appendToolResult(store, toolCall, result.output, result.isError);
+      appendToolResult(store, toolCall, result.output, result.isError, result.meta);
     }
   }
 }
@@ -303,6 +340,7 @@ function appendToolResult(
   toolCall: ToolCallArray[number],
   output: string,
   isError: boolean,
+  meta?: Record<string, unknown>,
 ): void {
   const event: StreamEvent = {
     type: "tool-result",
@@ -310,6 +348,7 @@ function appendToolResult(
     toolName: toolCall.toolName,
     output,
     isError,
+    ...(meta ? { meta } : {}),
   };
   store.getState().append(event);
 }

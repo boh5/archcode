@@ -3,6 +3,7 @@ import type { ModelMessage, streamText as aiStreamText } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
+import { CommandRegistry } from "../../commands/registry";
 import { createSessionStore } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
@@ -11,6 +12,7 @@ import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from 
 import type { ToolRegistry } from "../../tools/registry";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { __setStreamTextForTest, runQueryLoop } from "./loop";
+import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 
 type MockChunk =
@@ -1124,6 +1126,192 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(statuses).toEqual([false]);
       expect(store.getState().steps.at(-1)).toMatchObject({ step: 0, error: "model failed" });
     });
+
+    test("beforeModelBuild hook is called before toModelMessages", async () => {
+      const store = createStore();
+      const callOrder: string[] = [];
+      createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelBuild: [async () => { callOrder.push("beforeModelBuild"); }],
+            beforeModelCall: [async () => { callOrder.push("beforeModelCall"); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(callOrder).toEqual(["beforeModelBuild", "beforeModelCall"]);
+    });
+
+    test("beforeModelBuild can modify store state and changes are reflected in projected messages", async () => {
+      const store = createStore();
+      store.getState().append({ type: "user-message", content: "original" });
+      store.getState().append({ type: "run-end", status: "completed" });
+
+      const streamFn = createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelBuild: [
+              async ({ store: ctxStore }) => {
+                for (const msg of ctxStore.getState().messages) {
+                  msg.compacted = true;
+                }
+                ctxStore.getState().append({
+                  type: "compact",
+                  summary: "Previous conversation summarized",
+                  tailStartId: "synthetic-id",
+                });
+              },
+            ],
+          },
+        }),
+        "New question",
+      );
+
+      const projectedMessages = streamCallMessages(streamFn, 0);
+      const userContents = projectedMessages
+        .filter((m): m is Extract<ModelMessage, { role: "user" }> => m.role === "user")
+        .map((m) => typeof m.content === "string" ? m.content : JSON.stringify(m.content));
+      expect(userContents).not.toContain("original");
+    });
+
+    test("hook execution order: beforeModelBuild → toModelMessages → beforeModelCall → streamText", async () => {
+      const store = createStore();
+      const order: string[] = [];
+      const streamFn = createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelBuild: [async () => { order.push("beforeModelBuild"); }],
+            beforeModelCall: [async ({ messages }) => {
+              order.push(`beforeModelCall(messages=${messages.length})`);
+            }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(streamFn).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["beforeModelBuild", "beforeModelCall(messages=1)"]);
+    });
+
+    test("beforeModelBuild receives systemPrompt from options", async () => {
+      const store = createStore();
+      const receivedSystemPrompt: (string | undefined)[] = [];
+      createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          systemPrompt: "You are a helpful assistant",
+          hooks: {
+            beforeModelBuild: [async (ctx) => { receivedSystemPrompt.push(ctx.systemPrompt); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(receivedSystemPrompt).toEqual(["You are a helpful assistant"]);
+    });
+
+    test("beforeModelBuild receives undefined systemPrompt when not provided", async () => {
+      const store = createStore();
+      const receivedSystemPrompt: (string | undefined)[] = [];
+      createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelBuild: [async (ctx) => { receivedSystemPrompt.push(ctx.systemPrompt); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(receivedSystemPrompt).toEqual([undefined]);
+    });
+
+    test("beforeModelBuild receives store, modelInfo, and abort in context", async () => {
+      const store = createStore();
+      const abortController = new AbortController();
+      const contexts: BeforeModelBuildContext[] = [];
+      createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          abort: abortController.signal,
+          hooks: {
+            beforeModelBuild: [async (ctx) => { contexts.push(ctx); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0].store).toBe(store);
+      expect(contexts[0].modelInfo).toBe(dummyModelInfo);
+      expect(contexts[0].abort).toBe(abortController.signal);
+      expect("messages" in contexts[0]).toBe(false);
+    });
+
+    test("beforeModelBuild hooks execute in registration order", async () => {
+      const store = createStore();
+      const order: string[] = [];
+      createMockStreamText([{ text: "ok" }]);
+
+      await runQueryLoop(
+        makeOptions({
+          store,
+          hooks: {
+            beforeModelBuild: [
+              async () => { order.push("build-1"); },
+              async () => { order.push("build-2"); },
+            ],
+            beforeModelCall: [async () => { order.push("call-1"); }],
+          },
+        }),
+        "Hi",
+      );
+
+      expect(order).toEqual(["build-1", "build-2", "call-1"]);
+    });
+
+    test("beforeModelBuild hook errors are logged and loop continues", async () => {
+      const store = createStore();
+      const warn = mock(() => {});
+      const originalWarn = console.warn;
+      console.warn = warn;
+      createMockStreamText([{ text: "Still works" }]);
+
+      try {
+        const result = await runQueryLoop(
+          makeOptions({
+            store,
+            hooks: {
+              beforeModelBuild: [async () => { throw new Error("build hook failed"); }],
+            },
+          }),
+          "Hi",
+        );
+
+        expect(result).toEqual({ text: "Still works", steps: 0 });
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      expect(warn).toHaveBeenCalledWith("Loop hook failed:", "build hook failed");
+      expect(store.getState().isRunning).toBe(false);
+    });
   });
 
   test("streamText throw emits failed run-end state", async () => {
@@ -1645,7 +1833,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(contextAbort === abort).toBe(true);
   });
 
-  test("tool result stores output and isError without registry meta", async () => {
+  test("tool result stores output and isError with registry meta", async () => {
     const store = createStore();
     const registry = createTestRegistry(async () => "ignored");
     registry.globalHooks.after.push(() => ({
@@ -1665,7 +1853,9 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const toolPart = assistantMessages(store)[0].parts[0];
     expect(toolPart).toMatchObject({ state: "completed", output: "with metadata" });
-    expect("meta" in (toolPart as unknown as Record<string, unknown>)).toBe(false);
+    if (toolPart.type === "tool" && toolPart.state === "completed") {
+      expect(toolPart.meta).toEqual({ secret: "do not store" });
+    }
   });
 
   test("step-end stores finish reason and usage", async () => {
@@ -1699,4 +1889,73 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(result.text).toBe("custom");
   });
 
+});
+
+describe("runQueryLoop slash commands", () => {
+  test("exact /compact handles command, stores system notice, and skips model call", async () => {
+    const streamFn = createMockStreamText([{ text: "should not run" }]);
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register({
+      name: "compact",
+      description: "Compact context",
+      handler: mock(async () => ({ success: true, message: "Context compacted" })),
+    });
+
+    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(streamFn).not.toHaveBeenCalled();
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "Context compacted",
+    });
+    expect(store.getState().toModelMessages()).toEqual([]);
+  });
+
+  test("/compact with trailing whitespace still triggers command", async () => {
+    const store = createStore();
+    const handler = mock(async () => ({ success: true, message: "trimmed compact" }));
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register({ name: "compact", description: "Compact context", handler });
+
+    await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact  ");
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "trimmed compact",
+    });
+  });
+
+  test("/compact with args is normal user input and is sent to model", async () => {
+    const streamFn = createMockStreamText([{ text: "normal answer" }]);
+    const store = createStore();
+    const handler = mock(async () => ({ success: true, message: "should not run" }));
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register({ name: "compact", description: "Compact context", handler });
+
+    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/compact now");
+
+    expect(result).toEqual({ text: "normal answer", steps: 0 });
+    expect(handler).not.toHaveBeenCalled();
+    expect(streamCallMessages(streamFn, 0)).toEqual([{ role: "user", content: "/compact now" }]);
+  });
+
+  test("unknown slash command stores system notice and skips model call", async () => {
+    const streamFn = createMockStreamText([{ text: "should not run" }]);
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+
+    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/unknown");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(streamFn).not.toHaveBeenCalled();
+    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "Unknown command: /unknown",
+    });
+    expect(store.getState().toModelMessages()).toEqual([]);
+  });
 });

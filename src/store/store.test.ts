@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BusyError, InvalidTodoStateError, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
+import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, getSessionStore } from "./store";
 
 function uniqueSessionId(label: string): string {
@@ -808,5 +808,164 @@ describe("Oracle regression tests", () => {
     if (toolParts[0]!.type === "tool" && toolParts[0]!.state === "error") {
       expect(toolParts[0]!.errorMessage).toBe("Run ended before tool result");
     }
+  });
+});
+
+describe("meta propagation through tool-result event", () => {
+  test("tool-result with meta propagates to CompletedToolPart", () => {
+    const store = createFreshStore("meta-completed");
+    store.getState().append({ type: "tool-call", toolCallId: "call-meta-1", toolName: "bash", input: "ls" });
+    store.getState().append({
+      type: "tool-result",
+      toolCallId: "call-meta-1",
+      toolName: "bash",
+      output: "file.txt",
+      isError: false,
+      meta: { exitCode: 0 },
+    });
+
+    const part = toolPart(onlyMessage(store.getState().messages));
+    expect(part.state).toBe("completed");
+    if (part.state !== "completed") throw new Error("Expected completed");
+    expect(part.meta).toEqual({ exitCode: 0 });
+  });
+
+  test("tool-result with meta propagates to ErrorToolPart", () => {
+    const store = createFreshStore("meta-error");
+    store.getState().append({ type: "tool-call", toolCallId: "call-meta-2", toolName: "bash", input: "bad" });
+    store.getState().append({
+      type: "tool-result",
+      toolCallId: "call-meta-2",
+      toolName: "bash",
+      output: "command not found",
+      isError: true,
+      meta: { exitCode: 127 },
+    });
+
+    const part = toolPart(onlyMessage(store.getState().messages));
+    expect(part.state).toBe("error");
+    if (part.state !== "error") throw new Error("Expected error");
+    expect(part.meta).toEqual({ exitCode: 127 });
+  });
+
+  test("tool-result without meta does not add meta field", () => {
+    const store = createFreshStore("meta-absent");
+    store.getState().append({ type: "tool-call", toolCallId: "call-no-meta", toolName: "read", input: {} });
+    store.getState().append({
+      type: "tool-result",
+      toolCallId: "call-no-meta",
+      toolName: "read",
+      output: "ok",
+      isError: false,
+    });
+
+    const part = toolPart(onlyMessage(store.getState().messages));
+    expect(part.state).toBe("completed");
+    if (part.state !== "completed") throw new Error("Expected completed");
+    expect(part.meta).toBeUndefined();
+  });
+});
+
+describe("compact event", () => {
+  test("compact event marks prefix messages as compacted and inserts synthetic message", () => {
+    const store = createFreshStore("compact-basic");
+    store.getState().append({ type: "user-message", content: "old question" });
+    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "user-message", content: "new question" });
+
+    const messages = store.getState().messages;
+    const tailId = messages[1]!.id;
+
+    store.getState().append({
+      type: "compact",
+      summary: "User asked about old topic",
+      tailStartId: tailId,
+    });
+
+    const state = store.getState();
+    expect(state.messages[0]!.compacted).toBe(true);
+    expect(state.messages[1]!.compacted).toBeUndefined();
+
+    const compactionMsg = state.messages.find((m) =>
+      m.parts.some((p) => p.type === "compaction"),
+    );
+    expect(compactionMsg).toBeDefined();
+    expect(compactionMsg!.compacted).toBeUndefined();
+
+    const compactionPart = compactionMsg!.parts.find((p) => p.type === "compaction") as CompactionPart;
+    expect(compactionPart.summary).toBe("User asked about old topic");
+    expect(compactionPart.tailStartId).toBe(tailId);
+  });
+
+  test("compact event with unknown tailStartId compacts all messages", () => {
+    const store = createFreshStore("compact-unknown-tail");
+    store.getState().append({ type: "user-message", content: "message 1" });
+    store.getState().append({ type: "user-message", content: "message 2" });
+
+    store.getState().append({
+      type: "compact",
+      summary: "Everything compacted",
+      tailStartId: "nonexistent-id",
+    });
+
+    const state = store.getState();
+    expect(state.messages[0]!.compacted).toBe(true);
+    expect(state.messages[1]!.compacted).toBe(true);
+  });
+
+  test("second compact event replaces existing compaction part", () => {
+    const store = createFreshStore("compact-replace");
+    store.getState().append({ type: "user-message", content: "very old" });
+    store.getState().append({ type: "user-message", content: "old" });
+    store.getState().append({ type: "user-message", content: "recent" });
+
+    const messages = store.getState().messages;
+    const firstTailId = messages[1]!.id;
+    const secondTailId = messages[2]!.id;
+
+    store.getState().append({
+      type: "compact",
+      summary: "First summary",
+      tailStartId: firstTailId,
+    });
+
+    const afterFirst = store.getState().messages;
+    expect(afterFirst.filter((m) => m.compacted).length).toBeGreaterThanOrEqual(1);
+
+    store.getState().append({
+      type: "compact",
+      summary: "Second summary",
+      tailStartId: secondTailId,
+    });
+
+    const state = store.getState();
+    const compactionMessages = state.messages.filter((m) =>
+      m.parts.some((p) => p.type === "compaction"),
+    );
+    expect(compactionMessages).toHaveLength(1);
+
+    const compactionPart = compactionMessages[0]!.parts.find((p) => p.type === "compaction") as CompactionPart;
+    expect(compactionPart.summary).toBe("Second summary");
+    expect(compactionPart.tailStartId).toBe(secondTailId);
+  });
+
+  test("synthetic compaction message is not marked compacted", () => {
+    const store = createFreshStore("compact-not-compacted");
+    store.getState().append({ type: "user-message", content: "old" });
+    store.getState().append({ type: "user-message", content: "new" });
+
+    const tailId = store.getState().messages[1]!.id;
+
+    store.getState().append({
+      type: "compact",
+      summary: "Summary",
+      tailStartId: tailId,
+    });
+
+    const compactionMsg = store.getState().messages.find((m) =>
+      m.parts.some((p) => p.type === "compaction"),
+    );
+    expect(compactionMsg).toBeDefined();
+    expect(compactionMsg!.compacted).toBeUndefined();
   });
 });

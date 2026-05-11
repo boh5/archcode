@@ -6,6 +6,7 @@ import type { SessionStoreState, TextPart } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
 import { MemoryFileManager } from "../../memory/file-manager";
+import { toModelMessagesFromStoredMessages } from "../../store/projection";
 
 let _generateObject: typeof aiGenerateObject = aiGenerateObject;
 
@@ -53,7 +54,7 @@ export function createMemoryExtractionTask(
 
       // --- Build truncated conversation for LLM ------------------------------
       const maxMessages = DEFAULT_EXTRACTION_MAX_MESSAGES;
-      const modelMessages = state.toModelMessages();
+      const modelMessages = toModelMessagesFromStoredMessages(state.messages, { mode: "full-history" });
       const truncated = modelMessages.slice(-maxMessages);
 
       // Truncate individual message content to a reasonable token limit

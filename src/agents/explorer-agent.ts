@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
+import { CommandRegistry, createCompactCommand } from "../commands/index";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
 import { createSessionStore } from "../store/store";
@@ -10,7 +11,7 @@ import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "..
 import { AgentRunningError, NoModelsConfiguredError } from "./orchestrator-agent";
 import type { Agent, AgentResult, AgentRunOptions } from "./orchestrator-agent";
 import { runQueryLoop } from "./query/loop";
-import { createAutoInjectReminderHook, createTodoContinuationHook } from "./query/hooks";
+import { createAutoInjectReminderHook, createTodoContinuationHook, createAutoCompactHook } from "./query/hooks";
 import { getToolsForDepth } from "./tool-filter";
 
 export const EXPLORER_READ_ONLY_TOOLS = [
@@ -62,6 +63,8 @@ export class ExplorerAgent implements Agent {
   private agentsMdLoaded = false;
   private running = false;
   private depth: number;
+  private autoCompactHook = createAutoCompactHook();
+  private commandRegistry: CommandRegistry;
 
   constructor(options: ExplorerAgentOptions) {
     this.providerRegistry = options.providerRegistry;
@@ -78,6 +81,8 @@ export class ExplorerAgent implements Agent {
     this.store = options.store ?? createSessionStore(crypto.randomUUID());
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.depth = options.depth ?? 0;
+    this.commandRegistry = new CommandRegistry();
+    this.commandRegistry.register(createCompactCommand(this.store, this.modelInfo, this.autoCompactHook.circuitBreaker));
   }
 
   private async ensureAgentsMd(): Promise<void> {
@@ -142,8 +147,10 @@ export class ExplorerAgent implements Agent {
           abort,
           systemPrompt,
           store: this.store,
+          commandRegistry: this.commandRegistry,
           currentDepth: this.depth,
           hooks: {
+            beforeModelBuild: [this.autoCompactHook.hook],
             beforeModelCall: [createAutoInjectReminderHook()],
             afterStepEnd: [createTodoContinuationHook()],
           },

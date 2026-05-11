@@ -5,6 +5,7 @@ import type {
   TextPart,
   ReasoningPart,
   ToolPart,
+  SystemNoticePart,
   StreamingTextState,
   StreamingReasoningState,
   StreamingToolState,
@@ -187,6 +188,17 @@ export function buildRenderBlocks(
         for (const tb of toolBlocks) {
           blocks.push({ ...tb, _sortKey: message.createdAt, _sortTieBreaker: 0 });
         }
+        continue;
+      }
+
+      if (part.type === "system-notice") {
+        blocks.push({
+          id: part.id,
+          content: `ℹ ${part.notice}`,
+          color: "gray",
+          _sortKey: message.createdAt,
+          _sortTieBreaker: 0,
+        });
         continue;
       }
     }

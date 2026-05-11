@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMockStore } from "./test-helpers";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
-import type { Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
+import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -673,5 +673,180 @@ describe("saveSessionTranscript error handling", () => {
       await chmod(readonlyDir, 0o755).catch(() => {});
       await rm(readonlyDir, { recursive: true, force: true }).catch(() => {});
     }
+  });
+});
+
+describe("compaction and meta transcript round-trip", () => {
+  test("roundtrips compacted messages with compacted flag", async () => {
+    const sessionId = uniqueSessionId("compacted-roundtrip");
+    const messages: StoredMessage[] = [
+      { id: "msg-1", role: "user", parts: [textPart("t1", "old", 1)], createdAt: 1, compacted: true },
+      { id: "msg-2", role: "user", parts: [textPart("t2", "new", 2)], createdAt: 2, completedAt: 3 },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
+  test("roundtrips CompactionPart in messages", async () => {
+    const sessionId = uniqueSessionId("compaction-part-roundtrip");
+    const compactionPart: CompactionPart = {
+      type: "compaction",
+      id: "cp-1",
+      summary: "Summary of compacted conversation",
+      tailStartId: "msg-tail",
+      compactedAt: 12345,
+    };
+    const messages: StoredMessage[] = [
+      { id: "msg-synthetic", role: "user", parts: [compactionPart], createdAt: 12345, completedAt: 12346 },
+      { id: "msg-tail", role: "user", parts: [textPart("t-tail", "tail content", 12350)], createdAt: 12350, completedAt: 12351 },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
+  test("roundtrips SystemNoticePart in messages", async () => {
+    const sessionId = uniqueSessionId("system-notice-roundtrip");
+    const noticePart: SystemNoticePart = {
+      type: "system-notice",
+      id: "sn-1",
+      notice: "System maintenance scheduled",
+      createdAt: 999,
+      completedAt: 1000,
+    };
+    const messages: StoredMessage[] = [
+      { id: "msg-notice", role: "user", parts: [noticePart, textPart("t-1", "hello", 1001)], createdAt: 999, completedAt: 1002 },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
+  test("roundtrips CompletedToolPart with meta", async () => {
+    const sessionId = uniqueSessionId("tool-meta-roundtrip");
+    const messages: StoredMessage[] = [
+      {
+        id: "msg-tool",
+        role: "assistant",
+        parts: [{
+          type: "tool",
+          state: "completed",
+          id: "tool-1",
+          toolCallId: "call-1",
+          toolName: "bash",
+          input: "ls",
+          output: "file.txt",
+          createdAt: 100,
+          startedAt: 101,
+          endedAt: 102,
+          meta: { exitCode: 0, durationMs: 42 },
+        }],
+        createdAt: 100,
+        completedAt: 103,
+      },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
+  test("roundtrips ErrorToolPart with meta", async () => {
+    const sessionId = uniqueSessionId("tool-error-meta-roundtrip");
+    const messages: StoredMessage[] = [
+      {
+        id: "msg-tool-err",
+        role: "assistant",
+        parts: [{
+          type: "tool",
+          state: "error",
+          id: "tool-2",
+          toolCallId: "call-2",
+          toolName: "bash",
+          input: "bad",
+          errorMessage: "command failed",
+          createdAt: 200,
+          startedAt: 201,
+          endedAt: 202,
+          meta: { exitCode: 1, timedOut: false },
+        }],
+        createdAt: 200,
+        completedAt: 203,
+      },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+  });
+
+  test("roundtrips a full compacted session with all new types", async () => {
+    const sessionId = uniqueSessionId("full-compacted-session");
+    const messages: StoredMessage[] = [
+      {
+        id: "msg-old-user",
+        role: "user",
+        parts: [textPart("t-old", "old question", 10)],
+        createdAt: 10,
+        compacted: true,
+      },
+      {
+        id: "msg-synthetic",
+        role: "user",
+        parts: [{
+          type: "compaction",
+          id: "cp-full",
+          summary: "User asked about old topic and got a response",
+          tailStartId: "msg-tail",
+          compactedAt: 50,
+        }],
+        createdAt: 50,
+        completedAt: 51,
+      },
+      {
+        id: "msg-tail",
+        role: "user",
+        parts: [textPart("t-new", "new question", 60)],
+        createdAt: 60,
+        completedAt: 61,
+      },
+      {
+        id: "msg-assistant",
+        role: "assistant",
+        parts: [{
+          type: "tool",
+          state: "completed",
+          id: "tool-full",
+          toolCallId: "call-full",
+          toolName: "bash",
+          input: "echo hi",
+          output: "hi",
+          createdAt: 70,
+          startedAt: 71,
+          endedAt: 72,
+          meta: { exitCode: 0 },
+        }],
+        createdAt: 70,
+        completedAt: 73,
+      },
+    ];
+
+    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().messages).toEqual(messages);
+    expect(loaded.getState().toModelMessages()[0]).toEqual({
+      role: "user",
+      content: "<compact-summary>\nUser asked about old topic and got a response\n</compact-summary>",
+    });
   });
 });

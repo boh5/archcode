@@ -1,7 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
 
 export interface TruncatorOptions {
   outputDir?: string;
@@ -13,18 +11,10 @@ const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_MAX_LINES = 2000;
 const PREVIEW_LINES = 5;
 
-function sanitizeSegment(segment: string): string {
-  return segment.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
-function generateSuffix(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
   const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;
-  const outputDir = options?.outputDir ?? join(homedir(), ".specra", "tool-output");
+  const outputDir = options?.outputDir ?? TOOL_OUTPUT_DIR;
 
   return async function truncationAfterHook(
     result: ToolExecutionResult,
@@ -40,28 +30,27 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
       return;
     }
 
-    await mkdir(outputDir, { recursive: true });
+    const sessionId = ctx.store.getState().sessionId;
 
-    const sanitizedTool = sanitizeSegment(ctx.toolName);
-    const sanitizedCallId = sanitizeSegment(ctx.toolCallId);
-    const suffix = generateSuffix();
-    const filename = `${sanitizedTool}-${sanitizedCallId}-${suffix}.txt`;
-    const filePath = join(outputDir, filename);
+    const persisted = await persistToolOutputValue(
+      result.output,
+      ctx.toolName,
+      ctx.toolCallId,
+      sessionId,
+      { outputDir, previewLines: PREVIEW_LINES },
+    );
 
-    await Bun.write(filePath, result.output);
-
-    const lines = result.output.split("\n");
-    const previewLines = lines.slice(0, PREVIEW_LINES).join("\n");
-    const marker = `[Output truncated; full output saved to: ${filePath}]`;
-    const shortened = `${previewLines}\n${marker}`;
+    if (!persisted.fullPath) {
+      return;
+    }
 
     return {
-      output: shortened,
+      output: persisted.updatedOutput,
       isError: result.isError,
       meta: {
         ...result.meta,
         truncated: true,
-        fullOutputPath: filePath,
+        fullOutputPath: persisted.fullPath,
       },
     };
   };

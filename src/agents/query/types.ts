@@ -1,5 +1,6 @@
 import type { StoreApi } from "zustand";
 import type { ModelInfo } from "../../provider/model";
+import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
@@ -20,6 +21,7 @@ export interface QueryLoopOptions {
   systemPrompt?: string;
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
+  commandRegistry?: CommandRegistry;
   subAgentManager?: ToolSubAgentManagerLike & ContinuationSubAgentManagerLike;
   currentDepth?: number;
   hooks?: QueryLoopHooks;

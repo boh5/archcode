@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import type { StoreApi } from "zustand";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
+import { CommandRegistry, createCompactCommand } from "../commands/index";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
 import { createSessionStore } from "../store/store";
@@ -12,6 +13,7 @@ import type { ToolRegistry } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
 import { BackgroundTaskManager } from "../background/manager";
 import type { SpecraConfig } from "../config/schema";
+import { enforceQuota, TOOL_OUTPUT_DIR } from "../tools/index";
 import { createAgentRegistry } from "./agent-registry";
 import { runQueryLoop } from "./query/loop";
 import {
@@ -21,6 +23,7 @@ import {
   createTitleGenerationHook,
   createMemoryExtractionHook,
   createMemoryConsolidationHook,
+  createAutoCompactHook,
 } from "./query/hooks";
 import { SubAgentManager } from "./sub-agent-manager";
 
@@ -92,6 +95,8 @@ export class OrchestratorAgent implements Agent {
   private subAgentManager: SubAgentManager;
   private config: SpecraConfig;
   private memoryRoots: { project: string; user: string };
+  private autoCompactHook = createAutoCompactHook();
+  private commandRegistry: CommandRegistry;
 
   constructor(options: OrchestratorAgentOptions) {
     this.providerRegistry = options.providerRegistry;
@@ -112,6 +117,8 @@ export class OrchestratorAgent implements Agent {
       project: join(this.workspaceRoot, ".specra", "memory"),
       user: join(homedir(), ".specra", "memory"),
     };
+    this.commandRegistry = new CommandRegistry();
+    this.commandRegistry.register(createCompactCommand(this.store, this.modelInfo, this.autoCompactHook.circuitBreaker));
     this.subAgentManager = new SubAgentManager({
       parentStore: this.store,
       providerRegistry: this.providerRegistry,
@@ -156,6 +163,13 @@ export class OrchestratorAgent implements Agent {
     }
 
     this.running = true;
+    try {
+      await enforceQuota(TOOL_OUTPUT_DIR);
+    } catch (error) {
+      console.warn(
+        `[OrchestratorAgent] Failed to enforce tool output cache quota: ${error instanceof Error ? error.message : error}`,
+      );
+    }
     const btm = new BackgroundTaskManager();
     try {
       await this.ensureAgentsMd();
@@ -182,9 +196,11 @@ export class OrchestratorAgent implements Agent {
           abort,
           systemPrompt,
           store: this.store,
+          commandRegistry: this.commandRegistry,
           subAgentManager: this.subAgentManager,
           currentDepth: 0,
           hooks: {
+            beforeModelBuild: [this.autoCompactHook.hook],
             beforeModelCall: [createAutoInjectReminderHook()],
             afterStepEnd: [
               createTodoContinuationHook({ subAgentManager: this.subAgentManager }),

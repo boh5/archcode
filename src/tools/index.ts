@@ -27,6 +27,12 @@ export { defineTool } from "./define-tool";
 export { ToolRegistry, ResolvedToolSet, createRegistry } from "./registry";
 export { createOutputTruncator } from "./hooks/truncate";
 export type { TruncatorOptions } from "./hooks/truncate";
+export {
+  persistToolOutput,
+  persistToolOutputValue,
+  TOOL_OUTPUT_DIR,
+} from "./persist-output";
+export type { PersistOptions, PersistableToolPart } from "./persist-output";
 export { createExecutionLogger } from "./hooks/logger";
 export { createRedactionHook, redactString, redactValue, REDACTION_MARKER } from "./hooks/redact";
 export { createAuditHook } from "./hooks/audit";
@@ -67,6 +73,14 @@ export type {
   PathValidationResult,
   ResolveAndValidatePathResult,
 } from "./security/path-validator";
+
+// ─── Tool Output Cache (LRU Cleanup) ───
+export {
+  DEFAULT_QUOTA_MB,
+  enforceQuota,
+  getCacheStats,
+} from "./tool-output-cache";
+export type { CacheStats } from "./tool-output-cache";
 
 // ─── Concurrency ───
 export { createMutationQueue, sharedMutationQueue } from "./concurrency/mutation-queue";

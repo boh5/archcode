@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
-import type { StoredMessage, StoredPart } from "./types";
+import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
 import { REDACTION_MARKER } from "../tools/hooks/redact";
 
 let idCounter = 0;
@@ -35,7 +35,8 @@ function completedToolPart(options: {
   toolName?: string;
   input?: unknown;
   output?: string;
-} = {}): StoredPart {
+  meta?: Record<string, unknown>;
+}): StoredPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -47,6 +48,7 @@ function completedToolPart(options: {
     createdAt: idCounter,
     startedAt: idCounter + 1,
     endedAt: idCounter + 2,
+    ...(options.meta ? { meta: options.meta } : {}),
   };
 }
 
@@ -55,7 +57,8 @@ function errorToolPart(options: {
   toolName?: string;
   input?: unknown;
   errorMessage?: string;
-} = {}): StoredPart {
+  meta?: Record<string, unknown>;
+}): StoredPart {
   return {
     type: "tool",
     id: nextId("tool"),
@@ -67,6 +70,7 @@ function errorToolPart(options: {
     createdAt: idCounter,
     startedAt: idCounter + 1,
     endedAt: idCounter + 2,
+    ...(options.meta ? { meta: options.meta } : {}),
   };
 }
 
@@ -94,13 +98,34 @@ function runningToolPart(): StoredPart {
   };
 }
 
-function storedMessage(role: StoredMessage["role"], parts: StoredPart[]): StoredMessage {
+function compactionPart(summary: string, tailStartId: string): CompactionPart {
+  return {
+    type: "compaction",
+    id: nextId("compaction"),
+    summary,
+    tailStartId,
+    compactedAt: idCounter,
+  };
+}
+
+function systemNoticePart(notice: string): SystemNoticePart {
+  return {
+    type: "system-notice",
+    id: nextId("notice"),
+    notice,
+    createdAt: idCounter,
+    completedAt: idCounter + 1,
+  };
+}
+
+function storedMessage(role: StoredMessage["role"], parts: StoredPart[], compacted?: boolean): StoredMessage {
   return {
     id: nextId("message"),
     role,
     parts,
     createdAt: idCounter,
     completedAt: idCounter + 1,
+    ...(compacted ? { compacted: true } : {}),
   };
 }
 
@@ -466,6 +491,233 @@ describe("toModelMessagesFromStoredMessages", () => {
           },
         ],
       },
+    ]);
+  });
+});
+
+describe("toModelMessagesFromStoredMessages compaction", () => {
+  test("projection after compaction: summary + tail appear, old prefix excluded", () => {
+    const tailMsg = storedMessage("user", [textPart("tail question")]);
+    const tailAssistantMsg = storedMessage("assistant", [textPart("tail answer")]);
+
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary of old conversation", tailMsg.id),
+    ]);
+
+    const prefixMsg = storedMessage("user", [textPart("old question")], true);
+    const prefixAssistantMsg = storedMessage("assistant", [textPart("old answer")], true);
+
+    const messages = [prefixMsg, prefixAssistantMsg, compactionMsg, tailMsg, tailAssistantMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(projected).toEqual([
+      { role: "user", content: "<compact-summary>\nSummary of old conversation\n</compact-summary>" },
+      { role: "user", content: "tail question" },
+      { role: "assistant", content: [{ type: "text", text: "tail answer" }] },
+    ]);
+  });
+
+  test("full-history projection includes original compacted prefix and excludes CompactionPart", () => {
+    const tailMsg = storedMessage("user", [textPart("tail question")]);
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary of old conversation", tailMsg.id),
+    ]);
+    const prefixMsg = storedMessage("user", [textPart("old question")], true);
+    const prefixAssistantMsg = storedMessage("assistant", [textPart("old answer")], true);
+
+    const messages = [prefixMsg, prefixAssistantMsg, compactionMsg, tailMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages, { mode: "full-history" });
+
+    expect(projected).toEqual([
+      { role: "user", content: "old question" },
+      { role: "assistant", content: [{ type: "text", text: "old answer" }] },
+      { role: "user", content: "tail question" },
+    ]);
+  });
+
+  test("full-history projection excludes SystemNoticePart", () => {
+    const messages = [
+      storedMessage("user", [systemNoticePart("system notice here"), textPart("hello")]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages, { mode: "full-history" });
+    expect(projected).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  test("model mode skips SystemNoticePart in user messages", () => {
+    const messages = [
+      storedMessage("user", [systemNoticePart("system notice here"), textPart("hello")]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    expect(projected).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  test("model mode skips SystemNoticePart in assistant messages", () => {
+    const messages = [
+      storedMessage("assistant", [systemNoticePart("notice"), textPart("response")]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    expect(projected).toEqual([{ role: "assistant", content: [{ type: "text", text: "response" }] }]);
+  });
+
+  test("tool call/result pairs stay atomic at compaction boundary", () => {
+    const tailMsg = storedMessage("user", [textPart("continuation")]);
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary including tool call context", tailMsg.id),
+    ]);
+
+    const prefixUserMsg = storedMessage("user", [textPart("old question")], true);
+    const prefixAssistantMsg = storedMessage("assistant", [
+      completedToolPart({ toolCallId: "call-1", toolName: "read", input: { path: "a" }, output: "A" }),
+    ], true);
+
+    const messages = [prefixUserMsg, prefixAssistantMsg, compactionMsg, tailMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(projected).toEqual([
+      { role: "user", content: "<compact-summary>\nSummary including tool call context\n</compact-summary>" },
+      { role: "user", content: "continuation" },
+    ]);
+  });
+
+  test("multiple compactions in one session: second CompactionPart supersedes first", () => {
+    const tailMsg2 = storedMessage("user", [textPart("second tail")]);
+    const compactionMsg2 = storedMessage("user", [
+      compactionPart("Second summary", tailMsg2.id),
+    ]);
+
+    const prefixMsg = storedMessage("user", [textPart("old question")], true);
+
+    const messages = [prefixMsg, compactionMsg2, tailMsg2];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    const summaryMessages = projected.filter(
+      (m) => typeof m.content === "string" && m.content.includes("compact-summary"),
+    );
+    expect(summaryMessages).toHaveLength(1);
+    expect(summaryMessages[0]!.content).toContain("Second summary");
+  });
+
+  test("user text containing literal <compact-summary> markers is not treated as compaction", () => {
+    const messages = [
+      storedMessage("user", [textPart("I typed <compact-summary> literally")]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    expect(projected).toEqual([{ role: "user", content: "I typed <compact-summary> literally" }]);
+  });
+
+  test("non-compacted sessions project identically to current behavior", () => {
+    const messages = [
+      storedMessage("user", [textPart("hello")]),
+      storedMessage("assistant", [textPart("world")]),
+      storedMessage("user", [textPart("how are you")]),
+    ];
+
+    const defaultProjection = toModelMessagesFromStoredMessages(messages);
+    const explicitModelProjection = toModelMessagesFromStoredMessages(messages, { mode: "model" });
+
+    expect(defaultProjection).toEqual(explicitModelProjection);
+    expect(explicitModelProjection).toEqual([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: [{ type: "text", text: "world" }] },
+      { role: "user", content: "how are you" },
+    ]);
+  });
+
+  test("synthetic compaction message is preserved by projection (not skipped)", () => {
+    const tailMsg = storedMessage("user", [textPart("tail")]);
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary text", tailMsg.id),
+    ]);
+
+    const messages = [compactionMsg, tailMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(projected[0]).toEqual({
+      role: "user",
+      content: "<compact-summary>\nSummary text\n</compact-summary>",
+    });
+    expect(projected[1]).toEqual({ role: "user", content: "tail" });
+  });
+
+  test("current incomplete user message is in tail (not in summary)", () => {
+    const tailMsg = storedMessage("user", [textPart("current question")]);
+
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary of earlier conversation", tailMsg.id),
+    ]);
+
+    const prefixMsg = storedMessage("user", [textPart("old question")], true);
+
+    const messages = [prefixMsg, compactionMsg, tailMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    const userContents = projected
+      .filter((m) => m.role === "user")
+      .map((m) => (typeof m.content === "string" ? m.content : ""));
+
+    expect(userContents.some((c) => c.includes("current question"))).toBe(true);
+    expect(userContents.some((c) => c.includes("old question"))).toBe(false);
+  });
+
+  test("meta propagation: CompletedToolPart with meta projects normally", () => {
+    const messages = [
+      storedMessage("assistant", [
+        completedToolPart({
+          toolCallId: "call-meta",
+          toolName: "bash",
+          input: "ls",
+          output: "file.txt",
+          meta: { exitCode: 0 },
+        }),
+      ]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+    expect(projected).toHaveLength(2);
+    expect(projected[0]).toEqual({
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "call-meta", toolName: "bash", input: "ls" }],
+    });
+    expect(projected[1]).toEqual({
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "call-meta", toolName: "bash", output: { type: "text", value: "file.txt" } }],
+    });
+  });
+
+  test("full-history mode projects compacted tool parts", () => {
+    const prefixMsg = storedMessage("assistant", [
+      completedToolPart({ toolCallId: "call-old", toolName: "read", input: { path: "old" }, output: "old content" }),
+    ], true);
+
+    const tailMsg = storedMessage("user", [textPart("new question")]);
+    const compactionMsg = storedMessage("user", [
+      compactionPart("Summary", tailMsg.id),
+    ]);
+
+    const messages = [prefixMsg, compactionMsg, tailMsg];
+
+    const projected = toModelMessagesFromStoredMessages(messages, { mode: "full-history" });
+
+    expect(projected).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call-old", toolName: "read", input: { path: "old" } }],
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "call-old", toolName: "read", output: { type: "text", value: "old content" } }],
+      },
+      { role: "user", content: "new question" },
     ]);
   });
 });
