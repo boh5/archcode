@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createSessionStore } from "./store";
+import { createMockStore } from "./test-helpers";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
 import type { Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo } from "./types";
 
@@ -136,6 +136,7 @@ type PersistedSessionState = Pick<
   SessionStoreState,
   | "sessionId"
   | "createdAt"
+  | "title"
   | "messages"
   | "steps"
   | "todos"
@@ -158,6 +159,7 @@ function persistedState(
   return {
     sessionId,
     createdAt: 99,
+    title: null,
     messages,
     steps,
     todos,
@@ -487,6 +489,7 @@ describe("session transcript serialization", () => {
       "sessionId",
       "steps",
       "subAgentDescriptions",
+      "title",
       "todos",
     ]);
     expect("events" in parsed).toBe(false);
@@ -580,8 +583,7 @@ describe("session transcript serialization", () => {
   test("loadSessionTranscript resets readSnapshots to empty Map", async () => {
     const sessionId = uniqueSessionId("read-snapshots");
 
-    const store = createSessionStore(sessionId);
-    store.setState({ readSnapshots: new Map([["file.ts", 456]]) });
+    const store = createMockStore({ readSnapshots: new Map([["file.ts", 456]]) });
 
     await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const loaded = await loadSessionTranscript(sessionId, TMP_DIR);

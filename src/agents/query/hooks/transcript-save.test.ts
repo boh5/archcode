@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { createSessionStore } from "../../../store/store";
+import { createMockStore } from "../../../store/test-helpers";
 import type { StoredMessage, StoredTodo, StepInfo } from "../../../store/types";
 
 const mockSaveSessionTranscript = mock(() => Promise.resolve());
@@ -26,7 +26,7 @@ describe("createTranscriptSaveHook", () => {
   test("reads store state and calls saveSessionTranscript with correct fields", async () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
-    const store = createSessionStore(sessionId);
+    const store = createMockStore({ sessionId });
 
     const messages: StoredMessage[] = [
       {
@@ -85,6 +85,7 @@ describe("createTranscriptSaveHook", () => {
       {
         sessionId,
         createdAt: now,
+        title: null,
         messages,
         steps,
         todos,
@@ -94,7 +95,7 @@ describe("createTranscriptSaveHook", () => {
   });
 
   test("handles saveSessionTranscript errors gracefully (logs warning, does not throw)", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = createMockStore();
     const expectedError = new Error("Disk full");
 
     mockSaveSessionTranscript.mockRejectedValue(expectedError);
@@ -123,7 +124,7 @@ describe("createTranscriptSaveHook", () => {
   test("accesses sessionId, createdAt, messages, steps, todos from store (not from context)", async () => {
     const sessionId = crypto.randomUUID();
     const createdAt = Date.now();
-    const store = createSessionStore(sessionId);
+    const store = createMockStore({ sessionId });
 
     store.setState({
       sessionId,

@@ -276,6 +276,7 @@ export interface SessionStoreState {
   createdAt: number;
 
   // Persistent layer
+  title: string | null;
   messages: StoredMessage[];
   steps: StepInfo[];
 

@@ -6,7 +6,7 @@ import { BUILTIN_SERVER_DEFINITIONS, getServerDefinitionsForLanguage } from "../
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { createWorkspaceGuard } from "../../hooks/read-snapshot";
+import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDocumentSymbols, formatWorkspaceSymbols } from "./format-output";
@@ -29,7 +29,7 @@ export const lspSymbolsTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
-  guards: [createWorkspaceGuardForDocumentFilePath()],
+  guards: [createWorkspaceGuardForFilePath()],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     if (input.scope === "workspace") {
       return handleWorkspaceSymbols(input.query!, ctx);
@@ -147,18 +147,6 @@ async function handleWorkspaceSymbols(
   } catch (error) {
     return toLspToolErrorResult(error, "LSP workspace symbols failed");
   }
-}
-
-// ─── Workspace guard adapter ───
-
-function createWorkspaceGuardForDocumentFilePath() {
-  const guard = createWorkspaceGuard();
-  return (input: unknown, ctx: Parameters<typeof guard>[1]) => {
-    const normalized = isRecord(input) && input.scope === "document" && typeof input.filePath === "string"
-      ? { ...input, path: input.filePath }
-      : input;
-    return guard(normalized, ctx);
-  };
 }
 
 // ─── Symbol parsing ───
@@ -318,6 +306,4 @@ function toLspToolErrorResult(error: unknown, label: string): ToolExecutionResul
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+

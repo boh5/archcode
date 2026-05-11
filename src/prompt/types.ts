@@ -1,3 +1,5 @@
+import type { MemoryRoots } from "../memory";
+
 /**
  * Context provided to the system prompt builder.
  * All fields required except `agentsMd` (absent when no AGENTS.md found).
@@ -17,6 +19,9 @@ export interface PromptContext {
 
   /** Environment details injected into the prompt */
   readonly env: PromptEnv;
+
+  /** Resolved filesystem roots for project and user memory directories */
+  readonly memoryRoots?: MemoryRoots;
 }
 
 export interface PromptEnv {

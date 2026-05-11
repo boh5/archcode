@@ -46,6 +46,7 @@ export function createSessionStore(
   const store = createStore<SessionStoreState>((set, get) => ({
     sessionId,
     createdAt: Date.now(),
+    title: null,
     messages: [],
     steps: [],
     todos: [],

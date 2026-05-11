@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { StoreApi } from "zustand";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
@@ -8,9 +10,18 @@ import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
+import { BackgroundTaskManager } from "../background/manager";
+import type { SpecraConfig } from "../config/schema";
 import { createAgentRegistry } from "./agent-registry";
 import { runQueryLoop } from "./query/loop";
-import { createAutoInjectReminderHook, createTodoContinuationHook, createTranscriptSaveHook } from "./query/hooks";
+import {
+  createAutoInjectReminderHook,
+  createTodoContinuationHook,
+  createTranscriptSaveHook,
+  createTitleGenerationHook,
+  createMemoryExtractionHook,
+  createMemoryConsolidationHook,
+} from "./query/hooks";
 import { SubAgentManager } from "./sub-agent-manager";
 
 export interface AgentRunOptions {
@@ -54,6 +65,7 @@ export interface OrchestratorAgentOptions {
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
+  readonly config?: SpecraConfig;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -78,6 +90,8 @@ export class OrchestratorAgent implements Agent {
   private agentsMdLoaded = false;
   private running = false;
   private subAgentManager: SubAgentManager;
+  private config: SpecraConfig;
+  private memoryRoots: { project: string; user: string };
 
   constructor(options: OrchestratorAgentOptions) {
     this.providerRegistry = options.providerRegistry;
@@ -93,6 +107,11 @@ export class OrchestratorAgent implements Agent {
     this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
     this.store = createSessionStore(crypto.randomUUID());
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+    this.config = options.config ?? { provider: {} } as SpecraConfig;
+    this.memoryRoots = {
+      project: join(this.workspaceRoot, ".specra", "memory"),
+      user: join(homedir(), ".specra", "memory"),
+    };
     this.subAgentManager = new SubAgentManager({
       parentStore: this.store,
       providerRegistry: this.providerRegistry,
@@ -137,6 +156,7 @@ export class OrchestratorAgent implements Agent {
     }
 
     this.running = true;
+    const btm = new BackgroundTaskManager();
     try {
       await this.ensureAgentsMd();
       const allToolNames = this.toolRegistry.getAll().map((d) => d.name);
@@ -147,9 +167,10 @@ export class OrchestratorAgent implements Agent {
         agentId: "default",
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),
+        memoryRoots: this.memoryRoots,
       };
 
-      const systemPrompt = buildSystemPrompt(ctx);
+      const systemPrompt = await buildSystemPrompt(ctx);
 
       const result = await runQueryLoop(
         {
@@ -165,8 +186,15 @@ export class OrchestratorAgent implements Agent {
           currentDepth: 0,
           hooks: {
             beforeModelCall: [createAutoInjectReminderHook()],
-            afterStepEnd: [createTodoContinuationHook({ subAgentManager: this.subAgentManager })],
-            afterLoopEnd: [createTranscriptSaveHook()],
+            afterStepEnd: [
+              createTodoContinuationHook({ subAgentManager: this.subAgentManager }),
+              createTitleGenerationHook(btm, this.providerRegistry),
+            ],
+            afterLoopEnd: [
+              createTranscriptSaveHook(),
+              createMemoryExtractionHook(btm, this.providerRegistry, this.memoryRoots),
+              createMemoryConsolidationHook(btm, this.providerRegistry, this.memoryRoots),
+            ],
           },
         },
         userMessage,
@@ -183,6 +211,7 @@ export class OrchestratorAgent implements Agent {
       throw error;
     } finally {
       this.running = false;
+      await btm.drain(60000);
     }
   }
 }

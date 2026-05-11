@@ -1,12 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { mkdir, rm } from "node:fs/promises";
-import type { StoreApi } from "zustand";
 import { FakeLspServer } from "../../../lsp/fake-server";
 import { LspClient } from "../../../lsp/client";
 import { setLspClientPoolForTest, type LspClientPool, type PoolKey } from "../../../lsp/client-pool";
 import type { StdioLspTransportOptions } from "../../../lsp/transport";
-import type { SessionStoreState } from "../../../store/index";
+import { createMockStore } from "../../../store/test-helpers";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult, type FormattedToolError } from "../../errors";
 import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
@@ -390,39 +389,6 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     allowedTools: new Set(["lsp_diagnostics"]),
     workspaceRoot: testDir,
     ...overrides,
-  };
-}
-
-function createMockStore(): StoreApi<SessionStoreState> {
-  const state: SessionStoreState = {
-    sessionId: "test",
-    createdAt: Date.now(),
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    streamingTools: {},
-    readSnapshots: new Map(),
-    runCount: 0,
-    append: () => {},
-    toModelMessages: () => [],
-  };
-
-  return {
-    getState: () => state,
-    getInitialState: () => state,
-    setState: (partial) => {
-      if (typeof partial === "function") {
-        Object.assign(state, partial(state));
-        return;
-      }
-      Object.assign(state, partial);
-    },
-    subscribe: () => () => {},
   };
 }
 

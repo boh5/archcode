@@ -3,7 +3,7 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createRipgrepService } from "../ripgrep/service";
 import type { RipgrepService } from "../ripgrep/service";
-import { createWorkspaceGuard } from "../hooks/read-snapshot";
+import { createWorkspaceGuard } from "../hooks/workspace-guard";
 import { buildFileListArgs, buildCountArgs, buildSearchArgs, formatSearchResult, parseRgOutput } from "../ripgrep/search";
 import type { ToolExecutionResult } from "../types";
 

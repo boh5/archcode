@@ -12,17 +12,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { createMockStore } from "../../store/test-helpers";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
   createReadSnapshotAfterHook,
   createReadBeforeEditGuard,
-  createWorkspaceGuard,
-  isSensitiveFile,
-  createSensitiveFileGuard,
   refreshReadSnapshot,
   invalidateReadSnapshot,
-  resolveAndValidatePath,
 } from "./read-snapshot";
+import { createWorkspaceGuard } from "./workspace-guard";
+import { isSensitiveFile, createSensitiveFileGuard } from "./sensitive-file-guard";
+import { resolveAndValidatePath } from "../security/path-validator";
 
 // ─── Test dirs ───
 
@@ -41,43 +41,6 @@ afterAll(() => {
 });
 
 // ─── Helpers ───
-
-function createMockStore(
-  snapshots?: Map<string, number>,
-): StoreApi<SessionStoreState> {
-  const state: SessionStoreState = {
-    sessionId: "test",
-    createdAt: Date.now(),
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    streamingTools: {},
-    readSnapshots: new Map(snapshots),
-    runCount: 0,
-    append: () => {},
-    toModelMessages: () => [],
-  };
-  return {
-    getState: () => state,
-    setState: (partial) => {
-      if (typeof partial === "function") {
-        const fn = partial as (
-          s: SessionStoreState,
-        ) => Partial<SessionStoreState>;
-        Object.assign(state, fn(state));
-      } else {
-        Object.assign(state, partial);
-      }
-    },
-    getInitialState: () => state,
-    subscribe: () => () => {},
-  };
-}
 
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
@@ -211,7 +174,7 @@ describe("createReadBeforeEditGuard", () => {
     const file = workspaceFile("edit-allow.txt");
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
     const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
 
     const guard = createReadBeforeEditGuard();
@@ -224,7 +187,7 @@ describe("createReadBeforeEditGuard", () => {
     const file = workspaceFile("subdir/canonical-edit.txt");
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
     const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
 
     const guard = createReadBeforeEditGuard();
@@ -249,7 +212,7 @@ describe("createReadBeforeEditGuard", () => {
     const file = workspaceFile("edit-conflict.txt");
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, 12345]]);
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
     const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
 
     const guard = createReadBeforeEditGuard();
@@ -261,7 +224,7 @@ describe("createReadBeforeEditGuard", () => {
 
   test("denies with permission-like reason for non-existent snapshots entry", async () => {
     const file = workspaceFile("edit-never-snapshotted.txt");
-    const store = createMockStore(new Map());
+    const store = createMockStore();
     const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
 
     const guard = createReadBeforeEditGuard();
@@ -369,7 +332,7 @@ describe("refreshReadSnapshot", () => {
     const file = workspaceFile("refresh.txt");
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, 999]]);
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
 
     refreshReadSnapshot(file, store, workspaceDir);
 
@@ -400,7 +363,7 @@ describe("invalidateReadSnapshot", () => {
     const file = workspaceFile("invalidate.txt");
     const realpath = realpathSync.native(file);
     const snapshots = new Map([[realpath, 123]]);
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
 
     invalidateReadSnapshot(file, store, workspaceDir);
 
@@ -426,7 +389,7 @@ describe("LRU eviction", () => {
     for (let i = 0; i < 1024; i++) {
       snapshots.set(`/dummy/file-${i}.txt`, i);
     }
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
 
     const file = workspaceFile("lru-new.txt");
     const realpath = realpathSync.native(file);
@@ -452,7 +415,7 @@ describe("LRU eviction", () => {
     for (let i = 0; i < 100; i++) {
       snapshots.set(`/dummy/file-${i}.txt`, i);
     }
-    const store = createMockStore(snapshots);
+    const store = createMockStore({ readSnapshots: snapshots });
 
     const file = workspaceFile("lru-below.txt");
     const realpath = realpathSync.native(file);

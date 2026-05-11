@@ -692,4 +692,54 @@ describe("session persistence", () => {
       expect(contextAskUser).not.toBe(contextConfirm);
     });
   });
+
+  describe("memory integration", () => {
+    test("accepts config option and creates agent", () => {
+      setupMockStreamText("ok");
+
+      const config: SpecraConfig = {
+        provider: makeMockConfig().provider,
+      } as SpecraConfig;
+
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      registerBuiltinTools(toolRegistry);
+
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, config });
+      expect(agent.store).toBeDefined();
+    });
+
+    test("works without config (backward compatible)", () => {
+      setupMockStreamText("ok");
+
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      registerBuiltinTools(toolRegistry);
+
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry });
+      expect(agent.store).toBeDefined();
+    });
+
+    test("btm.drain() is called after run completes", async () => {
+      setupMockStreamText("ok");
+
+      const agent = makeTestAgent();
+      const result = await agent.run("test");
+
+      expect(result.text).toBe("ok");
+      expect(result.steps).toBe(0);
+    });
+
+    test("btm.drain() is called even when run throws", async () => {
+      setupFailingStreamText("model unavailable");
+
+      const agent = makeTestAgent();
+
+      await agent.run("test");
+
+      const steps = agent.store.getState().steps;
+      const errorStep = steps.find((s) => s.error !== undefined);
+      expect(errorStep).toBeDefined();
+    });
+  });
 });

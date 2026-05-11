@@ -7,11 +7,11 @@ export function createTranscriptSaveHook(): (
 ) => Promise<void> {
   return async (ctx: AfterLoopEndContext): Promise<void> => {
     try {
-      const { sessionId, createdAt, messages, steps, todos } =
+      const { sessionId, createdAt, title, messages, steps, todos } =
         ctx.store.getState();
       const sessionsDir = getSessionsDir();
       await saveSessionTranscript(
-        { sessionId, createdAt, messages, steps, todos },
+        { sessionId, createdAt, title, messages, steps, todos },
         sessionsDir,
       );
     } catch (err) {

@@ -256,4 +256,92 @@ describe("registerBuiltinTools", () => {
     expect(result.isError).toBe(false);
     expect(result.output).toContain("1: hello tier1");
   });
+
+  describe("memory tools", () => {
+    it("registers memory_read and memory_write by default", () => {
+      const registry = new ToolRegistry();
+
+      registerBuiltinTools(registry);
+
+      expect(registry.get("memory_read")).toBeDefined();
+      expect(registry.get("memory_write")).toBeDefined();
+    });
+  });
+
+  describe("memory index guard", () => {
+    it("adds memory index guard as a global guard", () => {
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry);
+
+      expect(registry.globalGuards.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("memory index guard denies writes to .specra/memory/index.md", async () => {
+      const workspaceRoot = await createTmpRoot("guard-deny");
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry);
+      registry.globalHooks.after.pop();
+
+      const result = await registry.execute(
+        {
+          toolName: "file_write",
+          toolCallId: "guard-test",
+          input: { path: ".specra/memory/index.md", content: "hacked" },
+        },
+        makeContext("file_write", ["file_write"], workspaceRoot, {
+          toolCallId: "guard-test",
+          input: { path: ".specra/memory/index.md", content: "hacked" },
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("MEMORY_INDEX_WRITE_DENIED");
+    });
+
+    it("memory index guard allows writes to non-index files", async () => {
+      const workspaceRoot = await createTmpRoot("guard-allow");
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry);
+      registry.globalHooks.after.pop();
+
+      const result = await registry.execute(
+        {
+          toolName: "file_write",
+          toolCallId: "guard-allow",
+          input: { path: "regular-file.txt", content: "hello" },
+        },
+        makeContext("file_write", ["file_write"], workspaceRoot, {
+          toolCallId: "guard-allow",
+          input: { path: "regular-file.txt", content: "hello" },
+          confirmPermission: async () => "approve" as const,
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+    });
+
+    it("memory index guard does not block read-only tools", async () => {
+      const workspaceRoot = await createTmpRoot("guard-readonly");
+      const samplePath = join(workspaceRoot, "sample.txt");
+      await Bun.write(samplePath, "hello guard\n");
+
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry);
+      registry.globalHooks.after.pop();
+
+      const result = await registry.execute(
+        {
+          toolName: "file_read",
+          toolCallId: "guard-readonly",
+          input: { path: samplePath },
+        },
+        makeContext("file_read", ["file_read"], workspaceRoot, {
+          toolCallId: "guard-readonly",
+          input: { path: samplePath },
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+    });
+  });
 });

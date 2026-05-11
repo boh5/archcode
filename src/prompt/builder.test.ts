@@ -19,49 +19,49 @@ function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
 }
 
 describe("buildSystemPrompt", () => {
-  test("includes identity section", () => {
-    const result = buildSystemPrompt(makeCtx());
+  test("includes identity section", async () => {
+    const result = await buildSystemPrompt(makeCtx());
     expect(result).toContain("Specra");
     expect(result).toContain("default");
   });
 
-  test("includes guidelines section", () => {
-    const result = buildSystemPrompt(makeCtx());
+  test("includes guidelines section", async () => {
+    const result = await buildSystemPrompt(makeCtx());
     expect(result).toContain("## Guidelines");
   });
 
-  test("includes tools section", () => {
-    const result = buildSystemPrompt(makeCtx());
+  test("includes tools section", async () => {
+    const result = await buildSystemPrompt(makeCtx());
     expect(result).toContain("## Tools");
     expect(result).toContain("file_read");
     expect(result).toContain("file_write");
   });
 
-  test("includes environment section", () => {
-    const result = buildSystemPrompt(makeCtx());
+  test("includes environment section", async () => {
+    const result = await buildSystemPrompt(makeCtx());
     expect(result).toContain("## Environment");
     expect(result).toContain("Platform: darwin");
   });
 
-  test("omits project context when agentsMd is undefined", () => {
-    const result = buildSystemPrompt(makeCtx({ agentsMd: undefined }));
+  test("omits project context when agentsMd is undefined", async () => {
+    const result = await buildSystemPrompt(makeCtx({ agentsMd: undefined }));
     expect(result).not.toContain("## Project Context");
   });
 
-  test("includes project context when agentsMd is provided", () => {
+  test("includes project context when agentsMd is provided", async () => {
     const agentsMd = "# My Project\nSome instructions.";
-    const result = buildSystemPrompt(makeCtx({ agentsMd }));
+    const result = await buildSystemPrompt(makeCtx({ agentsMd }));
     expect(result).toContain("## Project Context");
     expect(result).toContain("My Project");
   });
 
-  test("includes project context when agentsMd is empty string", () => {
-    const result = buildSystemPrompt(makeCtx({ agentsMd: "" }));
+  test("includes project context when agentsMd is empty string", async () => {
+    const result = await buildSystemPrompt(makeCtx({ agentsMd: "" }));
     expect(result).toContain("## Project Context");
   });
 
-  test("sections appear in correct order", () => {
-    const result = buildSystemPrompt(makeCtx({ agentsMd: "AGENTSCONTENT" }));
+  test("sections appear in correct order", async () => {
+    const result = await buildSystemPrompt(makeCtx({ agentsMd: "AGENTSCONTENT" }));
     const identityIdx = result.indexOf("Specra");
     const guidelinesIdx = result.indexOf("## Guidelines");
     const toolsIdx = result.indexOf("## Tools");

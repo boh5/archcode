@@ -13,48 +13,13 @@ import {
   stat,
 } from "node:fs/promises";
 import path, { join } from "node:path";
-import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "../../store/index";
+import { createMockStore } from "../../store/test-helpers";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { ToolRegistry } from "../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileWriteTool } from "./file-write";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-write");
-
-function createMockStore(): StoreApi<SessionStoreState> {
-  const state: SessionStoreState = {
-    sessionId: "test",
-    createdAt: Date.now(),
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    streamingTools: {},
-    readSnapshots: new Map(),
-    runCount: 0,
-    append: () => {},
-    toModelMessages: () => [],
-  };
-
-  return {
-    getState: () => state,
-    getInitialState: () => state,
-    setState: (partial) => {
-      if (typeof partial === "function") {
-        Object.assign(state, partial(state));
-        return;
-      }
-
-      Object.assign(state, partial);
-    },
-    subscribe: () => () => {},
-  };
-}
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {

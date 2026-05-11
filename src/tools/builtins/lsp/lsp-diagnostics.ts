@@ -7,7 +7,7 @@ import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions
 import { pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { createWorkspaceGuard } from "../../hooks/read-snapshot";
+import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDiagnostics, formatTimeout } from "./format-output";
@@ -369,18 +369,6 @@ async function handleDirectoryDiagnostics(
   return formatDirectoryDiagnostics(allDiagnostics, totalFilesFound, warnings);
 }
 
-// ─── Workspace guard adapter ───
-
-function createWorkspaceGuardForFilePath() {
-  const guard = createWorkspaceGuard();
-  return (input: unknown, ctx: Parameters<typeof guard>[1]) => {
-    const normalized = isRecord(input) && typeof input.filePath === "string"
-      ? { ...input, path: input.filePath }
-      : input;
-    return guard(normalized, ctx);
-  };
-}
-
 // ─── Diagnostics helpers ───
 
 async function waitForDiagnostics(
@@ -453,9 +441,7 @@ function diagnosticSeverityToString(severity: unknown): LspDiagnosticSeverity {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+
 
 function formatWarningMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

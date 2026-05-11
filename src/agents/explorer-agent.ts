@@ -129,7 +129,7 @@ export class ExplorerAgent implements Agent {
         env: buildEnv(this.workspaceRoot),
       };
 
-      const systemPrompt = buildSystemPrompt(ctx);
+      const systemPrompt = await buildSystemPrompt(ctx);
 
       const result = await runQueryLoop(
         {

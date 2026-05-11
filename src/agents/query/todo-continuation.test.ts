@@ -208,6 +208,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   return {
     sessionId: "session-1",
     createdAt: 1,
+    title: null,
     messages: [],
     steps: [],
     todos: [],

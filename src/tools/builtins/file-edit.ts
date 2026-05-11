@@ -6,11 +6,11 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createEditErrorRecoveryHook } from "../hooks/edit-error-recovery";
+import { createWorkspaceGuard } from "../hooks/workspace-guard";
+import { resolveAndValidatePath } from "../security/path-validator";
 import {
   createReadBeforeEditGuard,
-  createWorkspaceGuard,
   refreshReadSnapshot,
-  resolveAndValidatePath,
 } from "../hooks/read-snapshot";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 

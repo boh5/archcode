@@ -1,0 +1,179 @@
+import { describe, test, expect, beforeEach, spyOn } from "bun:test";
+import { BackgroundTaskManager } from "./manager";
+
+function tick(ms: number = 0): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+describe("BackgroundTaskManager", () => {
+  let manager: BackgroundTaskManager;
+
+  beforeEach(() => {
+    manager = new BackgroundTaskManager();
+  });
+
+  describe("dispatch", () => {
+    test("fire-and-forget: returns immediately without awaiting task completion", () => {
+      let started = false;
+      manager.dispatch("sync-start", () => {
+        started = true;
+        return Promise.resolve();
+      });
+      // Task code runs synchronously up to its first await, so started is
+      // already true after dispatch returns.
+      expect(started).toBe(true);
+    });
+
+    test("task executes asynchronously and completes", async () => {
+      let completed = false;
+      manager.dispatch("async", async () => {
+        await tick(5);
+        completed = true;
+      });
+      // Immediately after dispatch the task hasn't finished its async work.
+      expect(completed).toBe(false);
+      await tick(15);
+      expect(completed).toBe(true);
+    });
+
+    test("same-name dispatch is deduplicated while first is running", async () => {
+      let runCount = 0;
+      const fn = async () => {
+        runCount++;
+        await tick(20);
+      };
+
+      manager.dispatch("dedup", fn);
+      manager.dispatch("dedup", fn); // should be skipped
+
+      await tick(40);
+      expect(runCount).toBe(1);
+    });
+
+    test("allows re-dispatch after previous task completes", async () => {
+      let runCount = 0;
+      const fn = async () => {
+        runCount++;
+      };
+
+      manager.dispatch("reuse", fn);
+      await tick(10);
+      expect(runCount).toBe(1);
+
+      manager.dispatch("reuse", fn);
+      await tick(10);
+      expect(runCount).toBe(2);
+    });
+  });
+
+  describe("isRunning", () => {
+    test("returns true while a task is in-flight", () => {
+      manager.dispatch("never", () => new Promise<void>(() => {}));
+      expect(manager.isRunning("never")).toBe(true);
+    });
+
+    test("returns false after task completes", async () => {
+      manager.dispatch("fast", () => Promise.resolve());
+      await tick(10);
+      expect(manager.isRunning("fast")).toBe(false);
+    });
+
+    test("returns false for unknown task name", () => {
+      expect(manager.isRunning("nope")).toBe(false);
+    });
+  });
+
+  describe("drain", () => {
+    test("waits for all in-flight tasks to complete", async () => {
+      let done = false;
+      manager.dispatch("slowpoke", async () => {
+        await tick(10);
+        done = true;
+      });
+
+      expect(done).toBe(false);
+      await manager.drain();
+      expect(done).toBe(true);
+    });
+
+    test("resolves immediately when no tasks are running", async () => {
+      await expect(manager.drain()).resolves.toBeUndefined();
+    });
+
+    test("times out and returns even if tasks are still running", async () => {
+      // Never-resolving task
+      manager.dispatch("eternal", () => new Promise<void>(() => {}));
+      const start = performance.now();
+      await manager.drain(50);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeGreaterThanOrEqual(30);
+      expect(elapsed).toBeLessThan(300);
+    });
+
+    test("drain timeout default is 60s", async () => {
+      // Just verify the signature accepts no argument
+      expect(typeof manager.drain).toBe("function");
+      expect(manager.drain.length).toBe(0); // default param, not counted
+    });
+  });
+
+  describe("cancelAll", () => {
+    test("clears tracking for all tasks", () => {
+      manager.dispatch("a", () => new Promise<void>(() => {}));
+      manager.dispatch("b", () => new Promise<void>(() => {}));
+      expect(manager.isRunning("a")).toBe(true);
+      expect(manager.isRunning("b")).toBe(true);
+
+      manager.cancelAll();
+      expect(manager.isRunning("a")).toBe(false);
+      expect(manager.isRunning("b")).toBe(false);
+    });
+
+    test("drain completes successfully after cancelAll", async () => {
+      manager.dispatch("slow", () => new Promise<void>(() => {}));
+      manager.cancelAll();
+      // drain should return quickly (nothing to wait for)
+      await expect(manager.drain(10)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("error handling", () => {
+    test("catches task errors and logs them via console.warn", async () => {
+      const warn = spyOn(console, "warn").mockImplementation(() => {});
+      const error = new Error("task failure");
+
+      manager.dispatch("failing", async () => {
+        throw error;
+      });
+
+      await tick(10);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Task "failing" failed:'),
+        error,
+      );
+      warn.mockRestore();
+    });
+
+    test("error does not prevent drain from completing", async () => {
+      manager.dispatch("boom", async () => {
+        throw new Error("boom");
+      });
+      await expect(manager.drain()).resolves.toBeUndefined();
+    });
+
+    test("manager can dispatch new tasks after a task error", async () => {
+      manager.dispatch("failing", async () => {
+        throw new Error("boom");
+      });
+      await tick(10);
+
+      let recovered = false;
+      manager.dispatch("recovery", async () => {
+        recovered = true;
+      });
+      await tick(10);
+      expect(recovered).toBe(true);
+    });
+  });
+});

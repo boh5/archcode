@@ -99,7 +99,7 @@ export async function createSpecraRuntime(
       }
     }
 
-    const agent = new OrchestratorAgent({ providerRegistry, toolRegistry });
+    const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, config });
     return { agent, mcpManager, toolRegistry, providerRegistry, warnings };
   } catch (err) {
     await closeMcpManagerBestEffort(mcpManager, recordWarning);

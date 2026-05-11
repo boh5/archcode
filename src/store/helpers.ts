@@ -147,6 +147,7 @@ const StepInfoSchema = z.strictObject({
 const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
+  title: z.string().nullable().optional(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema).optional(),
   todos: z.array(StoredTodoSchema)
@@ -165,7 +166,7 @@ export type SessionFile = z.infer<typeof SessionFileSchema>;
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "messages" | "steps" | "todos"
+  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "todos"
 > & Partial<Pick<
   SessionStoreState,
   "reminders" | "childSessionIds" | "parentSessionId" | "subAgentDescriptions"
@@ -200,6 +201,7 @@ export async function saveSessionTranscript(
   const data: SessionFile = {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
+    title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
     todos: state.todos,
@@ -244,6 +246,7 @@ export async function loadSessionTranscript(
   store.setState({
     sessionId: parsed.sessionId,
     createdAt: parsed.createdAt,
+    title: parsed.title ?? null,
     messages: parsed.messages,
     steps: parsed.steps ?? [],
     todos: parsed.todos ?? [],

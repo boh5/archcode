@@ -5,12 +5,10 @@ import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import {
-  createSensitiveFileGuard,
-  createWorkspaceGuard,
-  refreshReadSnapshot,
-  resolveAndValidatePath,
-} from "../hooks/read-snapshot";
+import { createSensitiveFileGuard } from "../hooks/sensitive-file-guard";
+import { createWorkspaceGuard } from "../hooks/workspace-guard";
+import { refreshReadSnapshot } from "../hooks/read-snapshot";
+import { resolveAndValidatePath } from "../security/path-validator";
 import type { GuardDecision, GuardHook, ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───

@@ -1,10 +1,7 @@
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { ASSIGNMENT_PATTERN, SENSITIVE_KEY_PATTERN, TOKEN_PATTERN } from "../../security/patterns";
 
 export const REDACTION_MARKER = "[REDACTED:SECRET]";
-
-const SENSITIVE_KEY_PATTERN = /(?:api[_-]?key|auth|authorization|bearer|client[_-]?secret|credential|pass(?:word)?|secret|token)/i;
-const TOKEN_PATTERN = /\b(?:sk|pk|ghp|github_pat|xox[baprs]|AKIA|ASIA|SG)_[A-Za-z0-9_=-]{8,}\b|\b(?:sk|pk|ghp|github_pat|xox[baprs]|AKIA|ASIA|SG)-[A-Za-z0-9_=-]{8,}\b|\b[A-Za-z0-9+/]{32,}={0,2}\b/g;
-const ASSIGNMENT_PATTERN = /\b([A-Za-z0-9_-]*(?:api[_-]?key|auth|authorization|bearer|client[_-]?secret|credential|pass(?:word)?|secret|token)[A-Za-z0-9_-]*\s*[=:]\s*)([^\s&;,]+)/gi;
 
 export function redactString(value: string): string {
   // First replace assignment patterns (key=value where key contains sensitive words)

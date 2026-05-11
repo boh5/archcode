@@ -2,8 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "../../store/index";
+import { createMockStore } from "../../store/test-helpers";
 import type { ToolExecutionContext } from "../types";
 import { classifyCommand, createBashGuard } from "./bash-classifier";
 
@@ -28,35 +27,6 @@ afterAll(() => {
 
 function outcome(command: string, cwd?: string) {
   return classifyCommand(command, { workspaceRoot: workspaceDir, cwd }).outcome;
-}
-
-function createMockStore(): StoreApi<SessionStoreState> {
-  const state: SessionStoreState = {
-    sessionId: "test",
-    createdAt: Date.now(),
-    messages: [],
-    steps: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    streamingTools: {},
-    readSnapshots: new Map(),
-    runCount: 0,
-    todos: [],
-    append: () => {},
-    toModelMessages: () => [],
-  };
-  return {
-    getState: () => state,
-    setState: (partial) => {
-      if (typeof partial === "function") Object.assign(state, partial(state));
-      else Object.assign(state, partial);
-    },
-    getInitialState: () => state,
-    subscribe: () => () => {},
-  };
 }
 
 function makeCtx(workspaceRoot = workspaceDir): ToolExecutionContext {

@@ -1,5 +1,4 @@
 import { statSync } from "node:fs";
-import path from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
 import { resolveAndValidatePath } from "../security/path-validator";
@@ -14,8 +13,6 @@ import type {
 // ─── LRU limit ───
 
 const MAX_SNAPSHOTS = 1024;
-
-export { resolveAndValidatePath } from "../security/path-validator";
 
 // ─── After hook — record read snapshot ───
 
@@ -105,80 +102,6 @@ export function createReadBeforeEditGuard(): GuardHook {
       return {
         outcome: "deny",
         reason: `File "${resolved}" has been modified since it was read. Use file_read to refresh before editing. [TOOL_FILE_WRITE_CONFLICT]`,
-      };
-    }
-
-    return { outcome: "allow" };
-  };
-}
-
-// ─── Guard — workspace boundary ───
-
-/**
- * Guard that ensures the requested file path resolves inside
- * `ctx.workspaceRoot`. Denies access to paths that escape the
- * workspace via `..` or symlinks.
- */
-export function createWorkspaceGuard(): GuardHook {
-  return (input: unknown, ctx: ToolExecutionContext): GuardDecision => {
-    const inputRecord = input as { path?: string };
-    if (!inputRecord.path) {
-      return { outcome: "allow" };
-    }
-
-    const { resolved, isWithinWorkspace } = resolveAndValidatePath(
-      inputRecord.path,
-      ctx.workspaceRoot,
-    );
-
-    if (!isWithinWorkspace) {
-      return {
-        outcome: "deny",
-        reason: `"${resolved}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
-      };
-    }
-
-    return { outcome: "allow" };
-  };
-}
-
-// ─── Sensitive file detection ───
-
-export const SENSITIVE_PATTERNS: RegExp[] = [
-  /^\.env$/,
-  /^\.env\..+$/, // .env files
-  /.*\.pem$/,
-  /.*\.key$/,
-  /.*\.p12$/, // private keys
-  /^id_rsa.*$/,
-  /^id_ed25519.*$/, // SSH keys
-  /^\.gitconfig$/, // git config
-  /^\.bashrc$/,
-  /^\.zshrc$/, // shell config
-  /^\.npmrc$/, // npm config (may contain tokens)
-];
-
-export function isSensitiveFile(basename: string): boolean {
-  return SENSITIVE_PATTERNS.some((pattern) => pattern.test(basename));
-}
-
-// ─── Guard — sensitive file confirmation ───
-
-/**
- * Guard for `file_read` / `file_write`: returns `"ask"` when the
- * target file basename matches a sensitive-file pattern, prompting
- * the user for confirmation.
- */
-export function createSensitiveFileGuard(): GuardHook {
-  return (input: unknown, _ctx: ToolExecutionContext): GuardDecision => {
-    const inputRecord = input as { path: string };
-    const basename = path.basename(inputRecord.path);
-
-    if (isSensitiveFile(basename)) {
-      return {
-        outcome: "ask",
-        reason: `File "${basename}" is a sensitive file.`,
-        prompt: `Are you sure you want to access "${inputRecord.path}"? This file may contain secrets or credentials.`,
       };
     }
 

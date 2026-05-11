@@ -1,4 +1,7 @@
-export { specraConfigSchema, type SpecraConfig } from "./schema";
+export {
+  specraConfigSchema,
+  type SpecraConfig,
+} from "./schema";
 export {
   ConfigLoadError,
   ConfigParseError,

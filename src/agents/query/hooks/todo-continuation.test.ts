@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { ModelInfo } from "../../../provider/model";
-import { createSessionStore } from "../../../store/store";
+import { createMockStore } from "../../../store/test-helpers";
 import type { SessionStoreState, StepInfo, StoredPart, StoredTodo } from "../../../store/types";
 import type { AfterStepEndContext } from "../loop-hooks";
 import { createTodoContinuationHook } from "./todo-continuation";
@@ -111,7 +111,7 @@ describe("createTodoContinuationHook", () => {
 type TodoContinuationHook = (ctx: AfterStepEndContext) => Promise<void>;
 
 function createHookStore(): StoreApi<SessionStoreState> {
-  return createSessionStore(crypto.randomUUID());
+  return createMockStore();
 }
 
 async function runStep(

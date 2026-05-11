@@ -4,3 +4,5 @@ dist/
 bun.lockb
 .specra.json
 .sisyphus
+.specra
+.playwright-mcp

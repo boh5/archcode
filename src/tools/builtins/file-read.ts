@@ -3,12 +3,10 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { getSystemErrorCode } from "../../utils";
 import type { ToolExecutionResult } from "../types";
-import {
-  createReadSnapshotAfterHook,
-  createSensitiveFileGuard,
-  createWorkspaceGuard,
-  resolveAndValidatePath,
-} from "../hooks/read-snapshot";
+import { createSensitiveFileGuard } from "../hooks/sensitive-file-guard";
+import { createWorkspaceGuard } from "../hooks/workspace-guard";
+import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
+import { resolveAndValidatePath } from "../security/path-validator";
 
 // ─── Constants ───
 

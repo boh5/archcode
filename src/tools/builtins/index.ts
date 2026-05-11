@@ -15,6 +15,7 @@ export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./w
 export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder } from "./wait-for-reminder";
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
+export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";

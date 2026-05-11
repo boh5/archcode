@@ -15,6 +15,7 @@ import {
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
+import { createMockStore } from "../../store/test-helpers";
 import { inferToolErrorKindFromResult, TOOL_ERROR_META_KEY } from "../errors";
 import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
 import { ToolRegistry } from "../registry";
@@ -22,42 +23,6 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileEditTool } from "./file-edit";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-edit");
-
-function createMockStore(
-  snapshots: Map<string, number> = new Map(),
-): StoreApi<SessionStoreState> {
-  const state: SessionStoreState = {
-    sessionId: "test",
-    createdAt: Date.now(),
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    streamingTools: {},
-    readSnapshots: new Map(snapshots),
-    runCount: 0,
-    append: () => {},
-    toModelMessages: () => [],
-  };
-
-  return {
-    getState: () => state,
-    getInitialState: () => state,
-    setState: (partial) => {
-      if (typeof partial === "function") {
-        Object.assign(state, partial(state));
-        return;
-      }
-
-      Object.assign(state, partial);
-    },
-    subscribe: () => () => {},
-  };
-}
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -84,7 +49,7 @@ async function writeWorkspaceFile(relativePath: string, content: string): Promis
 async function createReadStore(filePath: string): Promise<StoreApi<SessionStoreState>> {
   const resolved = realpathSync.native(filePath);
   const fileStat = await stat(filePath);
-  return createMockStore(new Map([[resolved, fileStat.mtimeMs]]));
+  return createMockStore({ readSnapshots: new Map([[resolved, fileStat.mtimeMs]]) });
 }
 
 async function makeReadCtx(relativePath: string): Promise<ToolExecutionContext> {
@@ -310,7 +275,7 @@ describe("fileEditTool", () => {
   test("read-before-edit guard denies when mtime differs from snapshot", async () => {
     const filePath = await writeWorkspaceFile("mtime.txt", "content");
     const resolved = realpathSync.native(filePath);
-    const ctx = makeCtx({ store: createMockStore(new Map([[resolved, 1]])) });
+    const ctx = makeCtx({ store: createMockStore({ readSnapshots: new Map([[resolved, 1]]) }) });
 
     const result = await executeThroughRegistry(
       { path: "mtime.txt", edits: [{ oldString: "content", newString: "updated" }] },

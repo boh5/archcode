@@ -6,7 +6,7 @@ import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { createWorkspaceGuard } from "../../hooks/read-snapshot";
+import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDefinition } from "./format-output";
@@ -128,16 +128,6 @@ export const lspGotoDefinitionTool = defineTool({
   },
 });
 
-function createWorkspaceGuardForFilePath() {
-  const guard = createWorkspaceGuard();
-  return (input: unknown, ctx: Parameters<typeof guard>[1]) => {
-    const normalized = isRecord(input) && typeof input.filePath === "string"
-      ? { ...input, path: input.filePath }
-      : input;
-    return guard(normalized, ctx);
-  };
-}
-
 function parseDefinitionResult(result: unknown): LspLocation[] {
   if (result === null || result === undefined) return [];
   if (Array.isArray(result)) {
@@ -189,6 +179,4 @@ function locationFromUriAndRange(uri: string, range: unknown): LspLocation | und
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+

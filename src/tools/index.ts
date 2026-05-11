@@ -46,16 +46,12 @@ export {
   serializeToolError,
 } from "./errors";
 export type { FormattedToolError, FormatToolErrorOptions, ToolErrorKind } from "./errors";
+export { createSensitiveFileGuard, isSensitiveFile, SENSITIVE_PATTERNS } from "./hooks/sensitive-file-guard";
 export {
   createReadSnapshotAfterHook,
   createReadBeforeEditGuard,
-  createWorkspaceGuard as createWorkspaceGuardFromSnapshot,
-  createSensitiveFileGuard as createSensitiveFileGuardFromSnapshot,
-  isSensitiveFile,
-  resolveAndValidatePath,
   refreshReadSnapshot,
   invalidateReadSnapshot,
-  SENSITIVE_PATTERNS,
 } from "./hooks/read-snapshot";
 export type { AfterHook as AfterHookType } from "./types";
 export { createEditErrorRecoveryHook } from "./hooks/edit-error-recovery";

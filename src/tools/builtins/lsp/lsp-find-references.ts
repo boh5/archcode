@@ -6,7 +6,7 @@ import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { createWorkspaceGuard } from "../../hooks/read-snapshot";
+import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatReferences } from "./format-output";
@@ -150,16 +150,4 @@ function isReferenceLocation(value: unknown): value is Required<LspReferenceLoca
   return typeof value.range.start.line === "number" && typeof value.range.start.character === "number";
 }
 
-function createWorkspaceGuardForFilePath() {
-  const guard = createWorkspaceGuard();
-  return (input: unknown, ctx: Parameters<typeof guard>[1]) => {
-    const normalized = isRecord(input) && typeof input.filePath === "string"
-      ? { ...input, path: input.filePath }
-      : input;
-    return guard(normalized, ctx);
-  };
-}
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
