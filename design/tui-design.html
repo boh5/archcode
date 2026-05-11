@@ -1,0 +1,1942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Specra TUI Design Prototype</title>
+<style>
+/* ============================================================
+   CSS Variables — Claude Code Inspired Theme
+   Change these to retheme the entire UI
+   ============================================================ */
+:root {
+  /* Accent */
+  --accent:        #d77757;
+  --accent-dim:    #2d1f1a;
+  --accent-border: #d7775780;
+
+  /* Semantic */
+  --success:       #4eba65;
+  --success-dim:   #1a2e1f;
+  --error:         #ff6b80;
+  --error-dim:     #2a1519;
+  --warning:       #f7be3c;
+  --warning-dim:   #2a2210;
+  --info:          #56b6c2;
+
+  /* Text */
+  --text:          #e2e2e2;
+  --text-secondary:#999999;
+  --text-dim:      #5a5a5a;
+  --text-accent:   #d77757;
+
+  /* Background — solid colors only (terminal compatible) */
+  --bg:            #1a1a1a;
+  --bg-surface:    #222222;
+  --bg-elevated:   #2a2a2a;
+  --bg-selected:   #2d2520;
+  --bg-input:      #1e1e1e;
+
+  /* Border */
+  --border:        #3a3a3a;
+  --border-focus:  #d7775780;
+  --border-selected: #d77757;
+
+  /* User message */
+  --user-bg:       #1b2838;
+  --user-border:   #2d5a8a;
+
+  /* Assistant message */
+  --assistant-bg:  transparent;
+
+  /* Tool block */
+  --tool-bg:       #1e1e1e;
+  --tool-border:   #333333;
+  --tool-header:   #2a2a2a;
+
+  /* Agent (delegate/background_output) */
+  --agent-accent:   #4eba65;
+  --agent-bg:       #1e2420;
+  --agent-border:   #2a4a30;
+
+  /* Card (interactive elements) */
+  --card-bg:       #252525;
+  --card-border:   #4a4a4a;
+
+  /* Diff — solid colors only */
+  --diff-add-bg:   #1a2e1f;
+  --diff-add-text: #4eba65;
+  --diff-del-bg:   #2a1519;
+  --diff-del-text: #ff6b80;
+  --diff-hunk-bg:  #1a2530;
+
+  /* Spacing */
+  --gap-xs:  4px;
+  --gap-sm:  8px;
+  --gap-md:  12px;
+  --gap-lg:  16px;
+  --gap-xl:  24px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Font */
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-size: 13px;
+  --line-height: 1.55;
+
+  /* Status bar */
+  --statusbar-height: 28px;
+  --statusbar-bg: #161616;
+  --statusbar-border: #2a2a2a;
+
+  /* Context bar */
+  --context-bar-bg: #3a3a3a;
+  --context-bar-fill: var(--accent);
+
+  /* Permission confirmation */
+  --perm-bg:       #2a1e1a;
+  --perm-border:   #d77757;
+
+  /* Scrollbar */
+  --scrollbar-track: #1a1a1a;
+  --scrollbar-thumb: #3a3a3a;
+}
+
+/* ============================================================
+   Reset & Base
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+
+/* ============================================================
+   Terminal Window Shell
+   ============================================================ */
+.terminal {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 960px;
+  margin: 0 auto;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+/* ============================================================
+   Top Status Bar
+   ============================================================ */
+.statusbar-top {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  height: var(--statusbar-height);
+  padding: 0 var(--gap-md);
+  background: var(--statusbar-bg);
+  border-bottom: 1px solid var(--statusbar-border);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.statusbar-top .logo {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.statusbar-top .separator {
+  color: var(--text-dim);
+}
+
+.statusbar-top .model-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.statusbar-top .git-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar-top .git-branch .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+/* Context usage bar */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.context-bar .bar-track {
+  width: 80px;
+  height: 4px;
+  background: var(--context-bar-bg);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.context-bar .bar-fill {
+  height: 100%;
+  background: var(--context-bar-fill);
+  border-radius: 2px;
+}
+
+.context-bar .bar-fill.warning { background: var(--warning); }
+.context-bar .bar-fill.critical { background: var(--error); }
+
+.context-bar .bar-label {
+  font-size: 10px;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* ============================================================
+   Main Chat Area
+   ============================================================ */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--gap-lg) var(--gap-xl);
+  scroll-behavior: smooth;
+}
+
+/* ============================================================
+   Message Base
+   ============================================================ */
+.message {
+  margin-bottom: var(--gap-lg);
+}
+
+/* User message */
+.message-user {
+  position: relative;
+  padding: var(--gap-sm) var(--gap-md);
+  background: var(--user-bg);
+  border-left: 3px solid var(--user-border);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.message-user .role-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #5c9cf5;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--gap-xs);
+}
+
+.message-user .content {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Assistant message */
+.message-assistant {
+  padding: var(--gap-sm) 0;
+}
+
+.message-assistant .role-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: var(--gap-xs);
+}
+
+.message-assistant .content {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-assistant .content p {
+  margin-bottom: var(--gap-sm);
+}
+
+.message-assistant .content p:last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================
+   Reasoning Block (collapsible)
+   ============================================================ */
+.reasoning-block {
+  margin: var(--gap-sm) 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.reasoning-block .block-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-md);
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.reasoning-block.selected .block-header {
+  background: var(--bg-selected);
+}
+
+.reasoning-block .block-header .icon {
+  color: var(--text-dim);
+}
+
+.reasoning-block.expanded .block-header .icon {
+  transform: rotate(90deg);
+}
+
+.reasoning-block .block-header .label {
+  font-weight: 500;
+}
+
+.reasoning-block .block-content {
+  display: none;
+  padding: 0 var(--gap-md) var(--gap-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  border-top: 1px solid var(--border);
+  padding-top: var(--gap-sm);
+}
+
+.reasoning-block.expanded .block-content {
+  display: block;
+}
+
+/* ============================================================
+   Tool Block (unified style)
+   ============================================================ */
+.tool-block {
+  margin: var(--gap-sm) 0;
+  background: var(--tool-bg);
+  border: 1px solid var(--tool-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+/* Agent variant (delegate / background_output) */
+.tool-block.agent-variant {
+  background: var(--agent-bg);
+  border-color: var(--agent-border);
+}
+
+.tool-block.agent-variant .block-header {
+  border-left: 3px solid var(--agent-accent);
+}
+
+/* Header */
+.tool-block .block-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) var(--gap-md);
+  background: var(--tool-header);
+  user-select: none;
+  min-height: 28px;
+}
+
+.tool-block.selected .block-header {
+  background: var(--bg-selected);
+  border-left: 2px solid var(--border-selected);
+  padding-left: calc(var(--gap-md) - 2px);
+}
+
+.tool-block .tool-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.tool-block .tool-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tool-block .tool-target {
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-block .tool-duration {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+/* Status badges */
+.tool-block .status-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+.status-badge.success {
+  background: var(--success-dim);
+  color: var(--success);
+}
+
+.status-badge.error {
+  background: var(--error-dim);
+  color: var(--error);
+}
+
+.status-badge.running {
+  background: var(--warning-dim);
+  color: var(--warning);
+}
+
+.status-badge.pending {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* Expand/collapse icon */
+.tool-block .expand-icon {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.tool-block.expanded .expand-icon {
+  transform: rotate(90deg);
+}
+
+.tool-block .block-hint {
+  display: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  margin-left: auto;
+  padding-left: var(--gap-sm);
+  white-space: nowrap;
+}
+
+.tool-block.selected .block-hint {
+  display: inline;
+}
+
+.tool-block.selected.expanded .block-hint {
+  display: inline;
+}
+
+.reasoning-block .block-hint {
+  display: none;
+  color: var(--text-dim);
+  font-size: 10px;
+  margin-left: auto;
+  padding-left: var(--gap-sm);
+  white-space: nowrap;
+}
+
+.reasoning-block.selected .block-hint {
+  display: inline;
+}
+
+/* Body content with 5-line default collapse */
+.tool-block .block-content {
+  border-top: 1px solid var(--border);
+  padding: var(--gap-xs) 0;
+  max-height: calc(var(--font-size) * var(--line-height) * 5 + var(--gap-xs) * 2);
+  overflow: hidden;
+}
+
+.tool-block.expanded .block-content {
+  max-height: none;
+  overflow: visible;
+}
+
+.tool-block .block-content pre {
+  margin: 0;
+  padding: 0 var(--gap-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--line-height);
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Line numbers */
+.tool-block .block-content .line-numbers {
+  display: inline-block;
+  width: 36px;
+  text-align: right;
+  padding-right: var(--gap-sm);
+  color: var(--text-dim);
+  user-select: none;
+  font-size: 11px;
+}
+
+/* Expand toggle */
+.tool-block .expand-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-xs) var(--gap-md);
+  font-size: 11px;
+  color: var(--accent);
+  border-top: 1px dashed var(--border);
+  user-select: none;
+}
+
+.tool-block.selected .expand-toggle {
+  background: var(--bg-selected);
+}
+
+/* Tool input section */
+.tool-block .tool-input {
+  padding: var(--gap-xs) var(--gap-md);
+  color: var(--text-secondary);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-block .tool-input .input-key {
+  color: var(--text-dim);
+}
+
+.tool-block .tool-input .input-val {
+  color: var(--text-secondary);
+}
+
+/* Tool error output */
+.tool-block .block-content.error-output {
+  color: var(--error);
+  background: var(--error-dim);
+}
+
+/* ============================================================
+   Diff Rendering (within tool blocks)
+   ============================================================ */
+.diff-line {
+  display: block;
+  padding: 0 var(--gap-md);
+  min-height: calc(1em * var(--line-height));
+}
+
+.diff-line.add    { background: var(--diff-add-bg); color: var(--diff-add-text); }
+.diff-line.delete { background: var(--diff-del-bg); color: var(--diff-del-text); }
+.diff-line.hunk   { background: var(--diff-hunk-bg); color: var(--info); }
+.diff-line .diff-marker { display: inline-block; width: 16px; }
+
+/* ============================================================
+   Card-style Interactive Components
+   ============================================================ */
+.card {
+  margin: var(--gap-sm) 0;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-md);
+  font-size: 12px;
+}
+
+.card .card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-md);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Todo card */
+.card-todo .card-header { color: var(--warning); }
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) 0;
+  color: var(--text);
+}
+
+.todo-item .todo-icon { flex-shrink: 0; width: 16px; text-align: center; margin-top: 1px; }
+.todo-item.completed  .todo-icon { color: var(--success); }
+.todo-item.completed  .todo-text { color: var(--text-secondary); text-decoration: line-through; }
+.todo-item.in-progress .todo-icon { color: var(--warning); }
+.todo-item.in-progress .todo-text { color: var(--text); font-weight: 500; }
+.todo-item.pending     .todo-icon { color: var(--text-dim); }
+.todo-item.pending     .todo-text { color: var(--text-secondary); }
+.todo-item.cancelled   .todo-icon { color: var(--text-dim); }
+.todo-item.cancelled   .todo-text { color: var(--text-dim); text-decoration: line-through; }
+
+/* AskUser card */
+.card-askuser .card-header { color: var(--info); }
+
+.ask-question {
+  margin-bottom: var(--gap-md);
+}
+
+.ask-question .question-text {
+  color: var(--text);
+  margin-bottom: var(--gap-sm);
+  font-size: 13px;
+}
+
+.ask-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) var(--gap-sm);
+  margin-bottom: 2px;
+}
+
+.ask-option.selected {
+  background: var(--accent-dim);
+}
+
+.ask-option .option-num {
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 20px;
+}
+
+.ask-option .option-content .option-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ask-option .option-content .option-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.ask-hint {
+  margin-top: var(--gap-sm);
+  padding-top: var(--gap-xs);
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ============================================================
+   Permission Confirmation (bottom area, NOT modal)
+   ============================================================ */
+.perm-area {
+  display: none;
+  flex-direction: column;
+  border-top: 2px solid var(--perm-border);
+  background: var(--perm-bg);
+  flex-shrink: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.perm-area.active {
+  display: flex;
+}
+
+.perm-area .perm-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-lg);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--warning);
+  border-bottom: 1px solid var(--border);
+}
+
+.perm-area .perm-body {
+  padding: var(--gap-md) var(--gap-lg);
+  font-size: 12px;
+}
+
+.perm-area .perm-detail {
+  margin-bottom: var(--gap-sm);
+}
+
+.perm-area .perm-detail .perm-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--gap-xs);
+}
+
+.perm-area .perm-detail .perm-value {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.perm-area .perm-diff {
+  margin-top: var(--gap-sm);
+  background: var(--tool-bg);
+  border: 1px solid var(--tool-border);
+  border-radius: var(--radius-sm);
+  padding: var(--gap-sm);
+  font-size: 12px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.perm-area .perm-actions {
+  display: flex;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-lg);
+  border-top: 1px solid var(--border);
+}
+
+/* ============================================================
+   AskUser (bottom area, replaces input, like perm-area)
+   ============================================================ */
+.ask-area {
+  display: none;
+  flex-direction: column;
+  border-top: 2px solid var(--info);
+  background: #162832;
+  flex-shrink: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.ask-area.active {
+  display: flex;
+}
+
+.ask-area .ask-header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-lg);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--info);
+  border-bottom: 1px solid var(--border);
+}
+
+.ask-area .ask-header .ask-counter {
+  color: var(--text-dim);
+  font-weight: 400;
+  margin-left: auto;
+}
+
+.ask-area .ask-body {
+  padding: var(--gap-md) var(--gap-lg);
+  font-size: 13px;
+}
+
+.ask-area .ask-question-text {
+  color: var(--text);
+  font-weight: 500;
+  margin-bottom: var(--gap-md);
+}
+
+.ask-area .ask-option-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) var(--gap-sm);
+  margin-bottom: 2px;
+  border-left: 2px solid transparent;
+}
+
+.ask-area .ask-option-item.focused {
+  background: #1a3545;
+  border-left-color: var(--info);
+}
+
+.ask-area .ask-option-item .opt-num {
+  color: var(--info);
+  font-weight: 600;
+  min-width: 24px;
+}
+
+.ask-area .ask-option-item .opt-label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ask-area .ask-option-item .opt-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.ask-area .ask-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: var(--gap-xs) var(--gap-lg) var(--gap-sm);
+  border-top: 1px solid var(--border);
+}
+
+.perm-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) var(--gap-md);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  min-width: 80px;
+  justify-content: center;
+}
+
+.perm-btn.yes {
+  background: var(--success-dim);
+  color: var(--success);
+  border: 1px solid var(--success);
+  font-weight: 600;
+}
+
+.perm-btn.yes.focused {
+  background: var(--success);
+  color: #000;
+}
+
+.perm-btn.no {
+  background: var(--error-dim);
+  color: var(--error);
+  border: 1px solid var(--error);
+  font-weight: 600;
+}
+
+.perm-btn.no.focused {
+  background: var(--error);
+  color: #000;
+}
+
+.perm-btn .btn-key {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ============================================================
+   Thinking / Streaming Indicators
+   ============================================================ */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.thinking-indicator .spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-dim);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.thinking-indicator .dots::after {
+  content: '';
+  animation: dots 1.5s steps(3, end) infinite;
+}
+
+@keyframes dots {
+  0%   { content: ''; }
+  33%  { content: '.'; }
+  66%  { content: '..'; }
+  100% { content: '...'; }
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 2px;
+  animation: blink 0.8s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+/* ============================================================
+   Bottom Status Bar
+   ============================================================ */
+.statusbar-bottom {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  height: var(--statusbar-height);
+  padding: 0 var(--gap-md);
+  background: var(--statusbar-bg);
+  border-top: 1px solid var(--statusbar-border);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.statusbar-bottom .status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar-bottom .running-indicator {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+.statusbar-bottom .spacer { flex: 1; }
+
+.statusbar-bottom .keybinding {
+  padding: 0 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ============================================================
+   Input Area
+   ============================================================ */
+.input-area {
+  display: flex;
+  align-items: flex-start;
+  padding: var(--gap-md) var(--gap-xl);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.input-area .prompt {
+  color: var(--accent);
+  margin-right: var(--gap-sm);
+  padding-top: 2px;
+  font-weight: 700;
+}
+
+.input-area .input-field {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  resize: none;
+  min-height: 20px;
+}
+
+.input-area .input-field::placeholder {
+  color: var(--text-dim);
+}
+
+.input-area.running {
+  background: var(--bg-surface);
+}
+
+.input-area.running .prompt {
+  color: var(--text-dim);
+}
+
+.input-area.running .input-field {
+  color: var(--text-dim);
+}
+
+.input-area.nav-mode {
+  background: var(--bg-surface);
+  opacity: 0.5;
+}
+
+.input-area.nav-mode .prompt {
+  color: var(--text-dim);
+}
+
+.input-area.nav-mode .input-field {
+  color: var(--text-dim);
+}
+
+.input-area .nav-hint {
+  display: none;
+  color: var(--accent);
+  font-size: 11px;
+  margin-left: var(--gap-sm);
+  white-space: nowrap;
+}
+
+.input-area.nav-mode .nav-hint {
+  display: inline;
+}
+
+.statusbar-bottom .mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mode-badge.mode-input {
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.mode-badge.mode-nav {
+  background: var(--accent);
+  color: #1a1a1a;
+}
+
+.mode-badge.mode-perm {
+  background: var(--warning);
+  color: #1a1a1a;
+}
+
+.mode-badge.mode-ask {
+  background: var(--info);
+  color: #1a1a1a;
+}
+
+/* ============================================================
+   Reminder
+   ============================================================ */
+.reminder {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  padding: var(--gap-xs) var(--gap-md);
+  margin: var(--gap-xs) 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--text-dim);
+}
+
+.reminder .reminder-icon { flex-shrink: 0; }
+.reminder .reminder-content { white-space: pre-wrap; }
+.reminder.handled { color: var(--text-dim); border-left-color: var(--text-dim); }
+.reminder.handled .reminder-content { text-decoration: line-through; }
+
+/* ============================================================
+   Step delimiter
+   ============================================================ */
+.step-delimiter {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin: var(--gap-md) 0;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.step-delimiter::before,
+.step-delimiter::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ============================================================
+   Utility / Helpers
+   ============================================================ */
+.text-success { color: var(--success); }
+.text-error   { color: var(--error); }
+.text-warning { color: var(--warning); }
+.text-accent  { color: var(--accent); }
+.text-dim     { color: var(--text-dim); }
+.text-info    { color: var(--info); }
+
+.mt-sm  { margin-top: var(--gap-sm); }
+.mt-md  { margin-top: var(--gap-md); }
+.mb-sm  { margin-bottom: var(--gap-sm); }
+.mb-md  { margin-bottom: var(--gap-md); }
+</style>
+</head>
+<body>
+
+<div class="terminal">
+
+  <!-- ========== TOP STATUS BAR ========== -->
+  <div class="statusbar-top">
+    <span class="logo">Specra</span>
+    <span class="separator">·</span>
+    <span class="model-name">claude-3.5-sonnet</span>
+    <span class="separator">·</span>
+    <span class="git-branch">
+      <span class="dot"></span>
+      main
+    </span>
+    <span class="separator">·</span>
+    <span>Refactor Auth to JWT</span>
+
+    <div class="context-bar">
+      <span>18.2k</span>
+      <div class="bar-track">
+        <div class="bar-fill" style="width: 62%"></div>
+      </div>
+      <span class="bar-label">62%</span>
+    </div>
+  </div>
+
+  <!-- ========== MAIN CHAT AREA ========== -->
+  <div class="chat-area">
+
+    <!-- ===== Step 1 Delimiter ===== -->
+    <div class="step-delimiter">Step 1</div>
+
+    <!-- ===== User Message ===== -->
+    <div class="message message-user">
+      <div class="role-label">You</div>
+      <div class="content">帮我重构 auth 模块，把 session 方案换成 JWT。需要支持 token 刷新和黑名单机制</div>
+    </div>
+
+    <!-- ===== Reasoning Block (collapsed by default) ===== -->
+    <div class="reasoning-block">
+      <div class="block-header">
+        <span class="icon">▶</span>
+        <span class="label">💭 Thinking</span>
+        <span style="color:var(--text-dim); margin-left:auto; font-size:10px;">2.3s</span>
+      </div>
+      <div class="block-content">The user wants to refactor from session-based auth to JWT. Let me think about the architecture:
+
+1. Current session auth uses express-session with memory store
+2. JWT approach needs: access token + refresh token pair
+3. Token blacklist for logout/revocation - can use Redis
+4. Need to check existing code structure first
+5. Should maintain backward compatibility during migration
+
+Key considerations:
+- Access token: short-lived (15min), stored in httpOnly cookie
+- Refresh token: longer-lived (7d), stored in httpOnly cookie
+- Blacklist: Redis SET with token jti claims
+- Need middleware order: rate limit → cors → jwt verification → routes</div>
+    </div>
+
+    <!-- ===== Assistant Text ===== -->
+    <div class="message message-assistant">
+      <div class="role-label">Specra</div>
+      <div class="content"><p>好的，我来帮你把 session 认证方案重构为 JWT。方案如下：</p>
+<p>• Access Token: 15分钟有效期，httpOnly cookie<br>• Refresh Token: 7天有效期，httpOnly cookie<br>• 黑名单: Redis SET 存储 token jti，用于登出/撤销</p>
+<p>先看一下现有代码结构。</p></div>
+    </div>
+
+    <!-- ===== Tool: file_read (collapsed) ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">file_read</span>
+        <span class="tool-target">src/auth/session.ts</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">1.2s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers"> 1 </span>import express from 'express';
+<span class="line-numbers"> 2 </span>import session from 'express-session';
+<span class="line-numbers"> 3 </span>import MemoryStore from 'memorystore';
+<span class="line-numbers"> 4 </span>
+<span class="line-numbers"> 5 </span>export function createSessionMiddleware() {
+<span class="line-numbers"> 6 </span>  return session({
+<span class="line-numbers"> 7 </span>    store: new MemoryStore({ checkPeriod: 86400000 }),
+<span class="line-numbers"> 8 </span>    secret: process.env.SESSION_SECRET!,
+</pre>
+      </div>
+      <div class="expand-toggle">
+        <span class="expand-label">▸ 14 more lines</span>
+      </div>
+    </div>
+
+    <!-- ===== Tool: grep (collapsed) ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">grep</span>
+        <span class="tool-target">"session" in src/auth/</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.3s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span>src/auth/session.ts:5:  export function createSessionMiddleware() {
+<span class="line-numbers">  </span>src/auth/session.ts:12:  export function destroySession() {
+<span class="line-numbers">  </span>src/auth/routes.ts:3:   import { createSessionMiddleware } from './session';
+<span class="line-numbers">  </span>src/auth/routes.ts:8:   router.use(createSessionMiddleware());
+<span class="line-numbers">  </span>src/middleware/auth.ts:4: export function requireAuth(req, res, next) {
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Assistant Text ===== -->
+    <div class="message message-assistant">
+      <div class="role-label">Specra</div>
+      <div class="content"><p>现有代码结构清楚了。我来创建 JWT 模块并修改相关文件。</p></div>
+    </div>
+
+    <!-- ===== Tool: file_edit (with diff view) ===== -->
+    <div class="tool-block expanded">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">file_write</span>
+        <span class="tool-target">src/auth/jwt.ts</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.8s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="diff-line hunk">   @@ -0,0 +1,42 @@</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import { jwtVerify, SignJWT } from 'jose';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import type { JWTPayload } from 'jose';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> </span>
+<span class="diff-line add"><span class="diff-marker">+</span> interface TokenPair {</span>
+<span class="diff-line add"><span class="diff-marker">+</span>   accessToken: string;</span>
+<span class="diff-line add"><span class="diff-marker">+</span>   refreshToken: string;</span>
+<span class="diff-line add"><span class="diff-marker">+</span> }</span>
+<span class="diff-line add"><span class="diff-marker">+</span> </span>
+<span class="diff-line add"><span class="diff-marker">+</span> export async function generateTokenPair(</span>
+<span class="diff-line add"><span class="diff-marker">+</span>   userId: string</span>
+<span class="diff-line add"><span class="diff-marker">+</span> ): Promise&lt;TokenPair&gt; {</span>
+<span class="diff-line add"><span class="diff-marker">+</span>   const accessToken = await new SignJWT({ sub: userId })</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .setProtectedHeader({ alg: 'HS256' })</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .setExpirationTime('15m')</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .sign(getSecret());</span>
+<span class="diff-line add"><span class="diff-marker">+</span> </span>
+<span class="diff-line add"><span class="diff-marker">+</span>   const refreshToken = await new SignJWT({ sub: userId })</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .setProtectedHeader({ alg: 'HS256' })</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .setExpirationTime('7d')</span>
+<span class="diff-line add"><span class="diff-marker">+</span>     .sign(getSecret());</span>
+<span class="diff-line add"><span class="diff-marker">+</span> </span>
+<span class="diff-line add"><span class="diff-marker">+</span>   return { accessToken, refreshToken };</span>
+<span class="diff-line add"><span class="diff-marker">+</span> }</span>
+</pre>
+      </div>
+      <div class="expand-toggle">
+        <span class="expand-label">▾ 24 more lines</span>
+      </div>
+    </div>
+
+    <!-- ===== Tool: file_edit with mixed diff ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">file_edit</span>
+        <span class="tool-target">src/auth/routes.ts</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.6s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="diff-line hunk">   @@ -3,8 +3,12 @@</span>
+<span class="diff-line delete"><span class="diff-marker">-</span> import { createSessionMiddleware } from './session';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import { jwtMiddleware, refreshTokenMiddleware } from './jwt';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import { blacklistMiddleware } from './blacklist';</span>
+<span class="diff-line">  </span>
+<span class="diff-line">  </span> export const authRouter = Router();</span>
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Tool: bash (collapsed) ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">bash</span>
+        <span class="tool-target">bun run typecheck</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">4.2s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span><span style="color:var(--text-secondary)">$</span> bun run typecheck
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span>src/auth/jwt.ts(18,5): error TS2345: Argument of type 'string | undefined'
+<span class="line-numbers">  </span>  is not assignable to parameter of type 'KeyLike'.
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span>Found 1 error. Watching for file changes.
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Tool: git_diff ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">git_diff</span>
+        <span class="tool-target">--stat</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.1s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span> <span class="text-success">A</span> src/auth/jwt.ts       | 42 ++++++++++++++++++++++
+<span class="line-numbers">  </span> <span class="text-success">A</span> src/auth/blacklist.ts | 28 ++++++++++++++
+<span class="line-numbers">  </span> <span style="color:var(--warning)">M</span> src/auth/routes.ts   |  8 ++---
+<span class="line-numbers">  </span> <span style="color:var(--error)">D</span> src/auth/session.ts  | 22 -----------
+<span class="line-numbers">  </span> 4 files changed, 70 insertions(+), 30 deletions(-)
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Step 2 Delimiter ===== -->
+    <div class="step-delimiter">Step 2</div>
+
+    <!-- ===== Tool: delegate (agent variant, slightly different) ===== -->
+    <div class="tool-block agent-variant">
+      <div class="block-header">
+        <span class="tool-icon">▶</span>
+        <span class="tool-name">delegate</span>
+        <span class="tool-target">test: write jwt integration tests</span>
+        <span class="status-badge running">◉</span>
+        <span class="tool-duration">12s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span><span class="text-dim">Sub-agent running...</span>
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span><span class="text-dim">Category:</span> <span class="text-accent">deep</span>
+<span class="line-numbers">  </span><span class="text-dim">Skills:</span> git-master, review-work
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span><span class="text-dim">Writing integration tests for JWT module:</span>
+<span class="line-numbers">  </span>• token generation (access + refresh)
+<span class="line-numbers">  </span>• token verification with expired tokens
+<span class="line-numbers">  </span>• blacklist revocation flow
+<span class="line-numbers">  </span>• refresh token rotation
+</pre>
+      </div>
+      <div class="expand-toggle">
+        <span class="expand-label">▸ 3 more lines</span>
+      </div>
+    </div>
+
+    <!-- ===== Tool: background_output (agent variant) ===== -->
+    <div class="tool-block agent-variant">
+      <div class="block-header">
+        <span class="tool-icon">▶</span>
+        <span class="tool-name">background_output</span>
+        <span class="tool-target">bg_a3f2k1</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.1s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span><span class="text-success">✓</span> Task completed: Explore auth patterns
+<span class="line-numbers">  </span><span class="text-dim">Session:</span> ses_1e9f3bfb
+<span class="line-numbers">  </span><span class="text-dim">Duration:</span> 45s
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span>Found 3 implementations using jose for JWT
+<span class="line-numbers">  </span>in express apps. Key patterns: httpOnly
+</pre>
+      </div>
+      <div class="expand-toggle">
+        <span class="expand-label">▸ 8 more lines</span>
+      </div>
+    </div>
+
+    <!-- ===== Tool: lsp_diagnostics ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">lsp_diagnostics</span>
+        <span class="tool-target">src/auth/</span>
+        <span class="status-badge success">✓</span>
+        <span class="tool-duration">0.2s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span><span class="text-error">error</span> src/auth/jwt.ts:18 — TS2345: Argument of type
+<span class="line-numbers">  </span>  'string | undefined' is not assignable to 'KeyLike'
+<span class="line-numbers">  </span><span class="text-warning">warning</span> src/auth/jwt.ts:24 — TS6133: 'exp'
+<span class="line-numbers">  </span>  is declared but never read
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Reminder ===== -->
+    <div class="reminder">
+      <span class="reminder-icon">💬</span>
+      <span class="reminder-content">Sub-agent (explore) completed — results available via background_output</span>
+    </div>
+
+    <!-- ===== Reminder (handled) ===== -->
+    <div class="reminder handled">
+      <span class="reminder-icon">💬</span>
+      <span class="reminder-content">Todo continuation: 3 items remaining</span>
+    </div>
+
+    <!-- ===== Todo Card ===== -->
+    <div class="card card-todo">
+      <div class="card-header">
+        <span>📋</span>
+        <span>Todos</span>
+      </div>
+
+      <div class="todo-item completed">
+        <span class="todo-icon">✓</span>
+        <span class="todo-text">Analyze existing session auth implementation</span>
+      </div>
+      <div class="todo-item completed">
+        <span class="todo-icon">✓</span>
+        <span class="todo-text">Create JWT token generation module (src/auth/jwt.ts)</span>
+      </div>
+      <div class="todo-item in-progress">
+        <span class="todo-icon">◉</span>
+        <span class="todo-text">Create token blacklist with Redis (src/auth/blacklist.ts)</span>
+      </div>
+      <div class="todo-item pending">
+        <span class="todo-icon">○</span>
+        <span class="todo-text">Update routes to use JWT middleware</span>
+      </div>
+      <div class="todo-item pending">
+        <span class="todo-icon">○</span>
+        <span class="todo-text">Write integration tests</span>
+      </div>
+      <div class="todo-item cancelled">
+        <span class="todo-icon">✕</span>
+        <span class="todo-text">Migrate existing sessions (decided to skip)</span>
+      </div>
+    </div>
+
+    <!-- ===== AskUser reference (moved to bottom area) ===== -->
+    <!-- The AskUser card is now shown in the bottom input area, press 'a' to see it -->
+
+    <!-- ===== Tool with error ===== -->
+    <div class="tool-block">
+      <div class="block-header">
+        <span class="tool-icon">⚙</span>
+        <span class="tool-name">bash</span>
+        <span class="tool-target">bun test src/auth/jwt.test.ts</span>
+        <span class="status-badge error">✗</span>
+        <span class="tool-duration">6.8s</span>
+        <span class="expand-icon">▶</span>
+      </div>
+      <div class="block-content">
+<pre>
+<span class="line-numbers">  </span><span style="color:var(--text-secondary)">$</span> bun test src/auth/jwt.test.ts
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span><span class="text-error">FAIL</span> src/auth/jwt.test.ts > generateTokenPair
+<span class="line-numbers">  </span>  AssertionError: Expected "accessToken" to be a valid JWT
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span>  at /src/auth/jwt.test.ts:24:5
+<span class="line-numbers">  </span>
+<span class="line-numbers">  </span>1 test failed | 3 passed | 2 skipped
+</pre>
+      </div>
+    </div>
+
+    <!-- ===== Thinking Indicator (between steps) ===== -->
+    <div class="thinking-indicator">
+      <span class="spinner"></span>
+      <span>Thinking<span class="dots"></span></span>
+    </div>
+
+    <!-- ===== Assistant Text (streaming with cursor) ===== -->
+    <div class="message message-assistant">
+      <div class="role-label">Specra</div>
+      <div class="content">
+<p>我看到类型错误了 — `getSecret()` 返回 `string | undefined` 但 `SignJWT.sign()` 需要 `KeyLike`。我来修复这个问题，加上非空断言和类型转换。<span class="streaming-cursor"></span></p>
+      </div>
+    </div>
+
+  </div><!-- /chat-area -->
+
+  <!-- ========== BOTTOM STATUS BAR ========== -->
+  <div class="statusbar-bottom">
+    <span class="mode-badge mode-input" id="modeBadge">INPUT</span>
+    <span class="separator">·</span>
+    <span class="status-item">
+      <span class="running-indicator" id="runningDot"></span>
+      <span id="runningText">Running</span>
+    </span>
+    <span class="separator">·</span>
+    <span class="status-item">Steps 5/50</span>
+    <span class="separator">·</span>
+    <span class="status-item">$0.24</span>
+
+    <span class="spacer"></span>
+
+    <span id="dynamicHints">
+      <span class="keybinding">Tab</span>
+      <span>Navigate</span>
+      <span class="separator">·</span>
+      <span class="keybinding">Ctrl+C</span>
+      <span>Interrupt</span>
+    </span>
+  </div>
+
+  <!-- ========== INPUT AREA (normal state) ========== -->
+  <div class="input-area" id="inputNormal">
+    <span class="prompt">›</span>
+    <input class="input-field" type="text" placeholder="Type your message..." />
+    <span class="nav-hint">Tab → back to input</span>
+  </div>
+
+  <!-- ========== PERMISSION CONFIRMATION (bottom area, replaces input) ========== -->
+  <div class="perm-area" id="permArea">
+    <div class="perm-header">
+      <span>⚠</span>
+      <span>Permission Required</span>
+    </div>
+    <div class="perm-body">
+      <div class="perm-detail">
+        <div class="perm-label">Tool</div>
+        <div class="perm-value">file_write</div>
+      </div>
+      <div class="perm-detail">
+        <div class="perm-label">Action</div>
+        <div class="perm-value">Create new file: src/auth/jwt.ts</div>
+      </div>
+      <div class="perm-detail">
+        <div class="perm-label">Reason</div>
+        <div class="perm-value" style="color:var(--text-secondary)">Workspace guard — writing outside project root</div>
+      </div>
+      <div class="perm-diff">
+<pre><span class="diff-line hunk">   @@ -0,0 +1,3 @@</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import { jwtVerify, SignJWT } from 'jose';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> import type { JWTPayload } from 'jose';</span>
+<span class="diff-line add"><span class="diff-marker">+</span> </span></pre>
+      </div>
+    </div>
+    <div class="perm-actions">
+      <div class="perm-btn yes focused" id="permYes">
+        <span class="btn-key">[y]</span>
+        <span>Allow</span>
+      </div>
+      <div class="perm-btn no" id="permNo">
+        <span class="btn-key">[n]</span>
+        <span>Deny</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== ASK_USER (bottom area, replaces input) ========== -->
+  <div class="ask-area" id="askArea">
+    <div class="ask-header">
+      <span>❓</span>
+      <span>ask_user</span>
+      <span class="ask-counter">[1/3]</span>
+    </div>
+    <div class="ask-body">
+      <div class="ask-question-text">JWT secret 的管理方式？</div>
+      <div class="ask-option-item focused" data-opt="1">
+        <span class="opt-num">1.</span>
+        <div>
+          <div class="opt-label">环境变量</div>
+          <div class="opt-desc">从 process.env.JWT_SECRET 读取，适合12-factor部署</div>
+        </div>
+      </div>
+      <div class="ask-option-item" data-opt="2">
+        <span class="opt-num">2.</span>
+        <div>
+          <div class="opt-label">密钥文件</div>
+          <div class="opt-desc">从文件系统读取 PEM 密钥，适合 Kubernetes secrets</div>
+        </div>
+      </div>
+      <div class="ask-option-item" data-opt="3">
+        <span class="opt-num">3.</span>
+        <div>
+          <div class="opt-label">Vault 集成</div>
+          <div class="opt-desc">从 HashiCorp Vault 动态获取，适合生产高安全场景</div>
+        </div>
+      </div>
+    </div>
+    <div class="ask-hint">Enter number to select · Type custom answer · Esc to cancel</div>
+  </div>
+
+</div><!-- /terminal -->
+
+<!--
+  ╔══════════════════════════════════════════════════════════════╗
+  ║  DEVELOPER REFERENCE — not part of the TUI design          ║
+  ║  This section is for humans/AIs reviewing this prototype    ║
+  ╚══════════════════════════════════════════════════════════════╝
+
+  MODE SYSTEM (Tab to switch):
+
+    INPUT mode (default):
+      Normal text input. ↑/↓ reserved for input history (future).
+      Tab → switch to NAV mode
+      p   → demo: switch to permission confirmation
+      a   → demo: switch to ask_user question
+
+    NAV mode:
+      j / ↓     Navigate to next tool/reasoning block
+      k / ↑     Navigate to previous block
+      Enter / → Expand selected block
+      Esc / ←   Collapse selected block
+      Tab       Switch back to INPUT mode
+      p         Demo: switch to permission confirmation
+      a         Demo: switch to ask_user question
+
+    PERM mode (permission confirmation, replaces input area):
+      y / Y     Allow
+      n / N     Deny
+      ← / →     Switch between Allow/Deny focus
+      Enter     Confirm focused choice
+      Esc       Back to NAV mode
+
+    ASK mode (ask_user question, replaces input area):
+      1-9       Select option by number
+      ↑ / ↓     Browse options
+      Enter     Confirm selection
+      Esc       Back to NAV mode
+
+  TEST-ONLY KEYS (not shown in UI):
+    p — toggle permission confirmation demo
+    a — toggle ask_user question demo
+
+  DESIGN NOTES:
+    - Color scheme: Claude Code warm orange (#d77757), all via CSS variables
+    - No hover, no transitions, no shadows, no cursor:pointer (terminal incompatible)
+    - Tab toggles between INPUT and NAV modes
+    - Tool blocks: unified style, default 5-line collapse, expandable
+    - Agent blocks (delegate, background_output): green accent variant
+    - Interactive cards (todo_write, ask_user): distinct card style
+    - Permission & AskUser: replace input area at bottom (not modal overlay)
+    - Selected block shows ▸ Expand / ◂ Collapse hint in header
+    - Bottom status bar: mode badge + running state + dynamic keybinding hints
+    - Input area: normal (editable) vs nav-mode (dimmed) states
+    - Mode badge changes color: input=dim, nav=orange, perm=yellow, ask=blue
+-->
+
+<script>
+(function() {
+  var focusableSelector = '.tool-block, .reasoning-block';
+  var focusIndex = -1;
+  var appMode = 'input';
+
+  function injectHints() {
+    document.querySelectorAll('.tool-block .block-header, .reasoning-block .block-header').forEach(function(header) {
+      if (!header.querySelector('.block-hint')) {
+        var hint = document.createElement('span');
+        hint.className = 'block-hint';
+        hint.textContent = '▸ Expand';
+        header.appendChild(hint);
+      }
+    });
+  }
+
+  function updateHintText(block) {
+    var hint = block.querySelector('.block-hint');
+    if (!hint) return;
+    if (block.classList.contains('expanded')) {
+      hint.textContent = '◂ Collapse';
+    } else {
+      hint.textContent = '▸ Expand';
+    }
+  }
+
+  function getFocusableItems() {
+    return Array.from(document.querySelectorAll(focusableSelector));
+  }
+
+  function updateFocus() {
+    var items = getFocusableItems();
+    items.forEach(function(item, i) {
+      item.classList.toggle('selected', i === focusIndex);
+      if (i === focusIndex) {
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    });
+  }
+
+  function toggleBlock(block) {
+    var isExpanded = block.classList.contains('expanded');
+    block.classList.toggle('expanded');
+    var toggle = block.querySelector('.expand-icon');
+    if (toggle) {
+      toggle.textContent = isExpanded ? '▶' : '▼';
+    }
+    var label = block.querySelector('.expand-label');
+    if (label) {
+      var match = label.textContent.match(/(\d+)/);
+      if (match) {
+        label.textContent = isExpanded ? ('▸ ' + match[1] + ' more lines') : ('▾ ' + match[1] + ' more lines');
+      }
+    }
+    updateHintText(block);
+  }
+
+  function setAppMode(newMode) {
+    var inputArea = document.getElementById('inputNormal');
+    var permArea = document.getElementById('permArea');
+    var askArea = document.getElementById('askArea');
+    var inputField = inputArea.querySelector('.input-field');
+
+    if (newMode === 'input') {
+      inputArea.style.display = 'flex';
+      inputArea.classList.remove('nav-mode');
+      permArea.classList.remove('active');
+      askArea.classList.remove('active');
+      if (inputField) inputField.focus();
+      focusIndex = -1;
+      updateFocus();
+    } else if (newMode === 'nav') {
+      inputArea.style.display = 'flex';
+      inputArea.classList.add('nav-mode');
+      if (inputField) inputField.blur();
+      permArea.classList.remove('active');
+      askArea.classList.remove('active');
+      if (focusIndex < 0) focusIndex = 0;
+      updateFocus();
+    } else if (newMode === 'perm') {
+      inputArea.style.display = 'none';
+      inputArea.classList.remove('nav-mode');
+      permArea.classList.add('active');
+      askArea.classList.remove('active');
+      focusIndex = -1;
+      updateFocus();
+      document.getElementById('permYes').classList.add('focused');
+      document.getElementById('permNo').classList.remove('focused');
+    } else if (newMode === 'ask') {
+      inputArea.style.display = 'none';
+      inputArea.classList.remove('nav-mode');
+      permArea.classList.remove('active');
+      askArea.classList.add('active');
+      focusIndex = -1;
+      updateFocus();
+      updateAskFocus(0);
+    }
+
+    appMode = newMode;
+    updateModeUI();
+  }
+
+  function updateModeUI() {
+    var badge = document.getElementById('modeBadge');
+    var hints = document.getElementById('dynamicHints');
+    var runningDot = document.getElementById('runningDot');
+    var runningText = document.getElementById('runningText');
+
+    badge.className = 'mode-badge mode-' + appMode;
+    if (appMode === 'input') {
+      badge.textContent = 'INPUT';
+      hints.innerHTML = '<span class="keybinding">Tab</span><span>Navigate</span><span class="separator">·</span><span class="keybinding">Ctrl+C</span><span>Interrupt</span>';
+      runningText.textContent = 'Running';
+      runningDot.style.background = 'var(--success)';
+    } else if (appMode === 'nav') {
+      badge.textContent = 'NAV';
+      hints.innerHTML = '<span class="keybinding">↑↓</span><span>Navigate</span><span class="separator">·</span><span class="keybinding">Enter</span><span>Expand</span><span class="separator">·</span><span class="keybinding">Esc</span><span>Collapse</span><span class="separator">·</span><span class="keybinding">Tab</span><span>Back</span>';
+      runningText.textContent = 'Navigating';
+      runningDot.style.background = 'var(--accent)';
+    } else if (appMode === 'perm') {
+      badge.textContent = 'CONFIRM';
+      hints.innerHTML = '<span class="keybinding">y</span><span>Allow</span><span class="separator">·</span><span class="keybinding">n</span><span>Deny</span><span class="separator">·</span><span class="keybinding">←→</span><span>Switch</span>';
+      runningText.textContent = 'Awaiting permission';
+      runningDot.style.background = 'var(--warning)';
+    } else if (appMode === 'ask') {
+      badge.textContent = 'ASK';
+      hints.innerHTML = '<span class="keybinding">1-9</span><span>Select</span><span class="separator">·</span><span class="keybinding">↑↓</span><span>Browse</span><span class="separator">·</span><span class="keybinding">Enter</span><span>Confirm</span>';
+      runningText.textContent = 'Awaiting response';
+      runningDot.style.background = 'var(--info)';
+    }
+  }
+
+  var askOptIndex = 0;
+  function updateAskFocus(idx) {
+    var opts = document.querySelectorAll('#askArea .ask-option-item');
+    opts.forEach(function(opt, i) {
+      opt.classList.toggle('focused', i === idx);
+    });
+    askOptIndex = idx;
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (appMode === 'perm') {
+      if (e.key === 'y' || e.key === 'Y') {
+        e.preventDefault();
+        setAppMode('input');
+        return;
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        setAppMode('input');
+        return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        var permYes = document.getElementById('permYes');
+        var permNo = document.getElementById('permNo');
+        permYes.classList.toggle('focused');
+        permNo.classList.toggle('focused');
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        setAppMode('input');
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setAppMode('nav');
+        return;
+      }
+      return;
+    }
+
+    if (appMode === 'ask') {
+      var opts = document.querySelectorAll('#askArea .ask-option-item');
+      if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        updateAskFocus(Math.max(0, askOptIndex - 1));
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        updateAskFocus(Math.min(opts.length - 1, askOptIndex + 1));
+        return;
+      }
+      if (e.key >= '1' && e.key <= String(opts.length)) {
+        e.preventDefault();
+        updateAskFocus(parseInt(e.key) - 1);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        setAppMode('input');
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setAppMode('nav');
+        return;
+      }
+      return;
+    }
+
+    if (appMode === 'nav') {
+      var items = getFocusableItems();
+
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        focusIndex = Math.min(focusIndex + 1, items.length - 1);
+        if (focusIndex < 0) focusIndex = 0;
+        updateFocus();
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        focusIndex = Math.max(focusIndex - 1, 0);
+        updateFocus();
+      } else if (e.key === 'Enter' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (focusIndex >= 0) {
+          var item = items[focusIndex];
+          if (item.classList.contains('tool-block') || item.classList.contains('reasoning-block')) {
+            toggleBlock(item);
+          }
+        }
+      } else if (e.key === 'Escape' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (focusIndex >= 0) {
+          var item2 = items[focusIndex];
+          if ((item2.classList.contains('tool-block') || item2.classList.contains('reasoning-block')) && item2.classList.contains('expanded')) {
+            item2.classList.remove('expanded');
+            var icon = item2.querySelector('.expand-icon');
+            if (icon) icon.textContent = '▶';
+            var label = item2.querySelector('.expand-label');
+            if (label) {
+              var match = label.textContent.match(/(\d+)/);
+              if (match) label.textContent = '▸ ' + match[1] + ' more lines';
+            }
+            updateHintText(item2);
+          }
+        }
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        setAppMode('input');
+      } else if (e.key === 'p' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setAppMode('perm');
+      } else if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setAppMode('ask');
+      }
+      return;
+    }
+
+    if (appMode === 'input') {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setAppMode('nav');
+        return;
+      }
+      if (e.key === 'p' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setAppMode('perm');
+        return;
+      }
+      if (e.key === 'a' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setAppMode('ask');
+        return;
+      }
+    }
+  });
+
+  injectHints();
+  document.querySelectorAll('.tool-block.expanded, .reasoning-block.expanded').forEach(updateHintText);
+  setAppMode('input');
+
+  var chatArea = document.querySelector('.chat-area');
+  if (chatArea) {
+    chatArea.scrollTop = chatArea.scrollHeight;
+  }
+})();
+</script>
+
+</body>
+</html>
