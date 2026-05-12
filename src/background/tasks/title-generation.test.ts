@@ -1,14 +1,14 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { generateObject } from "ai";
+import { generateText } from "ai";
 import { createSessionStore } from "../../store/store";
-import { __setGenerateObjectForTest } from "./title-generation";
+import { __setGenerateTextForTest } from "./title-generation";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation");
 
-const mockGenerateObject = mock(
-  async () => ({ object: { title: "Short test title" } }),
+const mockGenerateText = mock(
+  async () => ({ text: "Short test title" }),
 );
 
 import { createTitleGenerationTask } from "./title-generation";
@@ -33,16 +33,16 @@ function createMinimalRegistry(): Registry {
 
 describe("createTitleGenerationTask", () => {
   beforeEach(async () => {
-    __setGenerateObjectForTest(mockGenerateObject as unknown as typeof generateObject);
-    mockGenerateObject.mockReset();
-    mockGenerateObject.mockImplementation(
-      async () => ({ object: { title: "Short test title" } }),
+    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    mockGenerateText.mockReset();
+    mockGenerateText.mockImplementation(
+      async () => ({ text: "Short test title" }),
     );
     await mkdir(TEST_TMP, { recursive: true });
   });
 
   afterEach(() => {
-    __setGenerateObjectForTest(generateObject as unknown as typeof generateObject);
+    __setGenerateTextForTest(generateText as unknown as typeof generateText);
   });
 
   afterAll(async () => {
@@ -85,8 +85,8 @@ describe("createTitleGenerationTask", () => {
     await task.run(ctx as never);
 
     expect(store.getState().title).toBe("Short test title");
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
-    expect(mockGenerateObject).toHaveBeenCalledWith(
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: expect.stringContaining("authentication"),
       }),
@@ -110,11 +110,11 @@ describe("createTitleGenerationTask", () => {
     await task.run(ctx as never);
 
     expect(store.getState().title).toBeNull();
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  test("handles generateObject failure gracefully", async () => {
-    mockGenerateObject.mockRejectedValue(new Error("API error"));
+  test("handles generateText failure gracefully", async () => {
+    mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const now = Date.now();
     const store = createSessionStore(crypto.randomUUID());
@@ -162,8 +162,8 @@ describe("createTitleGenerationTask", () => {
       );
     } finally {
       console.warn = originalWarn;
-      mockGenerateObject.mockImplementation(
-        async () => ({ object: { title: "Short test title" } }),
+      mockGenerateText.mockImplementation(
+        async () => ({ text: "Short test title" }),
       );
     }
   });
@@ -196,7 +196,7 @@ describe("createTitleGenerationTask", () => {
     await task.run(ctx as never);
 
     expect(store.getState().title).toBeNull();
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   test("persists after title generation via saveSessionTranscript", async () => {

@@ -1,15 +1,14 @@
-import { generateObject as aiGenerateObject } from "ai";
+import { generateText as aiGenerateText } from "ai";
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { Registry } from "../../provider/index";
 import type { SessionStoreState, TextPart } from "../../store/types";
-import { TitleGenerationResultSchema } from "../../memory/schemas";
 import { saveSessionTranscript } from "../../store/helpers";
 
-let _generateObject: typeof aiGenerateObject = aiGenerateObject;
+let _generateText: typeof aiGenerateText = aiGenerateText;
 
-export function __setGenerateObjectForTest(fn: typeof aiGenerateObject) {
-  _generateObject = fn;
+export function __setGenerateTextForTest(fn: typeof aiGenerateText) {
+  _generateText = fn;
 }
 
 export function createTitleGenerationTask(
@@ -37,13 +36,13 @@ export function createTitleGenerationTask(
         const modelId = providerRegistry.modelIds[0];
         const modelInfo = providerRegistry.getModel(modelId);
 
-        const { object } = await _generateObject({
+        const result = await _generateText({
           model: modelInfo.model,
-          schema: TitleGenerationResultSchema,
           prompt: `Generate a concise session title (3-8 words) based on this user message: ${text}`,
         });
+        const title = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 50);
 
-        store.setState({ title: object.title });
+        store.setState({ title });
 
         const updatedState = store.getState();
         const sessionsDir = ctx.sessionsDir;

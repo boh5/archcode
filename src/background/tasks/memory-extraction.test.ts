@@ -5,16 +5,26 @@ import { createSessionStore } from "../../store/store";
 import type { StoredMessage } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import { MemoryFileManager } from "../../memory/file-manager";
-import { __setGenerateObjectForTest } from "./memory-extraction";
-import { generateObject } from "ai";
+import { __setGenerateTextForTest } from "../../llm";
+import { generateText } from "ai";
 import { createMemoryExtractionTask } from "./memory-extraction";
 import type { Registry } from "../../provider/index";
 
-const mockGenerateObject = mock(
-  async (_opts: Record<string, unknown>): Promise<Record<string, unknown>> => ({
-    object: { memories: [] },
-  }),
-);
+function makeGenerateTextResult(input: unknown = { memories: [] }) {
+  return {
+    text: "",
+    toolCalls: [
+      {
+        type: "tool-call" as const,
+        toolCallId: "call_1",
+          toolName: "result",
+        input,
+      },
+    ],
+  };
+}
+
+const mockGenerateText = mock(async (_opts: Record<string, unknown>) => makeGenerateTextResult());
 
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
@@ -73,10 +83,10 @@ function makeAssistantMessage(text: string, now: number): StoredMessage {
 
 describe("createMemoryExtractionTask", () => {
   beforeEach(async () => {
-    __setGenerateObjectForTest(mockGenerateObject as unknown as typeof generateObject);
-    mockGenerateObject.mockReset();
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
+    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    mockGenerateText.mockReset();
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
         memories: [
           {
             title: "User prefers TypeScript",
@@ -87,13 +97,13 @@ describe("createMemoryExtractionTask", () => {
             shouldCreate: true,
           },
         ],
-      },
-    }));
+      }),
+    );
     await mkdir(tmpDir, { recursive: true });
   });
 
   afterEach(async () => {
-    __setGenerateObjectForTest(generateObject as unknown as typeof generateObject);
+    __setGenerateTextForTest(generateText as unknown as typeof generateText);
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -129,7 +139,7 @@ describe("createMemoryExtractionTask", () => {
 
     await task.run(ctx as never);
 
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   test("skips extraction when total content length below MIN_CONTENT_LENGTH_FOR_EXTRACTION", async () => {
@@ -156,7 +166,7 @@ describe("createMemoryExtractionTask", () => {
 
     await task.run(ctx as never);
 
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   test("extracts memories and writes topic files on success", async () => {
@@ -185,10 +195,13 @@ describe("createMemoryExtractionTask", () => {
 
     await task.run(ctx as never);
 
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
-    expect(mockGenerateObject).toHaveBeenCalledWith(
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
-        schema: expect.anything(),
+        tools: expect.objectContaining({
+          result: expect.anything(),
+        }),
+        toolChoice: { type: "tool", toolName: "result" },
       }),
     );
 
@@ -205,10 +218,10 @@ describe("createMemoryExtractionTask", () => {
     expect(index).toContain("typescript_preference");
   });
 
-  test("handles generateObject failure gracefully", async () => {
+  test("handles llmObject failure gracefully", async () => {
     const roots = makeMemoryRoots("gen-error");
     await setupDirs(roots);
-    mockGenerateObject.mockRejectedValue(new Error("API error"));
+    mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -251,12 +264,10 @@ describe("createMemoryExtractionTask", () => {
     }
   });
 
-  test("handles generateObject validation error gracefully", async () => {
+  test("handles LlmSchemaValidationError gracefully", async () => {
     const roots = makeMemoryRoots("validation-error");
     await setupDirs(roots);
-    mockGenerateObject.mockImplementation(async () => ({
-      object: { invalid: "data" },
-    }));
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ invalid: "data" }));
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -291,7 +302,7 @@ describe("createMemoryExtractionTask", () => {
       expect(topics).toHaveLength(0);
 
       expect(warnSpy).toHaveBeenCalledWith(
-        "Memory extraction result validation failed:",
+        "Memory extraction: LLM output validation failed:",
         expect.any(String),
       );
     } finally {
@@ -308,8 +319,8 @@ describe("createMemoryExtractionTask", () => {
     await mkdir(knowledgeDir, { recursive: true });
     await mkdir(join(knowledgeDir, "typescript_preference.md"), { recursive: true });
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
         memories: [
           {
             title: "TypeScript Preference",
@@ -328,8 +339,8 @@ describe("createMemoryExtractionTask", () => {
             shouldCreate: true,
           },
         ],
-      },
-    }));
+      }),
+    );
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -389,8 +400,8 @@ describe("createMemoryExtractionTask", () => {
       "The user prefers TypeScript for all projects.",
     );
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
         memories: [
           {
             title: "TypeScript Preference",
@@ -401,8 +412,8 @@ describe("createMemoryExtractionTask", () => {
             shouldCreate: false,
           },
         ],
-      },
-    }));
+      }),
+    );
 
     const now = Date.now();
     const longText = "A".repeat(300);
@@ -438,8 +449,8 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("create-new-topic");
     await setupDirs(roots);
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
         memories: [
           {
             title: "New Topic",
@@ -450,8 +461,8 @@ describe("createMemoryExtractionTask", () => {
             shouldCreate: false,
           },
         ],
-      },
-    }));
+      }),
+    );
 
     const now = Date.now();
     const longText = "A".repeat(300);
@@ -487,9 +498,7 @@ describe("createMemoryExtractionTask", () => {
   test("skips writing when LLM returns empty memories array", async () => {
     const roots = makeMemoryRoots("empty-memories");
     await setupDirs(roots);
-    mockGenerateObject.mockImplementation(async () => ({
-      object: { memories: [] },
-    }));
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ memories: [] }));
 
     const now = Date.now();
     const longText = "A".repeat(300);
@@ -596,8 +605,8 @@ describe("createMemoryExtractionTask", () => {
 
     await task.run(ctx as never);
 
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
-    const call = mockGenerateObject.mock.calls[0];
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    const call = mockGenerateText.mock.calls[0];
     const callArgs = call[0] as Record<string, unknown>;
     expect(typeof callArgs.prompt).toBe("string");
     // With DEFAULT_EXTRACTION_MAX_MESSAGES = 50, all 10 messages should be included
@@ -618,8 +627,8 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
         memories: [
           {
             title: "Debugging Tips",
@@ -630,8 +639,8 @@ describe("createMemoryExtractionTask", () => {
             shouldCreate: true,
           },
         ],
-      },
-    }));
+      }),
+    );
 
     const registry = createMinimalRegistry();
     const task = createMemoryExtractionTask(store, registry, roots);

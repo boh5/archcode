@@ -1,21 +1,36 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createMemoryConsolidationTask, __setGenerateObjectForTest } from "./memory-consolidation";
-import { generateObject } from "ai";
+import { createMemoryConsolidationTask } from "./memory-consolidation";
+import { __setGenerateTextForTest } from "../../llm";
+import { generateText, Output, type GenerateTextResult, type ToolSet } from "ai";
 import type { Registry } from "../../provider/index";
 import type { BackgroundTaskContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
 
-const mockGenerateObject = mock(
-  async () => ({
-    object: {
-      entries: [
-        { title: "Merged Topic", name: "merged", summary: "Consolidated summary" },
-      ],
-    },
-  }),
-);
+type MockGenerateTextResult = GenerateTextResult<ToolSet, Output.Output>;
+
+function makeGenerateTextResult(
+  input: unknown = {
+    entries: [
+      { title: "Merged Topic", name: "merged", summary: "Consolidated summary" },
+    ],
+  },
+): MockGenerateTextResult {
+  return ({
+    text: "",
+    toolCalls: [
+      {
+        type: "tool-call" as const,
+        toolCallId: "call_1",
+        toolName: "result",
+        input,
+      },
+    ],
+  }) as unknown as MockGenerateTextResult;
+}
+
+const mockGenerateText = mock(async () => makeGenerateTextResult());
 
 function createMinimalRegistry(): Registry {
   return {
@@ -38,22 +53,14 @@ const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 describe("createMemoryConsolidationTask", () => {
   beforeEach(async () => {
-    __setGenerateObjectForTest(mockGenerateObject as unknown as typeof generateObject);
-    mockGenerateObject.mockReset();
-    mockGenerateObject.mockImplementation(
-      async () => ({
-        object: {
-          entries: [
-            { title: "Merged Topic", name: "merged", summary: "Consolidated summary" },
-          ],
-        },
-      }),
-    );
+    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    mockGenerateText.mockReset();
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult());
     await mkdir(tmpDir, { recursive: true });
   });
 
   afterEach(async () => {
-    __setGenerateObjectForTest(generateObject as unknown as typeof generateObject);
+    __setGenerateTextForTest(generateText as unknown as typeof generateText);
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -71,7 +78,7 @@ describe("createMemoryConsolidationTask", () => {
 
     await task.run({} as BackgroundTaskContext);
 
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   test("skips when index has no entries", async () => {
@@ -91,7 +98,7 @@ describe("createMemoryConsolidationTask", () => {
 
     await task.run({} as BackgroundTaskContext);
 
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   test("consolidates index and writes valid entries", async () => {
@@ -118,12 +125,10 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Topic 2", name: "topic2", summary: "Second topic summary" },
     ]);
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
-        entries: [
-          { title: "Merged Topic", name: "topic1", summary: "Consolidated summary" },
-        ],
-      },
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({
+      entries: [
+        { title: "Merged Topic", name: "topic1", summary: "Consolidated summary" },
+      ],
     }));
 
     const registry = createMinimalRegistry();
@@ -134,7 +139,7 @@ describe("createMemoryConsolidationTask", () => {
 
     await task.run({} as BackgroundTaskContext);
 
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("Merged Topic");
@@ -159,13 +164,11 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Exists", name: "exists", summary: "Real entry" },
     ]);
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
-        entries: [
-          { title: "Exists", name: "exists", summary: "Valid entry" },
-          { title: "Ghost", name: "ghost", summary: "Nonexistent file" },
-        ],
-      },
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({
+      entries: [
+        { title: "Exists", name: "exists", summary: "Valid entry" },
+        { title: "Ghost", name: "ghost", summary: "Nonexistent file" },
+      ],
     }));
 
     const registry = createMinimalRegistry();
@@ -181,7 +184,7 @@ describe("createMemoryConsolidationTask", () => {
     expect(newIndex).not.toContain("ghost");
   });
 
-  test("leaves old index intact on generateObject validation error", async () => {
+  test("leaves old index intact on LlmSchemaValidationError", async () => {
     const projectRoot = join(tmpDir, "validation-error-project");
     const userRoot = join(tmpDir, "validation-error-user");
     await mkdir(projectRoot, { recursive: true });
@@ -198,9 +201,11 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Topic 1", name: "topic1", summary: "Original summary" },
     ]);
 
-    const validationError = new Error("Validation failed");
-    validationError.name = "AI_TypeValidationError";
-    mockGenerateObject.mockRejectedValue(validationError);
+    // Return invalid tool-call input that fails schema parsing,
+    // causing llmObject to throw LlmSchemaValidationError
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({ invalid: "data" }),
+    );
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -219,14 +224,14 @@ describe("createMemoryConsolidationTask", () => {
       expect(index).toContain("Original summary");
       expect(warnSpy).toHaveBeenCalledWith(
         "Memory consolidation: LLM output validation failed:",
-        "Validation failed",
+        expect.any(String),
       );
     } finally {
       console.warn = originalWarn;
     }
   });
 
-  test("leaves old index intact on generateObject throw", async () => {
+  test("leaves old index intact on generateText throw", async () => {
     const projectRoot = join(tmpDir, "throw-project");
     const userRoot = join(tmpDir, "throw-user");
     await mkdir(projectRoot, { recursive: true });
@@ -243,7 +248,7 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Topic 1", name: "topic1", summary: "Original summary" },
     ]);
 
-    mockGenerateObject.mockRejectedValue(new Error("API error"));
+    mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -269,7 +274,7 @@ describe("createMemoryConsolidationTask", () => {
     }
   });
 
-  test("calls generateObject with correct prompt containing entries and descriptions", async () => {
+  test("calls generateText with correct prompt containing entries and descriptions", async () => {
     const projectRoot = join(tmpDir, "prompt-project");
     const userRoot = join(tmpDir, "prompt-user");
     await mkdir(projectRoot, { recursive: true });
@@ -286,12 +291,10 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Authentication", name: "auth", summary: "Login flows" },
     ]);
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
-        entries: [
-          { title: "Authentication", name: "auth", summary: "Auth summary" },
-        ],
-      },
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({
+      entries: [
+        { title: "Authentication", name: "auth", summary: "Auth summary" },
+      ],
     }));
 
     const registry = createMinimalRegistry();
@@ -302,12 +305,12 @@ describe("createMemoryConsolidationTask", () => {
 
     await task.run({} as BackgroundTaskContext);
 
-    expect(mockGenerateObject).toHaveBeenCalledWith(
+    expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: expect.stringContaining("Authentication"),
       }),
     );
-    expect(mockGenerateObject).toHaveBeenCalledWith(
+    expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: expect.stringContaining("auth"),
       }),
@@ -331,12 +334,10 @@ describe("createMemoryConsolidationTask", () => {
       { title: "Design Patterns", name: "patterns", summary: "Patterns summary" },
     ]);
 
-    mockGenerateObject.mockImplementation(async () => ({
-      object: {
-        entries: [
-          { title: "Design Patterns", name: "patterns", summary: "Updated summary" },
-        ],
-      },
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({
+      entries: [
+        { title: "Design Patterns", name: "patterns", summary: "Updated summary" },
+      ],
     }));
 
     const registry = createMinimalRegistry();

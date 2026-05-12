@@ -1,15 +1,9 @@
-import { generateObject as aiGenerateObject } from "ai";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { Registry } from "../../provider/index";
 import { MemoryConsolidationResultSchema } from "../../memory/schemas";
 import { MemoryFileManager, parseIndex } from "../../memory/file-manager";
 import { DEFAULT_MAX_INDEX_LINES } from "../../memory/constants";
-
-let _generateObject: typeof aiGenerateObject = aiGenerateObject;
-
-export function __setGenerateObjectForTest(fn: typeof aiGenerateObject) {
-  _generateObject = fn;
-}
+import { llmObject, LlmSchemaValidationError } from "../../llm";
 
 export function createMemoryConsolidationTask(
   providerRegistry: Registry,
@@ -47,7 +41,7 @@ export function createMemoryConsolidationTask(
         const modelId = providerRegistry.modelIds[0];
         const modelInfo = providerRegistry.getModel(modelId);
 
-        const { object } = await _generateObject({
+        const result = await llmObject({
           model: modelInfo.model,
           schema: MemoryConsolidationResultSchema,
           prompt: `You are a memory consolidation system. Reorganize the following memory index to be more concise and remove duplicates.
@@ -70,13 +64,13 @@ Instructions:
 
         const existingNames = new Set(await fileManager.listTopics());
 
-        const validEntries = object.entries.filter((entry) =>
+        const validEntries = result.entries.filter((entry) =>
           existingNames.has(entry.name),
         );
 
         await fileManager.writeIndex(validEntries);
       } catch (err) {
-        if (err instanceof Error && err.name === "AI_TypeValidationError") {
+        if (err instanceof LlmSchemaValidationError) {
           console.warn(
             "Memory consolidation: LLM output validation failed:",
             err.message,

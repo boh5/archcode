@@ -1,18 +1,13 @@
-import { generateObject as aiGenerateObject } from "ai";
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { Registry } from "../../provider/index";
 import type { SessionStoreState, TextPart } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
+import type { MemoryExtractionResult } from "../../memory/schemas";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
 import { MemoryFileManager } from "../../memory/file-manager";
 import { toModelMessagesFromStoredMessages } from "../../store/projection";
-
-let _generateObject: typeof aiGenerateObject = aiGenerateObject;
-
-export function __setGenerateObjectForTest(fn: typeof aiGenerateObject) {
-  _generateObject = fn;
-}
+import { llmObject, LlmSchemaValidationError, LlmObjectError } from "../../llm";
 import {
   MIN_MESSAGES_FOR_EXTRACTION,
   MIN_CONTENT_LENGTH_FOR_EXTRACTION,
@@ -84,12 +79,12 @@ export function createMemoryExtractionTask(
         .join("\n\n");
 
       // --- Call LLM ----------------------------------------------------------
-      let result;
+      let result: MemoryExtractionResult;
       try {
         const modelId = providerRegistry.modelIds[0];
         const modelInfo = providerRegistry.getModel(modelId);
 
-        const { object } = await _generateObject({
+        result = await llmObject({
           model: modelInfo.model,
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
@@ -105,9 +100,15 @@ Prefer updating existing topics over creating duplicates.
 Conversation:
 ${conversationText}`,
         });
-
-        result = object;
       } catch (err) {
+        if (err instanceof LlmSchemaValidationError) {
+          console.warn("Memory extraction: LLM output validation failed:", err.message);
+          return;
+        }
+        if (err instanceof LlmObjectError) {
+          console.warn("Memory extraction LLM call failed:", err.message);
+          return;
+        }
         console.warn(
           "Memory extraction LLM call failed:",
           err instanceof Error ? err.message : String(err),
@@ -115,34 +116,12 @@ ${conversationText}`,
         return;
       }
 
-      // --- Validate result ---------------------------------------------------
-      let memories: Array<{
-        title: string;
-        name: string;
-        description: string;
-        type: "user" | "feedback" | "project" | "reference";
-        content: string;
-        shouldCreate: boolean;
-      }>;
-
-      try {
-        // Re-validate through schema to catch any LLM output issues
-        const parsed = MemoryExtractionResultSchema.parse(result);
-        memories = parsed.memories;
-      } catch (err) {
-        console.warn(
-          "Memory extraction result validation failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-        return;
-      }
-
-      if (memories.length === 0) return;
+      if (result.memories.length === 0) return;
 
       // --- Write topic files -------------------------------------------------
       const fileManager = new MemoryFileManager(memoryRoots);
 
-      for (const memory of memories) {
+      for (const memory of result.memories) {
         try {
           if (memory.shouldCreate) {
             await fileManager.writeTopic(
