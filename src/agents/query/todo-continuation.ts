@@ -1,38 +1,48 @@
-import type { Reminder, SessionStoreState, StoredTodo } from "../../store/types";
+import type { Reminder, RunEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
 
-export const TODO_CONTINUATION_COOLDOWN_MS = 30_000;
+export const TODO_REMINDER_STEP_INTERVAL = 10;
+export const TODO_REMINDER_COOLDOWN_MS = 30_000;
+export const TODO_REMINDER_MAX_COUNT = 10;
+
+export const TODO_CONTINUATION_COOLDOWN_MS = 60_000;
+export const TODO_CONTINUATION_MAX_COUNT = 5;
 export const TODO_CONTINUATION_STAGNATION_THRESHOLD = 3;
-export const TODO_CONTINUATION_MAX_COUNT = 10;
 
 export interface SubAgentManagerLike {
   readonly activeCount: number;
 }
 
-export interface StagnationResult {
-  isStagnant: boolean;
-  newCount: number;
-  newHash: string;
-}
+export type ReminderBlockReason =
+  | "no_pending_todos"
+  | "cooldown"
+  | "steps_since_write_below_threshold"
+  | "pending_question"
+  | "running_sub_agents"
+  | "max_reminders";
 
-export interface ContinuationCheckOptions {
-  readonly stagnationCount?: number;
-  readonly trigger?: "stagnation" | "loop_end";
-}
+export type ReminderCheckResult =
+  | {
+      should: true;
+      pendingTodos: StoredTodo[];
+      reminder: Reminder;
+    }
+  | {
+      should: false;
+      reason: ReminderBlockReason;
+    };
 
 export type ContinuationBlockReason =
   | "no_pending_todos"
   | "cooldown"
-  | "not_stagnant"
   | "pending_question"
   | "running_sub_agents"
-  | "max_continuations";
-
-export type ContinuationInjectReason = "stagnation" | "loop_end";
+  | "max_continuations"
+  | "stagnation"
+  | "disallowed_status";
 
 export type ContinuationCheckResult =
   | {
       should: true;
-      reason: ContinuationInjectReason;
       pendingTodos: StoredTodo[];
       reminder: Reminder;
     }
@@ -41,47 +51,43 @@ export type ContinuationCheckResult =
       reason: ContinuationBlockReason;
     };
 
-export function computeTodoHash(todos: readonly StoredTodo[]): string {
-  return hashString(JSON.stringify(todos.map((todo) => [todo.id, todo.status])));
+export function getStepsSinceLastTodoWrite(state: SessionStoreState): number {
+  const currentStepIndex = state.steps.length - 1;
+  if (currentStepIndex < 0) return 0;
+  if (state.lastTodoWriteStepIndex === null) return currentStepIndex + 1;
+  return currentStepIndex - state.lastTodoWriteStepIndex;
 }
 
-export function checkStagnation(
-  currentHash: string,
-  lastHash: string | null,
-  count: number,
-): StagnationResult {
-  const newCount = lastHash === currentHash ? count + 1 : 0;
-
-  return {
-    isStagnant: newCount >= TODO_CONTINUATION_STAGNATION_THRESHOLD,
-    newCount,
-    newHash: currentHash,
-  };
+export function getStepsSinceLastReminder(state: SessionStoreState): number {
+  const currentStepIndex = state.steps.length - 1;
+  if (currentStepIndex < 0) return TODO_REMINDER_STEP_INTERVAL;
+  if (state.lastTodoReminderStepIndex === null) return currentStepIndex + 1;
+  return currentStepIndex - state.lastTodoReminderStepIndex;
 }
 
-export function shouldInjectContinuationReminder(
+export function shouldInjectReminder(
   state: SessionStoreState,
   now: number,
-  continuationCount: number,
   subAgentManager?: SubAgentManagerLike,
-  options: ContinuationCheckOptions = {},
-): ContinuationCheckResult {
+): ReminderCheckResult {
   const pendingTodos = getPendingTodos(state.todos);
   if (pendingTodos.length === 0) {
     return { should: false, reason: "no_pending_todos" };
   }
 
-  const lastInjectionTime = findLastTodoContinuationInjectionTime(state.reminders);
-  if (lastInjectionTime !== null && now - lastInjectionTime < TODO_CONTINUATION_COOLDOWN_MS) {
-    return { should: false, reason: "cooldown" };
+  const stepsSinceWrite = getStepsSinceLastTodoWrite(state);
+  if (stepsSinceWrite < TODO_REMINDER_STEP_INTERVAL) {
+    return { should: false, reason: "steps_since_write_below_threshold" };
   }
 
-  const trigger = options.trigger ?? "stagnation";
-  if (
-    trigger === "stagnation" &&
-    (options.stagnationCount ?? 0) < TODO_CONTINUATION_STAGNATION_THRESHOLD
-  ) {
-    return { should: false, reason: "not_stagnant" };
+  const stepsSinceReminder = getStepsSinceLastReminder(state);
+  if (stepsSinceReminder < TODO_REMINDER_STEP_INTERVAL) {
+    return { should: false, reason: "steps_since_write_below_threshold" };
+  }
+
+  const lastInjectionTime = findLastStepReminderInjectionTime(state.reminders);
+  if (lastInjectionTime !== null && now - lastInjectionTime < TODO_REMINDER_COOLDOWN_MS) {
+    return { should: false, reason: "cooldown" };
   }
 
   if (hasPendingQuestion(state)) {
@@ -92,13 +98,58 @@ export function shouldInjectContinuationReminder(
     return { should: false, reason: "running_sub_agents" };
   }
 
-  if (continuationCount >= TODO_CONTINUATION_MAX_COUNT) {
-    return { should: false, reason: "max_continuations" };
+  if (state.todoStepReminderCount >= TODO_REMINDER_MAX_COUNT) {
+    return { should: false, reason: "max_reminders" };
   }
 
   return {
     should: true,
-    reason: trigger,
+    pendingTodos,
+    reminder: createTodoReminderReminder(pendingTodos, now),
+  };
+}
+
+export function shouldContinueAfterLoop(
+  state: SessionStoreState,
+  loopEndStatus: RunEndEvent["status"],
+  now: number,
+  subAgentManager?: SubAgentManagerLike,
+): ContinuationCheckResult {
+  if (!isLoopEndAllowed(loopEndStatus)) {
+    return { should: false, reason: "disallowed_status" };
+  }
+
+  const pendingTodos = getPendingTodos(state.todos);
+  if (pendingTodos.length === 0) {
+    return { should: false, reason: "no_pending_todos" };
+  }
+
+  const lastInjectionTime = findLastLoopContinuationInjectionTime(state.reminders);
+  if (lastInjectionTime !== null && now - lastInjectionTime < TODO_CONTINUATION_COOLDOWN_MS) {
+    return { should: false, reason: "cooldown" };
+  }
+
+  if (hasPendingQuestion(state)) {
+    return { should: false, reason: "pending_question" };
+  }
+
+  if ((subAgentManager?.activeCount ?? 0) > 0) {
+    return { should: false, reason: "running_sub_agents" };
+  }
+
+  if (state.todoLoopContinuationCount >= TODO_CONTINUATION_MAX_COUNT) {
+    return { should: false, reason: "max_continuations" };
+  }
+
+  if (hasStagnated(state, pendingTodos)) {
+    const newStagnationCount = state.todoContinuationStagnationCount + 1;
+    if (newStagnationCount >= TODO_CONTINUATION_STAGNATION_THRESHOLD) {
+      return { should: false, reason: "stagnation" };
+    }
+  }
+
+  return {
+    should: true,
     pendingTodos,
     reminder: createTodoContinuationReminder(pendingTodos, now),
   };
@@ -112,19 +163,41 @@ export function hasPendingQuestion(state: Pick<SessionStoreState, "messages">): 
   const lastAssistantMessage = [...state.messages].reverse().find((message) => message.role === "assistant");
 
   return lastAssistantMessage?.parts.some(
-    (part) => part.type === "tool" && part.toolName === "ask_user",
+    (part) =>
+      part.type === "tool" &&
+      part.toolName === "ask_user" &&
+      (part.state === "pending" || part.state === "running"),
   ) ?? false;
+}
+
+function hasStagnated(
+  state: SessionStoreState,
+  currentPendingTodos: StoredTodo[],
+): boolean {
+  const lastPendingCount = state.lastTodoContinuationPendingCount;
+  if (lastPendingCount === null) return false;
+
+  // If count decreased, there's progress — no stagnation
+  if (currentPendingTodos.length < lastPendingCount) return false;
+
+  // If count increased, LLM added new tasks — not stagnation
+  if (currentPendingTodos.length > lastPendingCount) return false;
+
+  // Same count: check if any previously-pending todo was completed
+  // (which means LLM completed old ones and added new ones = progress)
+  // For simplicity and safety, same count with same stagnation counter means stagnation
+  return true;
 }
 
 function getPendingTodos(todos: readonly StoredTodo[]): StoredTodo[] {
   return todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress");
 }
 
-function findLastTodoContinuationInjectionTime(reminders: readonly Reminder[]): number | null {
+function findLastStepReminderInjectionTime(reminders: readonly Reminder[]): number | null {
   let lastInjectionTime: number | null = null;
 
   for (const reminder of reminders) {
-    if (reminder.source.type !== "todo_continuation") continue;
+    if (reminder.source.type !== "todo_step_reminder") continue;
     if (lastInjectionTime === null || reminder.createdAt > lastInjectionTime) {
       lastInjectionTime = reminder.createdAt;
     }
@@ -133,10 +206,35 @@ function findLastTodoContinuationInjectionTime(reminders: readonly Reminder[]): 
   return lastInjectionTime;
 }
 
+function findLastLoopContinuationInjectionTime(reminders: readonly Reminder[]): number | null {
+  let lastInjectionTime: number | null = null;
+
+  for (const reminder of reminders) {
+    if (reminder.source.type !== "todo_loop_continuation") continue;
+    if (lastInjectionTime === null || reminder.createdAt > lastInjectionTime) {
+      lastInjectionTime = reminder.createdAt;
+    }
+  }
+
+  return lastInjectionTime;
+}
+
+function createTodoReminderReminder(pendingTodos: StoredTodo[], now: number): Reminder {
+  return {
+    id: crypto.randomUUID(),
+    source: { type: "todo_step_reminder", pendingTodos },
+    delivery: "auto_inject",
+    content: formatTodoReminderContent(pendingTodos),
+    payload: { pendingTodos },
+    createdAt: now,
+    consumedAt: null,
+  };
+}
+
 function createTodoContinuationReminder(pendingTodos: StoredTodo[], now: number): Reminder {
   return {
     id: crypto.randomUUID(),
-    source: { type: "todo_continuation", pendingTodos },
+    source: { type: "todo_loop_continuation", pendingTodos },
     delivery: "auto_inject",
     content: formatTodoContinuationContent(pendingTodos),
     payload: { pendingTodos },
@@ -145,18 +243,31 @@ function createTodoContinuationReminder(pendingTodos: StoredTodo[], now: number)
   };
 }
 
-function formatTodoContinuationContent(pendingTodos: readonly StoredTodo[]): string {
-  const todoLines = pendingTodos.map((todo) => `- [ ] ${todo.content}`).join("\n");
-  return `[TODO CONTINUATION]\n以下任务尚未完成：\n${todoLines}\n请继续工作。`;
+function formatTodoReminderContent(pendingTodos: readonly StoredTodo[]): string {
+  const todoLines = pendingTodos
+    .map((todo) => `- [${todo.status === "in_progress" ? "x" : " "}] ${todo.content}`)
+    .join("\n");
+  return [
+    "TODO REMINDER",
+    "",
+    "It's been a while since you updated your todo list. Consider using the",
+    "todo_write tool to track progress if it's relevant to the current task.",
+    "",
+    "Current todos:",
+    todoLines,
+  ].join("\n");
 }
 
-function hashString(value: string): string {
-  let hash = 0x811c9dc5;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-
-  return hash.toString(16).padStart(8, "0");
+function formatTodoContinuationContent(pendingTodos: readonly StoredTodo[]): string {
+  const todoLines = pendingTodos
+    .map((todo) => `- [${todo.status === "in_progress" ? "=" : " "}] ${todo.content}`)
+    .join("\n");
+  return [
+    "TODO CONTINUATION",
+    "",
+    "The following tasks are not yet completed:",
+    todoLines,
+    "",
+    "Please continue working. Do not stop.",
+  ].join("\n");
 }

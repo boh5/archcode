@@ -109,7 +109,7 @@ function sampleReminders(): Reminder[] {
     {
       id: "reminder-1",
       source: {
-        type: "todo_continuation",
+        type: "todo_step_reminder",
         pendingTodos: [{ id: "pending-todo", content: "resume this", status: "pending", createdAt: 500 }],
       },
       delivery: "auto_inject",

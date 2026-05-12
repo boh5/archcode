@@ -5,3 +5,4 @@ export { createTodoContinuationHook, type TodoContinuationHookOptions } from "./
 export { createMemoryExtractionHook } from "./memory-extraction";
 export { createMemoryConsolidationHook } from "./memory-consolidation";
 export { createAutoCompactHook, type AutoCompactHookResult } from "./auto-compact";
+export type { AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";

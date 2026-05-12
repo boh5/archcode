@@ -83,7 +83,9 @@ export async function runQueryLoop(
       return { text: "", steps: 0 };
     }
 
-    store.getState().append({ type: "user-message", content: userMessage });
+    if (userMessage) {
+      store.getState().append({ type: "user-message", content: userMessage });
+    }
 
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
@@ -159,7 +161,7 @@ export async function runQueryLoop(
       status: runEndStatus,
       ...(failed ? { error: "Run failed" } : {}),
     });
-    await runHooks(afterLoopEnd, { store, modelInfo, abort });
+    await runHooks(afterLoopEnd, { store, modelInfo, abort, loopEndStatus: runEndStatus });
   }
 }
 

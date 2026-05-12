@@ -122,28 +122,48 @@ export class ExplorerAgent implements Agent {
 
       const systemPrompt = await buildSystemPrompt(ctx);
 
-      const result = await runQueryLoop(
-        {
-          modelInfo: this.modelInfo,
-          toolRegistry: this.toolRegistry,
-          allowedTools,
-          workspaceRoot: this.workspaceRoot,
-          confirmPermission: confirm,
-          askUser,
-          abort,
-          systemPrompt,
-          store: this.store,
-          commandRegistry: this.commandRegistry,
-          currentDepth: this.depth,
-          hooks: {
-            beforeModelBuild: [this.autoCompactHook.hook],
-            beforeModelCall: [createAutoInjectReminderHook()],
-            afterStepEnd: [createTodoContinuationHook()],
+      const todoContinuation = createTodoContinuationHook();
+      let currentUserMessage = userMessage;
+
+      while (true) {
+        const result = await runQueryLoop(
+          {
+            modelInfo: this.modelInfo,
+            toolRegistry: this.toolRegistry,
+            allowedTools,
+            workspaceRoot: this.workspaceRoot,
+            confirmPermission: confirm,
+            askUser,
+            abort,
+            systemPrompt,
+            store: this.store,
+            commandRegistry: this.commandRegistry,
+            currentDepth: this.depth,
+            hooks: {
+              beforeModelBuild: [this.autoCompactHook.hook],
+              beforeModelCall: [createAutoInjectReminderHook()],
+              afterStepEnd: [todoContinuation.afterStepEnd],
+              afterLoopEnd: [todoContinuation.afterLoopEnd],
+            },
           },
-        },
-        userMessage,
-      );
-      return { text: result.text, steps: result.steps };
+          currentUserMessage,
+        );
+
+        const hasUnconsumedContinuation = this.store
+          .getState()
+          .reminders.some(
+            (reminder) =>
+              reminder.source.type === "todo_loop_continuation" &&
+              reminder.delivery === "auto_inject" &&
+              reminder.consumedAt === null,
+          );
+
+        if (!hasUnconsumedContinuation || abort?.aborted) {
+          return { text: result.text, steps: result.steps };
+        }
+
+        currentUserMessage = "";
+      }
     } catch (error) {
       if (!(error instanceof BusyError)) {
         this.store.getState().append({

@@ -130,7 +130,7 @@ function pendingTodo(id = "todo-1"): StoredTodo {
 function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder {
   return {
     id,
-    source: { type: "todo_continuation", pendingTodos: [pendingTodo()] },
+    source: { type: "todo_step_reminder", pendingTodos: [pendingTodo()] },
     delivery: "auto_inject",
     content: `Reminder ${id}`,
     createdAt,

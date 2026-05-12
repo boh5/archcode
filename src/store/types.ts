@@ -13,7 +13,11 @@ export interface RunEndEvent {
 
 export type ReminderSource =
   | {
-      type: "todo_continuation";
+      type: "todo_step_reminder";
+      pendingTodos: StoredTodo[];
+    }
+  | {
+      type: "todo_loop_continuation";
       pendingTodos: StoredTodo[];
     }
   | {
@@ -326,6 +330,14 @@ export interface SessionStoreState {
   isStreamingModel: boolean;
   currentRunId?: string;
   currentAssistantMessageId?: string;
+
+  // Todo continuation tracking (persistent across loops)
+  lastTodoWriteStepIndex: number | null;
+  lastTodoReminderStepIndex: number | null;
+  todoStepReminderCount: number;
+  todoLoopContinuationCount: number;
+  todoContinuationStagnationCount: number;
+  lastTodoContinuationPendingCount: number | null;
 
   // Temporary streaming layer
   streamingText?: StreamingTextState;

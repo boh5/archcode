@@ -10,7 +10,7 @@ function createReminder(overrides: Partial<Reminder> = {}): Reminder {
 
   return {
     id,
-    source: { type: "todo_continuation", pendingTodos: [] },
+    source: { type: "todo_step_reminder", pendingTodos: [] },
     delivery: "auto_inject",
     content: `Reminder ${id}`,
     createdAt: Date.now(),

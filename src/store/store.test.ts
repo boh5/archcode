@@ -13,7 +13,7 @@ function createFreshStore(label: string) {
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
   return {
     id: crypto.randomUUID(),
-    source: { type: "todo_continuation", pendingTodos: [] },
+    source: { type: "todo_step_reminder", pendingTodos: [] },
     delivery: "auto_inject",
     content: "remember this",
     createdAt: Date.now(),

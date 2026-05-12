@@ -511,7 +511,7 @@ describe("todo_write tool rendering", () => {
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
   return {
     id: crypto.randomUUID(),
-    source: { type: "todo_continuation", pendingTodos: [] },
+    source: { type: "todo_step_reminder", pendingTodos: [] },
     delivery: "auto_inject",
     content: "Continue working",
     createdAt: now,

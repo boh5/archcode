@@ -1,171 +1,242 @@
 import { describe, expect, test } from "bun:test";
 import type { Reminder, SessionStoreState, StoredMessage, StoredPart } from "../../store/types";
 import {
-  checkStagnation,
-  computeTodoHash,
+  getStepsSinceLastTodoWrite,
+  getStepsSinceLastReminder,
   hasPendingQuestion,
   isLoopEndAllowed,
-  shouldInjectContinuationReminder,
+  shouldInjectReminder,
+  shouldContinueAfterLoop,
+  TODO_REMINDER_COOLDOWN_MS,
   TODO_CONTINUATION_COOLDOWN_MS,
 } from "./todo-continuation";
 
-describe("computeTodoHash", () => {
-  test("hashes only todo id and status pairs", () => {
-    const baseHash = computeTodoHash([
-      { id: "todo-1", content: "first", status: "pending", createdAt: 1, updatedAt: 1 },
-      { id: "todo-2", content: "second", status: "completed" },
-    ]);
+describe("getStepsSinceLastTodoWrite", () => {
+  test("returns 0 when no steps exist", () => {
+    expect(getStepsSinceLastTodoWrite(stateWith({ steps: [], lastTodoWriteStepIndex: null }))).toBe(0);
+  });
 
-    const contentChangedHash = computeTodoHash([
-      { id: "todo-1", content: "renamed", status: "pending", createdAt: 9, updatedAt: 9 },
-      { id: "todo-2", content: "also renamed", status: "completed" },
-    ]);
-    const statusChangedHash = computeTodoHash([
-      { id: "todo-1", content: "first", status: "in_progress" },
-      { id: "todo-2", content: "second", status: "completed" },
-    ]);
+  test("returns stepCount + 1 when no todo_write has occurred", () => {
+    const state = stateWith({
+      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }],
+      lastTodoWriteStepIndex: null,
+    });
+    expect(getStepsSinceLastTodoWrite(state)).toBe(2);
+  });
 
-    expect(contentChangedHash).toBe(baseHash);
-    expect(statusChangedHash).not.toBe(baseHash);
+  test("counts steps since last todo_write", () => {
+    const state = stateWith({
+      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }, { id: "s2", step: 2, startedAt: 3 }],
+      lastTodoWriteStepIndex: 0,
+    });
+    expect(getStepsSinceLastTodoWrite(state)).toBe(2);
   });
 });
 
-describe("checkStagnation", () => {
-  test("resets count when the hash changes", () => {
-    expect(checkStagnation("new", "old", 2)).toEqual({
-      isStagnant: false,
-      newCount: 0,
-      newHash: "new",
-    });
+describe("getStepsSinceLastReminder", () => {
+  test("returns STEP_INTERVAL when no steps exist", () => {
+    expect(getStepsSinceLastReminder(stateWith({ steps: [], lastTodoReminderStepIndex: null }))).toBe(10);
   });
 
-  test("count 2 is not stagnant and count 3 is stagnant", () => {
-    expect(checkStagnation("same", "same", 1)).toEqual({
-      isStagnant: false,
-      newCount: 2,
-      newHash: "same",
+  test("counts steps since last reminder", () => {
+    const state = stateWith({
+      steps: [{ id: "s0", step: 0, startedAt: 1 }, { id: "s1", step: 1, startedAt: 2 }, { id: "s2", step: 2, startedAt: 3 }],
+      lastTodoReminderStepIndex: 1,
     });
-    expect(checkStagnation("same", "same", 2)).toEqual({
-      isStagnant: true,
-      newCount: 3,
-      newHash: "same",
-    });
+    expect(getStepsSinceLastReminder(state)).toBe(1);
   });
 });
 
-describe("shouldInjectContinuationReminder", () => {
+describe("shouldInjectReminder", () => {
   test("blocks empty and all-completed todo lists", () => {
-    expect(shouldInjectContinuationReminder(stateWith({ todos: [] }), 10_000, 0, undefined, { stagnationCount: 3 })).toEqual({
+    expect(shouldInjectReminder(stateWith({ todos: [] }), 10_000)).toEqual({
       should: false,
       reason: "no_pending_todos",
     });
     expect(
-      shouldInjectContinuationReminder(
+      shouldInjectReminder(
         stateWith({ todos: [{ id: "done", content: "done", status: "completed" }] }),
         10_000,
-        0,
-        undefined,
-        { stagnationCount: 3 },
       ),
     ).toEqual({ should: false, reason: "no_pending_todos" });
   });
 
-  test("blocks step-level trigger before stagnation count reaches 3", () => {
-    expect(
-      shouldInjectContinuationReminder(stateWithPendingTodo(), 10_000, 0, undefined, {
-        trigger: "stagnation",
-        stagnationCount: 2,
-      }),
-    ).toEqual({ should: false, reason: "not_stagnant" });
+  test("blocks when steps since last todo_write below threshold", () => {
+    const state = stateWithPendingTodo({ lastTodoWriteStepIndex: 8, steps: stepsForCount(9) });
+    expect(shouldInjectReminder(state, 10_000)).toEqual({
+      should: false,
+      reason: "steps_since_write_below_threshold",
+    });
   });
 
-  test("allows step-level trigger at stagnation count 3", () => {
-    const result = shouldInjectContinuationReminder(stateWithPendingTodo(), 10_000, 0, undefined, {
-      trigger: "stagnation",
-      stagnationCount: 3,
-    });
+  test("allows reminder when 10 steps since last todo_write", () => {
+    const state = stateWithPendingTodo({ lastTodoWriteStepIndex: null, steps: stepsForCount(10) });
+
+    const result = shouldInjectReminder(state, 10_000);
 
     expect(result.should).toBe(true);
-    if (!result.should) throw new Error("Expected continuation to be allowed");
-    expect(result.reason).toBe("stagnation");
+    if (!result.should) throw new Error("Expected reminder to be allowed");
     expect(result.pendingTodos).toEqual([{ id: "todo-1", content: "continue", status: "pending" }]);
     expect(result.reminder).toMatchObject({
-      source: { type: "todo_continuation", pendingTodos: result.pendingTodos },
+      source: { type: "todo_step_reminder", pendingTodos: result.pendingTodos },
       delivery: "auto_inject",
       createdAt: 10_000,
       consumedAt: null,
     });
     expect(result.reminder.id).toBeString();
-    expect(result.reminder.content).toContain("[TODO CONTINUATION]");
-    expect(result.reminder.content).toContain("continue");
+    expect(result.reminder.content).toContain("TODO REMINDER");
+    expect(result.reminder.content).toContain("Consider using the");
   });
 
-  test("loop-end trigger skips stagnation threshold", () => {
-    const result = shouldInjectContinuationReminder(stateWithPendingTodo(), 10_000, 0, undefined, {
-      trigger: "loop_end",
-    });
-
-    expect(result.should).toBe(true);
-    if (!result.should) throw new Error("Expected continuation to be allowed");
-    expect(result.reason).toBe("loop_end");
-  });
-
-  test("30s cooldown prevents duplicate continuation", () => {
+  test("30s cooldown prevents duplicate reminder", () => {
     const state = stateWith({
       todos: [{ id: "todo-1", content: "continue", status: "pending" }],
       reminders: [todoReminder(1_000)],
+      lastTodoWriteStepIndex: null,
+      steps: stepsForCount(10),
     });
 
     expect(
-      shouldInjectContinuationReminder(
-        state,
-        1_000 + TODO_CONTINUATION_COOLDOWN_MS - 1,
-        0,
-        undefined,
-        { stagnationCount: 3 },
-      ),
+      shouldInjectReminder(state, 1_000 + TODO_REMINDER_COOLDOWN_MS - 1),
     ).toEqual({ should: false, reason: "cooldown" });
   });
 
-  test("allows continuation at the cooldown boundary", () => {
+  test("allows reminder at the cooldown boundary", () => {
     const state = stateWith({
       todos: [{ id: "todo-1", content: "continue", status: "pending" }],
       reminders: [todoReminder(1_000)],
+      lastTodoWriteStepIndex: null,
+      steps: stepsForCount(10),
     });
 
-    const result = shouldInjectContinuationReminder(
-      state,
-      1_000 + TODO_CONTINUATION_COOLDOWN_MS,
-      0,
-      undefined,
-      { stagnationCount: 3 },
-    );
-
+    const result = shouldInjectReminder(state, 1_000 + TODO_REMINDER_COOLDOWN_MS);
     expect(result.should).toBe(true);
   });
 
-  test("pending ask_user tool call blocks continuation", () => {
+  test("pending ask_user tool call blocks reminder", () => {
+    const state = stateWith({
+      todos: [{ id: "todo-1", content: "continue", status: "pending" }],
+      messages: [assistantMessage([toolPart("ask_user")])],
+      lastTodoWriteStepIndex: 0,
+      steps: stepsForCount(11),
+    });
+
+    expect(shouldInjectReminder(state, 10_000)).toEqual({
+      should: false,
+      reason: "pending_question",
+    });
+  });
+
+  test("running sub-agents block reminder", () => {
+    const state = stateWithPendingTodo({ lastTodoWriteStepIndex: 0, steps: stepsForCount(11) });
+    expect(shouldInjectReminder(state, 10_000, { activeCount: 1 })).toEqual({
+      should: false,
+      reason: "running_sub_agents",
+    });
+  });
+
+  test("todo continuation count 10 blocks reminder", () => {
+    const state = stateWithPendingTodo({
+      lastTodoWriteStepIndex: 0,
+      steps: stepsForCount(11),
+      todoStepReminderCount: 10,
+    });
+    expect(shouldInjectReminder(state, 10_000)).toEqual({
+      should: false,
+      reason: "max_reminders",
+    });
+  });
+});
+
+describe("shouldContinueAfterLoop", () => {
+  test("disallowed status blocks continuation", () => {
+    const state = stateWithPendingTodo();
+    expect(shouldContinueAfterLoop(state, "failed", 10_000)).toEqual({
+      should: false,
+      reason: "disallowed_status",
+    });
+    expect(shouldContinueAfterLoop(state, "aborted", 10_000)).toEqual({
+      should: false,
+      reason: "disallowed_status",
+    });
+  });
+
+  test("no pending todos blocks continuation", () => {
+    expect(shouldContinueAfterLoop(stateWith({ todos: [] }), "completed", 10_000)).toEqual({
+      should: false,
+      reason: "no_pending_todos",
+    });
+  });
+
+  test("allows continuation on completed loop with pending todos", () => {
+    const state = stateWithPendingTodo();
+    const result = shouldContinueAfterLoop(state, "completed", 10_000);
+
+    expect(result.should).toBe(true);
+    if (!result.should) throw new Error("Expected continuation");
+    expect(result.reminder.content).toContain("TODO CONTINUATION");
+    expect(result.reminder.content).toContain("Please continue working");
+  });
+
+  test("60s cooldown blocks continuation", () => {
+    const state = stateWith({
+      todos: [{ id: "todo-1", content: "continue", status: "pending" }],
+      reminders: [loopContinuationReminder(1_000)],
+    });
+
+    expect(shouldContinueAfterLoop(state, "completed", 1_000 + TODO_CONTINUATION_COOLDOWN_MS - 1)).toEqual({
+      should: false,
+      reason: "cooldown",
+    });
+  });
+
+  test("pending question blocks continuation", () => {
     const state = stateWith({
       todos: [{ id: "todo-1", content: "continue", status: "pending" }],
       messages: [assistantMessage([toolPart("ask_user")])],
     });
 
-    expect(shouldInjectContinuationReminder(state, 10_000, 0, undefined, { stagnationCount: 3 })).toEqual({
+    expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
       should: false,
       reason: "pending_question",
     });
   });
 
   test("running sub-agents block continuation", () => {
-    expect(
-      shouldInjectContinuationReminder(stateWithPendingTodo(), 10_000, 0, { activeCount: 1 }, { stagnationCount: 3 }),
-    ).toEqual({ should: false, reason: "running_sub_agents" });
+    const state = stateWithPendingTodo();
+    expect(shouldContinueAfterLoop(state, "completed", 10_000, { activeCount: 1 })).toEqual({
+      should: false,
+      reason: "running_sub_agents",
+    });
   });
 
-  test("continuation count 10 blocks continuation", () => {
-    expect(
-      shouldInjectContinuationReminder(stateWithPendingTodo(), 10_000, 10, undefined, { stagnationCount: 3 }),
-    ).toEqual({ should: false, reason: "max_continuations" });
+  test("max continuation count 5 blocks continuation", () => {
+    const state = stateWithPendingTodo({ todoLoopContinuationCount: 5 });
+    expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
+      should: false,
+      reason: "max_continuations",
+    });
+  });
+
+  test("stagnation blocks continuation after 3 no-progress continuations", () => {
+    const state = stateWithPendingTodo({
+      todoContinuationStagnationCount: 2,
+      lastTodoContinuationPendingCount: 1,
+    });
+    expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
+      should: false,
+      reason: "stagnation",
+    });
+  });
+
+  test("stagnation resets when pending count decreases", () => {
+    const state = stateWith({
+      todos: [{ id: "todo-1", content: "done", status: "completed" }, { id: "todo-2", content: "continue", status: "pending" }],
+      todoContinuationStagnationCount: 2,
+      lastTodoContinuationPendingCount: 3,
+    });
+    const result = shouldContinueAfterLoop(state, "completed", 10_000);
+    expect(result.should).toBe(true);
   });
 });
 
@@ -200,8 +271,16 @@ describe("hasPendingQuestion", () => {
   });
 });
 
-function stateWithPendingTodo(): SessionStoreState {
-  return stateWith({ todos: [{ id: "todo-1", content: "continue", status: "pending" }] });
+function stateWithPendingTodo(overrides: Partial<SessionStoreState> = {}): SessionStoreState {
+  return stateWith({ todos: [{ id: "todo-1", content: "continue", status: "pending" }], ...overrides });
+}
+
+function stepsForCount(count: number): SessionStoreState["steps"] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `step-${i}`,
+    step: i,
+    startedAt: i,
+  }));
 }
 
 function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
@@ -220,6 +299,12 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
     streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
+    lastTodoWriteStepIndex: null,
+    lastTodoReminderStepIndex: null,
+    todoStepReminderCount: 0,
+    todoLoopContinuationCount: 0,
+    todoContinuationStagnationCount: 0,
+    lastTodoContinuationPendingCount: null,
     append: () => {},
     toModelMessages: () => [],
     ...overrides,
@@ -229,9 +314,20 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
 function todoReminder(createdAt: number): Reminder {
   return {
     id: `reminder-${createdAt}`,
-    source: { type: "todo_continuation", pendingTodos: [] },
+    source: { type: "todo_step_reminder", pendingTodos: [] },
     delivery: "auto_inject",
-    content: "continue",
+    content: "reminder",
+    createdAt,
+    consumedAt: null,
+  };
+}
+
+function loopContinuationReminder(createdAt: number): Reminder {
+  return {
+    id: `reminder-${createdAt}`,
+    source: { type: "todo_loop_continuation", pendingTodos: [] },
+    delivery: "auto_inject",
+    content: "continuation",
     createdAt,
     consumedAt: null,
   };

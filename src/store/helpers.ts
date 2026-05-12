@@ -15,7 +15,11 @@ const StoredTodoSchema = z.strictObject({
 
 const ReminderSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({
-    type: z.literal("todo_continuation"),
+    type: z.literal("todo_step_reminder"),
+    pendingTodos: z.array(StoredTodoSchema),
+  }),
+  z.strictObject({
+    type: z.literal("todo_loop_continuation"),
     pendingTodos: z.array(StoredTodoSchema),
   }),
   z.strictObject({

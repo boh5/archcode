@@ -25,7 +25,7 @@ describe("Reminder", () => {
     const reminder: Reminder = {
       id: "reminder-1",
       source: {
-        type: "todo_continuation",
+        type: "todo_step_reminder",
         pendingTodos: [
           {
             id: "todo-1",
@@ -47,7 +47,7 @@ describe("Reminder", () => {
     };
 
     expect(reminder.id).toBe("reminder-1");
-    expect(reminder.source.type).toBe("todo_continuation");
+    expect(reminder.source.type).toBe("todo_step_reminder");
     expect(reminder.consumedAt).toBeNull();
   });
 

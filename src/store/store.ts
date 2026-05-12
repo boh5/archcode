@@ -61,6 +61,12 @@ export function createSessionStore(
     streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
+    lastTodoWriteStepIndex: null,
+    lastTodoReminderStepIndex: null,
+    todoStepReminderCount: 0,
+    todoLoopContinuationCount: 0,
+    todoContinuationStagnationCount: 0,
+    lastTodoContinuationPendingCount: null,
     append: (event: StreamEvent) => {
       set((state) => reduceStreamEvent(state, event));
     },
@@ -395,7 +401,11 @@ function reduceStreamEvent(
 
     case "todo-write": {
       validateTodos(event.todos);
-      return { todos: [...event.todos] };
+      const currentStepIndex = state.steps.length - 1;
+      return {
+        todos: [...event.todos],
+        lastTodoWriteStepIndex: currentStepIndex >= 0 ? currentStepIndex : null,
+      };
     }
 
     case "reminder": {

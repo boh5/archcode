@@ -1,8 +1,7 @@
-import type { AfterStepEndContext } from "../loop-hooks";
+import type { AfterLoopEndContext, AfterStepEndContext } from "../loop-hooks";
 import {
-  checkStagnation,
-  computeTodoHash,
-  shouldInjectContinuationReminder,
+  shouldInjectReminder,
+  shouldContinueAfterLoop,
   type SubAgentManagerLike,
 } from "../todo-continuation";
 
@@ -12,49 +11,60 @@ export interface TodoContinuationHookOptions {
 
 export function createTodoContinuationHook(
   options: TodoContinuationHookOptions = {},
-): (ctx: AfterStepEndContext) => Promise<void> {
-  let lastTodoHash: string | null = null;
-  let stagnationCount = 0;
-  let continuationCount = 0;
+): {
+  afterStepEnd: (ctx: AfterStepEndContext) => Promise<void>;
+  afterLoopEnd: (ctx: AfterLoopEndContext) => Promise<void>;
+} {
+  return {
+    afterStepEnd: createTodoReminderHook(options),
+    afterLoopEnd: createTodoLoopContinuationHook(options),
+  };
+}
 
+function createTodoReminderHook(
+  options: TodoContinuationHookOptions,
+): (ctx: AfterStepEndContext) => Promise<void> {
   return async (ctx: AfterStepEndContext) => {
     const state = ctx.store.getState();
-    const lastStep = state.steps.at(-1);
-    if (!lastStep) return;
+    const checkResult = shouldInjectReminder(state, Date.now(), options.subAgentManager);
 
-    const finishReason = lastStep.finishReason ?? "stop";
+    if (!checkResult.should) return;
 
-    if (finishReason === "tool-calls") {
-      const hash = computeTodoHash(state.todos);
-      const result = checkStagnation(hash, lastTodoHash, stagnationCount);
-      lastTodoHash = result.newHash;
-      stagnationCount = result.newCount;
+    const currentStepIndex = state.steps.length - 1;
+    ctx.store.getState().append({ type: "reminder", reminder: checkResult.reminder });
+    ctx.store.setState({
+      lastTodoReminderStepIndex: currentStepIndex,
+      todoStepReminderCount: state.todoStepReminderCount + 1,
+    });
+  };
+}
 
-      if (result.isStagnant) {
-        const checkResult = shouldInjectContinuationReminder(
-          state,
-          Date.now(),
-          continuationCount,
-          options.subAgentManager,
-          { stagnationCount: result.newCount, trigger: "stagnation" },
-        );
-        if (checkResult.should) {
-          ctx.store.getState().append({ type: "reminder", reminder: checkResult.reminder });
-          continuationCount++;
-        }
-      }
-    } else if (finishReason === "stop" || finishReason === "length") {
-      const checkResult = shouldInjectContinuationReminder(
-        state,
-        Date.now(),
-        continuationCount,
-        options.subAgentManager,
-        { trigger: "loop_end" },
-      );
-      if (checkResult.should) {
-        ctx.store.getState().append({ type: "reminder", reminder: checkResult.reminder });
-        continuationCount++;
-      }
-    }
+function createTodoLoopContinuationHook(
+  options: TodoContinuationHookOptions,
+): (ctx: AfterLoopEndContext) => Promise<void> {
+  return async (ctx: AfterLoopEndContext) => {
+    const state = ctx.store.getState();
+    const checkResult = shouldContinueAfterLoop(
+      state,
+      ctx.loopEndStatus,
+      Date.now(),
+      options.subAgentManager,
+    );
+
+    if (!checkResult.should) return;
+
+    const pendingCount = checkResult.pendingTodos.length;
+    const lastPendingCount = state.lastTodoContinuationPendingCount;
+    const newStagnationCount =
+      lastPendingCount !== null && pendingCount >= lastPendingCount
+        ? state.todoContinuationStagnationCount + 1
+        : 0;
+
+    ctx.store.getState().append({ type: "reminder", reminder: checkResult.reminder });
+    ctx.store.setState({
+      todoLoopContinuationCount: state.todoLoopContinuationCount + 1,
+      todoContinuationStagnationCount: newStagnationCount,
+      lastTodoContinuationPendingCount: pendingCount,
+    });
   };
 }

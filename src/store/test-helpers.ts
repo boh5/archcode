@@ -19,6 +19,12 @@ export function createMockStore(
     streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
+    lastTodoWriteStepIndex: null,
+    lastTodoReminderStepIndex: null,
+    todoStepReminderCount: 0,
+    todoLoopContinuationCount: 0,
+    todoContinuationStagnationCount: 0,
+    lastTodoContinuationPendingCount: null,
     append: (event) => {
       switch (event.type) {
         case "reminder": {

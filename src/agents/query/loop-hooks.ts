@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { ModelInfo } from "../../provider/model";
 import type { ModelMessage } from "ai";
-import type { SessionStoreState } from "../../store/types";
+import type { RunEndEvent, SessionStoreState } from "../../store/types";
 
 export interface BeforeModelBuildContext {
   store: StoreApi<SessionStoreState>;
@@ -29,6 +29,7 @@ export interface AfterLoopEndContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
   abort?: AbortSignal;
+  loopEndStatus: RunEndEvent["status"];
 }
 
 export interface QueryLoopHooks {
