@@ -1,13 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export function getSessionsDir(override?: string): string {
-  if (override !== undefined) {
-    return override;
-  }
-  const envDir = process.env.SPECRA_SESSIONS_DIR;
-  if (envDir !== undefined) {
-    return envDir;
-  }
-  return join(homedir(), ".specra", "sessions");
+const DEFAULT_SESSIONS_DIR = join(homedir(), ".specra", "sessions");
+
+/**
+ * Returns the fixed sessions directory path (`~/.specra/sessions/`).
+ * Not configurable via env or config — this path is always used.
+ */
+export function getSessionsDir(): string {
+  return DEFAULT_SESSIONS_DIR;
 }

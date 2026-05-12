@@ -37,6 +37,7 @@ export interface OrchestratorAgentOptions {
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
   readonly config?: SpecraConfig;
+  readonly sessionsDir?: string;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -65,12 +66,14 @@ export class OrchestratorAgent implements Agent {
   private memoryRoots: { project: string; user: string };
   private autoCompactHook = createAutoCompactHook();
   private commandRegistry: CommandRegistry;
+  private sessionsDir: string | undefined;
 
   constructor(options: OrchestratorAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
+    this.sessionsDir = options.sessionsDir;
 
     const modelIds = this.providerRegistry.modelIds;
     if (modelIds.length === 0) {
@@ -180,7 +183,7 @@ export class OrchestratorAgent implements Agent {
               ],
               afterLoopEnd: [
                 todoContinuation.afterLoopEnd,
-                createTranscriptSaveHook(),
+                createTranscriptSaveHook(this.sessionsDir),
                 createMemoryExtractionHook(btm, this.providerRegistry, this.memoryRoots),
                 createMemoryConsolidationHook(btm, this.providerRegistry, this.memoryRoots),
               ],

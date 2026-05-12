@@ -1,17 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { generateObject } from "ai";
 import { createSessionStore } from "../../store/store";
 import { __setGenerateObjectForTest } from "./title-generation";
 
+const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation");
+
 const mockGenerateObject = mock(
   async () => ({ object: { title: "Short test title" } }),
 );
-
-const mockSaveSessionTranscript = mock(() => Promise.resolve());
-
-mock.module("../../store/helpers", () => ({
-  saveSessionTranscript: mockSaveSessionTranscript,
-}));
 
 import { createTitleGenerationTask } from "./title-generation";
 import type { Registry } from "../../provider/index";
@@ -34,18 +32,21 @@ function createMinimalRegistry(): Registry {
 }
 
 describe("createTitleGenerationTask", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     __setGenerateObjectForTest(mockGenerateObject as unknown as typeof generateObject);
     mockGenerateObject.mockReset();
     mockGenerateObject.mockImplementation(
       async () => ({ object: { title: "Short test title" } }),
     );
-    mockSaveSessionTranscript.mockReset();
-    mockSaveSessionTranscript.mockImplementation(() => Promise.resolve());
+    await mkdir(TEST_TMP, { recursive: true });
   });
 
   afterEach(() => {
     __setGenerateObjectForTest(generateObject as unknown as typeof generateObject);
+  });
+
+  afterAll(async () => {
+    await rm(TEST_TMP, { recursive: true, force: true });
   });
 
   test("generates title and sets it in store on success", async () => {
@@ -78,7 +79,7 @@ describe("createTitleGenerationTask", () => {
       modelInfo: registry.getModel("test:provider"),
       providerRegistry: registry,
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp/.specra/test-sessions",
+      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -103,7 +104,7 @@ describe("createTitleGenerationTask", () => {
       modelInfo: registry.getModel("test:provider"),
       providerRegistry: registry,
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp/.specra/test-sessions",
+      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -149,7 +150,7 @@ describe("createTitleGenerationTask", () => {
         modelInfo: registry.getModel("test:provider"),
         providerRegistry: registry,
         workspaceRoot: "/tmp",
-        sessionsDir: "/tmp/.specra/test-sessions",
+        sessionsDir: TEST_TMP,
       };
 
       await task.run(ctx as never);
@@ -189,7 +190,7 @@ describe("createTitleGenerationTask", () => {
       modelInfo: registry.getModel("test:provider"),
       providerRegistry: registry,
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp/.specra/test-sessions",
+      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -229,18 +230,17 @@ describe("createTitleGenerationTask", () => {
       modelInfo: registry.getModel("test:provider"),
       providerRegistry: registry,
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp/.specra/test-sessions",
+      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
 
-    expect(mockSaveSessionTranscript).toHaveBeenCalledTimes(1);
-    expect(mockSaveSessionTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId,
-        title: "Short test title",
-      }),
-      "/tmp/.specra/test-sessions",
-    );
+    const filePath = join(TEST_TMP, `${sessionId}.json`);
+    const file = Bun.file(filePath);
+    expect(await file.exists()).toBe(true);
+
+    const content = JSON.parse(await file.text());
+    expect(content.sessionId).toBe(sessionId);
+    expect(content.title).toBe("Short test title");
   });
 });

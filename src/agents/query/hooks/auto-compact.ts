@@ -37,8 +37,10 @@ export function createAutoCompactHook(): AutoCompactHookResult {
   let isCompacting = false;
 
   const hook = async (ctx: BeforeModelBuildContext): Promise<void> => {
-    // Guard: prevent recursive auto-compact
     if (isCompacting) return;
+
+    const contextLimit = ctx.modelInfo?.limit?.context;
+    if (typeof contextLimit !== "number" || contextLimit <= 0) return;
 
     const state = ctx.store.getState();
 
@@ -58,7 +60,7 @@ export function createAutoCompactHook(): AutoCompactHookResult {
     const currentTokens = Math.max(usageTokens ?? 0, estimatedTokens);
 
     // --- Check threshold ---
-    if (!shouldAutoCompact(currentTokens, ctx.modelInfo.limit.context)) return;
+    if (!shouldAutoCompact(currentTokens, contextLimit)) return;
 
     // --- Circuit breaker ---
     if (circuitBreaker.isOpen) return;
@@ -86,7 +88,7 @@ export function createAutoCompactHook(): AutoCompactHookResult {
       const result: CompactResult | null = await compact(
         {
           messages: state.messages,
-          contextLimit: ctx.modelInfo.limit.context,
+          contextLimit,
           model: ctx.modelInfo.model,
           sessionId: state.sessionId,
         },

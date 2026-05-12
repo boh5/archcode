@@ -1,29 +1,26 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { createMockStore } from "../../../store/test-helpers";
 import type { StoredMessage, StoredTodo, StepInfo } from "../../../store/types";
 
-const mockSaveSessionTranscript = mock(() => Promise.resolve());
-const mockGetSessionsDir = mock(() => "/tmp/.specra/sessions");
-
-mock.module("../../../store/helpers", () => ({
-  saveSessionTranscript: mockSaveSessionTranscript,
-}));
-
-mock.module("../../../store/sessions-dir", () => ({
-  getSessionsDir: mockGetSessionsDir,
-}));
+const TEST_TMP = join(import.meta.dir, "__test_tmp__", "transcript-save");
 
 import { createTranscriptSaveHook } from "./transcript-save";
 
 describe("createTranscriptSaveHook", () => {
-  beforeEach(() => {
-    mockSaveSessionTranscript.mockReset();
-    mockSaveSessionTranscript.mockImplementation(() => Promise.resolve());
-    mockGetSessionsDir.mockReset();
-    mockGetSessionsDir.mockImplementation(() => "/tmp/.specra/sessions");
+  beforeAll(async () => {
+    await mkdir(TEST_TMP, { recursive: true });
   });
 
-  test("reads store state and calls saveSessionTranscript with correct fields", async () => {
+  afterAll(async () => {
+    await rm(TEST_TMP, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+  });
+
+  test("reads store state and saves transcript with correct fields", async () => {
     const now = Date.now();
     const sessionId = crypto.randomUUID();
     const store = createMockStore({ sessionId });
@@ -78,27 +75,22 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook()(ctx as never);
+    await createTranscriptSaveHook(TEST_TMP)(ctx as never);
 
-    expect(mockSaveSessionTranscript).toHaveBeenCalledTimes(1);
-    expect(mockSaveSessionTranscript).toHaveBeenCalledWith(
-      {
-        sessionId,
-        createdAt: now,
-        title: null,
-        messages,
-        steps,
-        todos,
-      },
-      "/tmp/.specra/sessions",
-    );
+    const filePath = join(TEST_TMP, `${sessionId}.json`);
+    const file = Bun.file(filePath);
+    expect(await file.exists()).toBe(true);
+
+    const content = JSON.parse(await file.text());
+    expect(content.sessionId).toBe(sessionId);
+    expect(content.createdAt).toBe(now);
+    expect(content.messages).toHaveLength(1);
+    expect(content.steps).toHaveLength(1);
+    expect(content.todos).toHaveLength(1);
   });
 
-  test("handles saveSessionTranscript errors gracefully (logs warning, does not throw)", async () => {
+  test("handles save errors gracefully (logs warning, does not throw)", async () => {
     const store = createMockStore();
-    const expectedError = new Error("Disk full");
-
-    mockSaveSessionTranscript.mockRejectedValue(expectedError);
 
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
@@ -107,14 +99,16 @@ describe("createTranscriptSaveHook", () => {
     try {
       const ctx = { store, modelInfo: undefined as never };
 
+      const BAD_DIR = "/nonexistent/path/that/cannot/be/created/by/normal/user";
+
       await expect(
-        createTranscriptSaveHook()(ctx as never),
+        createTranscriptSaveHook(BAD_DIR)(ctx as never),
       ).resolves.toBeUndefined();
 
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
         "Transcript save hook failed:",
-        "Disk full",
+        expect.any(String),
       );
     } finally {
       console.warn = originalWarn;
@@ -139,17 +133,17 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook()(ctx as never);
+    await createTranscriptSaveHook(TEST_TMP)(ctx as never);
 
-    expect(mockSaveSessionTranscript).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId,
-        createdAt,
-        messages: [],
-        steps: [],
-        todos: [],
-      }),
-      expect.any(String),
-    );
+    const filePath = join(TEST_TMP, `${sessionId}.json`);
+    const file = Bun.file(filePath);
+    expect(await file.exists()).toBe(true);
+
+    const content = JSON.parse(await file.text());
+    expect(content.sessionId).toBe(sessionId);
+    expect(content.createdAt).toBe(createdAt);
+    expect(content.messages).toHaveLength(0);
+    expect(content.steps).toHaveLength(0);
+    expect(content.todos).toHaveLength(0);
   });
 });

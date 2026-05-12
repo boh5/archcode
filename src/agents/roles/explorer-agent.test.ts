@@ -23,7 +23,7 @@ function makeMockConfig(): SpecraConfig {
         models: {
           "test-model": {
             name: "Test Model",
-            limits: { context: 128000, output: 8192 },
+            limit: { context: 128000, output: 8192 },
             modalities: { input: ["text"], output: ["text"] },
           },
         },

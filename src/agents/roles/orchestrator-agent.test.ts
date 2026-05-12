@@ -26,7 +26,7 @@ function makeMockConfig(): SpecraConfig {
         models: {
           "test-model": {
             name: "Test Model",
-            limits: { context: 128000, output: 8192 },
+            limit: { context: 128000, output: 8192 },
             modalities: { input: ["text"], output: ["text"] },
           },
         },
@@ -602,56 +602,6 @@ describe("OrchestratorAgent", () => {
       expect(contextAskUser).toBe(constructorAskUser);
     });
 
-describe("session persistence", () => {
-  const TEST_TMP = join(import.meta.dir, "__test_tmp__", "session-persistence");
-
-  beforeAll(async () => {
-    await mkdir(TEST_TMP, { recursive: true });
-  });
-
-  afterAll(async () => {
-    await rm(TEST_TMP, { recursive: true, force: true });
-  });
-
-  test("saves session transcript to JSON file on run completion", async () => {
-    setupMockStreamText("Hello from persisted agent");
-
-    const agent = makeTestAgent();
-    const sessionId = agent.store.getState().sessionId;
-
-    const origEnvDir = process.env.SPECRA_SESSIONS_DIR;
-    process.env.SPECRA_SESSIONS_DIR = TEST_TMP;
-
-    try {
-      const result = await agent.run("test message");
-      expect(result.text).toBe("Hello from persisted agent");
-
-      const filePath = join(TEST_TMP, `${sessionId}.json`);
-      const file = Bun.file(filePath);
-      expect(await file.exists()).toBe(true);
-
-      const content = JSON.parse(await file.text());
-
-      expect(content.sessionId).toBe(sessionId);
-      expect(typeof content.createdAt).toBe("number");
-      expect(content.createdAt).toBeGreaterThan(0);
-      expect(Array.isArray(content.messages)).toBe(true);
-      expect(content.messages.length).toBeGreaterThan(0);
-      expect(Array.isArray(content.steps)).toBe(true);
-      expect(Array.isArray(content.todos)).toBe(true);
-      expect(content.streamingText).toBeUndefined();
-      expect(content.streamingReasoning).toBeUndefined();
-      expect(content.streamingTools).toBeUndefined();
-      expect(content.readSnapshots).toBeUndefined();
-      expect(content.isRunning).toBeUndefined();
-      expect(content.currentRunId).toBeUndefined();
-    } finally {
-      process.env.SPECRA_SESSIONS_DIR = origEnvDir;
-    }
-  });
-
-});
-
     test("askUser is separate from confirmPermission in tool context", async () => {
       const confirmPermission = mock(async () => "approve" as const);
       const askUser = mock(async () => ({ answers: [["yes"]] }) as { answers: string[][] }) as AskUserCallback;
@@ -690,6 +640,51 @@ describe("session persistence", () => {
       expect(contextConfirm).toBe(confirmPermission);
       expect(contextAskUser).toBe(askUser);
       expect(contextAskUser).not.toBe(contextConfirm);
+    });
+  });
+
+  describe("session persistence", () => {
+    const TEST_TMP = join(import.meta.dir, "__test_tmp__", "session-persistence");
+
+    beforeAll(async () => {
+      await mkdir(TEST_TMP, { recursive: true });
+    });
+
+    afterAll(async () => {
+      await rm(TEST_TMP, { recursive: true, force: true });
+    });
+
+    test("saves session transcript to JSON file on run completion", async () => {
+      setupMockStreamText("Hello from persisted agent");
+
+      const providerRegistry = createProviderRegistry(makeMockConfig().provider);
+      const toolRegistry = createToolRegistry();
+      registerBuiltinTools(toolRegistry);
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, sessionsDir: TEST_TMP });
+      const sessionId = agent.store.getState().sessionId;
+
+      const result = await agent.run("test message");
+      expect(result.text).toBe("Hello from persisted agent");
+
+      const filePath = join(TEST_TMP, `${sessionId}.json`);
+      const file = Bun.file(filePath);
+      expect(await file.exists()).toBe(true);
+
+      const content = JSON.parse(await file.text());
+
+      expect(content.sessionId).toBe(sessionId);
+      expect(typeof content.createdAt).toBe("number");
+      expect(content.createdAt).toBeGreaterThan(0);
+      expect(Array.isArray(content.messages)).toBe(true);
+      expect(content.messages.length).toBeGreaterThan(0);
+      expect(Array.isArray(content.steps)).toBe(true);
+      expect(Array.isArray(content.todos)).toBe(true);
+      expect(content.streamingText).toBeUndefined();
+      expect(content.streamingReasoning).toBeUndefined();
+      expect(content.streamingTools).toBeUndefined();
+      expect(content.readSnapshots).toBeUndefined();
+      expect(content.isRunning).toBeUndefined();
+      expect(content.currentRunId).toBeUndefined();
     });
   });
 
