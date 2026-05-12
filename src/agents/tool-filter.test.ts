@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { AnyToolDescriptor } from "../tools/types";
 import type { AgentType } from "./agent-registry";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./explorer-agent";
+import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
 import { getToolsForDepth } from "./tool-filter";
 
 function makeTool(name: string): AnyToolDescriptor {

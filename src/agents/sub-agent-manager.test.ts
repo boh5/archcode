@@ -5,7 +5,7 @@ import type { SessionStoreState } from "../store/types";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ToolRegistry } from "../tools/index";
 import type { AgentRegistry } from "./agent-registry";
-import type { Agent, AgentResult } from "./orchestrator-agent";
+import type { Agent, AgentResult } from "./types";
 import { ConcurrentLimitError, DepthLimitError } from "./errors";
 import { SubAgentManager } from "./sub-agent-manager";
 

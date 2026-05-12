@@ -1,6 +1,6 @@
 import type { AnyToolDescriptor } from "../tools/types";
 import type { AgentType } from "./agent-registry";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./explorer-agent";
+import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
 
 export function getToolsForDepth(
   depth: number,

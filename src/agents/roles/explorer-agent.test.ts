@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { SpecraConfig } from "../config/index";
-import { registerBuiltinTools } from "../core/index";
-import { createRegistry as createProviderRegistry } from "../provider/index";
-import { createSessionStore } from "../store/store";
-import { createRegistry as createToolRegistry } from "../tools/index";
-import { DELEGATION_TOOLS, ExplorerAgent, EXPLORER_READ_ONLY_TOOLS } from "./explorer-agent";
-import { AgentRunningError, NoModelsConfiguredError } from "./orchestrator-agent";
-import { __setStreamTextForTest } from "./query/loop";
+import type { SpecraConfig } from "../../config/index";
+import { registerBuiltinTools } from "../../core/index";
+import { createRegistry as createProviderRegistry } from "../../provider/index";
+import { createSessionStore } from "../../store/store";
+import { createRegistry as createToolRegistry } from "../../tools/index";
+import { ExplorerAgent } from "./explorer-agent";
+import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "../constants";
+import { AgentRunningError, NoModelsConfiguredError } from "../errors";
+import { __setStreamTextForTest } from "../query/loop";
 
 function makeMockConfig(): SpecraConfig {
   return {

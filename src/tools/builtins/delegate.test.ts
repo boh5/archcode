@@ -4,7 +4,7 @@ import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import type { AgentType } from "../../agents/agent-registry";
 import type { CreateSubAgentOptions, SubAgentRunHandle } from "../../agents/sub-agent-manager";
-import type { Agent, AgentResult } from "../../agents/orchestrator-agent";
+import type { Agent, AgentResult } from "../../agents/types";
 import type { SubAgentManagerLike, ToolExecutionContext } from "../types";
 import { executeDelegate } from "./delegate";
 

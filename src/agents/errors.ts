@@ -1,3 +1,17 @@
+export class NoModelsConfiguredError extends Error {
+  constructor() {
+    super("No models configured in .specra.json");
+    this.name = "NoModelsConfiguredError";
+  }
+}
+
+export class AgentRunningError extends Error {
+  constructor() {
+    super("Agent is already running");
+    this.name = "AgentRunningError";
+  }
+}
+
 export class SubAgentError extends Error {
   constructor(message: string) {
     super(message);

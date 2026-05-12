@@ -2,15 +2,15 @@ import { describe, expect, test, mock, afterAll, afterEach, beforeAll } from "bu
 import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
-import type { SpecraConfig } from "../config/index";
-import { createRegistry as createProviderRegistry } from "../provider/index";
-import { createRegistry as createToolRegistry, defineTool } from "../tools/index";
-import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionContext } from "../tools/index";
-import { registerBuiltinTools } from "../core/index";
+import type { SpecraConfig } from "../../config/index";
+import { createRegistry as createProviderRegistry } from "../../provider/index";
+import { createRegistry as createToolRegistry, defineTool } from "../../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionContext } from "../../tools/index";
+import { registerBuiltinTools } from "../../core/index";
 import { OrchestratorAgent } from "./orchestrator-agent";
-import { AgentRunningError, NoModelsConfiguredError } from "./orchestrator-agent";
-import type { Agent, AgentResult } from "./orchestrator-agent";
-import { __setStreamTextForTest } from "./query/loop";
+import { AgentRunningError, NoModelsConfiguredError } from "../errors";
+import type { Agent, AgentResult } from "../types";
+import { __setStreamTextForTest } from "../query/loop";
 
 function makeMockConfig(): SpecraConfig {
   return {

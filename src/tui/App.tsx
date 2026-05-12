@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
-import type { Agent, AgentRunOptions } from "../agents/orchestrator-agent";
+import type { Agent, AgentRunOptions } from "../agents/types";
 import type { AskUserAnswer, AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";

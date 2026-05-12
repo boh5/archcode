@@ -1,74 +1,30 @@
-import { join } from "node:path";
-import { homedir } from "node:os";
 import type { StoreApi } from "zustand";
-import type { Registry as ProviderRegistry } from "../provider/index";
-import type { ModelInfo } from "../provider/model";
-import { CommandRegistry, createCompactCommand } from "../commands/index";
-import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
-import type { PromptContext, PromptEnv } from "../prompt/index";
-import { createSessionStore } from "../store/store";
-import { BusyError } from "../store/types";
-import type { SessionStoreState } from "../store/types";
-import type { ToolRegistry } from "../tools/index";
-import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
-import { BackgroundTaskManager } from "../background/manager";
-import type { SpecraConfig } from "../config/schema";
-import { enforceQuota, TOOL_OUTPUT_DIR } from "../tools/index";
-import { createAgentRegistry } from "./agent-registry";
-import { runQueryLoop } from "./query/loop";
-import {
-  createAutoInjectReminderHook,
-  createTodoContinuationHook,
-  createTranscriptSaveHook,
-  createTitleGenerationHook,
-  createMemoryExtractionHook,
-  createMemoryConsolidationHook,
-  createAutoCompactHook,
-} from "./query/hooks";
-import { SubAgentManager } from "./sub-agent-manager";
+import type { Registry as ProviderRegistry } from "../../provider/index";
+import type { ModelInfo } from "../../provider/model";
+import { CommandRegistry, createCompactCommand } from "../../commands/index";
+import { buildSystemPrompt, loadAgentsMd } from "../../prompt/index";
+import type { PromptContext, PromptEnv } from "../../prompt/index";
+import { createSessionStore } from "../../store/store";
+import { BusyError } from "../../store/types";
+import type { SessionStoreState } from "../../store/types";
+import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../../tools/index";
+import { AgentRunningError, NoModelsConfiguredError } from "../errors";
+import type { Agent, AgentResult, AgentRunOptions } from "../types";
+import { runQueryLoop } from "../query/loop";
+import { createAutoInjectReminderHook, createTodoContinuationHook, createAutoCompactHook } from "../query/hooks";
+import { getToolsForDepth } from "../tool-filter";
+import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS } from "../constants";
 
-export interface AgentRunOptions {
-  abort?: AbortSignal;
-  confirmPermission?: ToolConfirmationCallback;
-  askUser?: AskUserCallback;
-}
+export { EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS };
 
-export interface Agent {
-  readonly store: StoreApi<SessionStoreState>;
-  run(
-    userMessage: string,
-    abort?: AbortSignal,
-    confirmPermission?: ToolConfirmationCallback,
-  ): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
-}
-
-export interface AgentResult {
-  readonly text: string;
-  readonly steps: number;
-}
-
-export class NoModelsConfiguredError extends Error {
-  constructor() {
-    super("No models configured in .specra.json");
-    this.name = "NoModelsConfiguredError";
-  }
-}
-
-export class AgentRunningError extends Error {
-  constructor() {
-    super("Agent is already running");
-    this.name = "AgentRunningError";
-  }
-}
-
-export interface OrchestratorAgentOptions {
+export interface ExplorerAgentOptions {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
-  readonly config?: SpecraConfig;
+  readonly store?: StoreApi<SessionStoreState>;
+  readonly depth?: number;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -81,7 +37,7 @@ function buildEnv(workspaceRoot: string): PromptEnv {
   };
 }
 
-export class OrchestratorAgent implements Agent {
+export class ExplorerAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   private providerRegistry: ProviderRegistry;
   private toolRegistry: ToolRegistry;
@@ -92,13 +48,11 @@ export class OrchestratorAgent implements Agent {
   private agentsMd: string | undefined;
   private agentsMdLoaded = false;
   private running = false;
-  private subAgentManager: SubAgentManager;
-  private config: SpecraConfig;
-  private memoryRoots: { project: string; user: string };
+  private depth: number;
   private autoCompactHook = createAutoCompactHook();
   private commandRegistry: CommandRegistry;
 
-  constructor(options: OrchestratorAgentOptions) {
+  constructor(options: ExplorerAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
     this.confirmPermission = options.confirmPermission;
@@ -110,22 +64,11 @@ export class OrchestratorAgent implements Agent {
     }
 
     this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
-    this.store = createSessionStore(crypto.randomUUID());
+    this.store = options.store ?? createSessionStore(crypto.randomUUID());
     this.workspaceRoot = options.workspaceRoot ?? process.cwd();
-    this.config = options.config ?? { provider: {} } as SpecraConfig;
-    this.memoryRoots = {
-      project: join(this.workspaceRoot, ".specra", "memory"),
-      user: join(homedir(), ".specra", "memory"),
-    };
+    this.depth = options.depth ?? 0;
     this.commandRegistry = new CommandRegistry();
     this.commandRegistry.register(createCompactCommand(this.store, this.modelInfo, this.autoCompactHook.circuitBreaker));
-    this.subAgentManager = new SubAgentManager({
-      parentStore: this.store,
-      providerRegistry: this.providerRegistry,
-      toolRegistry: this.toolRegistry,
-      workspaceRoot: this.workspaceRoot,
-      registry: createAgentRegistry(),
-    });
   }
 
   private async ensureAgentsMd(): Promise<void> {
@@ -164,24 +107,17 @@ export class OrchestratorAgent implements Agent {
 
     this.running = true;
     try {
-      await enforceQuota(TOOL_OUTPUT_DIR);
-    } catch (error) {
-      console.warn(
-        `[OrchestratorAgent] Failed to enforce tool output cache quota: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-    const btm = new BackgroundTaskManager();
-    try {
       await this.ensureAgentsMd();
-      const allToolNames = this.toolRegistry.getAll().map((d) => d.name);
+      const allowedTools = getToolsForDepth(this.depth, "explore", this.toolRegistry.getAll()).map(
+        (tool) => tool.name,
+      );
 
       const ctx: PromptContext = {
-        allowedTools: allToolNames,
+        allowedTools,
         workspaceRoot: this.workspaceRoot,
-        agentId: "default",
+        agentId: "explorer",
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),
-        memoryRoots: this.memoryRoots,
       };
 
       const systemPrompt = await buildSystemPrompt(ctx);
@@ -190,27 +126,19 @@ export class OrchestratorAgent implements Agent {
         {
           modelInfo: this.modelInfo,
           toolRegistry: this.toolRegistry,
-          allowedTools: allToolNames,
+          allowedTools,
+          workspaceRoot: this.workspaceRoot,
           confirmPermission: confirm,
           askUser,
           abort,
           systemPrompt,
           store: this.store,
           commandRegistry: this.commandRegistry,
-          subAgentManager: this.subAgentManager,
-          currentDepth: 0,
+          currentDepth: this.depth,
           hooks: {
             beforeModelBuild: [this.autoCompactHook.hook],
             beforeModelCall: [createAutoInjectReminderHook()],
-            afterStepEnd: [
-              createTodoContinuationHook({ subAgentManager: this.subAgentManager }),
-              createTitleGenerationHook(btm, this.providerRegistry),
-            ],
-            afterLoopEnd: [
-              createTranscriptSaveHook(),
-              createMemoryExtractionHook(btm, this.providerRegistry, this.memoryRoots),
-              createMemoryConsolidationHook(btm, this.providerRegistry, this.memoryRoots),
-            ],
+            afterStepEnd: [createTodoContinuationHook()],
           },
         },
         userMessage,
@@ -227,7 +155,6 @@ export class OrchestratorAgent implements Agent {
       throw error;
     } finally {
       this.running = false;
-      await btm.drain(60000);
     }
   }
 }

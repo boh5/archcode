@@ -4,7 +4,7 @@ import { createSessionStore } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { AgentRegistry, AgentType } from "./agent-registry";
-import type { Agent, AgentResult } from "./orchestrator-agent";
+import type { Agent, AgentResult } from "./types";
 import { ConcurrentLimitError, DepthLimitError } from "./errors";
 
 export const DEFAULT_SUB_AGENT_TIMEOUT_MS = 20 * 60 * 1000;

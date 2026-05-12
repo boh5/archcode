@@ -6,7 +6,7 @@ import {
   type ResolvedMcpConfig,
   type ResolvedMcpServerConfig,
 } from "./config/mcp";
-import { OrchestratorAgent } from "./agents/orchestrator-agent";
+import { OrchestratorAgent } from "./agents";
 import {
   createRegistry as createProviderRegistry,
   type Registry as ProviderRegistry,

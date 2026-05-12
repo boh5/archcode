@@ -3,8 +3,8 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/types";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ToolRegistry } from "../tools/index";
-import { ExplorerAgent } from "./explorer-agent";
-import type { Agent } from "./orchestrator-agent";
+import { ExplorerAgent } from "./roles/explorer-agent";
+import type { Agent } from "./types";
 
 /**
  * Zod enum for delegatable sub-agent types.
