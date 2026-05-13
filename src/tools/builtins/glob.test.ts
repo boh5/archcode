@@ -215,25 +215,25 @@ describe("glob tool", () => {
     });
   });
 
-  test("workspace guard denies path outside workspace", async () => {
-    const guard = tool.guards![0];
+  test("workspace permission denies path outside workspace", async () => {
+    const perm = tool.permissions![0];
 
-    const decision = await guard({ pattern: "*.ts", path: "../outside" }, createMockCtx());
+    const decision = await perm({ pattern: "*.ts", path: "../outside" }, createMockCtx());
     expect(decision.outcome).toBe("deny");
     expect(decision.reason).toContain("outside");
   });
 
-  test("workspace guard allows path within workspace", async () => {
-    const guard = tool.guards![0];
+  test("workspace permission allows path within workspace", async () => {
+    const perm = tool.permissions![0];
 
-    const decision = await guard({ pattern: "*.ts", path: "src/" }, createMockCtx());
+    const decision = await perm({ pattern: "*.ts", path: "src/" }, createMockCtx());
     expect(decision.outcome).toBe("allow");
   });
 
-  test("workspace guard allows when no path provided", async () => {
-    const guard = tool.guards![0];
+  test("workspace permission allows when no path provided", async () => {
+    const perm = tool.permissions![0];
 
-    const decision = await guard({ pattern: "*.ts" }, createMockCtx());
+    const decision = await perm({ pattern: "*.ts" }, createMockCtx());
     expect(decision.outcome).toBe("allow");
   });
 });

@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { CompactionPart, StoredMessage } from "./types";
-import { redactValue } from "../tools/hooks/redact";
+import { redactValue } from "../tools/security";
 
 export type ProjectionMode = "model" | "full-history";
 

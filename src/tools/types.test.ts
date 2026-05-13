@@ -9,11 +9,11 @@ import type {
   AfterHook,
   ToolDescriptor,
   ToolCallLike,
-  GuardDecision,
-  GuardHook,
   ToolConfirmationRequest,
   ToolConfirmationCallback,
   PermissionErrorCode,
+  PermissionDecision,
+  ToolPermission,
 } from "./types";
 import { DuplicateToolError } from "./types";
 
@@ -139,20 +139,20 @@ test("ToolDescriptor requires all fields", () => {
 
 // ─── New Permission Types ───
 
-describe("GuardDecision", () => {
+describe("PermissionDecision", () => {
   test("accepts allow outcome", () => {
-    const decision: GuardDecision = { outcome: "allow" };
+    const decision: PermissionDecision = { outcome: "allow" };
     expect(decision.outcome).toBe("allow");
   });
 
   test("accepts deny outcome with reason", () => {
-    const decision: GuardDecision = { outcome: "deny", reason: "not allowed" };
+    const decision: PermissionDecision = { outcome: "deny", reason: "not allowed" };
     expect(decision.outcome).toBe("deny");
     expect(decision.reason).toBe("not allowed");
   });
 
   test("accepts optional structured error kind and code", () => {
-    const decision: GuardDecision = {
+    const decision: PermissionDecision = {
       outcome: "deny",
       reason: "outside workspace",
       errorKind: "workspace",
@@ -163,19 +163,19 @@ describe("GuardDecision", () => {
   });
 
   test("accepts ask outcome without reason", () => {
-    const decision: GuardDecision = { outcome: "ask" };
+    const decision: PermissionDecision = { outcome: "ask" };
     expect(decision.outcome).toBe("ask");
     expect(decision.errorKind).toBeUndefined();
     expect(decision.errorCode).toBeUndefined();
   });
 });
 
-describe("GuardHook", () => {
-  test("is a function returning MaybePromise<GuardDecision>", () => {
-    const hook: GuardHook = async (_input, _ctx) => {
+describe("ToolPermission", () => {
+  test("is a function returning MaybePromise<PermissionDecision>", () => {
+    const perm: ToolPermission = async (_input, _ctx) => {
       return { outcome: "allow" };
     };
-    expect(typeof hook).toBe("function");
+    expect(typeof perm).toBe("function");
   });
 });
 
@@ -261,23 +261,23 @@ test("ToolExecutionContext confirmPermission is optional", () => {
 
 // ─── Extended ToolDescriptor ───
 
-test("ToolDescriptor accepts prepareInput and guards", () => {
+test("ToolDescriptor accepts prepareInput and permissions", () => {
   const _desc: ToolDescriptor = {
     name: "test",
     description: "A test tool",
     inputSchema: {} as any,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     prepareInput: async (raw, _ctx) => raw,
-    guards: [
+    permissions: [
       async (_input, _ctx) => ({ outcome: "allow" as const }),
     ],
     execute: async (_input, _ctx) => "ok",
   };
   expect(_desc.prepareInput).toBeDefined();
-  expect(_desc.guards).toHaveLength(1);
+  expect(_desc.permissions).toHaveLength(1);
 });
 
-test("ToolDescriptor prepareInput and guards are optional", () => {
+test("ToolDescriptor prepareInput and permissions are optional", () => {
   const _desc: ToolDescriptor = {
     name: "test",
     description: "A test tool",
@@ -286,5 +286,135 @@ test("ToolDescriptor prepareInput and guards are optional", () => {
     execute: async (_input, _ctx) => "ok",
   };
   expect(_desc.prepareInput).toBeUndefined();
-  expect(_desc.guards).toBeUndefined();
+  expect(_desc.permissions).toBeUndefined();
+});
+
+// ─── Permission API contract (TDD red phase) ───
+
+describe("PermissionDecision", () => {
+  test("accepts allow outcome", () => {
+    const decision: PermissionDecision = { outcome: "allow" };
+    expect(decision.outcome).toBe("allow");
+  });
+
+  test("accepts deny outcome with reason", () => {
+    const decision: PermissionDecision = { outcome: "deny", reason: "not allowed" };
+    expect(decision.outcome).toBe("deny");
+    expect(decision.reason).toBe("not allowed");
+  });
+
+  test("accepts optional structured error kind and code", () => {
+    const decision: PermissionDecision = {
+      outcome: "deny",
+      reason: "outside workspace",
+      errorKind: "workspace",
+      errorCode: "TOOL_FILE_OUTSIDE_WORKSPACE",
+    };
+    expect(decision.errorKind).toBe("workspace");
+    expect(decision.errorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+  });
+
+  test("accepts ask outcome without reason", () => {
+    const decision: PermissionDecision = { outcome: "ask" };
+    expect(decision.outcome).toBe("ask");
+    expect(decision.errorKind).toBeUndefined();
+    expect(decision.errorCode).toBeUndefined();
+  });
+
+  test("accepts ask outcome with prompt", () => {
+    const decision: PermissionDecision = { outcome: "ask", prompt: "Confirm write?" };
+    expect(decision.prompt).toBe("Confirm write?");
+  });
+});
+
+describe("ToolPermission", () => {
+  test("is a function returning MaybePromise<PermissionDecision>", () => {
+    const perm: ToolPermission = async (_input, _ctx) => {
+      return { outcome: "allow" };
+    };
+    expect(typeof perm).toBe("function");
+  });
+
+  test("can return sync PermissionDecision", () => {
+    const perm: ToolPermission = (_input, _ctx) => {
+      return { outcome: "deny", reason: "blocked" };
+    };
+    expect(typeof perm).toBe("function");
+  });
+});
+
+
+
+describe("ToolDescriptor — permissions field", () => {
+  test("ToolDescriptor accepts permissions array", () => {
+    const _desc: ToolDescriptor = {
+      name: "test",
+      description: "A test tool",
+      inputSchema: {} as any,
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      permissions: [
+        async (_input, _ctx) => ({ outcome: "allow" as const }),
+      ],
+      execute: async (_input, _ctx) => "ok",
+    };
+    expect(_desc.permissions).toHaveLength(1);
+  });
+
+  test("ToolDescriptor permissions are optional", () => {
+    const _desc: ToolDescriptor = {
+      name: "test",
+      description: "A test tool",
+      inputSchema: {} as any,
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      execute: async (_input, _ctx) => "ok",
+    };
+    expect(_desc.permissions).toBeUndefined();
+  });
+
+
+});
+
+describe("ToolExecutionContext — permissionOutcome preserved", () => {
+  test("permissionOutcome receives allow/deny/ask from permission decisions", () => {
+    const ctx: ToolExecutionContext = {
+      store: {} as any,
+      toolName: "test",
+      toolCallId: "call_1",
+      input: {},
+      step: 1,
+      abort: new AbortController().signal,
+      startedAt: Date.now(),
+      allowedTools: new Set(),
+      workspaceRoot: "/tmp",
+      permissionOutcome: "allow",
+    };
+    expect(ctx.permissionOutcome).toBe("allow");
+
+    const ctx2: ToolExecutionContext = {
+      ...ctx,
+      permissionOutcome: "deny",
+    };
+    expect(ctx2.permissionOutcome).toBe("deny");
+
+    const ctx3: ToolExecutionContext = {
+      ...ctx,
+      permissionOutcome: "ask",
+    };
+    expect(ctx3.permissionOutcome).toBe("ask");
+  });
+
+  test("permissionOutcome is optional", () => {
+    const ctx: ToolExecutionContext = {
+      store: {} as any,
+      toolName: "test",
+      toolCallId: "call_1",
+      input: {},
+      step: 1,
+      abort: new AbortController().signal,
+      startedAt: Date.now(),
+      allowedTools: new Set(),
+      workspaceRoot: "/tmp",
+    };
+    expect(ctx.permissionOutcome).toBeUndefined();
+  });
 });

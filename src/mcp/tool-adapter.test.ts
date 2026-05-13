@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 import { TOOL_ERROR_META_KEY, type FormattedToolError } from "../tools/errors";
-import { REDACTION_MARKER } from "../tools/hooks/redact";
+import { REDACTION_MARKER } from "../tools/security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../tools/types";
 import type { CallToolResultLike, McpClient } from "./client";
 import { adaptMcpTool } from "./tool-adapter";

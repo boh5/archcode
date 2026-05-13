@@ -1,5 +1,5 @@
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
-import { redactValue } from "./redact";
+import { redactValue } from "../security";
 
 export interface AuditEvent {
   version: 1;

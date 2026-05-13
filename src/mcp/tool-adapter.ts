@@ -2,7 +2,8 @@ import { jsonSchema } from "ai";
 import { z } from "zod";
 import { defineTool } from "../tools/define-tool";
 import { createToolErrorResult } from "../tools/errors";
-import { REDACTION_MARKER } from "../tools/hooks/redact";
+import { createMcpDestructivePermission } from "../tools/permission";
+import { REDACTION_MARKER } from "../tools/security";
 import type {
   AnyToolDescriptor,
   ToolExecutionResult,
@@ -25,12 +26,15 @@ export function adaptMcpTool(
 ): AnyToolDescriptor {
   const toolName = mcpTool.name;
 
+  const traits = traitsFromAnnotations(mcpTool.annotations);
+
   return defineTool({
     name: toMcpToolRegistryName(serverName, toolName),
     description: mcpTool.description ?? fallbackDescription(serverName, toolName),
     inputSchema: mcpToolInputSchema,
     aiInputSchema: jsonSchema(mcpTool.inputSchema as Record<string, unknown>),
-    traits: traitsFromAnnotations(mcpTool.annotations),
+    traits,
+    ...(traits.destructive ? { permissions: [createMcpDestructivePermission(serverName, toolName)] } : {}),
     async execute(input): Promise<ToolExecutionResult> {
       try {
         const result = await mcpClient.callTool(

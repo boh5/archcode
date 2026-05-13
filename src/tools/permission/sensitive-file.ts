@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { GuardHook, GuardDecision, ToolExecutionContext } from "../types";
+import type { ToolPermission, PermissionDecision, ToolExecutionContext } from "../types";
 
 export const SENSITIVE_PATTERNS: RegExp[] = [
   /^\.env$/,
@@ -19,8 +19,8 @@ export function isSensitiveFile(basename: string): boolean {
   return SENSITIVE_PATTERNS.some((pattern) => pattern.test(basename));
 }
 
-export function createSensitiveFileGuard(): GuardHook {
-  return (input: unknown, _ctx: ToolExecutionContext): GuardDecision => {
+export function createSensitiveFilePermission(): ToolPermission {
+  return (input: unknown, _ctx: ToolExecutionContext): PermissionDecision => {
     const inputRecord = input as { path: string };
     const basename = path.basename(inputRecord.path);
 

@@ -131,42 +131,42 @@ describe("fileReadTool", () => {
     }
   });
 
-  test("workspace guard denies paths outside workspace", async () => {
-    const guard = fileReadTool.guards?.[0];
-    expect(guard).toBeDefined();
+  test("workspace permission denies paths outside workspace", async () => {
+    const perm = fileReadTool.permissions?.[0];
+    expect(perm).toBeDefined();
 
-    const decision = await guard!({ path: "../outside.txt" }, makeCtx());
+    const decision = await perm!({ path: "../outside.txt" }, makeCtx());
 
     expect(decision.outcome).toBe("deny");
     expect(decision.reason).toContain("outside workspace");
   });
 
-  test("sensitive file guard asks for .env files", async () => {
-    const guard = fileReadTool.guards?.[1];
-    expect(guard).toBeDefined();
+  test("sensitive file permission asks for .env files", async () => {
+    const perm = fileReadTool.permissions?.[1];
+    expect(perm).toBeDefined();
 
-    const decision = await guard!({ path: ".env" }, makeCtx());
+    const decision = await perm!({ path: ".env" }, makeCtx());
 
     expect(decision.outcome).toBe("ask");
     expect(decision.reason).toContain("sensitive file");
     expect(decision.prompt).toContain("secrets or credentials");
   });
 
-  test("sensitive file guard asks for .pem files", async () => {
-    const guard = fileReadTool.guards?.[1];
-    expect(guard).toBeDefined();
+  test("sensitive file permission asks for .pem files", async () => {
+    const perm = fileReadTool.permissions?.[1];
+    expect(perm).toBeDefined();
 
-    const decision = await guard!({ path: "cert.pem" }, makeCtx());
+    const decision = await perm!({ path: "cert.pem" }, makeCtx());
 
     expect(decision.outcome).toBe("ask");
     expect(decision.prompt).toContain("secrets or credentials");
   });
 
-  test("sensitive file guard allows regular files", async () => {
-    const guard = fileReadTool.guards?.[1];
-    expect(guard).toBeDefined();
+  test("sensitive file permission allows regular files", async () => {
+    const perm = fileReadTool.permissions?.[1];
+    expect(perm).toBeDefined();
 
-    const decision = await guard!({ path: "README.md" }, makeCtx());
+    const decision = await perm!({ path: "README.md" }, makeCtx());
 
     expect(decision).toEqual({ outcome: "allow" });
   });

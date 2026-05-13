@@ -7,7 +7,7 @@
  */
 
 import path from "node:path";
-import { resolveAndValidatePath } from "../tools/security/path-validator";
+import { resolveAndValidatePath } from "../tools/security";
 
 // ─── URI → Path ───
 

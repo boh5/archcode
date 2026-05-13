@@ -2,8 +2,8 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
-import { createBashGuard } from "../security/bash-classifier";
-import { PathValidator } from "../security/path-validator";
+import { createBashPermission } from "../permission";
+import { PathValidator } from "../security";
 
 export const BashInputSchema = z
   .object({
@@ -142,7 +142,7 @@ export const bashTool = defineTool({
     }
     return raw;
   },
-  guards: [createBashGuard(process.cwd())],
+  permissions: [createBashPermission(process.cwd())],
   execute: async (input: BashInput, ctx: ToolExecutionContext) => {
     return runBashCommand(input, ctx);
   },

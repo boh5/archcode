@@ -5,11 +5,10 @@ import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import { createSensitiveFileGuard } from "../hooks/sensitive-file-guard";
-import { createWorkspaceGuard } from "../hooks/workspace-guard";
-import { refreshReadSnapshot } from "../hooks/read-snapshot";
-import { resolveAndValidatePath } from "../security/path-validator";
-import type { GuardDecision, GuardHook, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createFileExistsPermission, createMemoryIndexPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
+import { refreshReadSnapshot } from "../hooks";
+import { resolveAndValidatePath } from "../security";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -19,28 +18,6 @@ const FileWriteInputSchema = z
     content: z.string(),
   })
   .strict();
-
-type FileWriteInput = z.infer<typeof FileWriteInputSchema>;
-
-// ─── Guards ───
-
-function createFileExistsGuard(): GuardHook {
-  return (input: unknown, ctx: ToolExecutionContext): GuardDecision => {
-    const inputRecord = input as FileWriteInput;
-    const { resolved } = resolveAndValidatePath(inputRecord.path, ctx.workspaceRoot);
-
-    if (existsSync(resolved)) {
-      return {
-        outcome: "deny",
-        reason: `File "${resolved}" already exists. Use file_edit to modify existing files.`,
-        errorKind: "file-already-exists",
-        errorCode: "TOOL_FILE_ALREADY_EXISTS",
-      };
-    }
-
-    return { outcome: "allow" };
-  };
-}
 
 async function cleanupTempFile(tmpPath: string): Promise<void> {
   try {
@@ -58,7 +35,7 @@ export const fileWriteTool = defineTool({
     "Creates a new file at the specified path. Fails if the file already exists. Use file_edit to modify existing files.",
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  guards: [createWorkspaceGuard(), createFileExistsGuard(), createSensitiveFileGuard()],
+  permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createMemoryIndexPermission()],
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
     if (!isWithinWorkspace) {

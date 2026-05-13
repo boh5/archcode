@@ -6,12 +6,9 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import { createSessionStore } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
-import type { AuditEvent } from "../tools/hooks/audit";
-import { createAuditHook } from "../tools/hooks/audit";
-import { createExecutionLogger } from "../tools/hooks/logger";
-import { REDACTION_MARKER } from "../tools/hooks/redact";
-import { createRedactionHook } from "../tools/hooks/redact";
-import { createOutputTruncator } from "../tools/hooks/truncate";
+import type { AuditEvent } from "../tools/hooks";
+import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
+import { REDACTION_MARKER } from "../tools/security";
 import { ToolRegistry } from "../tools/registry";
 import type { Logger, ToolDescriptor, ToolExecutionContext } from "../tools/types";
 import { registerBuiltinTools } from "./register-tools";
@@ -269,16 +266,9 @@ describe("registerBuiltinTools", () => {
     });
   });
 
-  describe("memory index guard", () => {
-    it("adds memory index guard as a global guard", () => {
-      const registry = new ToolRegistry();
-      registerBuiltinTools(registry);
-
-      expect(registry.globalGuards.length).toBeGreaterThanOrEqual(1);
-    });
-
-    it("memory index guard denies writes to .specra/memory/index.md", async () => {
-      const workspaceRoot = await createTmpRoot("guard-deny");
+  describe("memory index permission", () => {
+    it("memory index permission denies writes to .specra/memory/index.md", async () => {
+      const workspaceRoot = await createTmpRoot("perm-deny");
       const registry = new ToolRegistry();
       registerBuiltinTools(registry);
       registry.globalHooks.after.pop();
@@ -286,11 +276,11 @@ describe("registerBuiltinTools", () => {
       const result = await registry.execute(
         {
           toolName: "file_write",
-          toolCallId: "guard-test",
+          toolCallId: "perm-test",
           input: { path: ".specra/memory/index.md", content: "hacked" },
         },
         makeContext("file_write", ["file_write"], workspaceRoot, {
-          toolCallId: "guard-test",
+          toolCallId: "perm-test",
           input: { path: ".specra/memory/index.md", content: "hacked" },
         }),
       );
@@ -299,8 +289,8 @@ describe("registerBuiltinTools", () => {
       expect(result.output).toContain("MEMORY_INDEX_WRITE_DENIED");
     });
 
-    it("memory index guard allows writes to non-index files", async () => {
-      const workspaceRoot = await createTmpRoot("guard-allow");
+    it("memory index permission allows writes to non-index files", async () => {
+      const workspaceRoot = await createTmpRoot("perm-allow");
       const registry = new ToolRegistry();
       registerBuiltinTools(registry);
       registry.globalHooks.after.pop();
@@ -308,11 +298,11 @@ describe("registerBuiltinTools", () => {
       const result = await registry.execute(
         {
           toolName: "file_write",
-          toolCallId: "guard-allow",
+          toolCallId: "perm-allow",
           input: { path: "regular-file.txt", content: "hello" },
         },
         makeContext("file_write", ["file_write"], workspaceRoot, {
-          toolCallId: "guard-allow",
+          toolCallId: "perm-allow",
           input: { path: "regular-file.txt", content: "hello" },
           confirmPermission: async () => "approve" as const,
         }),
@@ -321,10 +311,10 @@ describe("registerBuiltinTools", () => {
       expect(result.isError).toBe(false);
     });
 
-    it("memory index guard does not block read-only tools", async () => {
-      const workspaceRoot = await createTmpRoot("guard-readonly");
+    it("memory index permission does not block read-only tools", async () => {
+      const workspaceRoot = await createTmpRoot("perm-readonly");
       const samplePath = join(workspaceRoot, "sample.txt");
-      await Bun.write(samplePath, "hello guard\n");
+      await Bun.write(samplePath, "hello permission\n");
 
       const registry = new ToolRegistry();
       registerBuiltinTools(registry);
@@ -333,11 +323,11 @@ describe("registerBuiltinTools", () => {
       const result = await registry.execute(
         {
           toolName: "file_read",
-          toolCallId: "guard-readonly",
+          toolCallId: "perm-readonly",
           input: { path: samplePath },
         },
         makeContext("file_read", ["file_read"], workspaceRoot, {
-          toolCallId: "guard-readonly",
+          toolCallId: "perm-readonly",
           input: { path: samplePath },
         }),
       );

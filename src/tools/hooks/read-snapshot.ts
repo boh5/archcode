@@ -1,13 +1,11 @@
 import { statSync } from "node:fs";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
-import { resolveAndValidatePath } from "../security/path-validator";
+import { resolveAndValidatePath } from "../security";
 import type {
   AfterHook,
-  GuardDecision,
-  GuardHook,
-  ToolExecutionContext,
   ToolExecutionResult,
+  ToolExecutionContext,
 } from "../types";
 
 // ─── LRU limit ───
@@ -18,7 +16,7 @@ const MAX_SNAPSHOTS = 1024;
 
 /**
  * After-hook for `file_read`: records the file's realpath → mtimeMs
- * into `ctx.store.readSnapshots` so that subsequent edit guards can
+ * into `ctx.store.readSnapshots` so that subsequent edit permissions can
  * verify the file was recently read and hasn't changed.
  *
  * Skips recording when the tool execution failed (`isError === true`).
@@ -58,54 +56,6 @@ export function createReadSnapshotAfterHook(): AfterHook {
 
     snapshots.set(resolved, mtimeMs);
     store.setState({ readSnapshots: snapshots });
-  };
-}
-
-// ─── Guard — verify file was read before edit ───
-
-/**
- * Guard for `file_edit`: denies the edit if:
- *  1. The target file was never read (not in `readSnapshots`), or
- *  2. The file's mtime on disk differs from the recorded snapshot
- *     (indicating an external modification).
- */
-export function createReadBeforeEditGuard(): GuardHook {
-  return (input: unknown, ctx: ToolExecutionContext): GuardDecision => {
-    const inputRecord = input as { path: string };
-    const { resolved } = resolveAndValidatePath(
-      inputRecord.path,
-      ctx.workspaceRoot,
-    );
-
-    const snapshots = ctx.store.getState().readSnapshots;
-
-    if (!snapshots.has(resolved)) {
-      return {
-        outcome: "deny",
-        reason: `File "${resolved}" has not been read first. Use file_read before editing. [TOOL_FILE_NOT_READ_FIRST]`,
-      };
-    }
-
-    let currentMtime: number;
-    try {
-      currentMtime = statSync(resolved).mtimeMs;
-    } catch {
-      return {
-        outcome: "deny",
-        reason: `File "${resolved}" no longer exists. [TOOL_FILE_NOT_FOUND]`,
-      };
-    }
-
-    const recordedMtime = snapshots.get(resolved)!;
-
-    if (currentMtime !== recordedMtime) {
-      return {
-        outcome: "deny",
-        reason: `File "${resolved}" has been modified since it was read. Use file_read to refresh before editing. [TOOL_FILE_WRITE_CONFLICT]`,
-      };
-    }
-
-    return { outcome: "allow" };
   };
 }
 

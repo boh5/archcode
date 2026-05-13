@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolExecutionContext } from "../types";
 import { createAuditHook, type AuditEvent } from "./audit";
-import { REDACTION_MARKER } from "./redact";
+import { REDACTION_MARKER } from "../security";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
 

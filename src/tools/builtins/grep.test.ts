@@ -236,21 +236,21 @@ describe("grep tool", () => {
     expect(parse.success).toBe(true);
   });
 
-  test("workspace guard allows when no path provided", async () => {
-    const guard = tool.guards![0];
-    const decision = await guard({ pattern: "foo" }, createMockCtx());
+  test("workspace permission allows when no path provided", async () => {
+    const perm = tool.permissions![0];
+    const decision = await perm({ pattern: "foo" }, createMockCtx());
     expect(decision.outcome).toBe("allow");
   });
 
-  test("workspace guard allows path within workspace", async () => {
-    const guard = tool.guards![0];
-    const decision = await guard({ pattern: "foo", path: "src/" }, createMockCtx());
+  test("workspace permission allows path within workspace", async () => {
+    const perm = tool.permissions![0];
+    const decision = await perm({ pattern: "foo", path: "src/" }, createMockCtx());
     expect(decision.outcome).toBe("allow");
   });
 
-  test("workspace guard denies path outside workspace", async () => {
-    const guard = tool.guards![0];
-    const decision = await guard({ pattern: "foo", path: "../outside" }, createMockCtx());
+  test("workspace permission denies path outside workspace", async () => {
+    const perm = tool.permissions![0];
+    const decision = await perm({ pattern: "foo", path: "../outside" }, createMockCtx());
     expect(decision.outcome).toBe("deny");
     expect(decision.reason).toContain("outside");
   });

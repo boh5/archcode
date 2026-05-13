@@ -7,7 +7,7 @@ import type { ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
-import { redactValue } from "../../tools/hooks/redact";
+import { redactValue } from "../../tools/security";
 
 const DEFAULT_MAX_STEPS = 50;
 

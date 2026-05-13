@@ -5,13 +5,9 @@ import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import { createEditErrorRecoveryHook } from "../hooks/edit-error-recovery";
-import { createWorkspaceGuard } from "../hooks/workspace-guard";
-import { resolveAndValidatePath } from "../security/path-validator";
-import {
-  createReadBeforeEditGuard,
-  refreshReadSnapshot,
-} from "../hooks/read-snapshot";
+import { createEditErrorRecoveryHook, refreshReadSnapshot } from "../hooks";
+import { createMemoryIndexPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
+import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
@@ -325,7 +321,7 @@ export const fileEditTool = defineTool({
   inputSchema: FileEditInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   prepareInput: prepareEditInput,
-  guards: [createWorkspaceGuard(), createReadBeforeEditGuard()],
+  permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createMemoryIndexPermission()],
   hooks: { after: [createEditErrorRecoveryHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);

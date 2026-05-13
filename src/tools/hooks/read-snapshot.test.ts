@@ -4,39 +4,30 @@ import {
   mkdirSync,
   writeFileSync,
   realpathSync,
-  symlinkSync,
   statSync,
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "../../store/index";
 import { createMockStore } from "../../store/test-helpers";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
   createReadSnapshotAfterHook,
-  createReadBeforeEditGuard,
   refreshReadSnapshot,
   invalidateReadSnapshot,
 } from "./read-snapshot";
-import { createWorkspaceGuard } from "./workspace-guard";
-import { isSensitiveFile, createSensitiveFileGuard } from "./sensitive-file-guard";
-import { resolveAndValidatePath } from "../security/path-validator";
+import { resolveAndValidatePath } from "../security";
 
 // ─── Test dirs ───
 
-let testDir: string; // outside workspace
 let workspaceDir: string;
 
 beforeAll(() => {
-  testDir = mkdtempSync(join(tmpdir(), "rs-test-"));
   workspaceDir = mkdtempSync(join(tmpdir(), "rs-workspace-"));
   mkdirSync(join(workspaceDir, "subdir"), { recursive: true });
 });
 
 afterAll(() => {
-  rmSync(testDir, { recursive: true, force: true });
   rmSync(workspaceDir, { recursive: true, force: true });
 });
 
@@ -86,22 +77,6 @@ describe("resolveAndValidatePath", () => {
     const file = workspaceFile("in-workspace.txt");
     const result = resolveAndValidatePath(file, workspaceDir);
     expect(result.resolved).toBe(realpathSync.native(file));
-    expect(result.isWithinWorkspace).toBe(true);
-  });
-
-  test("detects path outside workspace", () => {
-    const outsideFile = join(testDir, "outside.txt");
-    writeFileSync(outsideFile, "content", "utf-8");
-    const result = resolveAndValidatePath(outsideFile, workspaceDir);
-    expect(result.isWithinWorkspace).toBe(false);
-  });
-
-  test("resolves symlinks to real path", () => {
-    const target = workspaceFile("sym-target.txt");
-    const link = join(workspaceDir, "sym-link.txt");
-    symlinkSync(target, link);
-    const result = resolveAndValidatePath(link, workspaceDir);
-    expect(result.resolved).toBe(realpathSync.native(target));
     expect(result.isWithinWorkspace).toBe(true);
   });
 
@@ -162,164 +137,6 @@ describe("createReadSnapshotAfterHook", () => {
     const returned = await hook(result, ctx);
 
     expect(returned).toBeUndefined();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// createReadBeforeEditGuard
-// ─────────────────────────────────────────────────────────────────────
-
-describe("createReadBeforeEditGuard", () => {
-  test("allows edit when path is in snapshots and mtime matches", async () => {
-    const file = workspaceFile("edit-allow.txt");
-    const realpath = realpathSync.native(file);
-    const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
-    const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
-
-    const guard = createReadBeforeEditGuard();
-    const decision = await guard({ path: file }, ctx);
-
-    expect(decision).toEqual({ outcome: "allow" });
-  });
-
-  test("allows equivalent normalized path when canonical snapshot exists", async () => {
-    const file = workspaceFile("subdir/canonical-edit.txt");
-    const realpath = realpathSync.native(file);
-    const snapshots = new Map([[realpath, statSync(realpath).mtimeMs]]);
-    const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
-
-    const guard = createReadBeforeEditGuard();
-    const decision = await guard({ path: "subdir/../subdir/canonical-edit.txt" }, ctx);
-
-    expect(decision).toEqual({ outcome: "allow" });
-  });
-
-  test("denies when path not in snapshots (not read first)", async () => {
-    const file = workspaceFile("edit-not-read.txt");
-    const store = createMockStore();
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
-
-    const guard = createReadBeforeEditGuard();
-    const decision = await guard({ path: file }, ctx);
-
-    expect(decision.outcome).toBe("deny");
-    expect(decision.reason).toContain("not been read");
-  });
-
-  test("denies when mtime changed (write conflict)", async () => {
-    const file = workspaceFile("edit-conflict.txt");
-    const realpath = realpathSync.native(file);
-    const snapshots = new Map([[realpath, 12345]]);
-    const store = createMockStore({ readSnapshots: snapshots });
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
-
-    const guard = createReadBeforeEditGuard();
-    const decision = await guard({ path: file }, ctx);
-
-    expect(decision.outcome).toBe("deny");
-    expect(decision.reason).toContain("modified");
-  });
-
-  test("denies with permission-like reason for non-existent snapshots entry", async () => {
-    const file = workspaceFile("edit-never-snapshotted.txt");
-    const store = createMockStore();
-    const ctx = makeCtx({ store, workspaceRoot: workspaceDir });
-
-    const guard = createReadBeforeEditGuard();
-    const decision = await guard({ path: file }, ctx);
-
-    expect(decision.outcome).toBe("deny");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// createWorkspaceGuard
-// ─────────────────────────────────────────────────────────────────────
-
-describe("createWorkspaceGuard", () => {
-  test("allows path inside workspace", async () => {
-    const file = workspaceFile("ws-inner.txt");
-    const guard = createWorkspaceGuard();
-    const decision = await guard({ path: file }, makeCtx({ workspaceRoot: workspaceDir }));
-
-    expect(decision).toEqual({ outcome: "allow" });
-  });
-
-  test("denies path outside workspace", async () => {
-    const outsideFile = join(testDir, "ws-outside.txt");
-    writeFileSync(outsideFile, "content", "utf-8");
-    const guard = createWorkspaceGuard();
-    const decision = await guard(
-      { path: outsideFile },
-      makeCtx({ workspaceRoot: workspaceDir }),
-    );
-
-    expect(decision.outcome).toBe("deny");
-    expect(decision.reason).toContain("outside workspace");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// isSensitiveFile / SENSITIVE_PATTERNS
-// ─────────────────────────────────────────────────────────────────────
-
-describe("isSensitiveFile", () => {
-  test.each([
-    // sensitive
-    [".env", true],
-    [".env.local", true],
-    [".env.production", true],
-    ["key.pem", true],
-    ["secret.key", true],
-    ["cert.p12", true],
-    ["id_rsa", true],
-    ["id_rsa.pub", true],
-    ["id_ed25519", true],
-    [".gitconfig", true],
-    [".bashrc", true],
-    [".zshrc", true],
-    [".npmrc", true],
-    // NOT sensitive
-    ["README.md", false],
-    ["index.ts", false],
-    ["package.json", false],
-    [".gitignore", false],
-    ["tsconfig.json", false],
-    ["main.go", false],
-  ])("isSensitiveFile(%j) returns %j", (filename, expected) => {
-    expect(isSensitiveFile(filename)).toBe(expected);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────
-// createSensitiveFileGuard
-// ─────────────────────────────────────────────────────────────────────
-
-describe("createSensitiveFileGuard", () => {
-  test("returns ask for .env files", async () => {
-    const guard = createSensitiveFileGuard();
-    const decision = await guard({ path: "/workspace/.env" }, makeCtx());
-
-    expect(decision.outcome).toBe("ask");
-    expect(decision.reason).toContain("sensitive");
-    expect(decision.prompt).toBeTruthy();
-  });
-
-  test("returns ask for .pem files", async () => {
-    const guard = createSensitiveFileGuard();
-    const decision = await guard({ path: "/workspace/cert.pem" }, makeCtx());
-
-    expect(decision.outcome).toBe("ask");
-    expect(decision.reason).toContain("sensitive");
-  });
-
-  test("returns allow for non-sensitive files", async () => {
-    const guard = createSensitiveFileGuard();
-    const decision = await guard({ path: "/workspace/index.ts" }, makeCtx());
-
-    expect(decision).toEqual({ outcome: "allow" });
   });
 });
 

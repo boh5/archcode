@@ -7,7 +7,7 @@ import type {
   MaybePromise,
   BeforeHook,
   AfterHook,
-  GuardHook,
+  ToolPermission,
   ToolExecutionResult,
 } from "./types";
 
@@ -24,7 +24,7 @@ interface DefineToolConfig<T extends z.ZodTypeAny, O extends string | ToolExecut
     after?: AfterHook[];
   };
   prepareInput?: (raw: unknown, ctx: ToolExecutionContext) => MaybePromise<unknown>;
-  guards?: GuardHook[];
+  permissions?: ToolPermission[];
   execute: (input: z.infer<T>, ctx: ToolExecutionContext) => MaybePromise<O>;
 }
 
@@ -39,7 +39,7 @@ export function defineTool<T extends z.ZodTypeAny, O extends string | ToolExecut
     traits: config.traits,
     hooks: config.hooks,
     prepareInput: config.prepareInput,
-    guards: config.guards,
+    permissions: config.permissions,
     execute: config.execute,
   };
 }

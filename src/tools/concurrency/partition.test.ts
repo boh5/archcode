@@ -10,15 +10,17 @@ function makeToolDescriptor(
   name: string,
   concurrencySafe: boolean,
 ): ToolDescriptor {
+  const destructive = !concurrencySafe;
   return {
     name,
     description: `Tool ${name}`,
     inputSchema: { safeParse: () => ({ success: true, data: {} }) } as any,
     traits: {
       readOnly: concurrencySafe,
-      destructive: !concurrencySafe,
+      destructive,
       concurrencySafe,
     },
+    ...(destructive ? { permissions: [async () => ({ outcome: "allow" })] } : {}),
     execute: async () => "",
   };
 }

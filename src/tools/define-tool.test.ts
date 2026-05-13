@@ -4,8 +4,8 @@ import { defineTool } from "./define-tool";
 import type {
   ToolDescriptor,
   ToolExecutionContext,
-  GuardHook,
-  GuardDecision,
+  ToolPermission,
+  PermissionDecision,
 } from "./types";
 
 // Minimal mock for ToolExecutionContext
@@ -213,13 +213,13 @@ describe("defineTool", () => {
     expect(result).resolves.toEqual({ path: "test.txt" });
   });
 
-  test("preserves guards array", () => {
+  test("preserves permissions array", () => {
     const schema = z.object({ path: z.string() }).strict();
 
-    const guardHook: GuardHook = async (
+    const permissionFn: ToolPermission = async (
       _input: unknown,
       _ctx: ToolExecutionContext,
-    ): Promise<GuardDecision> => {
+    ): Promise<PermissionDecision> => {
       return { outcome: "allow" };
     };
 
@@ -232,17 +232,17 @@ describe("defineTool", () => {
         destructive: false,
         concurrencySafe: true,
       },
-      guards: [guardHook],
+      permissions: [permissionFn],
       async execute(input, _ctx) {
         return `read: ${input.path}`;
       },
     });
 
-    expect(descriptor.guards).toHaveLength(1);
-    expect(descriptor.guards![0]).toBe(guardHook);
+    expect(descriptor.permissions).toHaveLength(1);
+    expect(descriptor.permissions![0]).toBe(permissionFn);
   });
 
-  test("preserves both prepareInput and guards with hooks", () => {
+  test("preserves both prepareInput and permissions with hooks", () => {
     const schema = z.object({ x: z.number() }).strict();
 
     const prepareInput = async (
@@ -255,10 +255,10 @@ describe("defineTool", () => {
       return raw;
     };
 
-    const guardHook: GuardHook = async (
+    const permissionFn: ToolPermission = async (
       _input: unknown,
       _ctx: ToolExecutionContext,
-    ): Promise<GuardDecision> => {
+    ): Promise<PermissionDecision> => {
       return { outcome: "allow" };
     };
 
@@ -277,15 +277,15 @@ describe("defineTool", () => {
       },
       hooks: { before: [beforeFn] },
       prepareInput,
-      guards: [guardHook],
+      permissions: [permissionFn],
       async execute(input, _ctx) {
         return `result: ${input.x}`;
       },
     });
 
     expect(descriptor.prepareInput).toBe(prepareInput);
-    expect(descriptor.guards).toHaveLength(1);
-    expect(descriptor.guards![0]).toBe(guardHook);
+    expect(descriptor.permissions).toHaveLength(1);
+    expect(descriptor.permissions![0]).toBe(permissionFn);
     expect(descriptor.hooks?.before).toHaveLength(1);
     expect(typeof descriptor.execute).toBe("function");
 
@@ -304,7 +304,7 @@ describe("defineTool", () => {
     });
 
     expect(minimal.prepareInput).toBeUndefined();
-    expect(minimal.guards).toBeUndefined();
+    expect(minimal.permissions).toBeUndefined();
     expect(minimal.hooks).toBeUndefined();
   });
 
@@ -326,5 +326,178 @@ describe("defineTool", () => {
     });
 
     expect(descriptor.name).toBe("fetch");
+  });
+});
+
+// ─── Permission API contract (TDD red phase) ───
+
+describe("Permission API contract — defineTool", () => {
+  test("descriptor has 'permissions' field instead of 'guards'", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const permissionFn: ToolPermission = async (
+      _input: unknown,
+      _ctx: ToolExecutionContext,
+    ): Promise<PermissionDecision> => {
+      return { outcome: "allow" };
+    };
+
+    const descriptor = defineTool({
+      name: "file_read",
+      description: "Read file",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      permissions: [permissionFn],
+      async execute(input, _ctx) {
+        return `read: ${input.path}`;
+      },
+    });
+
+    expect(Array.isArray(descriptor.permissions)).toBe(true);
+    expect(descriptor.permissions).toHaveLength(1);
+    expect(descriptor.permissions![0]).toBe(permissionFn);
+  });
+
+
+
+  test("permissions is optional and defaults to undefined", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const descriptor = defineTool({
+      name: "file_read",
+      description: "Read file",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      async execute(input, _ctx) {
+        return `read: ${input.path}`;
+      },
+    });
+
+    expect(descriptor.permissions).toBeUndefined();
+  });
+
+  test("permissions array can contain multiple ToolPermission functions", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const perm1: ToolPermission = async () => ({ outcome: "allow" });
+    const perm2: ToolPermission = async () => ({ outcome: "ask", reason: "confirm" });
+
+    const descriptor = defineTool({
+      name: "file_write",
+      description: "Write file",
+      inputSchema: schema,
+      traits: {
+        readOnly: false,
+        destructive: true,
+        concurrencySafe: false,
+      },
+      permissions: [perm1, perm2],
+      async execute(input, _ctx) {
+        return `wrote: ${input.path}`;
+      },
+    });
+
+    expect(descriptor.permissions).toHaveLength(2);
+    expect(descriptor.permissions![0]).toBe(perm1);
+    expect(descriptor.permissions![1]).toBe(perm2);
+  });
+
+  test("ToolPermission type is the new name for GuardHook", () => {
+    const perm: ToolPermission = async (_input, _ctx) => {
+      return { outcome: "deny", reason: "not allowed" };
+    };
+    expect(typeof perm).toBe("function");
+  });
+
+  test("PermissionDecision type is the new name for GuardDecision", () => {
+    const allow: PermissionDecision = { outcome: "allow" };
+    const deny: PermissionDecision = { outcome: "deny", reason: "blocked" };
+    const ask: PermissionDecision = { outcome: "ask", reason: "confirm?" };
+    const structured: PermissionDecision = {
+      outcome: "deny",
+      reason: "outside workspace",
+      errorKind: "workspace",
+      errorCode: "TOOL_FILE_OUTSIDE_WORKSPACE",
+    };
+
+    expect(allow.outcome).toBe("allow");
+    expect(deny.outcome).toBe("deny");
+    expect(ask.outcome).toBe("ask");
+    expect(structured.errorKind).toBe("workspace");
+    expect(structured.errorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+  });
+
+  test("defineTool config accepts 'permissions' instead of 'guards'", () => {
+    const schema = z.object({ path: z.string() }).strict();
+
+    const perm: ToolPermission = async () => ({ outcome: "allow" });
+
+    const descriptor = defineTool({
+      name: "file_read",
+      description: "Read file",
+      inputSchema: schema,
+      traits: {
+        readOnly: true,
+        destructive: false,
+        concurrencySafe: true,
+      },
+      permissions: [perm],
+      async execute(input, _ctx) {
+        return `read: ${input.path}`;
+      },
+    });
+
+    expect(descriptor.permissions).toHaveLength(1);
+  });
+
+
+
+  test("destructive tool descriptor without permissions is structurally valid but rejected by registry", () => {
+    const descriptor = defineTool({
+      name: "nuke",
+      description: "Nukes everything",
+      inputSchema: z.object({}).strict(),
+      traits: {
+        readOnly: false,
+        destructive: true,
+        concurrencySafe: false,
+      },
+      async execute() {
+        return "nuked";
+      },
+    });
+
+    expect(descriptor.traits.destructive).toBe(true);
+    expect(descriptor.permissions).toBeUndefined();
+  });
+
+  test("destructive tool descriptor with permissions is structurally valid", () => {
+    const perm: ToolPermission = async () => ({ outcome: "allow" });
+
+    const descriptor = defineTool({
+      name: "bash",
+      description: "Run bash",
+      inputSchema: z.object({}).strict(),
+      traits: {
+        readOnly: false,
+        destructive: true,
+        concurrencySafe: false,
+      },
+      permissions: [perm],
+      async execute() {
+        return "ok";
+      },
+    });
+
+    expect(descriptor.traits.destructive).toBe(true);
+    expect(descriptor.permissions).toHaveLength(1);
   });
 });

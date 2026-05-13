@@ -28,14 +28,14 @@ afterAll(async () => {
 });
 
 describe("lspGotoDefinitionTool", () => {
-  test("exports descriptor with correct traits, guards, and schema", () => {
+  test("exports descriptor with correct traits, permissions, and schema", () => {
     expect(lspGotoDefinitionTool.name).toBe("lsp_goto_definition");
     expect(lspGotoDefinitionTool.traits).toEqual({
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
     });
-    expect(lspGotoDefinitionTool.guards).toHaveLength(1);
+    expect(lspGotoDefinitionTool.permissions).toHaveLength(1);
     expect(lspGotoDefinitionTool.inputSchema.safeParse({ filePath: "src/main.ts", line: 1, character: 0 }).success).toBe(true);
     expect(lspGotoDefinitionTool.inputSchema.safeParse({ filePath: "src/main.ts", line: 1, character: 0, extra: true }).success).toBe(false);
   });
@@ -174,7 +174,7 @@ describe("lspGotoDefinitionTool", () => {
     expect(result.output).toContain("outside the workspace");
   });
 
-  test("workspace guard blocks traversal through registry", async () => {
+  test("workspace permission blocks traversal through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspGotoDefinitionTool);
 

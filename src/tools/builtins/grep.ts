@@ -3,7 +3,7 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createRipgrepService } from "../ripgrep/service";
 import type { RipgrepService } from "../ripgrep/service";
-import { createWorkspaceGuard } from "../hooks/workspace-guard";
+import { createWorkspacePermission } from "../permission";
 import { buildFileListArgs, buildCountArgs, buildSearchArgs, formatSearchResult, parseRgOutput } from "../ripgrep/search";
 import type { ToolExecutionResult } from "../types";
 
@@ -38,7 +38,7 @@ export const grepTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
-  guards: [createWorkspaceGuard()],
+  permissions: [createWorkspacePermission()],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     try {
       const rgPath = await rgService.ensure();

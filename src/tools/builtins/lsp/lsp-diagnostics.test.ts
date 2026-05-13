@@ -27,14 +27,14 @@ afterAll(async () => {
 });
 
 describe("lspDiagnosticsTool", () => {
-  test("exports descriptor with correct traits, guards, and schema", () => {
+  test("exports descriptor with correct traits, permissions, and schema", () => {
     expect(lspDiagnosticsTool.name).toBe("lsp_diagnostics");
     expect(lspDiagnosticsTool.traits).toEqual({
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
     });
-    expect(lspDiagnosticsTool.guards).toHaveLength(1);
+    expect(lspDiagnosticsTool.permissions).toHaveLength(1);
     expect(lspDiagnosticsTool.inputSchema).toBeDefined();
     expect(lspDiagnosticsTool.inputSchema.safeParse({ filePath: "src/main.ts" }).success).toBe(true);
     expect(lspDiagnosticsTool.inputSchema.safeParse({ filePath: "src/main.ts", extra: true }).success).toBe(false);
@@ -158,7 +158,7 @@ describe("lspDiagnosticsTool", () => {
     );
   });
 
-  test("workspace guard blocks ../ traversal through registry", async () => {
+  test("workspace permission blocks ../ traversal through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspDiagnosticsTool);
 

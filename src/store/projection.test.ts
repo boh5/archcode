@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
-import { REDACTION_MARKER } from "../tools/hooks/redact";
+import { REDACTION_MARKER } from "../tools/security";
 
 let idCounter = 0;
 

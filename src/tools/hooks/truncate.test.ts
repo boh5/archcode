@@ -2,7 +2,8 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
-import { createRedactionHook, REDACTION_MARKER } from "./redact";
+import { REDACTION_MARKER } from "../security";
+import { createRedactionHook } from "./redact";
 import { createOutputTruncator } from "./truncate";
 import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
 

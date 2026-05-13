@@ -28,14 +28,14 @@ afterAll(async () => {
 });
 
 describe("lspFindReferencesTool", () => {
-  test("exports descriptor with correct traits, guards, and schema", () => {
+  test("exports descriptor with correct traits, permissions, and schema", () => {
     expect(lspFindReferencesTool.name).toBe("lsp_find_references");
     expect(lspFindReferencesTool.traits).toEqual({
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
     });
-    expect(lspFindReferencesTool.guards).toHaveLength(1);
+    expect(lspFindReferencesTool.permissions).toHaveLength(1);
     expect(lspFindReferencesTool.inputSchema).toBeDefined();
     expect(lspFindReferencesTool.inputSchema.safeParse({ filePath: "src/main.ts", line: 1, character: 0 }).success).toBe(true);
     expect(lspFindReferencesTool.inputSchema.safeParse({ filePath: "src/main.ts", line: 1, character: 0, extra: true }).success).toBe(false);
@@ -141,7 +141,7 @@ describe("lspFindReferencesTool", () => {
     }
   });
 
-  test("workspace guard blocks ../ traversal through registry", async () => {
+  test("workspace permission blocks ../ traversal through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspFindReferencesTool);
 

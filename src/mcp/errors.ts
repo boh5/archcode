@@ -1,4 +1,4 @@
-import { REDACTION_MARKER } from "../tools/hooks/redact";
+import { REDACTION_MARKER } from "../tools/security";
 
 // ─── Error Classes ───
 

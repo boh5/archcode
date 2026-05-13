@@ -9,8 +9,8 @@ export type {
   AfterHook,
   ToolDescriptor,
   ToolCallLike,
-  GuardDecision,
-  GuardHook,
+  PermissionDecision,
+  ToolPermission,
   ToolConfirmationRequest,
   ToolConfirmationCallback,
   PermissionErrorCode,
@@ -22,25 +22,34 @@ export type {
 } from "./types";
 
 // ─── Values ───
-export { DuplicateToolError } from "./types";
+export { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 export { defineTool } from "./define-tool";
 export { ToolRegistry, ResolvedToolSet, createRegistry } from "./registry";
-export { createOutputTruncator } from "./hooks/truncate";
-export type { TruncatorOptions } from "./hooks/truncate";
+export { createOutputTruncator, type TruncatorOptions } from "./hooks";
 export {
   persistToolOutput,
   persistToolOutputValue,
   TOOL_OUTPUT_DIR,
 } from "./persist-output";
 export type { PersistOptions, PersistableToolPart } from "./persist-output";
-export { createExecutionLogger } from "./hooks/logger";
-export { createRedactionHook, redactString, redactValue, REDACTION_MARKER } from "./hooks/redact";
-export { createAuditHook } from "./hooks/audit";
-export type { AuditEvent, AuditHookOptions, AuditSink } from "./hooks/audit";
+export { createExecutionLogger } from "./hooks";
+export { redactString, redactValue, REDACTION_MARKER } from "./security";
+export { createRedactionHook, createAuditHook } from "./hooks";
+export type { AuditEvent, AuditHookOptions, AuditSink } from "./hooks";
 export {
-  combineGuardDecisions,
+  combinePermissionDecisions,
   createPermissionErrorResult,
-} from "./hooks/permission";
+  createWorkspacePermission,
+  createSensitiveFilePermission,
+  isSensitiveFile,
+  SENSITIVE_PATTERNS,
+  createMemoryIndexPermission,
+  createReadBeforeEditPermission,
+  createFileExistsPermission,
+  createBashPermission,
+  createMcpDestructivePermission,
+} from "./permission";
+export type { WorkspacePermissionOptions } from "./permission";
 export {
   TOOL_ERROR_META_KEY,
   createToolErrorResult,
@@ -52,27 +61,24 @@ export {
   serializeToolError,
 } from "./errors";
 export type { FormattedToolError, FormatToolErrorOptions, ToolErrorKind } from "./errors";
-export { createSensitiveFileGuard, isSensitiveFile, SENSITIVE_PATTERNS } from "./hooks/sensitive-file-guard";
 export {
   createReadSnapshotAfterHook,
-  createReadBeforeEditGuard,
   refreshReadSnapshot,
   invalidateReadSnapshot,
-} from "./hooks/read-snapshot";
+} from "./hooks";
 export type { AfterHook as AfterHookType } from "./types";
-export { createEditErrorRecoveryHook } from "./hooks/edit-error-recovery";
-export { createWorkspaceGuard } from "./hooks/workspace-guard";
+export { createEditErrorRecoveryHook } from "./hooks";
 export {
   PathValidator,
   createPathValidator,
   validateWorkspacePath,
-} from "./security/path-validator";
+} from "./security";
 export type {
   PathValidationError,
   PathValidationErrorCode,
   PathValidationResult,
   ResolveAndValidatePathResult,
-} from "./security/path-validator";
+} from "./security";
 
 // ─── Tool Output Cache (LRU Cleanup) ───
 export {

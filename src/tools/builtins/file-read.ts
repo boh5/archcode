@@ -3,10 +3,9 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { getSystemErrorCode } from "../../utils";
 import type { ToolExecutionResult } from "../types";
-import { createSensitiveFileGuard } from "../hooks/sensitive-file-guard";
-import { createWorkspaceGuard } from "../hooks/workspace-guard";
-import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
-import { resolveAndValidatePath } from "../security/path-validator";
+import { createSensitiveFilePermission, createWorkspacePermission } from "../permission";
+import { createReadSnapshotAfterHook } from "../hooks";
+import { resolveAndValidatePath } from "../security";
 
 // ─── Constants ───
 
@@ -55,7 +54,7 @@ export const fileReadTool = defineTool({
     "Reads a file from the filesystem and returns line-numbered text. Paths are resolved relative to the workspace root.",
   inputSchema: FileReadInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
-  guards: [createWorkspaceGuard(), createSensitiveFileGuard()],
+  permissions: [createWorkspacePermission(), createSensitiveFilePermission()],
   hooks: { after: [createReadSnapshotAfterHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved, isWithinWorkspace } = resolveAndValidatePath(

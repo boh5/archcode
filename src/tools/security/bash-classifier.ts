@@ -1,7 +1,21 @@
 import path from "node:path";
-import type { GuardDecision, GuardHook } from "../types";
-import { combineGuardDecisions } from "../hooks/permission";
+import type { PermissionDecision } from "../types";
 import { PathValidator } from "./path-validator";
+
+/**
+ * Combine multiple permission decisions using priority: deny > ask > allow.
+ * Inlined here to avoid security → permission reverse dependency.
+ */
+function combinePermissionDecisions(decisions: PermissionDecision[]): PermissionDecision {
+  if (decisions.length === 0) return { outcome: "allow" };
+  for (const decision of decisions) {
+    if (decision.outcome === "deny") return decision;
+  }
+  for (const decision of decisions) {
+    if (decision.outcome === "ask") return decision;
+  }
+  return { outcome: "allow" };
+}
 
 interface ClassifyCommandOptions {
   workspaceRoot: string;
@@ -27,7 +41,7 @@ interface ScanResult {
   substitutionCommands: string[];
 }
 
-const ASK: GuardDecision = {
+const ASK: PermissionDecision = {
   outcome: "ask",
   reason: "Command requires user confirmation",
   prompt: "Review this bash command before execution.",
@@ -48,15 +62,15 @@ const DENY_TOKENS = new Set([
 const SHELL_TOKENS = new Set(["sh", "bash", "zsh", "ksh", "dash"]);
 const WRITE_REDIRECTION_RE = /(^|[^<])>{1,2}|&>|\d>{1,2}/;
 
-function deny(reason: string): GuardDecision {
+function deny(reason: string): PermissionDecision {
   return { outcome: "deny", reason };
 }
 
-function ask(reason: string): GuardDecision {
+function ask(reason: string): PermissionDecision {
   return { outcome: "ask", reason, prompt: "Review this bash command before execution." };
 }
 
-function allow(): GuardDecision {
+function allow(): PermissionDecision {
   return { outcome: "allow" };
 }
 
@@ -267,7 +281,7 @@ function segmentHasWriteRedirection(segment: Segment): boolean {
   return segment.tokens.some((token) => WRITE_REDIRECTION_RE.test(token.value));
 }
 
-function classifyDangerousSegment(segment: Segment, nextSegment?: Segment): GuardDecision | undefined {
+function classifyDangerousSegment(segment: Segment, nextSegment?: Segment): PermissionDecision | undefined {
   const command = segment.tokens[0];
   if (!command) return undefined;
   const name = normalizeCommandName(command.value);
@@ -328,7 +342,7 @@ function validatePaths(tokens: Token[], validator: PathValidator): boolean {
   return tokens.every((token) => !token.quoted && validator.validate(token.value).ok);
 }
 
-function classifyReadOnlySegment(segment: Segment, validator: PathValidator): GuardDecision {
+function classifyReadOnlySegment(segment: Segment, validator: PathValidator): PermissionDecision {
   const command = segment.tokens[0];
   if (!command) return ask("Empty command segment requires confirmation");
   const name = normalizeCommandName(command.value);
@@ -365,7 +379,7 @@ function classifyReadOnlySegment(segment: Segment, validator: PathValidator): Gu
   return ask(`Unknown or mutating command requires confirmation: ${name}`);
 }
 
-function classifyGit(args: Token[]): GuardDecision {
+function classifyGit(args: Token[]): PermissionDecision {
   const subcommand = args[0]?.value;
   if (!subcommand) return ask("git without subcommand requires confirmation");
   if (!["status", "diff", "log"].includes(subcommand)) return ask("Only git status, diff, and log are auto-allowed");
@@ -373,12 +387,12 @@ function classifyGit(args: Token[]): GuardDecision {
   return allow();
 }
 
-function classifyBun(args: Token[]): GuardDecision {
+function classifyBun(args: Token[]): PermissionDecision {
   if (args.length === 2 && args[0]?.value === "run" && args[1]?.value === "typecheck") return allow();
   return ask("Only bun run typecheck is auto-allowed");
 }
 
-export function classifyCommand(command: string, options: ClassifyCommandOptions): GuardDecision {
+export function classifyCommand(command: string, options: ClassifyCommandOptions): PermissionDecision {
   const trimmed = command.trim();
   if (trimmed.length === 0) return ask("Empty command requires confirmation");
   if (hasDangerousRawToken(trimmed)) return deny("Command text contains a dangerous token");
@@ -391,7 +405,7 @@ export function classifyCommand(command: string, options: ClassifyCommandOptions
   if (!validator) return ask("Command cwd must resolve inside workspace");
 
   const substitutionDecisions = scanned.substitutionCommands.map((subcommand) => classifyCommand(subcommand, options));
-  const segmentDecisions: GuardDecision[] = [];
+  const segmentDecisions: PermissionDecision[] = [];
 
   for (let i = 0; i < scanned.segments.length; i += 1) {
     const segment = scanned.segments[i]!;
@@ -401,7 +415,7 @@ export function classifyCommand(command: string, options: ClassifyCommandOptions
   }
 
   if (scanned.hasUntrustedSyntax || scanned.substitutionCommands.length > 0) {
-    const substitutionDecision = combineGuardDecisions(substitutionDecisions);
+    const substitutionDecision = combinePermissionDecisions(substitutionDecisions);
     if (substitutionDecision.outcome === "deny") return substitutionDecision;
     return ask("Substitution, subshell, or redirection syntax requires confirmation");
   }
@@ -411,15 +425,7 @@ export function classifyCommand(command: string, options: ClassifyCommandOptions
     segmentDecisions.push(classifyReadOnlySegment(segment, validator));
   }
 
-  return combineGuardDecisions(segmentDecisions);
+  return combinePermissionDecisions(segmentDecisions);
 }
 
-export function createBashGuard(workspaceRoot: string): GuardHook {
-  return (input, ctx) => {
-    if (!input || typeof input !== "object" || !("command" in input) || typeof input.command !== "string") {
-      return ask("Bash guard requires a command string");
-    }
-    const cwd = "cwd" in input && typeof input.cwd === "string" ? input.cwd : undefined;
-    return classifyCommand(input.command, { workspaceRoot: ctx.workspaceRoot || workspaceRoot, cwd });
-  };
-}
+

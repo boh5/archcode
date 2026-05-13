@@ -2,9 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMockStore } from "../../store/test-helpers";
-import type { ToolExecutionContext } from "../types";
-import { classifyCommand, createBashGuard } from "./bash-classifier";
+import { classifyCommand } from "./bash-classifier";
 
 let testDir: string;
 let workspaceDir: string;
@@ -27,20 +25,6 @@ afterAll(() => {
 
 function outcome(command: string, cwd?: string) {
   return classifyCommand(command, { workspaceRoot: workspaceDir, cwd }).outcome;
-}
-
-function makeCtx(workspaceRoot = workspaceDir): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "bash",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["bash"]),
-    workspaceRoot,
-  };
 }
 
 describe("classifyCommand allowlist", () => {
@@ -179,21 +163,5 @@ describe("classifyCommand ask cases", () => {
 
   test("asks when cwd resolves outside workspace", () => {
     expect(outcome("pwd", outsideDir)).toBe("ask");
-  });
-});
-
-describe("createBashGuard", () => {
-  test("classifies input.command with context workspace root", async () => {
-    const guard = createBashGuard("/unused");
-    const decision = await guard({ command: "cat src/main.ts" }, makeCtx());
-
-    expect(decision.outcome).toBe("allow");
-  });
-
-  test("asks for invalid guard input", async () => {
-    const guard = createBashGuard(workspaceDir);
-    const decision = await guard({ value: "pwd" }, makeCtx());
-
-    expect(decision.outcome).toBe("ask");
   });
 });

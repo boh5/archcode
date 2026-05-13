@@ -6,7 +6,8 @@ import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
+import { createWorkspacePermission } from "../../permission";
+import { isRecord } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatReferences } from "./format-output";
@@ -32,7 +33,7 @@ export const lspFindReferencesTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
-  guards: [createWorkspaceGuardForFilePath()],
+  permissions: [createWorkspacePermission({ pathKey: "filePath" })],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     const includeDeclaration = input.includeDeclaration ?? true;
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(

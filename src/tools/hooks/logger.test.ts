@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createExecutionLogger } from "./logger";
-import { REDACTION_MARKER } from "./redact";
+import { REDACTION_MARKER } from "../security";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {

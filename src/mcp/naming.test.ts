@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { REDACTION_MARKER } from "../tools/hooks/redact";
+import { REDACTION_MARKER } from "../tools/security";
 import {
   McpServerNameError,
   McpToolNameError,

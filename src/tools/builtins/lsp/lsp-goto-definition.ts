@@ -6,7 +6,8 @@ import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
+import { createWorkspacePermission } from "../../permission";
+import { isRecord } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDefinition } from "./format-output";
@@ -39,7 +40,7 @@ export const lspGotoDefinitionTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
-  guards: [createWorkspaceGuardForFilePath()],
+  permissions: [createWorkspacePermission({ pathKey: "filePath" })],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(
       input.filePath,

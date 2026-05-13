@@ -28,14 +28,14 @@ afterAll(async () => {
 });
 
 describe("lspSymbolsTool", () => {
-  test("exports descriptor with correct traits, guards, and schema", () => {
+  test("exports descriptor with correct traits, permissions, and schema", () => {
     expect(lspSymbolsTool.name).toBe("lsp_symbols");
     expect(lspSymbolsTool.traits).toEqual({
       readOnly: true,
       destructive: false,
       concurrencySafe: true,
     });
-    expect(lspSymbolsTool.guards).toHaveLength(1);
+    expect(lspSymbolsTool.permissions).toHaveLength(1);
     expect(lspSymbolsTool.inputSchema.safeParse({ scope: "document", filePath: "src/main.ts" }).success).toBe(true);
     expect(lspSymbolsTool.inputSchema.safeParse({ scope: "workspace", query: "main" }).success).toBe(true);
     expect(lspSymbolsTool.inputSchema.safeParse({ scope: "document" }).success).toBe(false);
@@ -181,7 +181,7 @@ describe("lspSymbolsTool", () => {
     }
   });
 
-  test("workspace guard blocks document path outside workspace through registry", async () => {
+  test("workspace permission blocks document path outside workspace through registry", async () => {
     const registry = new ToolRegistry();
     registry.register(lspSymbolsTool);
 

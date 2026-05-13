@@ -9,16 +9,16 @@ import type {
   ToolCallLike,
   ToolExecutionContext,
   ToolExecutionResult,
-  GuardHook,
-  GuardDecision,
+  ToolPermission,
+  PermissionDecision,
   PermissionErrorCode,
 } from "./types";
-import { DuplicateToolError } from "./types";
+import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 import {
-  combineGuardDecisions,
+  combinePermissionDecisions,
   createPermissionErrorResult,
-} from "./hooks/permission";
-import { redactString, redactValue } from "./hooks/redact";
+} from "./permission";
+import { redactString, redactValue } from "./security/redaction";
 import {
   createToolErrorResult,
   extractCode,
@@ -32,18 +32,21 @@ export class ToolRegistry {
   private _logger: Logger | undefined;
 
   globalHooks: { before: BeforeHook[]; after: AfterHook[] };
-  globalGuards: GuardHook[];
+  globalPermissions: ToolPermission[];
 
   constructor(logger?: Logger) {
     this._descriptors = new Map();
     this._logger = logger;
     this.globalHooks = { before: [], after: [] };
-    this.globalGuards = [];
+    this.globalPermissions = [];
   }
 
   register(descriptor: AnyToolDescriptor): void {
     if (this._descriptors.has(descriptor.name)) {
       throw new DuplicateToolError(descriptor.name);
+    }
+    if (descriptor.traits.destructive && (!descriptor.permissions || descriptor.permissions.length === 0)) {
+      throw new DestructiveToolPermissionError(descriptor.name);
     }
     this._descriptors.set(descriptor.name, descriptor);
   }
@@ -219,16 +222,16 @@ export class ToolRegistry {
     input: unknown,
     ctx: ToolExecutionContext,
   ): Promise<ToolExecutionResult | undefined> {
-    const decisions: GuardDecision[] = [];
+    const decisions: PermissionDecision[] = [];
 
     try {
-      for (const guard of this.globalGuards) {
-        decisions.push(redactDecision(await guard(input, ctx)));
+      for (const permission of this.globalPermissions) {
+        decisions.push(redactDecision(await permission(input, ctx)));
       }
 
-      if (descriptor.guards) {
-        for (const guard of descriptor.guards) {
-          decisions.push(redactDecision(await guard(input, ctx)));
+      if (descriptor.permissions) {
+        for (const permission of descriptor.permissions) {
+          decisions.push(redactDecision(await permission(input, ctx)));
         }
       }
     } catch (err) {
@@ -238,7 +241,7 @@ export class ToolRegistry {
       );
     }
 
-    const decision = combineGuardDecisions(decisions);
+    const decision = combinePermissionDecisions(decisions);
     ctx.permissionOutcome = decision.outcome;
     if (decision.outcome === "allow") {
       return undefined;
@@ -352,7 +355,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function redactDecision(decision: GuardDecision): GuardDecision {
+function redactDecision(decision: PermissionDecision): PermissionDecision {
   return {
     outcome: decision.outcome,
     ...(decision.reason ? { reason: redactString(decision.reason) } : {}),

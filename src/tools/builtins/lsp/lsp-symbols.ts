@@ -6,7 +6,8 @@ import { BUILTIN_SERVER_DEFINITIONS, getServerDefinitionsForLanguage } from "../
 import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import { isRecord, createWorkspaceGuardForFilePath } from "./shared";
+import { createWorkspacePermission } from "../../permission";
+import { isRecord } from "./shared";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDocumentSymbols, formatWorkspaceSymbols } from "./format-output";
@@ -29,7 +30,7 @@ export const lspSymbolsTool = defineTool({
     destructive: false,
     concurrencySafe: true,
   },
-  guards: [createWorkspaceGuardForFilePath()],
+  permissions: [createWorkspacePermission({ pathKey: "filePath" })],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     if (input.scope === "workspace") {
       return handleWorkspaceSymbols(input.query!, ctx);

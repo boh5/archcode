@@ -1,6 +1,6 @@
 import type { ZodError } from "zod";
 import type { ToolExecutionResult } from "./types";
-import { redactString, redactValue } from "./hooks/redact";
+import { redactString, redactValue } from "./security/redaction";
 
 export const TOOL_ERROR_META_KEY = "toolError";
 

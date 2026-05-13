@@ -61,7 +61,7 @@ export type AfterHook = (
   ctx: ToolExecutionContext,
 ) => MaybePromise<ToolExecutionResult | void>;
 
-export type GuardDecision = {
+export type PermissionDecision = {
   outcome: "allow" | "deny" | "ask";
   reason?: string;
   prompt?: string;
@@ -69,10 +69,10 @@ export type GuardDecision = {
   errorCode?: string;
 };
 
-export type GuardHook = (
+export type ToolPermission = (
   input: unknown,
   ctx: ToolExecutionContext,
-) => MaybePromise<GuardDecision>;
+) => MaybePromise<PermissionDecision>;
 
 export interface ToolConfirmationRequest {
   toolName: string;
@@ -165,7 +165,7 @@ export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult 
     after?: AfterHook[];
   };
   prepareInput?: (raw: unknown, ctx: ToolExecutionContext) => MaybePromise<unknown>;
-  guards?: GuardHook[];
+  permissions?: ToolPermission[];
   execute: (input: I, ctx: ToolExecutionContext) => MaybePromise<O>;
 }
 
@@ -181,5 +181,12 @@ export class DuplicateToolError extends Error {
   constructor(toolName: string) {
     super(`Duplicate tool "${toolName}" is already registered`);
     this.name = "DuplicateToolError";
+  }
+}
+
+export class DestructiveToolPermissionError extends Error {
+  constructor(toolName: string) {
+    super(`Destructive tool "${toolName}" must declare at least one permission`);
+    this.name = "DestructiveToolPermissionError";
   }
 }

@@ -17,7 +17,7 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/index";
 import { createMockStore } from "../../store/test-helpers";
 import { inferToolErrorKindFromResult, TOOL_ERROR_META_KEY } from "../errors";
-import { createReadSnapshotAfterHook } from "../hooks/read-snapshot";
+import { createReadSnapshotAfterHook } from "../hooks";
 import { ToolRegistry } from "../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileEditTool } from "./file-edit";
@@ -240,7 +240,7 @@ describe("fileEditTool", () => {
     );
   });
 
-  test("read-before-edit guard denies when file was not read", async () => {
+  test("read-before-edit permission denies when file was not read", async () => {
     await writeWorkspaceFile("not-read.txt", "content");
     const ctx = makeCtx();
 
@@ -272,7 +272,7 @@ describe("fileEditTool", () => {
     expect(await Bun.file(filePath).text()).toBe("after\n");
   });
 
-  test("read-before-edit guard denies when mtime differs from snapshot", async () => {
+  test("read-before-edit permission denies when mtime differs from snapshot", async () => {
     const filePath = await writeWorkspaceFile("mtime.txt", "content");
     const resolved = realpathSync.native(filePath);
     const ctx = makeCtx({ store: createMockStore({ readSnapshots: new Map([[resolved, 1]]) }) });
@@ -286,7 +286,7 @@ describe("fileEditTool", () => {
     expect(result.output).toContain("modified since it was read");
   });
 
-  test("workspace guard denies paths outside workspace", async () => {
+  test("workspace permission denies paths outside workspace", async () => {
     const result = await executeThroughRegistry(
       { path: "../outside.txt", edits: [{ oldString: "a", newString: "b" }] },
       makeCtx(),

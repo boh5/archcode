@@ -11,11 +11,15 @@ import type {
   Logger,
   ToolExecutionContext,
   ToolCallLike,
+  ToolPermission,
+  PermissionDecision,
 } from "./types";
 import { DuplicateToolError } from "./types";
+import { DestructiveToolPermissionError } from "./types";
 import { createExecutionLogger } from "./hooks/logger";
 import { createAuditHook, type AuditEvent } from "./hooks/audit";
-import { createRedactionHook, REDACTION_MARKER } from "./hooks/redact";
+import { REDACTION_MARKER } from "./security/redaction";
+import { createRedactionHook } from "./hooks/redact";
 import { createOutputTruncator } from "./hooks/truncate";
 import { TOOL_ERROR_META_KEY } from "./errors";
 import { jsonSchema } from "ai";
@@ -71,6 +75,83 @@ describe("ToolRegistry", () => {
         DuplicateToolError,
       );
     });
+
+    test("throws DestructiveToolPermissionError for destructive tool with no permissions", () => {
+      const desc: ToolDescriptor = {
+        name: "nuke",
+        description: "Nukes everything",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: true, concurrencySafe: false },
+        async execute() {
+          return "nuked";
+        },
+      };
+
+      expect(() => registry.register(desc)).toThrow(DestructiveToolPermissionError);
+      expect(() => registry.register(desc)).toThrow(/nuke/);
+    });
+
+    test("throws DestructiveToolPermissionError for destructive tool with empty permissions array", () => {
+      const desc: ToolDescriptor = {
+        name: "nuke",
+        description: "Nukes everything",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: true, concurrencySafe: false },
+        permissions: [],
+        async execute() {
+          return "nuked";
+        },
+      };
+
+      expect(() => registry.register(desc)).toThrow(DestructiveToolPermissionError);
+    });
+
+    test("allows destructive tool with at least one permission", () => {
+      const perm: ToolPermission = async () => ({ outcome: "allow" });
+      const desc: ToolDescriptor = {
+        name: "bash",
+        description: "Run bash",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: false, destructive: true, concurrencySafe: false },
+        permissions: [perm],
+        async execute() {
+          return "ok";
+        },
+      };
+
+      expect(() => registry.register(desc)).not.toThrow();
+      expect(registry.get("bash")).toBe(desc);
+    });
+
+    test("allows non-destructive tool with no permissions", () => {
+      const desc: ToolDescriptor = {
+        name: "read",
+        description: "Read-only tool",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        async execute() {
+          return "ok";
+        },
+      };
+
+      expect(() => registry.register(desc)).not.toThrow();
+      expect(registry.get("read")).toBe(desc);
+    });
+
+    test("allows non-destructive tool with empty permissions array", () => {
+      const desc: ToolDescriptor = {
+        name: "read",
+        description: "Read-only tool",
+        inputSchema: z.object({}).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        permissions: [],
+        async execute() {
+          return "ok";
+        },
+      };
+
+      expect(() => registry.register(desc)).not.toThrow();
+    });
   });
 
   describe("registerAll()", () => {
@@ -120,7 +201,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test("initializes to empty arrays", () => {
       expect(registry.globalHooks.before).toEqual([]);
       expect(registry.globalHooks.after).toEqual([]);
-      expect(registry.globalGuards).toEqual([]);
+      expect(registry.globalPermissions).toEqual([]);
     });
   });
 
@@ -403,8 +484,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test("hook ordering is correct", async () => {
       const order: string[] = [];
 
-      registry.globalGuards.push(async () => {
-        order.push("global-guard");
+      registry.globalPermissions.push(async () => {
+        order.push("global-perm");
         return { outcome: "allow" };
       });
 
@@ -430,9 +511,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         order.push("prepare-input");
         return raw;
       };
-      desc.guards = [
+      desc.permissions = [
         async () => {
-          order.push("per-tool-guard");
+          order.push("per-tool-perm");
           return { outcome: "allow" };
         },
       ];
@@ -454,8 +535,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       expect(order).toEqual([
         "prepare-input",
-        "global-guard",
-        "per-tool-guard",
+        "global-perm",
+        "per-tool-perm",
         "global-before",
         "per-tool-before",
         "executor",
@@ -640,6 +721,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test("registered destructiveTool not in allowedTools returns TOOL_NOT_ALLOWED and skips executor spy", async () => {
       const desc = makeSpiedDescriptor("destructiveTool");
       desc.traits = { readOnly: false, destructive: true, concurrencySafe: false };
+      desc.permissions = [async () => ({ outcome: "allow" })];
       registry.register(desc);
 
       const result = await registry.execute(
@@ -652,11 +734,11 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(desc.execute).not.toHaveBeenCalled();
     });
 
-    test("guard deny uses stable permission metadata and skips hooks plus executor", async () => {
+    test("permission deny uses stable permission metadata and skips hooks plus executor", async () => {
       const order: string[] = [];
       const desc = makeDescriptor("echo");
-      desc.guards = [async () => {
-        order.push("per-tool-guard");
+      desc.permissions = [async () => {
+        order.push("per-tool-perm");
         return { outcome: "allow" };
       }];
       desc.hooks = { before: [async () => order.push("per-tool-before")] };
@@ -665,8 +747,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         return "ok";
       };
       registry.register(desc);
-      registry.globalGuards.push(async () => {
-        order.push("global-guard");
+      registry.globalPermissions.push(async () => {
+        order.push("global-perm");
         return { outcome: "deny", reason: "blocked" };
       });
       registry.globalHooks.after.push(async (result) => {
@@ -680,12 +762,12 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(result.output).toContain("blocked");
       expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
       expect(result.meta?.skippedExecution).toBe(true);
-      expect(order).toEqual(["global-guard", "per-tool-guard", "global-after"]);
+      expect(order).toEqual(["global-perm", "per-tool-perm", "global-after"]);
     });
 
-    test("guard deny uses guard-provided structured error kind and code", async () => {
+    test("permission deny uses permission-provided structured error kind and code", async () => {
       const desc = makeSpiedDescriptor("safeTool");
-      desc.guards = [async () => ({
+      desc.permissions = [async () => ({
         outcome: "deny",
         reason: "must read before write",
         errorKind: "read-before-write",
@@ -709,9 +791,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(desc.execute).not.toHaveBeenCalled();
     });
 
-    test("guard deny without structured fields falls back to generic permission denial", async () => {
+    test("permission deny without structured fields falls back to generic permission denial", async () => {
       const desc = makeSpiedDescriptor("safeTool");
-      desc.guards = [async () => ({ outcome: "deny", reason: "blocked" })];
+      desc.permissions = [async () => ({ outcome: "deny", reason: "blocked" })];
       registry.register(desc);
 
       const result = await registry.execute(
@@ -728,7 +810,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(desc.execute).not.toHaveBeenCalled();
     });
 
-    test("guard deny skips before executor per-tool after and still runs global after", async () => {
+    test("permission deny skips before executor per-tool after and still runs global after", async () => {
       const order: string[] = [];
       const desc = makeSpiedDescriptor("sensitiveReadTool");
       desc.hooks = {
@@ -738,8 +820,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
           return result;
         }],
       };
-      desc.guards = [async () => {
-        order.push("descriptor-guard");
+      desc.permissions = [async () => {
+        order.push("descriptor-perm");
         return { outcome: "deny", reason: "sensitive read denied" };
       }];
       registry.register(desc);
@@ -757,13 +839,13 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(result.isError).toBe(true);
       expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
       expect(desc.execute).not.toHaveBeenCalled();
-      expect(order).toEqual(["descriptor-guard", "global-after"]);
+      expect(order).toEqual(["descriptor-perm", "global-after"]);
     });
 
     test("ask decision calls confirmation callback and approval continues", async () => {
       const order: string[] = [];
-      registry.globalGuards.push(async () => {
-        order.push("global-guard");
+      registry.globalPermissions.push(async () => {
+        order.push("global-perm");
         return { outcome: "ask", reason: "needs approval" };
       });
       registry.globalHooks.before.push(async () => {
@@ -791,14 +873,14 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       expect(result).toEqual({ output: "approved", isError: false });
       expect(confirmPermission).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(["global-guard", "confirm", "global-before", "executor"]);
+      expect(order).toEqual(["global-perm", "confirm", "global-before", "executor"]);
     });
 
-    test("guard ask approve runs before hooks and executor for safeTool", async () => {
+    test("permission ask approve runs before hooks and executor for safeTool", async () => {
       const order: string[] = [];
       const desc = makeSpiedDescriptor("safeTool");
-      desc.guards = [async () => {
-        order.push("descriptor-guard");
+      desc.permissions = [async () => {
+        order.push("descriptor-perm");
         return { outcome: "ask", reason: "confirm safe tool" };
       }];
       desc.hooks = {
@@ -826,7 +908,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       expect(result).toEqual({ output: "approved", isError: false });
       expect(desc.execute).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(["descriptor-guard", "confirm", "global-before", "per-tool-before", "executor"]);
+      expect(order).toEqual(["descriptor-perm", "confirm", "global-before", "per-tool-before", "executor"]);
     });
 
     test.each([
@@ -841,7 +923,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
           return "nope";
         },
       });
-      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
       registry.globalHooks.after.push(async (result) => {
         order.push("global-after");
         return result;
@@ -860,7 +942,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
     test("ask decision without confirmation callback returns unavailable", async () => {
       registry.register(makeDescriptor("echo"));
-      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
 
       const result = await registry.execute(makeToolCall(), makeContext());
 
@@ -871,7 +953,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
     test("confirmation rejection returns failed permission result", async () => {
       registry.register(makeDescriptor("echo"));
-      registry.globalGuards.push(async () => ({ outcome: "ask", reason: "confirm" }));
+      registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
 
       const result = await registry.execute(
         makeToolCall(),
@@ -884,10 +966,10 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(result.meta?.skippedExecution).toBe(true);
     });
 
-    test("descriptor with no guards defaults to allow when global guards allow", async () => {
+    test("descriptor with no permissions defaults to allow when global permissions allow", async () => {
       const desc = makeSpiedDescriptor("safeTool");
       registry.register(desc);
-      registry.globalGuards.push(async () => ({ outcome: "allow" }));
+      registry.globalPermissions.push(async () => ({ outcome: "allow" }));
 
       const result = await registry.execute(
         makeToolCall({ toolName: "safeTool", input: { msg: "open" } }),
@@ -898,7 +980,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(desc.execute).toHaveBeenCalledTimes(1);
     });
 
-    test("no global guards and no descriptor guards defaults to allow", async () => {
+    test("no global permissions and no descriptor permissions defaults to allow", async () => {
       const desc = makeSpiedDescriptor("safeTool");
       registry.register(desc);
 
@@ -931,7 +1013,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
     test("global after hook throwing on permission denied preserves current global-after semantics", async () => {
       const desc = makeSpiedDescriptor("safeTool");
-      desc.guards = [async () => ({ outcome: "deny", reason: "blocked" })];
+      desc.permissions = [async () => ({ outcome: "deny", reason: "blocked" })];
       registry.register(desc);
       const secondAfter = mock(async (result) => result);
       registry.globalHooks.after.push(async () => {
@@ -956,9 +1038,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
       ["unavailable", "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE"],
       ["failed", "TOOL_PERMISSION_CONFIRMATION_FAILED"],
-    ] as const)("guard ask %s returns %s and skips execution", async (scenario, code) => {
+    ] as const)("permission ask %s returns %s and skips execution", async (scenario, code) => {
       const desc = makeSpiedDescriptor("sensitiveReadTool");
-      desc.guards = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
+      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
       registry.register(desc);
 
       const confirmPermission =
@@ -1010,19 +1092,19 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(order).toEqual(["prepare-input", "global-after"]);
     });
 
-    test("global guards run before descriptor guards", async () => {
+    test("global permissions run before descriptor permissions", async () => {
       const order: string[] = [];
-      registry.globalGuards.push(async () => {
-        order.push("global-guard-1");
+      registry.globalPermissions.push(async () => {
+        order.push("global-perm-1");
         return { outcome: "allow" };
       });
-      registry.globalGuards.push(async () => {
-        order.push("global-guard-2");
+      registry.globalPermissions.push(async () => {
+        order.push("global-perm-2");
         return { outcome: "ask", reason: "global ask" };
       });
       const desc = makeSpiedDescriptor("safeTool");
-      desc.guards = [async () => {
-        order.push("descriptor-guard");
+      desc.permissions = [async () => {
+        order.push("descriptor-perm");
         return { outcome: "allow" };
       }];
       registry.register(desc);
@@ -1036,7 +1118,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         }),
       );
 
-      expect(order).toEqual(["global-guard-1", "global-guard-2", "descriptor-guard"]);
+      expect(order).toEqual(["global-perm-1", "global-perm-2", "descriptor-perm"]);
     });
   });
 });
@@ -1345,13 +1427,13 @@ describe("hook integration with registry", () => {
     expect(fileContent).toContain("ERROR: [REDACTED:SECRET]");
   });
 
-  // 3. Permission guard runs before executor without mutating input
-  test("permission guard runs before executor without mutating input", async () => {
+  // 3. Permission check runs before executor without mutating input
+  test("permission check runs before executor without mutating input", async () => {
     const registry = createRegistry();
     registry.register(makeDescriptor("echo"));
     const order: string[] = [];
-    registry.globalGuards.push(async () => {
-      order.push("guard");
+    registry.globalPermissions.push(async () => {
+      order.push("perm");
       return { outcome: "allow" };
     });
     registry.globalHooks.before.push(async () => {
@@ -1365,7 +1447,7 @@ describe("hook integration with registry", () => {
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("echo: hello");
-    expect(order).toEqual(["guard", "before"]);
+    expect(order).toEqual(["perm", "before"]);
   });
 
   // 4. Truncator handles large successful output, preserves isError false
@@ -1463,13 +1545,13 @@ describe("hook integration with registry", () => {
     expect(after).toHaveBeenCalledTimes(2);
   });
 
-  test("redacts guard denial and confirmation prompt before callback and result", async () => {
+  test("redacts permission denial and confirmation prompt before callback and result", async () => {
     const registry = createRegistry();
     const rawSecret = "sk_test_1234567890abcdef";
     registry.register(makeDescriptor("echo"));
     registry.globalHooks.after.push(createRedactionHook());
 
-    registry.globalGuards.push(async () => ({ outcome: "ask", prompt: `approve token=${rawSecret}` }));
+    registry.globalPermissions.push(async () => ({ outcome: "ask", prompt: `approve token=${rawSecret}` }));
     const confirmPermission = mock(async (request) => {
       expect(JSON.stringify(request)).not.toContain(rawSecret);
       expect(JSON.stringify(request)).toContain(REDACTION_MARKER);
@@ -1487,9 +1569,167 @@ describe("hook integration with registry", () => {
     const denyRegistry = createRegistry();
     denyRegistry.register(makeDescriptor("echo"));
     denyRegistry.globalHooks.after.push(createRedactionHook());
-    denyRegistry.globalGuards.push(async () => ({ outcome: "deny", reason: `blocked secret=${rawSecret}` }));
+    denyRegistry.globalPermissions.push(async () => ({ outcome: "deny", reason: `blocked secret=${rawSecret}` }));
     const result = await denyRegistry.execute(makeToolCall(), makeContext());
     expect(result.output).toContain(`blocked secret=${REDACTION_MARKER}`);
     expect(result.output).not.toContain(rawSecret);
+  });
+});
+
+// ─── Permission API contract (TDD red phase) ───
+
+describe("Permission API contract — registry", () => {
+  let registry: ToolRegistry;
+
+  beforeEach(() => {
+    registry = createRegistry();
+  });
+
+  describe("globalPermissions", () => {
+    test("registry has 'globalPermissions' field instead of 'globalGuards'", () => {
+      expect(Array.isArray(registry.globalPermissions)).toBe(true);
+      expect(registry.globalPermissions).toEqual([]);
+    });
+
+    test("globalPermissions is a mutable array accepting ToolPermission functions", () => {
+      const perm: ToolPermission = async () => ({ outcome: "allow" });
+      registry.globalPermissions.push(perm);
+      expect(registry.globalPermissions).toHaveLength(1);
+      expect(registry.globalPermissions[0]).toBe(perm);
+    });
+
+
+  });
+
+  describe("descriptor.permissions", () => {
+    test("descriptor uses 'permissions' instead of 'guards'", () => {
+      const perm: ToolPermission = async () => ({ outcome: "allow" });
+      const desc: ToolDescriptor = {
+        name: "test_perm",
+        description: "Test permission",
+        inputSchema: z.object({ msg: z.string() }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        permissions: [perm],
+        async execute(input) {
+          return `echo: ${(input as { msg: string }).msg}`;
+        },
+      };
+
+      expect(Array.isArray(desc.permissions)).toBe(true);
+      expect(desc.permissions).toHaveLength(1);
+    });
+
+
+  });
+
+  describe("ctx.permissionOutcome", () => {
+    function makeContext(
+      overrides?: Partial<ToolExecutionContext>,
+    ): ToolExecutionContext {
+      const ac = new AbortController();
+      return {
+        store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
+        toolName: "echo",
+        toolCallId: "call-1",
+        input: { msg: "hello" },
+        step: 0,
+        abort: ac.signal,
+        startedAt: 0,
+        allowedTools: new Set(["echo"]),
+        workspaceRoot: "/tmp",
+        ...overrides,
+      };
+    }
+
+    function makeToolCall(
+      overrides?: Partial<ToolCallLike>,
+    ): ToolCallLike {
+      return {
+        toolCallId: "call-1",
+        toolName: "echo",
+        input: { msg: "hello" },
+        ...overrides,
+      };
+    }
+
+    test("permissionOutcome is set to 'allow' when all permissions allow", async () => {
+      const desc: ToolDescriptor = {
+        name: "echo",
+        description: "Tool: echo",
+        inputSchema: z.object({ msg: z.string() }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        permissions: [async () => ({ outcome: "allow" })],
+        async execute(input) {
+          return `echo: ${(input as { msg: string }).msg}`;
+        },
+      };
+      registry.register(desc);
+      registry.globalPermissions.push(async () => ({ outcome: "allow" }));
+
+      const ctx = makeContext();
+      await registry.execute(makeToolCall(), ctx);
+
+      expect(ctx.permissionOutcome).toBe("allow");
+    });
+
+    test("permissionOutcome is set to 'deny' when a permission denies", async () => {
+      const desc: ToolDescriptor = {
+        name: "echo",
+        description: "Tool: echo",
+        inputSchema: z.object({ msg: z.string() }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        permissions: [async () => ({ outcome: "deny", reason: "blocked" })],
+        async execute(input) {
+          return `echo: ${(input as { msg: string }).msg}`;
+        },
+      };
+      registry.register(desc);
+
+      const ctx = makeContext();
+      await registry.execute(makeToolCall(), ctx);
+
+      expect(ctx.permissionOutcome).toBe("deny");
+    });
+
+    test("permissionOutcome is set to 'ask' when a permission asks", async () => {
+      const desc: ToolDescriptor = {
+        name: "echo",
+        description: "Tool: echo",
+        inputSchema: z.object({ msg: z.string() }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        permissions: [async () => ({ outcome: "ask", reason: "confirm?" })],
+        async execute(input) {
+          return `echo: ${(input as { msg: string }).msg}`;
+        },
+      };
+      registry.register(desc);
+
+      const ctx = makeContext();
+      await registry.execute(makeToolCall(), ctx);
+
+      expect(ctx.permissionOutcome).toBe("ask");
+    });
+  });
+
+  describe("combinePermissionDecisions", () => {
+    test("combinePermissionDecisions is exported from ./permission", async () => {
+      const { combinePermissionDecisions } = await import("./permission");
+      expect(typeof combinePermissionDecisions).toBe("function");
+
+      const allow = combinePermissionDecisions([{ outcome: "allow" }]);
+      expect(allow.outcome).toBe("allow");
+
+      const deny = combinePermissionDecisions([
+        { outcome: "allow" },
+        { outcome: "deny", reason: "blocked" },
+      ]);
+      expect(deny.outcome).toBe("deny");
+
+      const ask = combinePermissionDecisions([
+        { outcome: "allow" },
+        { outcome: "ask", reason: "confirm?" },
+      ]);
+      expect(ask.outcome).toBe("ask");
+    });
   });
 });

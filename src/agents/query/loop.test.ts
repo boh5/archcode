@@ -84,15 +84,17 @@ function createNamedTool(
   name: string,
   execute: (input: z.infer<typeof testToolSchema>, ctx: ToolExecutionContext) => string | Promise<string> = async () => `${name} ok`,
 ) {
+  const isDestructive = name === "destructiveTool";
   return defineTool({
     name,
     description: `Mock tool: ${name}`,
     inputSchema: testToolSchema,
     traits: {
-      readOnly: name !== "destructiveTool",
-      destructive: name === "destructiveTool",
-      concurrencySafe: name !== "destructiveTool",
+      readOnly: !isDestructive,
+      destructive: isDestructive,
+      concurrencySafe: !isDestructive,
     },
+    ...(isDestructive ? { permissions: [async () => ({ outcome: "allow" })] } : {}),
     execute,
   });
 }
@@ -618,7 +620,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       message: string;
       toolName: "safeTool" | "destructiveTool" | "sensitiveReadTool";
     }> = [
-      { code: "TOOL_PERMISSION_DENIED", message: "guard denied sensitive read", toolName: "sensitiveReadTool" },
+      { code: "TOOL_PERMISSION_DENIED", message: "permission denied sensitive read", toolName: "sensitiveReadTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_DENIED", message: "user denied destructive tool", toolName: "destructiveTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_TIMEOUT", message: "confirmation timed out", toolName: "destructiveTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE", message: "confirmation unavailable", toolName: "sensitiveReadTool" },
@@ -637,9 +639,9 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       if (testCase.code === "TOOL_PREPARE_INPUT_FAILED") {
         descriptor.prepareInput = async () => { throw new Error(testCase.message); };
       } else if (testCase.code === "TOOL_PERMISSION_DENIED") {
-        descriptor.guards = [async () => ({ outcome: "deny", reason: testCase.message })];
+        descriptor.permissions = [async () => ({ outcome: "deny", reason: testCase.message })];
       } else {
-        descriptor.guards = [async () => ({ outcome: "ask", reason: testCase.message })];
+        descriptor.permissions = [async () => ({ outcome: "ask", reason: testCase.message })];
         if (testCase.code === "TOOL_PERMISSION_CONFIRMATION_DENIED") {
           confirmPermission = async () => "deny";
         } else if (testCase.code === "TOOL_PERMISSION_CONFIRMATION_TIMEOUT") {
@@ -1628,7 +1630,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const registry = createTestRegistry(async () => "ok");
     const tool = registry.get("echo");
     if (!tool) throw new Error("Expected echo tool");
-    tool.guards = [async () => ({ outcome: "ask", reason: `confirm token=${rawSecret}` })];
+    tool.permissions = [async () => ({ outcome: "ask", reason: `confirm token=${rawSecret}` })];
     const confirmPermission = mock(async (request) => {
       expect(JSON.stringify(request)).toContain(REDACTION_MARKER);
       expect(JSON.stringify(request)).not.toContain(rawSecret);
@@ -1696,8 +1698,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     ]);
     const askTool = registry.get("askTool");
     if (!askTool) throw new Error("Expected askTool");
-    askTool.guards = [async () => {
-      events.push("guard:askTool");
+    askTool.permissions = [async () => {
+      events.push("perm:askTool");
       return { outcome: "ask", reason: "confirm ask tool" };
     }];
     const confirmPermission = mock(async (request) => {
@@ -1725,10 +1727,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       "Use tools",
     );
 
-    // With parallel execution, openTool (no guards) runs while askTool awaits
+    // With parallel execution, openTool (no permissions) runs while askTool awaits
     // confirmation, so openTool executes before askTool.
     expect(events).toEqual([
-      "guard:askTool",
+      "perm:askTool",
       "confirm:askTool",
       "execute:openTool",
       "execute:askTool",
@@ -1750,11 +1752,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const sensitiveReadTool = registry.get("sensitiveReadTool");
     const destructiveTool = registry.get("destructiveTool");
     if (!sensitiveReadTool || !destructiveTool) throw new Error("Expected mock tools");
-    sensitiveReadTool.guards = [async () => {
+    sensitiveReadTool.permissions = [async () => {
       events.push("ask:sensitiveReadTool");
       return { outcome: "ask", reason: "confirm sensitive read" };
     }];
-    destructiveTool.guards = [async () => {
+    destructiveTool.permissions = [async () => {
       events.push("ask:destructiveTool");
       return { outcome: "ask", reason: "confirm destructive tool" };
     }];
@@ -1787,7 +1789,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     );
 
     // With parallel execution of concurrencySafe tools (safeTool
-    // and sensitiveReadTool), sensitiveReadTool's guard fires during the
+    // and sensitiveReadTool), sensitiveReadTool's permission fires during the
     // synchronous phase before safeTool's execute microtask. Confirm/execute
     // ordering within each tool remains intact. destructiveTool is serial.
     expect(events).toEqual([

@@ -341,8 +341,8 @@ React hooks are powerful.`;
       });
     });
 
-    test("has no guards or hooks", () => {
-      expect(memoryReadTool.guards).toBeUndefined();
+    test("has no permissions or hooks", () => {
+      expect(memoryReadTool.permissions).toBeUndefined();
       expect(memoryReadTool.hooks).toBeUndefined();
     });
   });
