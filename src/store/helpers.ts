@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import type { StoreApi } from "zustand";
 import { createSessionStore } from "./store";
 import type { SessionStoreState, StoredMessage } from "./types";
+import { getSessionsDir } from "./sessions-dir";
 
 const StoredTodoSchema = z.strictObject({
   id: z.string(),
@@ -215,8 +216,9 @@ export function getAssistantText(messages: StoredMessage[]): string {
 
 export async function saveSessionTranscript(
   state: PersistableSessionState,
-  dir: string,
 ): Promise<void> {
+  const dir = getSessionsDir();
+
   try {
     await mkdir(dir, { recursive: true });
   } catch (err) {
@@ -255,8 +257,8 @@ export async function saveSessionTranscript(
 
 export async function loadSessionTranscript(
   sessionId: string,
-  dir: string,
 ): Promise<StoreApi<SessionStoreState>> {
+  const dir = getSessionsDir();
   const filePath = join(dir, `${sessionId}.json`);
   const raw = await Bun.file(filePath).text();
   const parsed = SessionFileSchema.parse(JSON.parse(raw));

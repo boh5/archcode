@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { createMemoryConsolidationTask } from "./memory-consolidation";
 import { __setGenerateTextForTest } from "../../llm";
 import { generateText, Output, type GenerateTextResult, type ToolSet } from "ai";
-import type { Registry } from "../../provider/index";
+import type { ModelInfo } from "../../provider/model";
 import type { BackgroundTaskContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
 
@@ -32,21 +32,16 @@ function makeGenerateTextResult(
 
 const mockGenerateText = mock(async () => makeGenerateTextResult());
 
-function createMinimalRegistry(): Registry {
+function makeModelInfo(): ModelInfo {
   return {
-    modelIds: ["test:provider"],
-    getModel: mock(() => ({
-      model: {},
-      displayName: "Test Model",
-      limit: { context: 4096, output: 1024 },
-      modalities: { input: ["text"], output: ["text"] },
-      providerId: "test",
-      modelId: "provider",
-      qualifiedId: "test:provider",
-    })),
-    sdkRegistry: {} as never,
-    models: new Map(),
-  } as unknown as Registry;
+    model: { provider: "test" } as never,
+    displayName: "Test Model",
+    limit: { context: 4096, output: 1024 },
+    modalities: { input: ["text"], output: ["text"] },
+    providerId: "test",
+    modelId: "test-model",
+    qualifiedId: "test:test-model",
+  };
 }
 
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
@@ -70,13 +65,12 @@ describe("createMemoryConsolidationTask", () => {
     await mkdir(projectRoot, { recursive: true });
     await mkdir(userRoot, { recursive: true });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -90,13 +84,12 @@ describe("createMemoryConsolidationTask", () => {
     const fileManager = new MemoryFileManager({ project: projectRoot, user: userRoot });
     await fileManager.writeIndex([]);
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -131,13 +124,12 @@ describe("createMemoryConsolidationTask", () => {
       ],
     }));
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
 
@@ -171,13 +163,12 @@ describe("createMemoryConsolidationTask", () => {
       ],
     }));
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("exists");
@@ -212,13 +203,12 @@ describe("createMemoryConsolidationTask", () => {
     console.warn = warnSpy;
 
     try {
-      const registry = createMinimalRegistry();
-      const task = createMemoryConsolidationTask(registry, {
+const task = createMemoryConsolidationTask({
         project: projectRoot,
         user: userRoot,
       });
 
-      await task.run({} as BackgroundTaskContext);
+      await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
@@ -255,13 +245,12 @@ describe("createMemoryConsolidationTask", () => {
     console.warn = warnSpy;
 
     try {
-      const registry = createMinimalRegistry();
-      const task = createMemoryConsolidationTask(registry, {
+const task = createMemoryConsolidationTask({
         project: projectRoot,
         user: userRoot,
       });
 
-      await task.run({} as BackgroundTaskContext);
+      await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
@@ -297,13 +286,12 @@ describe("createMemoryConsolidationTask", () => {
       ],
     }));
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -340,13 +328,12 @@ describe("createMemoryConsolidationTask", () => {
       ],
     }));
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryConsolidationTask(registry, {
+    const task = createMemoryConsolidationTask({
       project: projectRoot,
       user: userRoot,
     });
 
-    await task.run({} as BackgroundTaskContext);
+    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("Design Patterns");

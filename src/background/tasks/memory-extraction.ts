@@ -1,6 +1,5 @@
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
-import type { Registry } from "../../provider/index";
 import type { SessionStoreState, TextPart } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import type { MemoryExtractionResult } from "../../memory/schemas";
@@ -24,13 +23,12 @@ import {
  */
 export function createMemoryExtractionTask(
   store: StoreApi<SessionStoreState>,
-  providerRegistry: Registry,
   memoryRoots: MemoryRoots,
 ): BackgroundTask {
   return {
     name: "memory-extraction",
 
-    run: async (_ctx: BackgroundTaskContext) => {
+    run: async (ctx: BackgroundTaskContext) => {
       const state = store.getState();
 
       // --- Short-session skip ------------------------------------------------
@@ -81,11 +79,8 @@ export function createMemoryExtractionTask(
       // --- Call LLM ----------------------------------------------------------
       let result: MemoryExtractionResult;
       try {
-        const modelId = providerRegistry.modelIds[0];
-        const modelInfo = providerRegistry.getModel(modelId);
-
         result = await llmObject({
-          model: modelInfo.model,
+          model: ctx.modelInfo.model,
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
 Focus on information that would be useful in future sessions:

@@ -1,17 +1,26 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMockStore } from "./test-helpers";
 import { getAssistantText, loadSessionTranscript, saveSessionTranscript } from "./helpers";
+import { __setSessionsDirForTest } from "./sessions-dir";
 import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
-afterAll(() => rm(TMP_DIR, { recursive: true, force: true }));
+afterAll(async () => {
+  __setSessionsDirForTest(undefined);
+  await rm(TMP_DIR, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  __setSessionsDirForTest(undefined);
+});
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
   await mkdir(TMP_DIR, { recursive: true });
+  __setSessionsDirForTest(TMP_DIR);
 });
 
 function uniqueSessionId(label: string): string {
@@ -175,8 +184,8 @@ describe("session transcript serialization", () => {
     const sessionId = uniqueSessionId("roundtrip");
     const state = persistedState(sessionId);
 
-    await saveSessionTranscript(state, TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(state);
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().sessionId).toBe(sessionId);
     expect(loaded.getState().createdAt).toBe(state.createdAt);
@@ -189,8 +198,8 @@ describe("session transcript serialization", () => {
     const sessionId = uniqueSessionId("part-variants");
     const messages = [allPartVariantsMessage()];
 
-    await saveSessionTranscript(persistedState(sessionId, messages), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -198,8 +207,8 @@ describe("session transcript serialization", () => {
   test("loaded store resets transient state to safe defaults", async () => {
     const sessionId = uniqueSessionId("safe-state");
 
-    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId));
+    const loaded = await loadSessionTranscript(sessionId);
     const state = loaded.getState();
 
     expect(state.isRunning).toBe(false);
@@ -216,7 +225,7 @@ describe("session transcript serialization", () => {
     const { todos: _todos, ...legacyState } = persistedState(sessionId);
     await writeSessionFile(sessionId, legacyState);
 
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().todos).toEqual([]);
   });
@@ -225,11 +234,8 @@ describe("session transcript serialization", () => {
     const sessionId = uniqueSessionId("reminders-roundtrip");
     const reminders = sampleReminders();
 
-    await saveSessionTranscript(
-      persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), reminders),
-      TMP_DIR,
-    );
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), reminders));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().reminders).toEqual(reminders);
   });
@@ -245,7 +251,7 @@ describe("session transcript serialization", () => {
     } = persistedState(sessionId);
     await writeSessionFile(sessionId, legacyState);
 
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId);
     const state = loaded.getState();
 
     expect(state.reminders).toEqual([]);
@@ -272,10 +278,10 @@ describe("session transcript serialization", () => {
       subAgentDescriptions,
     );
 
-    await saveSessionTranscript(state, TMP_DIR);
+    await saveSessionTranscript(state);
     const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(parsed.childSessionIds).toEqual(["child-1", "child-2"]);
     expect(parsed.subAgentDescriptions).toEqual([
@@ -290,8 +296,8 @@ describe("session transcript serialization", () => {
   test("loaded store preserves methods and can continue appending", async () => {
     const sessionId = uniqueSessionId("append-after-load");
 
-    await saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, [], []));
+    const loaded = await loadSessionTranscript(sessionId);
     loaded.getState().append({ type: "run-start", runId: "run-after-load" });
     loaded.getState().append({ type: "user-message", content: "after load" });
 
@@ -304,7 +310,7 @@ describe("session transcript serialization", () => {
   test("atomic write leaves no temporary file behind", async () => {
     const sessionId = uniqueSessionId("atomic");
 
-    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId));
     const files = await readdir(TMP_DIR);
 
     expect(files).toContain(`${sessionId}.json`);
@@ -315,21 +321,21 @@ describe("session transcript serialization", () => {
     const sessionId = uniqueSessionId("corrupted");
     await Bun.write(sessionFilePath(sessionId), "{not json");
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects schema-invalid data", async () => {
     const sessionId = uniqueSessionId("schema-invalid");
     await writeSessionFile(sessionId, { sessionId, createdAt: "not-number", messages: [] });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects unknown top-level fields", async () => {
     const sessionId = uniqueSessionId("unknown-top");
     await writeSessionFile(sessionId, { ...persistedState(sessionId), extra: true });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects unknown message fields", async () => {
@@ -343,7 +349,7 @@ describe("session transcript serialization", () => {
       steps: [],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects unknown part fields", async () => {
@@ -362,7 +368,7 @@ describe("session transcript serialization", () => {
       steps: [],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects invalid tool state", async () => {
@@ -379,7 +385,7 @@ describe("session transcript serialization", () => {
       ],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects invalid todo status", async () => {
@@ -389,7 +395,7 @@ describe("session transcript serialization", () => {
       todos: [{ id: "todo", content: "bad", status: "blocked" }],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects more than one in_progress todo", async () => {
@@ -402,7 +408,7 @@ describe("session transcript serialization", () => {
       ],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects unknown todo fields", async () => {
@@ -412,14 +418,14 @@ describe("session transcript serialization", () => {
       todos: [{ id: "todo", content: "bad", status: "pending", extra: true }],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects sessionId mismatch", async () => {
     const requestedSessionId = uniqueSessionId("requested");
     await writeSessionFile(requestedSessionId, persistedState("different-session"));
 
-    await expect(loadSessionTranscript(requestedSessionId, TMP_DIR)).rejects.toThrow("Session ID mismatch");
+    await expect(loadSessionTranscript(requestedSessionId)).rejects.toThrow("Session ID mismatch");
   });
 
   test("load rejects invalid role", async () => {
@@ -429,7 +435,7 @@ describe("session transcript serialization", () => {
       messages: [{ id: "message", role: "system", parts: [], createdAt: 1 }],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects missing required timestamps", async () => {
@@ -439,7 +445,7 @@ describe("session transcript serialization", () => {
       messages: [{ id: "message", role: "assistant", parts: [{ type: "text", id: "part", text: "hello", completedAt: 2 }] }],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("loaded store's toModelMessages works with loaded messages", async () => {
@@ -464,8 +470,8 @@ describe("session transcript serialization", () => {
       },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().toModelMessages()).toEqual([
       { role: "user", content: "hello" },
@@ -477,7 +483,7 @@ describe("session transcript serialization", () => {
   test("save writes the new session file shape", async () => {
     const sessionId = uniqueSessionId("shape");
 
-    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId));
     const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
@@ -502,8 +508,8 @@ describe("session transcript serialization", () => {
   test("loadSessionTranscript resets all runtime-only fields", async () => {
     const sessionId = uniqueSessionId("runtime-fields");
 
-    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId));
+    const loaded = await loadSessionTranscript(sessionId);
     const state = loaded.getState();
 
     expect(state.isRunning).toBe(false);
@@ -521,11 +527,8 @@ describe("session transcript serialization", () => {
     const originalSteps = sampleSteps();
     const originalTodos = sampleTodos();
 
-    await saveSessionTranscript(
-      persistedState(sessionId, originalMessages, originalSteps, originalTodos),
-      TMP_DIR,
-    );
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, originalMessages, originalSteps, originalTodos));
+    const loaded = await loadSessionTranscript(sessionId);
     const loadedState = loaded.getState();
 
     expect(loadedState.sessionId).toBe(sessionId);
@@ -545,7 +548,7 @@ describe("session transcript serialization", () => {
       reminders: [{ ...reminder, extra: true }],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("load rejects unknown reminder source fields", async () => {
@@ -563,14 +566,14 @@ describe("session transcript serialization", () => {
       ],
     });
 
-    await expect(loadSessionTranscript(sessionId, TMP_DIR)).rejects.toThrow();
+    await expect(loadSessionTranscript(sessionId)).rejects.toThrow();
   });
 
   test("append works after load", async () => {
     const sessionId = uniqueSessionId("append-after-load-v2");
 
-    await saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, [], []));
+    const loaded = await loadSessionTranscript(sessionId);
     loaded.getState().append({ type: "run-start", runId: "append-work-run" });
     loaded.getState().append({ type: "user-message", content: "appended after load" });
 
@@ -585,8 +588,8 @@ describe("session transcript serialization", () => {
 
     const store = createMockStore({ readSnapshots: new Map([["file.ts", 456]]) });
 
-    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().readSnapshots.size).toBe(0);
   });
@@ -636,12 +639,14 @@ describe("saveSessionTranscript error handling", () => {
     const readonlyDir = join(TMP_DIR, "readonly-save-test");
     await mkdir(readonlyDir, { recursive: true });
     await chmod(readonlyDir, 0o444);
+    __setSessionsDirForTest(readonlyDir);
 
     try {
       await expect(
-        saveSessionTranscript(persistedState(sessionId), readonlyDir),
+        saveSessionTranscript(persistedState(sessionId)),
       ).rejects.toThrow();
     } finally {
+      __setSessionsDirForTest(TMP_DIR);
       await chmod(readonlyDir, 0o755).catch(() => {});
       await rm(readonlyDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -649,10 +654,15 @@ describe("saveSessionTranscript error handling", () => {
 
   test("throws on invalid path", async () => {
     const sessionId = uniqueSessionId("invalid-path-save");
+    __setSessionsDirForTest("/dev/null/impossible");
 
-    await expect(
-      saveSessionTranscript(persistedState(sessionId), "/dev/null/impossible"),
-    ).rejects.toThrow();
+    try {
+      await expect(
+        saveSessionTranscript(persistedState(sessionId)),
+      ).rejects.toThrow();
+    } finally {
+      __setSessionsDirForTest(TMP_DIR);
+    }
   });
 
   test("error messages contain useful context about the path", async () => {
@@ -660,16 +670,17 @@ describe("saveSessionTranscript error handling", () => {
     const readonlyDir = join(TMP_DIR, "error-context-test");
     await mkdir(readonlyDir, { recursive: true });
     await chmod(readonlyDir, 0o444);
+    __setSessionsDirForTest(readonlyDir);
 
     try {
       const error = await saveSessionTranscript(
         persistedState(sessionId),
-        readonlyDir,
       ).catch((e: unknown) => e as Error);
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(readonlyDir);
     } finally {
+      __setSessionsDirForTest(TMP_DIR);
       await chmod(readonlyDir, 0o755).catch(() => {});
       await rm(readonlyDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -684,8 +695,8 @@ describe("compaction and meta transcript round-trip", () => {
       { id: "msg-2", role: "user", parts: [textPart("t2", "new", 2)], createdAt: 2, completedAt: 3 },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -704,8 +715,8 @@ describe("compaction and meta transcript round-trip", () => {
       { id: "msg-tail", role: "user", parts: [textPart("t-tail", "tail content", 12350)], createdAt: 12350, completedAt: 12351 },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -723,8 +734,8 @@ describe("compaction and meta transcript round-trip", () => {
       { id: "msg-notice", role: "user", parts: [noticePart, textPart("t-1", "hello", 1001)], createdAt: 999, completedAt: 1002 },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -753,8 +764,8 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -783,8 +794,8 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
   });
@@ -840,8 +851,8 @@ describe("compaction and meta transcript round-trip", () => {
       },
     ];
 
-    await saveSessionTranscript(persistedState(sessionId, messages, []), TMP_DIR);
-    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    await saveSessionTranscript(persistedState(sessionId, messages, []));
+    const loaded = await loadSessionTranscript(sessionId);
 
     expect(loaded.getState().messages).toEqual(messages);
     expect(loaded.getState().toModelMessages()[0]).toEqual({

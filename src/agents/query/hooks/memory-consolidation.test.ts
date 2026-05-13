@@ -8,11 +8,6 @@ import { createSessionStore } from "../../../store/store";
 const mockDispatch = mock(() => {});
 const mockBtm = { dispatch: mockDispatch };
 
-const mockProviderRegistry = {
-  modelIds: ["test:model"],
-  getModel: mock(() => ({ model: {} })),
-};
-
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 function makeStore() {
@@ -23,8 +18,6 @@ describe("createMemoryConsolidationHook", () => {
   beforeEach(async () => {
     mockDispatch.mockReset();
     mockDispatch.mockImplementation(() => {});
-    mockProviderRegistry.getModel.mockReset();
-    mockProviderRegistry.getModel.mockImplementation(() => ({ model: {} }));
     await mkdir(tmpDir, { recursive: true });
   });
 
@@ -48,7 +41,6 @@ describe("createMemoryConsolidationHook", () => {
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       { project: projectRoot, user: userRoot },
     );
 
@@ -77,7 +69,6 @@ describe("createMemoryConsolidationHook", () => {
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       { project: projectRoot, user: userRoot },
     );
 
@@ -97,7 +88,6 @@ describe("createMemoryConsolidationHook", () => {
 
     const hook = createMemoryConsolidationHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       { project: projectRoot, user: userRoot },
     );
 

@@ -1,5 +1,4 @@
 import type { BackgroundTaskManager } from "../../../background/manager";
-import type { Registry } from "../../../provider/index";
 import type { AfterLoopEndContext } from "../loop-hooks";
 import type { MemoryRoots } from "../../../memory/types";
 import { createMemoryExtractionTask } from "../../../background/tasks/memory-extraction";
@@ -11,7 +10,6 @@ import type { TextPart } from "../../../store/types";
 
 export function createMemoryExtractionHook(
   btm: BackgroundTaskManager,
-  providerRegistry: Registry,
   memoryRoots: MemoryRoots,
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
@@ -32,7 +30,6 @@ export function createMemoryExtractionHook(
 
     const task = createMemoryExtractionTask(
       ctx.store,
-      providerRegistry,
       memoryRoots,
     );
 
@@ -40,9 +37,7 @@ export function createMemoryExtractionHook(
       task.run({
         store: ctx.store,
         modelInfo: ctx.modelInfo,
-        providerRegistry,
         workspaceRoot: memoryRoots.project,
-        sessionsDir: "",
         abort: ctx.abort,
       }),
     );

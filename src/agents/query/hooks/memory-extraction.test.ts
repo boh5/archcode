@@ -8,11 +8,6 @@ import type { MemoryRoots } from "../../../memory/types";
 const mockDispatch = mock((..._args: any[]) => {}) as any;
 const mockBtm = { dispatch: mockDispatch };
 
-const mockProviderRegistry = {
-  modelIds: ["test:model"],
-  getModel: mock(() => ({ model: {} })),
-};
-
 const mockMemoryRoots: MemoryRoots = {
   project: "/tmp/test-project/.specra/memory",
   user: "/tmp/test-user/.specra/memory",
@@ -58,8 +53,6 @@ describe("createMemoryExtractionHook", () => {
   beforeEach(() => {
     mockDispatch.mockReset();
     mockDispatch.mockImplementation(() => {});
-    mockProviderRegistry.getModel.mockReset();
-    mockProviderRegistry.getModel.mockImplementation(() => ({ model: {} }));
   });
 
   test("dispatches memory-extraction task when enough content", async () => {
@@ -77,7 +70,6 @@ describe("createMemoryExtractionHook", () => {
     const ctx = { store, modelInfo: undefined as never, abort: undefined };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       mockMemoryRoots,
     );
 
@@ -100,7 +92,6 @@ describe("createMemoryExtractionHook", () => {
     const ctx = { store, modelInfo: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       mockMemoryRoots,
     );
 
@@ -122,7 +113,6 @@ describe("createMemoryExtractionHook", () => {
     const ctx = { store, modelInfo: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       mockMemoryRoots,
     );
 
@@ -146,7 +136,6 @@ describe("createMemoryExtractionHook", () => {
     const ctx = { store, modelInfo: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       mockMemoryRoots,
     );
 
@@ -172,7 +161,6 @@ describe("createMemoryExtractionHook", () => {
     const ctx = { store, modelInfo: undefined as never };
     const hook = createMemoryExtractionHook(
       mockBtm as never,
-      mockProviderRegistry as never,
       mockMemoryRoots,
     );
 

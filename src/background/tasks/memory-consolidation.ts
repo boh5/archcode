@@ -1,18 +1,16 @@
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
-import type { Registry } from "../../provider/index";
 import { MemoryConsolidationResultSchema } from "../../memory/schemas";
 import { MemoryFileManager, parseIndex } from "../../memory/file-manager";
 import { DEFAULT_MAX_INDEX_LINES } from "../../memory/constants";
 import { llmObject, LlmSchemaValidationError } from "../../llm";
 
 export function createMemoryConsolidationTask(
-  providerRegistry: Registry,
   memoryRoots: { project: string; user: string },
 ): BackgroundTask {
   return {
     name: "memory-consolidation",
 
-    async run(_ctx: BackgroundTaskContext): Promise<void> {
+    async run(ctx: BackgroundTaskContext): Promise<void> {
       const fileManager = new MemoryFileManager(memoryRoots);
 
       const indexContent = await fileManager.readIndex();
@@ -38,11 +36,8 @@ export function createMemoryConsolidationTask(
         .join("\n");
 
       try {
-        const modelId = providerRegistry.modelIds[0];
-        const modelInfo = providerRegistry.getModel(modelId);
-
         const result = await llmObject({
-          model: modelInfo.model,
+          model: ctx.modelInfo.model,
           schema: MemoryConsolidationResultSchema,
           prompt: `You are a memory consolidation system. Reorganize the following memory index to be more concise and remove duplicates.
 

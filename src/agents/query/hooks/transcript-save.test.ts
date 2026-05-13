@@ -3,10 +3,10 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMockStore } from "../../../store/test-helpers";
 import type { StoredMessage, StoredTodo, StepInfo } from "../../../store/types";
+import { __setSessionsDirForTest } from "../../../store/sessions-dir";
+import { createTranscriptSaveHook } from "./transcript-save";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "transcript-save");
-
-import { createTranscriptSaveHook } from "./transcript-save";
 
 describe("createTranscriptSaveHook", () => {
   beforeAll(async () => {
@@ -18,6 +18,7 @@ describe("createTranscriptSaveHook", () => {
   });
 
   beforeEach(() => {
+    __setSessionsDirForTest(TEST_TMP);
   });
 
   test("reads store state and saves transcript with correct fields", async () => {
@@ -75,7 +76,7 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook(TEST_TMP)(ctx as never);
+    await createTranscriptSaveHook()(ctx as never);
 
     const filePath = join(TEST_TMP, `${sessionId}.json`);
     const file = Bun.file(filePath);
@@ -99,10 +100,11 @@ describe("createTranscriptSaveHook", () => {
     try {
       const ctx = { store, modelInfo: undefined as never };
 
-      const BAD_DIR = "/nonexistent/path/that/cannot/be/created/by/normal/user";
+      // Override sessions dir to an impossible path for this test only
+      __setSessionsDirForTest("/nonexistent/path/that/cannot/be/created/by/normal/user");
 
       await expect(
-        createTranscriptSaveHook(BAD_DIR)(ctx as never),
+        createTranscriptSaveHook()(ctx as never),
       ).resolves.toBeUndefined();
 
       expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -112,6 +114,7 @@ describe("createTranscriptSaveHook", () => {
       );
     } finally {
       console.warn = originalWarn;
+      __setSessionsDirForTest(TEST_TMP);
     }
   });
 
@@ -133,7 +136,7 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook(TEST_TMP)(ctx as never);
+    await createTranscriptSaveHook()(ctx as never);
 
     const filePath = join(TEST_TMP, `${sessionId}.json`);
     const file = Bun.file(filePath);

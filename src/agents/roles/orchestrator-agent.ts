@@ -25,7 +25,7 @@ import {
   createMemoryConsolidationHook,
   createAutoCompactHook,
 } from "../query/hooks";
-import type { AfterStepEndContext, AfterLoopEndContext } from "../query/loop-hooks";
+import type { AfterLoopEndContext } from "../query/loop-hooks";
 import { SubAgentManager } from "../sub-agent-manager";
 import type { Agent, AgentResult, AgentRunOptions } from "../types";
 import { NoModelsConfiguredError, AgentRunningError } from "../errors";
@@ -37,7 +37,6 @@ export interface OrchestratorAgentOptions {
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
   readonly config?: SpecraConfig;
-  readonly sessionsDir?: string;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -66,14 +65,12 @@ export class OrchestratorAgent implements Agent {
   private memoryRoots: { project: string; user: string };
   private autoCompactHook = createAutoCompactHook();
   private commandRegistry: CommandRegistry;
-  private sessionsDir: string | undefined;
 
   constructor(options: OrchestratorAgentOptions) {
     this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
-    this.sessionsDir = options.sessionsDir;
 
     const modelIds = this.providerRegistry.modelIds;
     if (modelIds.length === 0) {
@@ -176,16 +173,18 @@ export class OrchestratorAgent implements Agent {
             currentDepth: 0,
             hooks: {
               beforeModelBuild: [this.autoCompactHook.hook],
-              beforeModelCall: [createAutoInjectReminderHook()],
+              beforeModelCall: [
+                createAutoInjectReminderHook(),
+                createTitleGenerationHook(btm),
+              ],
               afterStepEnd: [
                 todoContinuation.afterStepEnd,
-                createTitleGenerationHook(btm, this.providerRegistry),
               ],
               afterLoopEnd: [
                 todoContinuation.afterLoopEnd,
-                createTranscriptSaveHook(this.sessionsDir),
-                createMemoryExtractionHook(btm, this.providerRegistry, this.memoryRoots),
-                createMemoryConsolidationHook(btm, this.providerRegistry, this.memoryRoots),
+                createTranscriptSaveHook(),
+                createMemoryExtractionHook(btm, this.memoryRoots),
+                createMemoryConsolidationHook(btm, this.memoryRoots),
               ],
             },
           },

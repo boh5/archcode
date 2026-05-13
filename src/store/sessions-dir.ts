@@ -3,10 +3,12 @@ import { join } from "node:path";
 
 const DEFAULT_SESSIONS_DIR = join(homedir(), ".specra", "sessions");
 
-/**
- * Returns the fixed sessions directory path (`~/.specra/sessions/`).
- * Not configurable via env or config — this path is always used.
- */
+let _sessionsDir: string | undefined;
+
 export function getSessionsDir(): string {
-  return DEFAULT_SESSIONS_DIR;
+  return _sessionsDir ?? DEFAULT_SESSIONS_DIR;
+}
+
+export function __setSessionsDirForTest(dir: string | undefined): void {
+  _sessionsDir = dir;
 }

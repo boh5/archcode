@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { generateText } from "ai";
 import { createSessionStore } from "../../store/store";
 import { __setGenerateTextForTest } from "./title-generation";
+import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation");
 
@@ -12,23 +13,18 @@ const mockGenerateText = mock(
 );
 
 import { createTitleGenerationTask } from "./title-generation";
-import type { Registry } from "../../provider/index";
+import type { ModelInfo } from "../../provider/model";
 
-function createMinimalRegistry(): Registry {
+function makeModelInfo(): ModelInfo {
   return {
-    modelIds: ["test:provider"],
-    getModel: mock(() => ({
-      model: {},
-      displayName: "Test Model",
-      limit: { context: 4096, output: 1024 },
-      modalities: { input: ["text"], output: ["text"] },
-      providerId: "test",
-      modelId: "provider",
-      qualifiedId: "test:provider",
-    })),
-    sdkRegistry: {} as never,
-    models: new Map(),
-  } as unknown as Registry;
+    model: { provider: "test" } as never,
+    displayName: "Test Model",
+    limit: { context: 4096, output: 1024 },
+    modalities: { input: ["text"], output: ["text"] },
+    providerId: "test",
+    modelId: "test-model",
+    qualifiedId: "test:test-model",
+  };
 }
 
 describe("createTitleGenerationTask", () => {
@@ -39,10 +35,12 @@ describe("createTitleGenerationTask", () => {
       async () => ({ text: "Short test title" }),
     );
     await mkdir(TEST_TMP, { recursive: true });
+    __setSessionsDirForTest(TEST_TMP);
   });
 
   afterEach(() => {
     __setGenerateTextForTest(generateText as unknown as typeof generateText);
+    __setSessionsDirForTest(undefined);
   });
 
   afterAll(async () => {
@@ -72,14 +70,11 @@ describe("createTitleGenerationTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createTitleGenerationTask(store, registry);
+    const task = createTitleGenerationTask(store);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -88,6 +83,7 @@ describe("createTitleGenerationTask", () => {
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: expect.any(Object),
         prompt: expect.stringContaining("authentication"),
       }),
     );
@@ -97,14 +93,11 @@ describe("createTitleGenerationTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({ messages: [] });
 
-    const registry = createMinimalRegistry();
-    const task = createTitleGenerationTask(store, registry);
+    const task = createTitleGenerationTask(store);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -143,14 +136,11 @@ describe("createTitleGenerationTask", () => {
     console.warn = warnSpy;
 
     try {
-      const registry = createMinimalRegistry();
-      const task = createTitleGenerationTask(store, registry);
+      const task = createTitleGenerationTask(store);
       const ctx = {
         store,
-        modelInfo: registry.getModel("test:provider"),
-        providerRegistry: registry,
+        modelInfo: makeModelInfo(),
         workspaceRoot: "/tmp",
-        sessionsDir: TEST_TMP,
       };
 
       await task.run(ctx as never);
@@ -183,14 +173,11 @@ describe("createTitleGenerationTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createTitleGenerationTask(store, registry);
+    const task = createTitleGenerationTask(store);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);
@@ -223,14 +210,11 @@ describe("createTitleGenerationTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createTitleGenerationTask(store, registry);
+    const task = createTitleGenerationTask(store);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: TEST_TMP,
     };
 
     await task.run(ctx as never);

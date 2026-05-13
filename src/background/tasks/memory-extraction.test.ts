@@ -8,7 +8,7 @@ import { MemoryFileManager } from "../../memory/file-manager";
 import { __setGenerateTextForTest } from "../../llm";
 import { generateText } from "ai";
 import { createMemoryExtractionTask } from "./memory-extraction";
-import type { Registry } from "../../provider/index";
+import type { ModelInfo } from "../../provider/model";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
   return {
@@ -28,21 +28,16 @@ const mockGenerateText = mock(async (_opts: Record<string, unknown>) => makeGene
 
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
-function createMinimalRegistry(): Registry {
+function makeModelInfo(): ModelInfo {
   return {
-    modelIds: ["test:provider"],
-    getModel: mock(() => ({
-      model: {},
-      displayName: "Test Model",
-      limit: { context: 4096, output: 1024 },
-      modalities: { input: ["text"], output: ["text"] },
-      providerId: "test",
-      modelId: "provider",
-      qualifiedId: "test:provider",
-    })),
-    sdkRegistry: {} as never,
-    models: new Map(),
-  } as unknown as Registry;
+    model: { provider: "test" } as never,
+    displayName: "Test Model",
+    limit: { context: 4096, output: 1024 },
+    modalities: { input: ["text"], output: ["text"] },
+    providerId: "test",
+    modelId: "test-model",
+    qualifiedId: "test:test-model",
+  };
 }
 
 function makeUserMessage(text: string, now: number): StoredMessage {
@@ -127,14 +122,11 @@ describe("createMemoryExtractionTask", () => {
       messages: [makeUserMessage("Hi", now)],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -154,14 +146,11 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -183,14 +172,11 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -239,14 +225,11 @@ describe("createMemoryExtractionTask", () => {
         ],
       });
 
-      const registry = createMinimalRegistry();
-      const task = createMemoryExtractionTask(store, registry, roots);
+      const task = createMemoryExtractionTask(store, roots);
       const ctx = {
         store,
-        modelInfo: registry.getModel("test:provider"),
-        providerRegistry: registry,
+        modelInfo: makeModelInfo(),
         workspaceRoot: "/tmp",
-        sessionsDir: "/tmp",
       };
 
       await task.run(ctx as never);
@@ -285,14 +268,11 @@ describe("createMemoryExtractionTask", () => {
         ],
       });
 
-      const registry = createMinimalRegistry();
-      const task = createMemoryExtractionTask(store, registry, roots);
+      const task = createMemoryExtractionTask(store, roots);
       const ctx = {
         store,
-        modelInfo: registry.getModel("test:provider"),
-        providerRegistry: registry,
+        modelInfo: makeModelInfo(),
         workspaceRoot: "/tmp",
-        sessionsDir: "/tmp",
       };
 
       await task.run(ctx as never);
@@ -358,14 +338,11 @@ describe("createMemoryExtractionTask", () => {
         ],
       });
 
-      const registry = createMinimalRegistry();
-      const task = createMemoryExtractionTask(store, registry, roots);
+      const task = createMemoryExtractionTask(store, roots);
       const ctx = {
         store,
-        modelInfo: registry.getModel("test:provider"),
-        providerRegistry: registry,
+        modelInfo: makeModelInfo(),
         workspaceRoot: "/tmp",
-        sessionsDir: "/tmp",
       };
 
       await task.run(ctx as never);
@@ -426,14 +403,11 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -475,14 +449,11 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -511,14 +482,11 @@ describe("createMemoryExtractionTask", () => {
       ],
     });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -553,14 +521,11 @@ describe("createMemoryExtractionTask", () => {
         ],
       });
 
-      const registry = createMinimalRegistry();
-      const task = createMemoryExtractionTask(store, registry, roots);
+      const task = createMemoryExtractionTask(store, roots);
       const ctx = {
         store,
-        modelInfo: registry.getModel("test:provider"),
-        providerRegistry: registry,
+        modelInfo: makeModelInfo(),
         workspaceRoot: "/tmp",
-        sessionsDir: "/tmp",
       };
 
       await task.run(ctx as never);
@@ -593,14 +558,11 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({ messages });
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);
@@ -642,14 +604,11 @@ describe("createMemoryExtractionTask", () => {
       }),
     );
 
-    const registry = createMinimalRegistry();
-    const task = createMemoryExtractionTask(store, registry, roots);
+    const task = createMemoryExtractionTask(store, roots);
     const ctx = {
       store,
-      modelInfo: registry.getModel("test:provider"),
-      providerRegistry: registry,
+      modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
-      sessionsDir: "/tmp",
     };
 
     await task.run(ctx as never);

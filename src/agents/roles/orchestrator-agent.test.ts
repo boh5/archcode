@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { z } from "zod";
 import type { SpecraConfig } from "../../config/index";
+import { __setSessionsDirForTest } from "../../store/sessions-dir";
 import { createRegistry as createProviderRegistry } from "../../provider/index";
 import { createRegistry as createToolRegistry, defineTool } from "../../tools/index";
 import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionContext } from "../../tools/index";
@@ -651,16 +652,18 @@ describe("OrchestratorAgent", () => {
     });
 
     afterAll(async () => {
+      __setSessionsDirForTest(undefined);
       await rm(TEST_TMP, { recursive: true, force: true });
     });
 
     test("saves session transcript to JSON file on run completion", async () => {
       setupMockStreamText("Hello from persisted agent");
+      __setSessionsDirForTest(TEST_TMP);
 
       const providerRegistry = createProviderRegistry(makeMockConfig().provider);
       const toolRegistry = createToolRegistry();
       registerBuiltinTools(toolRegistry);
-      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, sessionsDir: TEST_TMP });
+      const agent = new OrchestratorAgent({ providerRegistry, toolRegistry });
       const sessionId = agent.store.getState().sessionId;
 
       const result = await agent.run("test message");
