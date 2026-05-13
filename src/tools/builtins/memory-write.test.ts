@@ -57,8 +57,24 @@ describe("MemoryWriteInputSchema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.scope).toBe("project");
+      expect(result.data.scope).toBeUndefined();
     }
+  });
+
+  it("makes description optional", () => {
+    const result = MemoryWriteInputSchema.safeParse({
+      name: "my_topic",
+      content: "Some content",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("makes type optional", () => {
+    const result = MemoryWriteInputSchema.safeParse({
+      name: "my_topic",
+      content: "Some content",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("rejects unknown fields", () => {
@@ -278,5 +294,112 @@ describe("memory_write tool", () => {
     expect(content).toContain("description: Testing frontmatter");
     expect(content).toContain("type: feedback");
     expect(content).toContain("Content here");
+  });
+
+  it("writes user preferences when name='preferences' and scope='user'", async () => {
+    const tool = createMemoryWriteTool(fileManager);
+    const result = await tool.execute(
+      {
+        name: "preferences",
+        content: "I prefer dark mode",
+        scope: "user",
+      },
+      makeCtx("call-9"),
+    );
+
+    expect(typeof result).toBe("string");
+    expect(result).toContain("user preferences");
+
+    const prefs = await fileManager.readPreferences();
+    expect(prefs).toBe("I prefer dark mode\n");
+  });
+
+  it("merges user preferences when preferences already exist", async () => {
+    await fileManager.writePreferences("Existing preference\n");
+    const tool = createMemoryWriteTool(fileManager);
+    const result = await tool.execute(
+      {
+        name: "preferences",
+        content: "New preference",
+        scope: "user",
+      },
+      makeCtx("call-10"),
+    );
+
+    expect(typeof result).toBe("string");
+    const prefs = await fileManager.readPreferences();
+    expect(prefs).toContain("Existing preference");
+    expect(prefs).toContain("New preference");
+  });
+
+  it("rejects writing preferences with scope='project'", async () => {
+    const tool = createMemoryWriteTool(fileManager);
+    const result = parseErrorResult(
+      await tool.execute(
+        {
+          name: "preferences",
+          content: "Should fail",
+          scope: "project",
+        },
+        makeCtx("call-11"),
+      ),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("user level");
+  });
+
+  it("defaults scope to user for preferences when scope not specified", async () => {
+    const tool = createMemoryWriteTool(fileManager);
+    const result = await tool.execute(
+      {
+        name: "preferences",
+        content: "I like vim",
+      },
+      makeCtx("call-12"),
+    );
+
+    expect(typeof result).toBe("string");
+    expect(result).toContain("user preferences");
+
+    const prefs = await fileManager.readPreferences();
+    expect(prefs).toBe("I like vim\n");
+  });
+
+  it("defaults scope to project for topics when scope not specified", async () => {
+    const tool = createMemoryWriteTool(fileManager);
+    const result = await tool.execute(
+      {
+        name: "architecture",
+        content: "Monorepo structure",
+      },
+      makeCtx("call-13"),
+    );
+
+    expect(typeof result).toBe("string");
+    expect(result).toContain("architecture");
+
+    const topic = await fileManager.readTopic("architecture");
+    expect(topic).not.toBeNull();
+    expect(topic!.content).toBe("Monorepo structure");
+  });
+
+  it("rejects scope='user' for non-preferences names", async () => {
+    const tool = createMemoryWriteTool(fileManager);
+    const result = parseErrorResult(
+      await tool.execute(
+        {
+          name: "my_topic",
+          content: "Should fail",
+          scope: "user",
+        },
+        makeCtx("call-14"),
+      ),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("Only");
+    expect(result.output).toContain("preferences");
+    expect(result.output).toContain("user level");
   });
 });

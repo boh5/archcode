@@ -2,7 +2,6 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { buildSystemPrompt } from "../builder";
 import type { PromptContext } from "../types";
 import {
-  COMBINED_PREFERENCES_MAX_BYTES,
   DEFAULT_MAX_PREFERENCES_BYTES,
 } from "../../memory/constants";
 import type { MemoryRoots } from "../../memory/types";
@@ -82,7 +81,6 @@ describe("buildSystemPrompt — Memory section", () => {
     expect(result).toContain("<specra-memory-context>");
     expect(result).toContain("</specra-memory-context>");
     expect(result).not.toContain("<specra-memory-preferences>");
-    expect(result).not.toContain("<specra-memory-project-preferences>");
   });
 
   test("includes Memory section with user preferences only", async () => {
@@ -99,48 +97,30 @@ describe("buildSystemPrompt — Memory section", () => {
     expect(result).not.toContain("<specra-memory-context>");
   });
 
-  test("includes Memory section with project preferences only", async () => {
-    const roots = await createMemoryDirs();
-    await writeMemoryFile(roots, "project", "preferences.md", "Use TypeScript strict mode");
-
-    const result = await buildSystemPrompt(
-      makeCtx({ memoryRoots: roots }),
-    );
-    expect(result).toContain("## Memory");
-    expect(result).toContain("<specra-memory-project-preferences>");
-    expect(result).toContain("Use TypeScript strict mode");
-    expect(result).toContain("</specra-memory-project-preferences>");
-  });
-
-  test("includes all memory sections when all files exist", async () => {
+  test("includes all memory sections when both user preferences and index exist", async () => {
     const roots = await createMemoryDirs();
     await writeMemoryFile(roots, "project", "index.md", "# Index\n- [A](a.md) — desc\n");
     await writeMemoryFile(roots, "user", "preferences.md", "User pref");
-    await writeMemoryFile(roots, "project", "preferences.md", "Project pref");
 
     const result = await buildSystemPrompt(
       makeCtx({ memoryRoots: roots }),
     );
     expect(result).toContain("<specra-memory-preferences>");
-    expect(result).toContain("<specra-memory-project-preferences>");
     expect(result).toContain("<specra-memory-context>");
   });
 
-  test("injection order: user preferences → project preferences → index", async () => {
+  test("injection order: user preferences → index", async () => {
     const roots = await createMemoryDirs();
     await writeMemoryFile(roots, "project", "index.md", "INDEX_CONTENT");
     await writeMemoryFile(roots, "user", "preferences.md", "USER_PREF");
-    await writeMemoryFile(roots, "project", "preferences.md", "PROJECT_PREF");
 
     const result = await buildSystemPrompt(
       makeCtx({ memoryRoots: roots }),
     );
     const userPrefIdx = result.indexOf("<specra-memory-preferences>");
-    const projectPrefIdx = result.indexOf("<specra-memory-project-preferences>");
     const contextIdx = result.indexOf("<specra-memory-context>");
 
-    expect(userPrefIdx).toBeLessThan(projectPrefIdx);
-    expect(projectPrefIdx).toBeLessThan(contextIdx);
+    expect(userPrefIdx).toBeLessThan(contextIdx);
   });
 
   test("Memory section appears between Environment and Project Context", async () => {
@@ -222,7 +202,7 @@ describe("buildSystemPrompt — Memory section", () => {
     const content = result.slice(startIdx, endIdx);
     const encoder = new TextEncoder();
     expect(result).toContain("<!-- preferences truncated -->");
-    expect(encoder.encode(content).length).toBeLessThanOrEqual(25600 + 100);
+    expect(encoder.encode(content).length).toBeLessThanOrEqual(DEFAULT_MAX_PREFERENCES_BYTES + 100);
   });
 
   test("does not append truncation warning when preferences fit within limit", async () => {
@@ -235,80 +215,6 @@ describe("buildSystemPrompt — Memory section", () => {
       }),
     );
     expect(result).not.toContain("<!-- preferences truncated -->");
-  });
-
-  test("enforces combined preferences cap (50KB)", async () => {
-    const roots = await createMemoryDirs();
-    const userContent = "u".repeat(30000);
-    const projectContent = "p".repeat(30000);
-    await writeMemoryFile(roots, "user", "preferences.md", userContent);
-    await writeMemoryFile(roots, "project", "preferences.md", projectContent);
-
-    const result = await buildSystemPrompt(
-      makeCtx({
-        memoryRoots: roots,
-      }),
-    );
-    const encoder = new TextEncoder();
-
-    const userStart = result.indexOf("<specra-memory-preferences>\n") + "<specra-memory-preferences>\n".length;
-    const userEnd = result.indexOf("\n</specra-memory-preferences>", userStart);
-    const userPrefContent = result.slice(userStart, userEnd);
-
-    const projStart = result.indexOf("<specra-memory-project-preferences>\n") + "<specra-memory-project-preferences>\n".length;
-    const projEnd = result.indexOf("\n</specra-memory-project-preferences>", projStart);
-    const projPrefContent = result.slice(projStart, projEnd);
-
-    const combinedBytes = encoder.encode(userPrefContent).length + encoder.encode(projPrefContent).length;
-    expect(combinedBytes).toBeLessThanOrEqual(COMBINED_PREFERENCES_MAX_BYTES + 100);
-  });
-
-  test("includes project preferences when truncated user prefs fit within combined cap", async () => {
-    const roots = await createMemoryDirs();
-    const userContent = "u".repeat(55000);
-    await writeMemoryFile(roots, "user", "preferences.md", userContent);
-    await writeMemoryFile(roots, "project", "preferences.md", "Project pref");
-
-    const result = await buildSystemPrompt(
-      makeCtx({
-        memoryRoots: roots,
-      }),
-    );
-    expect(result).toContain("<specra-memory-preferences>");
-    expect(result).toContain("<specra-memory-project-preferences>");
-  });
-
-  test("user prefs truncated to DEFAULT_MAX_PREFERENCES_BYTES, project prefs still included in remaining space", async () => {
-    const roots = await createMemoryDirs();
-    const userContent = "u".repeat(40000);
-    const projectContent = "p".repeat(30000);
-    await writeMemoryFile(roots, "user", "preferences.md", userContent);
-    await writeMemoryFile(roots, "project", "preferences.md", projectContent);
-
-    const result = await buildSystemPrompt(
-      makeCtx({
-        memoryRoots: roots,
-      }),
-    );
-
-    expect(result).toContain("<specra-memory-preferences>");
-    expect(result).toContain("<specra-memory-project-preferences>");
-
-    const encoder = new TextEncoder();
-    const userStart = result.indexOf("<specra-memory-preferences>\n") + "<specra-memory-preferences>\n".length;
-    const userEnd = result.indexOf("\n</specra-memory-preferences>", userStart);
-    const userPrefContent = result.slice(userStart, userEnd);
-    expect(encoder.encode(userPrefContent).length).toBeLessThanOrEqual(DEFAULT_MAX_PREFERENCES_BYTES + 50);
-
-    const projStart = result.indexOf("<specra-memory-project-preferences>\n") + "<specra-memory-project-preferences>\n".length;
-    const projEnd = result.indexOf("\n</specra-memory-project-preferences>", projStart);
-    const projPrefContent = result.slice(projStart, projEnd);
-
-    const remaining = COMBINED_PREFERENCES_MAX_BYTES - encoder.encode(userPrefContent).length;
-    expect(encoder.encode(projPrefContent).length).toBeLessThanOrEqual(remaining + 50);
-
-    const combinedBytes = encoder.encode(userPrefContent).length + encoder.encode(projPrefContent).length;
-    expect(combinedBytes).toBeLessThanOrEqual(COMBINED_PREFERENCES_MAX_BYTES + 100);
   });
 
   test("gracefully handles missing index file", async () => {
@@ -333,6 +239,5 @@ describe("buildSystemPrompt — Memory section", () => {
     expect(result).toContain("## Memory");
     expect(result).toContain("<specra-memory-context>");
     expect(result).not.toContain("<specra-memory-preferences>");
-    expect(result).not.toContain("<specra-memory-project-preferences>");
   });
 });

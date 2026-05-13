@@ -293,21 +293,13 @@ describe("MemoryFileManager — read methods", () => {
   });
 
   test("readPreferences returns null when preferences.md does not exist", async () => {
-    expect(await manager.readPreferences("project")).toBeNull();
-    expect(await manager.readPreferences("user")).toBeNull();
+    expect(await manager.readPreferences()).toBeNull();
   });
 
-  test("readPreferences returns content for project scope", async () => {
-    const prefPath = join(TMP_DIR, "project", ".specra", "memory", "preferences.md");
-    await Bun.write(prefPath, "I prefer TypeScript");
-    const result = await manager.readPreferences("project");
-    expect(result).toBe("I prefer TypeScript");
-  });
-
-  test("readPreferences returns content for user scope", async () => {
+  test("readPreferences returns content for user preferences", async () => {
     const prefPath = join(TMP_DIR, "user", ".specra", "memory", "preferences.md");
     await Bun.write(prefPath, "I prefer dark mode");
-    const result = await manager.readPreferences("user");
+    const result = await manager.readPreferences();
     expect(result).toBe("I prefer dark mode");
   });
 
@@ -408,15 +400,9 @@ describe("MemoryFileManager — write methods", () => {
     expect(result!.content).toBe("Updated content");
   });
 
-  test("writePreferences writes project preferences atomically", async () => {
-    await manager.writePreferences("project", "I prefer concise code");
-    const result = await manager.readPreferences("project");
-    expect(result).toBe("I prefer concise code");
-  });
-
   test("writePreferences writes user preferences atomically", async () => {
-    await manager.writePreferences("user", "I prefer dark theme");
-    const result = await manager.readPreferences("user");
+    await manager.writePreferences("I prefer dark theme");
+    const result = await manager.readPreferences();
     expect(result).toBe("I prefer dark theme");
   });
 
@@ -637,8 +623,8 @@ describe("MemoryFileManager — integration roundtrip", () => {
     expect(results[0].title).toBe("TypeScript Tips");
 
     // Write preferences
-    await manager.writePreferences("project", "I prefer functional style");
-    const prefs = await manager.readPreferences("project");
+    await manager.writePreferences("I prefer functional style");
+    const prefs = await manager.readPreferences();
     expect(prefs).toBe("I prefer functional style");
   });
 });

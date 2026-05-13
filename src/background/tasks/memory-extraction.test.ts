@@ -158,7 +158,7 @@ describe("createMemoryExtractionTask", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  test("extracts memories and writes topic files on success", async () => {
+  test("extracts user memories to preferences and project memories to topics", async () => {
     const roots = makeMemoryRoots("extract-success");
     await setupDirs(roots);
     const now = Date.now();
@@ -168,9 +168,32 @@ describe("createMemoryExtractionTask", () => {
       messages: [
         makeUserMessage(longText, now),
         makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up question about TypeScript", now),
+        makeUserMessage("Follow up question", now),
       ],
     });
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "User prefers TypeScript",
+            name: "typescript_preference",
+            description: "User prefers TypeScript over JavaScript",
+            type: "user",
+            content: "The user prefers TypeScript for all projects.",
+            shouldCreate: true,
+          },
+          {
+            title: "Project Architecture",
+            name: "architecture",
+            description: "Project uses monorepo",
+            type: "project",
+            content: "Monorepo structure with shared packages.",
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
 
     const task = createMemoryExtractionTask(store, roots);
     const ctx = {
@@ -182,26 +205,22 @@ describe("createMemoryExtractionTask", () => {
     await task.run(ctx as never);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
-    expect(mockGenerateText).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tools: expect.objectContaining({
-          result: expect.anything(),
-        }),
-        toolChoice: { type: "tool", toolName: "result" },
-      }),
-    );
 
+    // type: "user" should go to user preferences
     const fileManager = new MemoryFileManager(roots);
-    const topic = await fileManager.readTopic("typescript_preference");
+    const prefs = await fileManager.readPreferences();
+    expect(prefs).not.toBeNull();
+    expect(prefs).toContain("The user prefers TypeScript for all projects.");
+
+    // type: "project" should go to project knowledge topic
+    const topic = await fileManager.readTopic("architecture");
     expect(topic).not.toBeNull();
-    expect(topic!.name).toBe("User prefers TypeScript");
-    expect(topic!.description).toBe("User prefers TypeScript over JavaScript");
-    expect(topic!.type).toBe("user");
-    expect(topic!.content).toBe("The user prefers TypeScript for all projects.");
+    expect(topic!.name).toBe("Project Architecture");
+    expect(topic!.type).toBe("project");
 
     const index = await fileManager.readIndex();
     expect(index).not.toBeNull();
-    expect(index).toContain("typescript_preference");
+    expect(index).toContain("architecture");
   });
 
   test("handles llmObject failure gracefully", async () => {
@@ -297,17 +316,17 @@ describe("createMemoryExtractionTask", () => {
     // Creating a directory at the target file path forces writeTopic to fail
     const knowledgeDir = join(roots.project, "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
-    await mkdir(join(knowledgeDir, "typescript_preference.md"), { recursive: true });
+    await mkdir(join(knowledgeDir, "architecture.md"), { recursive: true });
 
     mockGenerateText.mockImplementation(async () =>
       makeGenerateTextResult({
         memories: [
           {
-            title: "TypeScript Preference",
-            name: "typescript_preference",
-            description: "User prefers TypeScript",
+            title: "User Preference",
+            name: "user_pref",
+            description: "User prefers concise code",
             type: "user",
-            content: "Prefers TypeScript.",
+            content: "Prefers concise code.",
             shouldCreate: true,
           },
           {
@@ -347,20 +366,17 @@ describe("createMemoryExtractionTask", () => {
 
       await task.run(ctx as never);
 
-      // architecture.md should have been written successfully
+      // type: "user" (preferences) should have been written successfully
       const fileManager = new MemoryFileManager(roots);
-      const topic = await fileManager.readTopic("architecture");
-      expect(topic).not.toBeNull();
-      expect(topic!.name).toBe("Project Architecture");
+      const prefs = await fileManager.readPreferences();
+      expect(prefs).not.toBeNull();
+      expect(prefs).toContain("Prefers concise code.");
 
+      // The project-level topic write should have failed (directory blocks it)
       expect(warnSpy).toHaveBeenCalledWith(
-        'Memory extraction: failed to write topic "typescript_preference":',
+        'Memory extraction: failed to write "architecture":',
         expect.any(String),
       );
-
-      const index = await fileManager.readIndex();
-      expect(index).not.toBeNull();
-      expect(index).toContain("architecture");
     } finally {
       console.warn = originalWarn;
     }
@@ -372,20 +388,20 @@ describe("createMemoryExtractionTask", () => {
 
     const fileManager = new MemoryFileManager(roots);
     await fileManager.writeTopic(
-      "typescript_preference",
-      { name: "TypeScript Preference", description: "User prefers TypeScript", type: "user" },
-      "The user prefers TypeScript for all projects.",
+      "architecture",
+      { name: "Architecture", description: "Project architecture decisions", type: "project" },
+      "The project uses a monorepo structure.",
     );
 
     mockGenerateText.mockImplementation(async () =>
       makeGenerateTextResult({
         memories: [
           {
-            title: "TypeScript Preference",
-            name: "typescript_preference",
+            title: "Architecture",
+            name: "architecture",
             description: "Updated description",
-            type: "user",
-            content: "Also likes strict mode.",
+            type: "project",
+            content: "Also uses Turborepo for builds.",
             shouldCreate: false,
           },
         ],
@@ -412,11 +428,11 @@ describe("createMemoryExtractionTask", () => {
 
     await task.run(ctx as never);
 
-    const topic = await fileManager.readTopic("typescript_preference");
+    const topic = await fileManager.readTopic("architecture");
     expect(topic).not.toBeNull();
-    expect(topic!.name).toBe("TypeScript Preference");
+    expect(topic!.name).toBe("Architecture");
     expect(topic!.description).toBe("Updated description");
-    expect(topic!.content).toBe("The user prefers TypeScript for all projects.\n\n---\n\nAlso likes strict mode.");
+    expect(topic!.content).toBe("The project uses a monorepo structure.\n\n---\n\nAlso uses Turborepo for builds.");
   });
 
   test("creates new topic when shouldCreate is false but topic does not exist", async () => {
@@ -505,6 +521,21 @@ describe("createMemoryExtractionTask", () => {
     await mkdir(knowledgeDir, { recursive: true });
     await mkdir(join(roots.project, "index.md"), { recursive: true });
 
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "Project Architecture",
+            name: "architecture",
+            description: "Project uses monorepo",
+            type: "project",
+            content: "Monorepo structure.",
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
+
     const warnSpy = mock(() => {});
     const originalWarn = console.warn;
     console.warn = warnSpy;
@@ -531,9 +562,9 @@ describe("createMemoryExtractionTask", () => {
       await task.run(ctx as never);
 
       const fileManager = new MemoryFileManager(roots);
-      const topic = await fileManager.readTopic("typescript_preference");
+      const topic = await fileManager.readTopic("architecture");
       expect(topic).not.toBeNull();
-      expect(topic!.name).toBe("User prefers TypeScript");
+      expect(topic!.name).toBe("Project Architecture");
 
       expect(warnSpy).toHaveBeenCalledWith(
         "Memory extraction: failed to rebuild index:",
@@ -618,5 +649,164 @@ describe("createMemoryExtractionTask", () => {
     expect(topic).not.toBeNull();
     expect(topic!.name).toBe("Debugging Tips");
     expect(topic!.content).toBe("Use console.log for quick debugging.");
+  });
+
+  test("skips topics with invalid names (path separators, hyphens)", async () => {
+    const roots = makeMemoryRoots("invalid-name");
+    await setupDirs(roots);
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "Valid Topic",
+            name: "valid_topic",
+            description: "A valid topic",
+            type: "project",
+            content: "Valid content",
+            shouldCreate: true,
+          },
+          {
+            title: "Invalid Topic",
+            name: "path/separator",
+            description: "Invalid name with slash",
+            type: "project",
+            content: "Should be skipped",
+            shouldCreate: true,
+          },
+          {
+            title: "Another Invalid",
+            name: "has-hyphen",
+            description: "Invalid name with hyphen",
+            type: "project",
+            content: "Also should be skipped",
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
+
+    const now = Date.now();
+    const longText = "A".repeat(300);
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage(longText, now),
+        makeAssistantMessage("Response", now),
+        makeUserMessage("Follow up", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    const ctx = {
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    };
+
+    const warnSpy = mock(() => {});
+    const originalWarn = console.warn;
+    console.warn = warnSpy;
+
+    try {
+      await task.run(ctx as never);
+
+      const fileManager = new MemoryFileManager(roots);
+      const validTopic = await fileManager.readTopic("valid_topic");
+      expect(validTopic).not.toBeNull();
+      expect(validTopic!.content).toBe("Valid content");
+
+      const invalidSlash = await fileManager.readTopic("path/separator");
+      expect(invalidSlash).toBeNull();
+
+      const invalidHyphen = await fileManager.readTopic("has-hyphen");
+      expect(invalidHyphen).toBeNull();
+
+      const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(warnCalls.some((m: string) => m.includes("path/separator"))).toBe(true);
+      expect(warnCalls.some((m: string) => m.includes("has-hyphen"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("skips memories containing secrets", async () => {
+    const roots = makeMemoryRoots("secret-skip");
+    await setupDirs(roots);
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "Safe Topic",
+            name: "safe_topic",
+            description: "A safe topic",
+            type: "project",
+            content: "This is safe project knowledge.",
+            shouldCreate: true,
+          },
+          {
+            title: "Leaked Secret",
+            name: "leaked_secret",
+            description: "Contains a secret",
+            type: "project",
+            content: "My api_key=sk_test_1234567890abcdef1234567890abcd",
+            shouldCreate: true,
+          },
+          {
+            title: "User Secret Pref",
+            name: "user_secret",
+            description: "User preferences with secret",
+            type: "user",
+            content: "I use password=mypassword123 for auth",
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
+
+    const now = Date.now();
+    const longText = "A".repeat(300);
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage(longText, now),
+        makeAssistantMessage("Response", now),
+        makeUserMessage("Follow up", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    const ctx = {
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    };
+
+    const warnSpy = mock(() => {});
+    const originalWarn = console.warn;
+    console.warn = warnSpy;
+
+    try {
+      await task.run(ctx as never);
+
+      const fileManager = new MemoryFileManager(roots);
+
+      const safeTopic = await fileManager.readTopic("safe_topic");
+      expect(safeTopic).not.toBeNull();
+      expect(safeTopic!.content).toBe("This is safe project knowledge.");
+
+      const leakedTopic = await fileManager.readTopic("leaked_secret");
+      expect(leakedTopic).toBeNull();
+
+      const prefs = await fileManager.readPreferences();
+      expect(prefs).toBeNull();
+
+      const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => c[0] as string);
+      expect(warnCalls.some((m: string) => m.includes("leaked_secret"))).toBe(true);
+      expect(warnCalls.some((m: string) => m.includes("user_secret"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 });

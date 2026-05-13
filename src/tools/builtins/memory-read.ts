@@ -17,8 +17,6 @@ import {
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
   parseFrontmatter,
-  PROJECT_PREFERENCES_MARKER_END,
-  PROJECT_PREFERENCES_MARKER_START,
 } from "../../memory";
 
 // ─── Input Schema ───
@@ -26,7 +24,6 @@ import {
 const MemoryReadInputSchema = z
   .object({
     name: z.string().optional(),
-    scope: z.enum(["project", "user", "both"]).default("both"),
   })
   .strict();
 
@@ -53,30 +50,16 @@ function truncatePreferences(content: string, maxBytes: number): string {
 
 async function buildCombinedContext(
   fileManager: MemoryFileManager,
-  scope: "project" | "user" | "both",
 ): Promise<string> {
   const parts: string[] = [];
   parts.push(MEMORY_CONTEXT_START);
 
-  // Order: user preferences → project preferences → index
-  if (scope === "user" || scope === "both") {
-    const userPrefs = await fileManager.readPreferences("user");
-    if (userPrefs !== null) {
-      const truncated = truncatePreferences(userPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
-      parts.push(PREFERENCES_MARKER_START);
-      parts.push(truncated);
-      parts.push(PREFERENCES_MARKER_END);
-    }
-  }
-
-  if (scope === "project" || scope === "both") {
-    const projectPrefs = await fileManager.readPreferences("project");
-    if (projectPrefs !== null) {
-      const truncated = truncatePreferences(projectPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
-      parts.push(PROJECT_PREFERENCES_MARKER_START);
-      parts.push(truncated);
-      parts.push(PROJECT_PREFERENCES_MARKER_END);
-    }
+  const userPrefs = await fileManager.readPreferences();
+  if (userPrefs !== null) {
+    const truncated = truncatePreferences(userPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
+    parts.push(PREFERENCES_MARKER_START);
+    parts.push(truncated);
+    parts.push(PREFERENCES_MARKER_END);
   }
 
   const indexContent = await fileManager.readIndex();
@@ -162,9 +145,9 @@ export function createMemoryReadTool(
     name: "memory_read",
     description:
       "Reads structured memory context. " +
-      "When called without a name, returns a combined context of index and preferences. " +
-      'Special names: "preferences" reads project preferences, "index" reads the memory index. ' +
-      "Otherwise, name identifies a knowledge topic (letters, numbers, underscores only).",
+      "When called without a name, returns a combined context of user preferences and project index. " +
+      'Special names: "preferences" reads user preferences, "index" reads the memory index. ' +
+      "Otherwise, name identifies a project knowledge topic (letters, numbers, underscores only).",
     inputSchema: MemoryReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (
@@ -172,12 +155,12 @@ export function createMemoryReadTool(
       _ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
       if (!input.name) {
-        return buildCombinedContext(fileManager, input.scope ?? "both");
+        return buildCombinedContext(fileManager);
       }
 
       if (input.name === "preferences") {
-        const projectPrefsPath = join(fileManager.projectRoot, PREFERENCES_FILE);
-        const content = await readRawFile(projectPrefsPath);
+        const userPrefsPath = join(fileManager.userRoot, PREFERENCES_FILE);
+        const content = await readRawFile(userPrefsPath);
         if (content === null) {
           return createToolErrorResult({
             kind: "file-not-found",

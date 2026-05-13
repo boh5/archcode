@@ -247,9 +247,8 @@ export class MemoryFileManager {
     return this.#readFileOrNull(indexPath);
   }
 
-  async readPreferences(scope: "project" | "user"): Promise<string | null> {
-    const root = scope === "project" ? this.projectRoot : this.userRoot;
-    const prefPath = join(root, PREFERENCES_FILE);
+  async readPreferences(): Promise<string | null> {
+    const prefPath = join(this.userRoot, PREFERENCES_FILE);
     return this.#readFileOrNull(prefPath);
   }
 
@@ -291,22 +290,14 @@ export class MemoryFileManager {
     name: string,
     frontmatter: MemoryFrontmatter,
     content: string,
-    scope: "project" | "user" = "project",
   ): Promise<void> {
-    const resolvedPath =
-      scope === "project"
-        ? await this.resolveProjectPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`))
-        : await this.resolveUserPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`));
+    const resolvedPath = await this.resolveProjectPath(join(KNOWLEDGE_DIR_NAME, `${name}.md`));
     const fileContent = formatFrontmatter(frontmatter, content);
     await atomicWrite(resolvedPath, fileContent);
   }
 
-  async writePreferences(
-    scope: "project" | "user",
-    content: string,
-  ): Promise<void> {
-    const root = scope === "project" ? this.projectRoot : this.userRoot;
-    const prefPath = join(root, PREFERENCES_FILE);
+  async writePreferences(content: string): Promise<void> {
+    const prefPath = join(this.userRoot, PREFERENCES_FILE);
     await atomicWrite(prefPath, content);
   }
 

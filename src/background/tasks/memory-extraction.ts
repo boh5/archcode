@@ -12,6 +12,7 @@ import {
   MIN_CONTENT_LENGTH_FOR_EXTRACTION,
   DEFAULT_EXTRACTION_MAX_MESSAGES,
 } from "../../memory/constants";
+import { containsSecretPattern } from "../../security/patterns";
 
 /**
  * Create a background task that extracts durable memories from the
@@ -84,13 +85,14 @@ export function createMemoryExtractionTask(
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
 Focus on information that would be useful in future sessions:
-- User preferences and working style
-- Project conventions and architecture decisions
-- Recurring feedback or corrections
-- Important technical context
+- User preferences and working style → classify as type "user" (these go to user-level preferences)
+- Project conventions and architecture decisions → classify as type "project" (these go to project knowledge)
+- Recurring feedback or corrections → classify as type "feedback" (these go to project knowledge)
+- Important technical references → classify as type "reference" (these go to project knowledge)
 
 Exclude: secrets, temporary details, error messages, and anything session-specific.
 Prefer updating existing topics over creating duplicates.
+Memories with type "user" will be saved to the user's personal preferences (not project knowledge).
 
 Conversation:
 ${conversationText}`,
@@ -113,37 +115,36 @@ ${conversationText}`,
 
       if (result.memories.length === 0) return;
 
-      // --- Write topic files -------------------------------------------------
+      // --- Write memories ----------
       const fileManager = new MemoryFileManager(memoryRoots);
+
+      const TOPIC_NAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
       for (const memory of result.memories) {
         try {
-          if (memory.shouldCreate) {
-            await fileManager.writeTopic(
-              memory.name,
-              {
-                name: memory.title,
-                description: memory.description,
-                type: memory.type,
-              },
-              memory.content,
+          const secretCheck = containsSecretPattern(memory.content);
+          if (secretCheck.found) {
+            console.warn(
+              `Memory extraction: skipping "${memory.name}" — content contains potential secrets (${secretCheck.patterns.join(", ")})`,
             );
+            continue;
+          }
+
+          if (memory.type === "user") {
+            const existing = await fileManager.readPreferences();
+            const merged = existing !== null
+              ? `${existing.trimEnd()}\n\n---\n\n${memory.content.trimEnd()}\n`
+              : `${memory.content.trimEnd()}\n`;
+            await fileManager.writePreferences(merged);
           } else {
-            // Merge into existing topic
-            const existing = await fileManager.readTopic(memory.name);
-            if (existing) {
-              const mergedContent = `${existing.content}\n\n---\n\n${memory.content}`;
-              await fileManager.writeTopic(
-                memory.name,
-                {
-                  name: memory.title,
-                  description: memory.description,
-                  type: memory.type,
-                },
-                mergedContent,
+            if (!TOPIC_NAME_REGEX.test(memory.name)) {
+              console.warn(
+                `Memory extraction: skipping topic "${memory.name}" — name contains invalid characters (only letters, numbers, underscores allowed)`,
               );
-            } else {
-              // Topic doesn't exist yet — create it anyway
+              continue;
+            }
+
+            if (memory.shouldCreate) {
               await fileManager.writeTopic(
                 memory.name,
                 {
@@ -153,14 +154,37 @@ ${conversationText}`,
                 },
                 memory.content,
               );
+            } else {
+              const existing = await fileManager.readTopic(memory.name);
+              if (existing) {
+                const mergedContent = `${existing.content}\n\n---\n\n${memory.content}`;
+                await fileManager.writeTopic(
+                  memory.name,
+                  {
+                    name: memory.title,
+                    description: memory.description,
+                    type: memory.type,
+                  },
+                  mergedContent,
+                );
+              } else {
+                await fileManager.writeTopic(
+                  memory.name,
+                  {
+                    name: memory.title,
+                    description: memory.description,
+                    type: memory.type,
+                  },
+                  memory.content,
+                );
+              }
             }
           }
         } catch (err) {
           console.warn(
-            `Memory extraction: failed to write topic "${memory.name}":`,
+            `Memory extraction: failed to write "${memory.name}":`,
             err instanceof Error ? err.message : String(err),
           );
-          // Continue with other topics
         }
       }
 

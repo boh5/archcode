@@ -1,7 +1,6 @@
 import type { PromptContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
 import {
-  COMBINED_PREFERENCES_MAX_BYTES,
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
   INDEX_TRUNCATION_SUFFIX,
@@ -9,15 +8,13 @@ import {
   MEMORY_CONTEXT_START,
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
-  PROJECT_PREFERENCES_MARKER_END,
-  PROJECT_PREFERENCES_MARKER_START,
 } from "../../memory/constants";
 
 const MEMORY_TOOLS_DESCRIPTION = `You have access to project and user memory via these tools:
-- memory_read: Read memory (no name = combined context; name "preferences" = project prefs; name "index" = memory index; otherwise name = knowledge topic)
-- memory_write: Write or update a knowledge topic (name must be letters, numbers, underscores only; index is auto-managed)
+- memory_read: Read memory (no name = combined context with user preferences + project index; name "preferences" = user preferences; name "index" = project index; otherwise name = knowledge topic)
+- memory_write: Write memory (name "preferences" with scope="user" to save user preferences; any other name to write a project knowledge topic; index is auto-managed)
 
-Memory is automatically injected into your context. When you learn something durable about the user's preferences or project conventions, use memory_write to save it. Do not save secrets, API keys, or passwords.`;
+Memory is automatically injected into your context. When you learn something durable about the user's preferences or working style, use memory_write with name="preferences". For project knowledge and conventions, use any other topic name. Do not save secrets, API keys, or passwords.`;
 
 function truncateIndex(content: string, maxLines: number): string {
   const lines = content.split("\n");
@@ -40,41 +37,17 @@ export async function buildMemorySection(ctx: PromptContext): Promise<string | n
 
   const fm = new MemoryFileManager(ctx.memoryRoots);
 
-  const [index, userPrefs, projectPrefs] = await Promise.all([
+  const [index, userPrefs] = await Promise.all([
     fm.readIndex(),
-    fm.readPreferences("user"),
-    fm.readPreferences("project"),
+    fm.readPreferences(),
   ]);
 
   const parts: string[] = [];
-  let truncatedUserPrefs: string | null = null;
 
   if (userPrefs !== null) {
-    truncatedUserPrefs = truncateByBytes(userPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
+    const truncated = truncateByBytes(userPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
     parts.push(
-      `${PREFERENCES_MARKER_START}\n${truncatedUserPrefs}\n${PREFERENCES_MARKER_END}`,
-    );
-  }
-
-  let projectPrefsContent: string | null = null;
-  if (projectPrefs !== null) {
-    projectPrefsContent = truncateByBytes(projectPrefs, DEFAULT_MAX_PREFERENCES_BYTES);
-
-    if (truncatedUserPrefs !== null) {
-      const encoder = new TextEncoder();
-      const userBytes = encoder.encode(truncatedUserPrefs).length;
-      const remaining = COMBINED_PREFERENCES_MAX_BYTES - userBytes;
-      if (remaining > 0) {
-        projectPrefsContent = truncateByBytes(projectPrefsContent, remaining);
-      } else {
-        projectPrefsContent = null;
-      }
-    }
-  }
-
-  if (projectPrefsContent !== null) {
-    parts.push(
-      `${PROJECT_PREFERENCES_MARKER_START}\n${projectPrefsContent}\n${PROJECT_PREFERENCES_MARKER_END}`,
+      `${PREFERENCES_MARKER_START}\n${truncated}\n${PREFERENCES_MARKER_END}`,
     );
   }
 

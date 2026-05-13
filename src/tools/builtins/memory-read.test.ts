@@ -14,8 +14,6 @@ import {
   PREFERENCES_FILE,
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
-  PROJECT_PREFERENCES_MARKER_END,
-  PROJECT_PREFERENCES_MARKER_START,
 } from "../../memory/constants";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { createMockStore } from "../../store/test-helpers";
@@ -44,7 +42,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   // Clean all files between tests
   await rm(join(projectDir, INDEX_FILE), { force: true });
-  await rm(join(projectDir, PREFERENCES_FILE), { force: true });
   await rm(join(userDir, PREFERENCES_FILE), { force: true });
   // Clean knowledge dir contents
   const knowledgeFiles = await Array.fromAsync(
@@ -91,10 +88,9 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
 
 describe("createMemoryReadTool", () => {
   describe("no-arg call (combined context)", () => {
-    test("returns combined context with both preferences and index in correct order", async () => {
+    test("returns combined context with user preferences and index in correct order", async () => {
       await Bun.write(join(projectDir, INDEX_FILE), "- [Alpha](alpha) — First topic\n");
       await Bun.write(join(userDir, PREFERENCES_FILE), "User likes simplicity.");
-      await Bun.write(join(projectDir, PREFERENCES_FILE), "Project uses TypeScript.");
 
       const result = (await memoryReadTool.execute(
         {},
@@ -108,16 +104,11 @@ describe("createMemoryReadTool", () => {
       expect(result).toContain(PREFERENCES_MARKER_START);
       expect(result).toContain("User likes simplicity.");
       expect(result).toContain(PREFERENCES_MARKER_END);
-      expect(result).toContain(PROJECT_PREFERENCES_MARKER_START);
-      expect(result).toContain("Project uses TypeScript.");
-      expect(result).toContain(PROJECT_PREFERENCES_MARKER_END);
 
-      // Verify order: user preferences → project preferences → index
+      // Verify order: user preferences → index
       const userPrefIdx = result.indexOf(PREFERENCES_MARKER_START);
-      const projectPrefIdx = result.indexOf(PROJECT_PREFERENCES_MARKER_START);
       const indexIdx = result.indexOf("## Memory Index");
-      expect(userPrefIdx).toBeLessThan(projectPrefIdx);
-      expect(projectPrefIdx).toBeLessThan(indexIdx);
+      expect(userPrefIdx).toBeLessThan(indexIdx);
     });
 
     test("returns context with no content when no files exist", async () => {
@@ -127,34 +118,6 @@ describe("createMemoryReadTool", () => {
       )) as string;
 
       expect(result).toBe(`${MEMORY_CONTEXT_START}\n\n${MEMORY_CONTEXT_END}`);
-    });
-
-    test("scope='project' excludes user preferences", async () => {
-      await Bun.write(join(userDir, PREFERENCES_FILE), "User data.");
-      await Bun.write(join(projectDir, PREFERENCES_FILE), "Project data.");
-
-      const result = (await memoryReadTool.execute(
-        { scope: "project" },
-        makeCtx(),
-      )) as string;
-
-      expect(result).toContain(PROJECT_PREFERENCES_MARKER_START);
-      expect(result).toContain("Project data.");
-      expect(result).not.toContain(PREFERENCES_MARKER_START);
-    });
-
-    test("scope='user' excludes project preferences", async () => {
-      await Bun.write(join(userDir, PREFERENCES_FILE), "User data.");
-      await Bun.write(join(projectDir, PREFERENCES_FILE), "Project data.");
-
-      const result = (await memoryReadTool.execute(
-        { scope: "user" },
-        makeCtx(),
-      )) as string;
-
-      expect(result).toContain(PREFERENCES_MARKER_START);
-      expect(result).toContain("User data.");
-      expect(result).not.toContain(PROJECT_PREFERENCES_MARKER_START);
     });
 
     test("truncates index when exceeding max lines", async () => {
@@ -180,7 +143,7 @@ describe("createMemoryReadTool", () => {
       await Bun.write(join(userDir, PREFERENCES_FILE), largePref);
 
       const result = (await memoryReadTool.execute(
-        { scope: "user" },
+        {},
         makeCtx(),
       )) as string;
 
@@ -198,15 +161,15 @@ describe("createMemoryReadTool", () => {
   });
 
   describe('name="preferences"', () => {
-    test("returns project preferences content", async () => {
-      await Bun.write(join(projectDir, PREFERENCES_FILE), "Project prefs content.");
+    test("returns user preferences content", async () => {
+      await Bun.write(join(userDir, PREFERENCES_FILE), "I prefer dark mode.");
 
       const result = (await memoryReadTool.execute(
         { name: "preferences" },
         makeCtx(),
       )) as string;
 
-      expect(result).toBe("Project prefs content.");
+      expect(result).toBe("I prefer dark mode.");
     });
 
     test("returns not-found when preferences file missing", async () => {
@@ -306,28 +269,15 @@ React hooks are powerful.`;
     test("accepts valid input with optional name", () => {
       expect(memoryReadTool.inputSchema.safeParse({}).success).toBe(true);
       expect(memoryReadTool.inputSchema.safeParse({ name: "test_memory" }).success).toBe(true);
-      expect(memoryReadTool.inputSchema.safeParse({ scope: "project" }).success).toBe(true);
-      expect(memoryReadTool.inputSchema.safeParse({ scope: "user" }).success).toBe(true);
-      expect(memoryReadTool.inputSchema.safeParse({ scope: "both" }).success).toBe(true);
     });
 
-    test("rejects invalid scope", () => {
-      expect(memoryReadTool.inputSchema.safeParse({ scope: "invalid" }).success).toBe(false);
-    });
-
-    test("rejects unknown properties", () => {
+    test("rejects unknown properties including scope", () => {
+      expect(memoryReadTool.inputSchema.safeParse({ scope: "project" }).success).toBe(false);
       expect(memoryReadTool.inputSchema.safeParse({ extra: true }).success).toBe(false);
     });
 
-    test("defaults scope to 'both'", () => {
-      const parsed = memoryReadTool.inputSchema.safeParse({}) as {
-        success: true;
-        data: { scope: string };
-      } | { success: false };
-      expect(parsed.success).toBe(true);
-      if (parsed.success) {
-        expect(parsed.data.scope).toBe("both");
-      }
+    test("accepts any string name (validation happens at execution time)", () => {
+      expect(memoryReadTool.inputSchema.safeParse({ name: "valid_name" }).success).toBe(true);
     });
   });
 

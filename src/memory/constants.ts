@@ -14,7 +14,6 @@ export const PREFERENCES_FILE = "preferences.md";
 export const DEFAULT_MAX_INDEX_LINES = 200;
 export const CONSOLIDATION_THRESHOLD = 250;
 export const DEFAULT_MAX_PREFERENCES_BYTES = 25600; // 25 KB
-export const COMBINED_PREFERENCES_MAX_BYTES = 51200; // 50 KB
 
 // ---------------------------------------------------------------------------
 // Session-extraction skip conditions
@@ -35,5 +34,3 @@ export const MEMORY_CONTEXT_START = "<specra-memory-context>";
 export const MEMORY_CONTEXT_END = "</specra-memory-context>";
 export const PREFERENCES_MARKER_START = "<specra-memory-preferences>";
 export const PREFERENCES_MARKER_END = "</specra-memory-preferences>";
-export const PROJECT_PREFERENCES_MARKER_START = "<specra-memory-project-preferences>";
-export const PROJECT_PREFERENCES_MARKER_END = "</specra-memory-project-preferences>";

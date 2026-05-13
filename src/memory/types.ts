@@ -19,10 +19,9 @@ export interface MemoryTopicFile {
   filePath: string;
 }
 
-/** User or project preferences (free-form markdown) */
+/** User preferences (free-form markdown, user-level only) */
 export interface MemoryPreferences {
   content: string;
-  scope: "project" | "user";
 }
 
 /** Resolved filesystem roots for project and user memory directories */
