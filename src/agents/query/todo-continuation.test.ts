@@ -128,8 +128,12 @@ describe("shouldInjectReminder", () => {
   });
 
   test("running sub-agents block reminder", () => {
-    const state = stateWithPendingTodo({ lastTodoWriteStepIndex: 0, steps: stepsForCount(11) });
-    expect(shouldInjectReminder(state, 10_000, { activeCount: 1 })).toEqual({
+    const state = stateWithPendingTodo({
+      lastTodoWriteStepIndex: 0,
+      steps: stepsForCount(11),
+      childSessionIds: new Set(["child-1"]),
+    });
+    expect(shouldInjectReminder(state, 10_000)).toEqual({
       should: false,
       reason: "running_sub_agents",
     });
@@ -203,8 +207,8 @@ describe("shouldContinueAfterLoop", () => {
   });
 
   test("running sub-agents block continuation", () => {
-    const state = stateWithPendingTodo();
-    expect(shouldContinueAfterLoop(state, "completed", 10_000, { activeCount: 1 })).toEqual({
+    const state = stateWithPendingTodo({ childSessionIds: new Set(["child-1"]) });
+    expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
       should: false,
       reason: "running_sub_agents",
     });

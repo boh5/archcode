@@ -6,9 +6,10 @@ import type { StoredMessage } from "../../store/types";
 
 export const DelegateInputSchema = z
   .object({
-    agent_type: z.enum(["explore"]),
+    agent_type: z.string().min(1),
     prompt: z.string(),
     description: z.string().optional(),
+    title: z.string().optional(),
     background: z.boolean().default(false),
   })
   .strict();
@@ -25,25 +26,30 @@ export interface DelegateErrorOutput {
 }
 
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext): Promise<string> {
-  if (ctx.subAgentManager === undefined) {
+  if (ctx.agentFactory === undefined) {
     return JSON.stringify({
       ok: false,
       sessionId: "",
-      error: { name: "SubAgentError", message: "SubAgentManager is not available in this execution context" },
+      error: { name: "SubAgentError", message: "AgentFactory is not available in this execution context" },
     } satisfies DelegateErrorOutput);
   }
 
   let sessionId = "";
   try {
-    const handle = ctx.subAgentManager.createAgent(input.agent_type, input.prompt, {
+    const handle = ctx.agentFactory.delegate({
+      parentStore: ctx.store,
+      parentAgentName: ctx.agentName ?? "orchestrator",
+      targetAgentName: input.agent_type,
+      prompt: input.prompt,
+      title: input.title ?? input.description,
+      description: input.description,
+      background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
-      description: input.description,
-      background: input.background,
     });
     sessionId = handle.sessionId;
 
-    if (input.background) {
+    if (input.background ?? false) {
       return JSON.stringify({ ok: true, session_id: sessionId });
     }
 
@@ -77,7 +83,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    "Delegate a prompt to an explore sub-agent. Use background=true to start it asynchronously and retrieve output later with background_output.",
+    "Delegate a prompt to another allowed agent. Use background=true to start it asynchronously and retrieve output later with background_output.",
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

@@ -1,0 +1,55 @@
+import {
+  DEFAULT_SUB_AGENT_TIMEOUT_MS,
+  MAX_CONCURRENT_SUB_AGENTS,
+  MAX_SUB_AGENT_DEPTH,
+} from "../constants";
+import type { AgentDefinition } from "../factory-types";
+
+export const orchestratorAgentDefinition = {
+  name: "orchestrator",
+  promptAgentId: "default",
+  tools: {
+    tools: [
+      "file_read",
+      "file_write",
+      "file_edit",
+      "grep",
+      "glob",
+      "git_status",
+      "git_diff",
+      "bash",
+      "todo_write",
+      "ask_user",
+      "lsp_diagnostics",
+      "lsp_goto_definition",
+      "lsp_find_references",
+      "lsp_symbols",
+      "web_fetch",
+      "wait_for_reminder",
+      "delegate",
+      "background_output",
+      "view_tool_output",
+      "memory_read",
+      "memory_write",
+    ],
+    delegateTargets: ["explore"],
+  },
+  hooks: {
+    autoCompact: true,
+    autoInjectReminder: true,
+    todoContinuation: true,
+    transcriptSave: true,
+    memoryExtraction: true,
+    memoryConsolidation: true,
+    titleGeneration: "enabled",
+  },
+  childPolicy: {
+    maxDepth: MAX_SUB_AGENT_DEPTH,
+    maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+    timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+    abortCascade: true,
+    terminalReminders: true,
+  },
+  includeMemoryInPrompt: true,
+  enforceToolOutputQuota: true,
+} as const satisfies AgentDefinition;

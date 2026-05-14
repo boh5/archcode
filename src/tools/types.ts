@@ -3,8 +3,7 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
-import type { AgentType } from "../agents/agent-registry";
-import type { SubAgentRunHandle, CreateSubAgentOptions } from "../agents/sub-agent-manager";
+import type { AgentFactoryLike } from "../agents/factory-types";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -36,13 +35,8 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
-  subAgentManager?: SubAgentManagerLike;
+  agentFactory?: AgentFactoryLike;
   currentDepth?: number;
-}
-
-export interface SubAgentManagerLike {
-  readonly activeCount: number;
-  createAgent(agentType: AgentType, prompt: string, options?: CreateSubAgentOptions): SubAgentRunHandle;
 }
 
 export interface Logger {

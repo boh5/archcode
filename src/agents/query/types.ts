@@ -4,9 +4,8 @@ import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
-import type { SubAgentManagerLike as ToolSubAgentManagerLike } from "../../tools/types";
+import type { AgentFactoryLike } from "../factory-types";
 import type { QueryLoopHooks } from "./loop-hooks";
-import type { SubAgentManagerLike as ContinuationSubAgentManagerLike } from "./todo-continuation";
 
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
@@ -22,7 +21,8 @@ export interface QueryLoopOptions {
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
   commandRegistry?: CommandRegistry;
-  subAgentManager?: ToolSubAgentManagerLike & ContinuationSubAgentManagerLike;
+  agentFactory?: AgentFactoryLike;
+  agentName?: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;
 }

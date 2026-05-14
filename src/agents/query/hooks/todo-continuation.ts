@@ -2,31 +2,24 @@ import type { AfterLoopEndContext, AfterStepEndContext } from "../loop-hooks";
 import {
   shouldInjectReminder,
   shouldContinueAfterLoop,
-  type SubAgentManagerLike,
 } from "../todo-continuation";
 
-export interface TodoContinuationHookOptions {
-  subAgentManager?: SubAgentManagerLike;
-}
-
 export function createTodoContinuationHook(
-  options: TodoContinuationHookOptions = {},
 ): {
   afterStepEnd: (ctx: AfterStepEndContext) => Promise<void>;
   afterLoopEnd: (ctx: AfterLoopEndContext) => Promise<void>;
 } {
   return {
-    afterStepEnd: createTodoReminderHook(options),
-    afterLoopEnd: createTodoLoopContinuationHook(options),
+    afterStepEnd: createTodoReminderHook(),
+    afterLoopEnd: createTodoLoopContinuationHook(),
   };
 }
 
 function createTodoReminderHook(
-  options: TodoContinuationHookOptions,
 ): (ctx: AfterStepEndContext) => Promise<void> {
   return async (ctx: AfterStepEndContext) => {
     const state = ctx.store.getState();
-    const checkResult = shouldInjectReminder(state, Date.now(), options.subAgentManager);
+    const checkResult = shouldInjectReminder(state, Date.now());
 
     if (!checkResult.should) return;
 
@@ -40,7 +33,6 @@ function createTodoReminderHook(
 }
 
 function createTodoLoopContinuationHook(
-  options: TodoContinuationHookOptions,
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
     const state = ctx.store.getState();
@@ -48,7 +40,6 @@ function createTodoLoopContinuationHook(
       state,
       ctx.loopEndStatus,
       Date.now(),
-      options.subAgentManager,
     );
 
     if (!checkResult.should) return;

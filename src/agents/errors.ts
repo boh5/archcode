@@ -32,3 +32,31 @@ export class DepthLimitError extends Error {
     this.name = "DepthLimitError";
   }
 }
+
+export class DelegationToolNotAllowedError extends SubAgentError {
+  constructor(
+    public readonly parentAgentName: string,
+    public readonly currentDepth: number,
+  ) {
+    super(`Agent "${parentAgentName}" is not allowed to delegate at depth ${currentDepth}: delegate tool is unavailable`);
+    this.name = "DelegationToolNotAllowedError";
+  }
+}
+
+export class DelegateTargetNotAllowedError extends SubAgentError {
+  constructor(
+    public readonly parentAgentName: string,
+    public readonly targetAgentName: string,
+    public readonly currentDepth: number,
+  ) {
+    super(`Agent "${parentAgentName}" cannot delegate to "${targetAgentName}" at depth ${currentDepth}`);
+    this.name = "DelegateTargetNotAllowedError";
+  }
+}
+
+export class AgentChildPolicyMissingError extends SubAgentError {
+  constructor(public readonly parentAgentName: string) {
+    super(`Agent "${parentAgentName}" does not define a child delegation policy`);
+    this.name = "AgentChildPolicyMissingError";
+  }
+}

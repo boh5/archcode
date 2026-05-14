@@ -8,10 +8,6 @@ export const TODO_CONTINUATION_COOLDOWN_MS = 60_000;
 export const TODO_CONTINUATION_MAX_COUNT = 5;
 export const TODO_CONTINUATION_STAGNATION_THRESHOLD = 3;
 
-export interface SubAgentManagerLike {
-  readonly activeCount: number;
-}
-
 export type ReminderBlockReason =
   | "no_pending_todos"
   | "cooldown"
@@ -68,7 +64,6 @@ export function getStepsSinceLastReminder(state: SessionStoreState): number {
 export function shouldInjectReminder(
   state: SessionStoreState,
   now: number,
-  subAgentManager?: SubAgentManagerLike,
 ): ReminderCheckResult {
   const pendingTodos = getPendingTodos(state.todos);
   if (pendingTodos.length === 0) {
@@ -94,7 +89,7 @@ export function shouldInjectReminder(
     return { should: false, reason: "pending_question" };
   }
 
-  if ((subAgentManager?.activeCount ?? 0) > 0) {
+  if (state.childSessionIds.size > 0) {
     return { should: false, reason: "running_sub_agents" };
   }
 
@@ -113,7 +108,6 @@ export function shouldContinueAfterLoop(
   state: SessionStoreState,
   loopEndStatus: RunEndEvent["status"],
   now: number,
-  subAgentManager?: SubAgentManagerLike,
 ): ContinuationCheckResult {
   if (!isLoopEndAllowed(loopEndStatus)) {
     return { should: false, reason: "disallowed_status" };
@@ -133,7 +127,7 @@ export function shouldContinueAfterLoop(
     return { should: false, reason: "pending_question" };
   }
 
-  if ((subAgentManager?.activeCount ?? 0) > 0) {
+  if (state.childSessionIds.size > 0) {
     return { should: false, reason: "running_sub_agents" };
   }
 

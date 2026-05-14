@@ -73,8 +73,8 @@ describe("createTodoContinuationHook - afterStepEnd (10-step reminder)", () => {
   test("does not inject when sub-agents are running", async () => {
     const store = createHookStore();
     seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);
-    store.setState({ lastTodoWriteStepIndex: null });
-    const { afterStepEnd } = createTodoContinuationHook({ subAgentManager: { activeCount: 1 } });
+    store.setState({ lastTodoWriteStepIndex: null, childSessionIds: new Set(["child-1"]) });
+    const { afterStepEnd } = createTodoContinuationHook();
 
     for (let i = 0; i < 12; i++) {
       await runStep(afterStepEnd, store);

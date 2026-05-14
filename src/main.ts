@@ -6,7 +6,11 @@ import {
   type ResolvedMcpConfig,
   type ResolvedMcpServerConfig,
 } from "./config/mcp";
-import { OrchestratorAgent } from "./agents";
+import {
+  createAgentFactory,
+  defaultAgentDefinitions,
+  type Agent,
+} from "./agents";
 import {
   createRegistry as createProviderRegistry,
   type Registry as ProviderRegistry,
@@ -35,7 +39,7 @@ export interface SpecraRuntimeOptions {
 }
 
 export interface SpecraRuntime {
-  agent: OrchestratorAgent;
+  agent: Agent;
   mcpManager: McpManager;
   toolRegistry: ToolRegistry;
   providerRegistry: ProviderRegistry;
@@ -99,7 +103,15 @@ export async function createSpecraRuntime(
       }
     }
 
-    const agent = new OrchestratorAgent({ providerRegistry, toolRegistry, config });
+    const workspaceRoot = process.cwd();
+    const factory = createAgentFactory({
+      definitions: defaultAgentDefinitions,
+      providerRegistry,
+      toolRegistry,
+      workspaceRoot,
+      config,
+    });
+    const agent = factory.createRootAgent("orchestrator");
     return { agent, mcpManager, toolRegistry, providerRegistry, warnings };
   } catch (err) {
     await closeMcpManagerBestEffort(mcpManager, recordWarning);

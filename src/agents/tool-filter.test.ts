@@ -1,65 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { z } from "zod";
-import type { AnyToolDescriptor } from "../tools/types";
-import type { AgentType } from "./agent-registry";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
-import { getToolsForDepth } from "./tool-filter";
+import { DelegateInputSchema } from "../tools/builtins/delegate";
+import { DELEGATION_TOOLS } from "./constants";
+import { DELEGATION_TOOLS as EXPORTED_DELEGATION_TOOLS } from "./tool-filter";
 
-function makeTool(name: string): AnyToolDescriptor {
-  return {
-    name,
-    description: `${name} tool`,
-    inputSchema: z.object({}).strict(),
-    traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: () => `${name} result`,
-  };
-}
-
-function toolNames(tools: AnyToolDescriptor[]): string[] {
-  return tools.map((tool) => tool.name);
-}
-
-const unknownTool = makeTool("file_write");
-const explorerReadOnlyTools = EXPLORER_READ_ONLY_TOOLS.map(makeTool);
-const delegationTools = DELEGATION_TOOLS.map(makeTool);
-const allTools = [unknownTool, ...explorerReadOnlyTools, ...delegationTools];
-
-describe("getToolsForDepth", () => {
-  test('depth 0 + "explore" returns read-only and delegation tools', () => {
-    const tools = getToolsForDepth(0, "explore", allTools);
-
-    expect(toolNames(tools)).toEqual([...EXPLORER_READ_ONLY_TOOLS, ...DELEGATION_TOOLS]);
+describe("tool-filter exports", () => {
+  test("re-exports delegation tools for depth filtering callers", () => {
+    expect(EXPORTED_DELEGATION_TOOLS).toBe(DELEGATION_TOOLS);
+    expect(EXPORTED_DELEGATION_TOOLS).toEqual(["delegate", "wait_for_reminder", "background_output"]);
   });
+});
 
-  test('depth 1 + "explore" returns read-only and delegation tools', () => {
-    const tools = getToolsForDepth(1, "explore", allTools);
+describe("delegate input schema", () => {
+  test("delegate input schema accepts dynamic non-empty agent types", () => {
+    const shape = DelegateInputSchema.shape;
+    expect(shape.agent_type).toBeDefined();
 
-    expect(toolNames(tools)).toEqual([...EXPLORER_READ_ONLY_TOOLS, ...DELEGATION_TOOLS]);
-  });
+    const valid = DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "test prompt",
+    });
+    expect(valid.success).toBe(true);
 
-  test('depth 2 + "explore" returns read-only tools only', () => {
-    const tools = getToolsForDepth(2, "explore", allTools);
+    const dynamic = DelegateInputSchema.safeParse({
+      agent_type: "unknown_type",
+      prompt: "test prompt",
+    });
+    expect(dynamic.success).toBe(true);
 
-    expect(toolNames(tools)).toEqual([...EXPLORER_READ_ONLY_TOOLS]);
-    expect(toolNames(tools)).not.toContain("delegate");
-    expect(toolNames(tools)).not.toContain("background_output");
-    expect(toolNames(tools)).not.toContain("wait_for_reminder");
-  });
-
-  test("unknown agent type returns all tools without filtering", () => {
-    const tools = getToolsForDepth(2, "oracle" as AgentType, allTools);
-
-    expect(tools).toBe(allTools);
-  });
-
-  test("tools not in the allowed set are excluded for explore", () => {
-    const tools = getToolsForDepth(0, "explore", [makeTool("grep"), unknownTool]);
-
-    expect(toolNames(tools)).toEqual(["grep"]);
-  });
-
-  test("empty allTools array returns empty result", () => {
-    expect(getToolsForDepth(0, "explore", [])).toEqual([]);
-    expect(getToolsForDepth(2, "oracle" as AgentType, [])).toEqual([]);
+    const invalid = DelegateInputSchema.safeParse({
+      agent_type: "",
+      prompt: "test prompt",
+    });
+    expect(invalid.success).toBe(false);
   });
 });

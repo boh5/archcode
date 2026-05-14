@@ -124,7 +124,8 @@ export async function runQueryLoop(
         resolvedWorkspaceRoot,
         confirmPermission,
         options.askUser,
-        options.subAgentManager,
+        options.agentFactory,
+        options.agentName,
         currentDepth,
         doomTracker,
       );
@@ -273,7 +274,8 @@ async function executeToolCalls(
   workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
   askUser?: QueryLoopOptions["askUser"],
-  subAgentManager?: NonNullable<QueryLoopOptions["subAgentManager"]>,
+  agentFactory?: NonNullable<QueryLoopOptions["agentFactory"]>,
+  agentName?: string,
   currentDepth?: number,
   doomTracker?: DoomTracker,
 ): Promise<void> {
@@ -306,7 +308,8 @@ async function executeToolCalls(
             workspaceRoot,
             ...(confirmPermission ? { confirmPermission } : {}),
             ...(askUser ? { askUser } : {}),
-            ...(subAgentManager ? { subAgentManager } : {}),
+            ...(agentFactory ? { agentFactory } : {}),
+            ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
           };
           const result = await registry.execute(toolCall, ctx);
@@ -328,7 +331,8 @@ async function executeToolCalls(
         workspaceRoot,
         ...(confirmPermission ? { confirmPermission } : {}),
         ...(askUser ? { askUser } : {}),
-        ...(subAgentManager ? { subAgentManager } : {}),
+        ...(agentFactory ? { agentFactory } : {}),
+        ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
       };
       const result = await registry.execute(toolCall, ctx);
