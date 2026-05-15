@@ -24,6 +24,9 @@ describe("isSensitiveFile", () => {
     [".env", true],
     [".env.local", true],
     [".env.production", true],
+    [".env.example", false],
+    [".env.template", false],
+    [".env.sample", false],
     ["key.pem", true],
     ["secret.key", true],
     ["cert.p12", true],
@@ -76,6 +79,13 @@ describe("createSensitiveFilePermission", () => {
   test("returns allow for non-sensitive files", async () => {
     const permission = createSensitiveFilePermission();
     const decision = await permission({ path: "/workspace/index.ts" }, makeCtx());
+
+    expect(decision).toEqual({ outcome: "allow" });
+  });
+
+  test("returns allow for .env.example files", async () => {
+    const permission = createSensitiveFilePermission();
+    const decision = await permission({ path: "/workspace/.env.example" }, makeCtx());
 
     expect(decision).toEqual({ outcome: "allow" });
   });

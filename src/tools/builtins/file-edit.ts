@@ -6,7 +6,7 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createEditErrorRecoveryHook, refreshReadSnapshot } from "../hooks";
-import { createMemoryIndexPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
+import { createProtectedSpecraPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
@@ -321,7 +321,7 @@ export const fileEditTool = defineTool({
   inputSchema: FileEditInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   prepareInput: prepareEditInput,
-  permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createMemoryIndexPermission()],
+  permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createProtectedSpecraPermission()],
   hooks: { after: [createEditErrorRecoveryHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);

@@ -11,10 +11,13 @@ import {
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import { MemoryFileManager } from "../memory/file-manager";
+import { ProjectApprovalManager } from "../tools/permission";
 
 export function registerBuiltinTools(
   registry: ToolRegistry,
 ): void {
+  registry.setProjectApprovalManager(new ProjectApprovalManager());
+
   const descriptors = createBuiltinToolDescriptors();
   registry.registerAll(descriptors);
 

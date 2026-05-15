@@ -110,7 +110,7 @@ describe("fileWriteTool", () => {
     expect(content).toBe("old");
   });
 
-  test("workspace permission denies paths outside workspace", async () => {
+  test("workspace permission asks for paths outside workspace", async () => {
     const perm = fileWriteTool.permissions?.[0];
     expect(perm).toBeDefined();
 
@@ -119,8 +119,9 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect(decision.outcome).toBe("deny");
+    expect(decision.outcome).toBe("ask");
     expect(decision.reason).toContain("outside workspace");
+    expect(decision.approval?.scope).toMatchObject({ kind: "file-path", operation: "read", pathMode: "exact" });
   });
 
   test("sensitive file permission asks for .env files", async () => {

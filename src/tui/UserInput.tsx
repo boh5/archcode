@@ -16,7 +16,7 @@ export interface UserInputProps {
   onSubmit: (text: string) => void | Promise<void>;
   isRunning: boolean;
   confirmationRequest?: ToolConfirmationRequest | null;
-  onConfirm?: (result: "approve" | "deny") => void;
+  onConfirm?: (result: "approve_once" | "approve_always" | "deny") => void;
   askUserRequest?: AskUserRequest | null;
   askUserCurrentIndex?: number;
   onAskUserAnswer?: (answer: string[]) => void;
@@ -26,11 +26,13 @@ export interface UserInputProps {
 export function handleConfirmationInput(
   input: string,
   key: { escape?: boolean; ctrlC?: boolean },
-): "approve" | "deny" | null {
+  confirmationRequest?: ToolConfirmationRequest | null,
+): "approve_once" | "approve_always" | "deny" | null {
   if (key.escape) return "deny";
   if (key.ctrlC) return "deny";
-  if (input === "y" || input === "Y") return "approve";
-  if (input === "n" || input === "N") return "deny";
+  if (input === "1" || input === "o" || input === "y" || input === "Y") return "approve_once";
+  if (input === "2" || input === "a") return confirmationRequest?.approval?.eligible === true ? "approve_always" : "deny";
+  if (input === "3" || input === "d" || input === "n" || input === "N") return "deny";
   return null;
 }
 
@@ -91,7 +93,7 @@ export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm,
 
   useInput((input, key) => {
     if (confirmationRequest) {
-      const result = handleConfirmationInput(input, key);
+      const result = handleConfirmationInput(input, key, confirmationRequest);
       if (result && onConfirm) {
         onConfirm(result);
       }
@@ -147,10 +149,26 @@ export function UserInput({ onSubmit, isRunning, confirmationRequest, onConfirm,
   });
 
   if (confirmationRequest) {
+    const eligible = confirmationRequest.approval?.eligible === true;
+    const agentLabel = confirmationRequest.agentName
+      ? confirmationRequest.currentDepth !== undefined && confirmationRequest.currentDepth > 0
+        ? `[${confirmationRequest.agentName} depth ${confirmationRequest.currentDepth}]`
+        : `[${confirmationRequest.agentName}]`
+      : undefined;
+
     return (
       <Box marginTop={1} flexDirection="column">
+        {agentLabel && <Text color="cyan">{agentLabel}</Text>}
         <Text color="yellow">{confirmationRequest.reason ?? confirmationRequest.description}</Text>
-        <Text dimColor>Allow? [y/n]</Text>
+        {confirmationRequest.ruleId && <Text dimColor>Rule: {confirmationRequest.ruleId}</Text>}
+        {eligible && confirmationRequest.approval?.display && (
+          <Text dimColor>Scope: {confirmationRequest.approval.display}</Text>
+        )}
+        {eligible ? (
+          <Text dimColor>1/o: Allow Once  2/a: Allow Always for this project  3/d/Esc: Deny</Text>
+        ) : (
+          <Text dimColor>1/o: Allow Once  d/Esc: Deny</Text>
+        )}
       </Box>
     );
   }

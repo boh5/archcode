@@ -4,7 +4,7 @@ import type { ModelInfo } from "../provider/model";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
-import type { AskUserAnswer, AskUserRequest, ToolConfirmationRequest } from "../tools/index";
+import type { AskUserAnswer, AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/index";
 import { shouldSubmit, createConfirmationCallback, createAskUserCallback } from "./App";
 import type { PendingConfirmation, PendingAskUser } from "./App";
 
@@ -125,7 +125,7 @@ describe("App orchestration", () => {
 });
 
 describe("createConfirmationCallback", () => {
-  test("stores pending request and resolves on approve", async () => {
+  test("stores pending request and resolves on approve_once", async () => {
     let pending: PendingConfirmation | null = null;
     const setPending = (p: PendingConfirmation | null) => {
       pending = p;
@@ -145,10 +145,10 @@ describe("createConfirmationCallback", () => {
     expect(pending!.request.toolName).toBe("bash");
     expect(pending!.request.description).toBe("Run destructive shell command");
 
-    pending!.resolve("approve");
+    pending!.resolve("approve_once");
 
     const result = await promise;
-    expect(result).toBe("approve");
+    expect(result).toBe("approve_once");
   });
 
   test("stores pending request and resolves on deny", async () => {
@@ -176,6 +176,32 @@ describe("createConfirmationCallback", () => {
     expect(result).toBe("deny");
   });
 
+  test("stores pending request and resolves on approve_always", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+
+    const callback = createConfirmationCallback(setPending);
+    const request: ToolConfirmationRequest = {
+      toolName: "bash",
+      toolCallId: "tc-always",
+      input: { command: "rm -rf /tmp/test" },
+      description: "Run destructive shell command",
+      approval: { eligible: true, display: "bash: rm -rf /tmp/test", reason: "Destructive command" },
+    };
+
+    const promise = callback(request);
+
+    expect(pending).not.toBeNull();
+    expect(pending!.request.approval?.eligible).toBe(true);
+
+    pending!.resolve("approve_always");
+
+    const result = await promise;
+    expect(result).toBe("approve_always");
+  });
+
   test("clearing pending after resolve does not affect already-resolved promise", async () => {
     let pending: PendingConfirmation | null = null;
     const setPending = (p: PendingConfirmation | null) => {
@@ -190,11 +216,11 @@ describe("createConfirmationCallback", () => {
       description: "test",
     });
 
-    pending!.resolve("approve");
+    pending!.resolve("approve_once");
     setPending(null);
 
     const result = await promise;
-    expect(result).toBe("approve");
+    expect(result).toBe("approve_once");
   });
 
   test("only one pending request at a time", async () => {
@@ -223,9 +249,53 @@ describe("createConfirmationCallback", () => {
       description: "second request",
     });
 
-    pendingHistory[pendingHistory.length - 1]!.resolve("approve");
+    pendingHistory[pendingHistory.length - 1]!.resolve("approve_once");
     const result2 = await promise2;
-    expect(result2).toBe("approve");
+    expect(result2).toBe("approve_once");
+  });
+
+  test("resolves with timeout immediately on already-aborted signal", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    const callback = createConfirmationCallback(setPending);
+    const result = await callback({
+      toolName: "bash",
+      toolCallId: "tc-confirm-pre-abort",
+      input: {},
+      description: "test",
+    }, controller.signal);
+
+    expect(result).toBe("timeout");
+    expect(pending).toBeNull();
+  });
+
+  test("resolves with timeout and clears pending on abort signal", async () => {
+    let pending: PendingConfirmation | null = null;
+    const setPending = (p: PendingConfirmation | null) => {
+      pending = p;
+    };
+    const controller = new AbortController();
+
+    const callback = createConfirmationCallback(setPending);
+    const promise = callback({
+      toolName: "bash",
+      toolCallId: "tc-confirm-abort",
+      input: {},
+      description: "test",
+    }, controller.signal);
+
+    expect(pending).not.toBeNull();
+
+    controller.abort();
+
+    const result = await promise;
+    expect(result).toBe("timeout");
+    expect(pending).toBeNull();
   });
 });
 
@@ -394,12 +464,12 @@ describe("createAskUserCallback", () => {
     expect(pendingConfirmation!.request.toolName).toBe("bash");
     expect(pendingAskUser!.request.toolName).toBe("ask_user");
 
-    pendingConfirmation!.resolve("approve");
+    pendingConfirmation!.resolve("approve_once");
     pendingAskUser!.resolve({ answers: [["src/main.ts"], ["Dark mode"]] });
 
     const confirmResult = await confirmPromise;
     const askResult = await askPromise;
-    expect(confirmResult).toBe("approve");
+    expect(confirmResult).toBe("approve_once");
     expect(askResult).toEqual({ answers: [["src/main.ts"], ["Dark mode"]] });
   });
 

@@ -4,6 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
+import { EXPLORER_READ_ONLY_TOOLS } from "../agents/constants";
 import { createSessionStore } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import type { AuditEvent } from "../tools/hooks";
@@ -286,7 +287,7 @@ describe("registerBuiltinTools", () => {
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("MEMORY_INDEX_WRITE_DENIED");
+      expect(result.output).toContain("SPECRA_PROTECTED_PATH_WRITE_DENIED");
     });
 
     it("memory index permission allows writes to non-index files", async () => {
@@ -333,6 +334,23 @@ describe("registerBuiltinTools", () => {
       );
 
       expect(result.isError).toBe(false);
+    });
+  });
+
+  describe("EXPLORER_READ_ONLY_TOOLS trait integrity", () => {
+    it("each listed tool has traits.readOnly === true", () => {
+      const descriptors = createBuiltinToolDescriptors();
+      const toolMap = new Map(descriptors.map((d) => [d.name, d]));
+      const errors: string[] = [];
+
+      for (const toolName of EXPLORER_READ_ONLY_TOOLS) {
+        const descriptor = toolMap.get(toolName);
+        expect(descriptor, `${toolName} should exist in builtin descriptors`).toBeDefined();
+        if (descriptor && !descriptor.traits.readOnly) {
+          errors.push(`${toolName}: readOnly=${descriptor.traits.readOnly}`);
+        }
+      }
+      expect(errors).toEqual([]);
     });
   });
 });

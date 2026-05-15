@@ -16,7 +16,6 @@ export const EXPLORER_READ_ONLY_TOOLS = [
   "lsp_symbols",
   "web_fetch",
   "ask_user",
-  "todo_write",
 ] as const;
 
 export const DELEGATION_TOOLS = ["delegate", "wait_for_reminder", "background_output"] as const;

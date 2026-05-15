@@ -1,45 +1,130 @@
 import { describe, expect, test } from "bun:test";
 import { inputReducer, handleConfirmationInput, parseAnswer } from "./UserInput";
 import type { InputAction, InputState } from "./UserInput";
-import type { AskUserQuestion } from "../tools/types";
+import type { AskUserQuestion, ToolConfirmationRequest } from "../tools/types";
+
+const eligibleRequest: ToolConfirmationRequest = {
+  toolName: "bash",
+  toolCallId: "tc-1",
+  input: { command: "rm -rf /tmp/test" },
+  description: "Run destructive shell command",
+  reason: "Destructive bash command",
+  approval: { eligible: true, display: "bash: rm -rf /tmp/test", reason: "Destructive command" },
+};
+
+const ineligibleRequest: ToolConfirmationRequest = {
+  toolName: "bash",
+  toolCallId: "tc-2",
+  input: { command: "ls" },
+  description: "Run shell command",
+  reason: "Shell command",
+  approval: { eligible: false, display: "bash: ls", reason: "Parser uncertainty" },
+};
+
+const noApprovalRequest: ToolConfirmationRequest = {
+  toolName: "bash",
+  toolCallId: "tc-3",
+  input: { command: "cat /etc/hosts" },
+  description: "Run shell command",
+  reason: "Shell command",
+};
 
 describe("handleConfirmationInput", () => {
-  test("y resolves approve", () => {
-    expect(handleConfirmationInput("y", { escape: false })).toBe("approve");
+  test("1 resolves approve_once", () => {
+    expect(handleConfirmationInput("1", { escape: false }, eligibleRequest)).toBe("approve_once");
   });
 
-  test("Y resolves approve", () => {
-    expect(handleConfirmationInput("Y", { escape: false })).toBe("approve");
+  test("o resolves approve_once", () => {
+    expect(handleConfirmationInput("o", { escape: false }, eligibleRequest)).toBe("approve_once");
   });
 
-  test("n resolves deny", () => {
-    expect(handleConfirmationInput("n", { escape: false })).toBe("deny");
+  test("y resolves approve_once (backward compat)", () => {
+    expect(handleConfirmationInput("y", { escape: false }, eligibleRequest)).toBe("approve_once");
   });
 
-  test("N resolves deny", () => {
-    expect(handleConfirmationInput("N", { escape: false })).toBe("deny");
+  test("Y resolves approve_once (backward compat)", () => {
+    expect(handleConfirmationInput("Y", { escape: false }, eligibleRequest)).toBe("approve_once");
+  });
+
+  test("2 resolves approve_always when eligible", () => {
+    expect(handleConfirmationInput("2", { escape: false }, eligibleRequest)).toBe("approve_always");
+  });
+
+  test("a resolves approve_always when eligible", () => {
+    expect(handleConfirmationInput("a", { escape: false }, eligibleRequest)).toBe("approve_always");
+  });
+
+  test("2 denies when ineligible", () => {
+    expect(handleConfirmationInput("2", { escape: false }, ineligibleRequest)).toBe("deny");
+  });
+
+  test("a denies when ineligible", () => {
+    expect(handleConfirmationInput("a", { escape: false }, ineligibleRequest)).toBe("deny");
+  });
+
+  test("2 denies when no approval", () => {
+    expect(handleConfirmationInput("2", { escape: false }, noApprovalRequest)).toBe("deny");
+  });
+
+  test("a denies when no approval", () => {
+    expect(handleConfirmationInput("a", { escape: false }, noApprovalRequest)).toBe("deny");
+  });
+
+  test("3 resolves deny", () => {
+    expect(handleConfirmationInput("3", { escape: false }, eligibleRequest)).toBe("deny");
+  });
+
+  test("d resolves deny", () => {
+    expect(handleConfirmationInput("d", { escape: false }, eligibleRequest)).toBe("deny");
+  });
+
+  test("n resolves deny (backward compat)", () => {
+    expect(handleConfirmationInput("n", { escape: false }, eligibleRequest)).toBe("deny");
+  });
+
+  test("N resolves deny (backward compat)", () => {
+    expect(handleConfirmationInput("N", { escape: false }, eligibleRequest)).toBe("deny");
   });
 
   test("Escape resolves deny", () => {
-    expect(handleConfirmationInput("", { escape: true })).toBe("deny");
-  });
-
-  test("other input returns null (ignored)", () => {
-    expect(handleConfirmationInput("a", { escape: false })).toBeNull();
-    expect(handleConfirmationInput("1", { escape: false })).toBeNull();
-    expect(handleConfirmationInput(" ", { escape: false })).toBeNull();
+    expect(handleConfirmationInput("", { escape: true }, eligibleRequest)).toBe("deny");
   });
 
   test("Ctrl+C resolves deny", () => {
-    expect(handleConfirmationInput("", { ctrlC: true })).toBe("deny");
+    expect(handleConfirmationInput("", { ctrlC: true }, eligibleRequest)).toBe("deny");
   });
 
   test("ctrlC takes priority over input", () => {
-    expect(handleConfirmationInput("y", { ctrlC: true })).toBe("deny");
+    expect(handleConfirmationInput("y", { ctrlC: true }, eligibleRequest)).toBe("deny");
   });
 
   test("escape takes priority over input", () => {
-    expect(handleConfirmationInput("y", { escape: true })).toBe("deny");
+    expect(handleConfirmationInput("y", { escape: true }, eligibleRequest)).toBe("deny");
+  });
+
+  test("other input returns null (ignored)", () => {
+    expect(handleConfirmationInput("x", { escape: false }, eligibleRequest)).toBeNull();
+    expect(handleConfirmationInput(" ", { escape: false }, eligibleRequest)).toBeNull();
+  });
+
+  test("1 and o work without confirmationRequest (no approval context)", () => {
+    expect(handleConfirmationInput("1", { escape: false })).toBe("approve_once");
+    expect(handleConfirmationInput("o", { escape: false })).toBe("approve_once");
+  });
+
+  test("y and Y work without confirmationRequest (backward compat)", () => {
+    expect(handleConfirmationInput("y", { escape: false })).toBe("approve_once");
+    expect(handleConfirmationInput("Y", { escape: false })).toBe("approve_once");
+  });
+
+  test("3 and d work without confirmationRequest", () => {
+    expect(handleConfirmationInput("3", { escape: false })).toBe("deny");
+    expect(handleConfirmationInput("d", { escape: false })).toBe("deny");
+  });
+
+  test("2 and a deny without confirmationRequest", () => {
+    expect(handleConfirmationInput("2", { escape: false })).toBe("deny");
+    expect(handleConfirmationInput("a", { escape: false })).toBe("deny");
   });
 });
 

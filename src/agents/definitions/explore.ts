@@ -1,23 +1,11 @@
 import type { AgentDefinition } from "../factory-types";
+import { EXPLORER_READ_ONLY_TOOLS } from "../constants";
 
 export const exploreAgentDefinition = {
   name: "explore",
   promptAgentId: "explorer",
   tools: {
-    tools: [
-      "file_read",
-      "grep",
-      "glob",
-      "git_status",
-      "git_diff",
-      "lsp_diagnostics",
-      "lsp_goto_definition",
-      "lsp_find_references",
-      "lsp_symbols",
-      "web_fetch",
-      "ask_user",
-      "todo_write",
-    ],
+    tools: [...EXPLORER_READ_ONLY_TOOLS, "todo_write"],
   },
   hooks: {
     autoCompact: true,

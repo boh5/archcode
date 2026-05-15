@@ -51,17 +51,31 @@ describe("createWorkspacePermission", () => {
     expect(decision).toEqual({ outcome: "allow" });
   });
 
-  test("denies path outside workspace", async () => {
+  test("asks for path outside workspace with exact file approval scope", async () => {
     const outsideFile = join(testDir, "ws-outside.txt");
     writeFileSync(outsideFile, "content", "utf-8");
+    const resolvedOutsideFile = realpathSync(outsideFile);
     const permission = createWorkspacePermission();
     const decision = await permission(
       { path: outsideFile },
       makeCtx({ workspaceRoot: workspaceDir }),
     );
 
-    expect(decision.outcome).toBe("deny");
+    expect(decision.outcome).toBe("ask");
     expect(decision.reason).toContain("outside workspace");
+    expect(decision.source).toBe("tool-guard");
+    expect(decision.ruleId).toBe("tool-file-outside-workspace");
+    expect(decision.approval).toEqual({
+      eligible: true,
+      scope: {
+        kind: "file-path",
+        operation: "read",
+        path: resolvedOutsideFile,
+        pathMode: "exact",
+      },
+      display: `Access ${resolvedOutsideFile}`,
+      reason: "Path is outside workspace",
+    });
   });
 
   test("allows when path is missing from input", async () => {
@@ -80,7 +94,12 @@ describe("createWorkspacePermission", () => {
       makeCtx({ workspaceRoot: workspaceDir }),
     );
 
-    expect(decision.outcome).toBe("deny");
+    expect(decision.outcome).toBe("ask");
+    expect(decision.approval?.scope).toMatchObject({
+      kind: "file-path",
+      operation: "read",
+      pathMode: "exact",
+    });
   });
 
   describe("with pathKey option", () => {
@@ -93,7 +112,12 @@ describe("createWorkspacePermission", () => {
         makeCtx({ workspaceRoot: workspaceDir }),
       );
 
-      expect(decision.outcome).toBe("deny");
+      expect(decision.outcome).toBe("ask");
+      expect(decision.approval?.scope).toMatchObject({
+        kind: "file-path",
+        operation: "read",
+        pathMode: "exact",
+      });
     });
 
     test("allows safe filePath with pathKey 'filePath'", async () => {

@@ -215,12 +215,13 @@ describe("glob tool", () => {
     });
   });
 
-  test("workspace permission denies path outside workspace", async () => {
+  test("workspace permission asks for path outside workspace", async () => {
     const perm = tool.permissions![0];
 
     const decision = await perm({ pattern: "*.ts", path: "../outside" }, createMockCtx());
-    expect(decision.outcome).toBe("deny");
+    expect(decision.outcome).toBe("ask");
     expect(decision.reason).toContain("outside");
+    expect(decision.approval?.scope).toMatchObject({ kind: "file-path", operation: "read", pathMode: "exact" });
   });
 
   test("workspace permission allows path within workspace", async () => {

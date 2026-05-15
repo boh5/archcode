@@ -181,7 +181,7 @@ describe("lspSymbolsTool", () => {
     }
   });
 
-  test("workspace permission blocks document path outside workspace through registry", async () => {
+  test("workspace permission asks for document path outside workspace through registry when confirmation is unavailable", async () => {
     const registry = new ToolRegistry();
     registry.register(lspSymbolsTool);
 
@@ -192,8 +192,7 @@ describe("lspSymbolsTool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-confirmation-unavailable");
   });
 
   test("execute returns workspace error for document path outside workspace", async () => {

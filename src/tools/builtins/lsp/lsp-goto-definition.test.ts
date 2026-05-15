@@ -174,7 +174,7 @@ describe("lspGotoDefinitionTool", () => {
     expect(result.output).toContain("outside the workspace");
   });
 
-  test("workspace permission blocks traversal through registry", async () => {
+  test("workspace permission asks for traversal through registry when confirmation is unavailable", async () => {
     const registry = new ToolRegistry();
     registry.register(lspGotoDefinitionTool);
 
@@ -184,8 +184,7 @@ describe("lspGotoDefinitionTool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-confirmation-unavailable");
   });
 
   test("returns lsp-server-not-found for unsupported extension", async () => {

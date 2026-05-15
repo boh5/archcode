@@ -16,6 +16,7 @@ export const SENSITIVE_PATTERNS: RegExp[] = [
 ];
 
 export function isSensitiveFile(basename: string): boolean {
+  if ([".env.example", ".env.template", ".env.sample"].includes(basename)) return false;
   return SENSITIVE_PATTERNS.some((pattern) => pattern.test(basename));
 }
 

@@ -32,8 +32,21 @@ export function createWorkspacePermission(
 
       if (!isWithinWorkspace) {
         return {
-          outcome: "deny",
+          outcome: "ask",
           reason: `"${resolved}" is outside workspace "${ctx.workspaceRoot}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
+          approval: {
+            eligible: true,
+            scope: {
+              kind: "file-path",
+              operation: "read",
+              path: resolved,
+              pathMode: "exact",
+            },
+            display: `Access ${resolved}`,
+            reason: "Path is outside workspace",
+          },
+          source: "tool-guard",
+          ruleId: "tool-file-outside-workspace",
         };
       }
     }

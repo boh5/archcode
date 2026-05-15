@@ -82,6 +82,35 @@ function setupMockStreamText(text = "ok") {
   return fn;
 }
 
+function setupToolCallStreamText(toolName: string, input: Record<string, unknown> = {}) {
+  let round = 0;
+  const fn = mock((_opts: Record<string, unknown>) => {
+    round += 1;
+    if (round > 1) {
+      return {
+        fullStream: (async function* () {})(),
+        finishReason: Promise.resolve("stop"),
+        text: Promise.resolve("done"),
+        toolCalls: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      };
+    }
+
+    return {
+    fullStream: (async function* () {
+      yield { type: "tool-call", toolCallId: "tool-call-1", toolName, input };
+    })(),
+    finishReason: Promise.resolve("tool-calls"),
+    text: Promise.resolve(""),
+    toolCalls: Promise.resolve([{ toolCallId: "tool-call-1", toolName, input }]),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    };
+  });
+
+  __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+  return fn;
+}
+
 function definitionWith(overrides: Partial<AgentDefinition>): AgentDefinition {
   return {
     ...exploreAgentDefinition,
@@ -99,14 +128,17 @@ function createAgent(options: {
   btm?: RecordingBackgroundTaskManager;
   quotaEnforcer?: (directory: string) => Promise<void>;
   workspaceRoot?: string;
+  depth?: number;
+  toolRegistry?: ReturnType<typeof makeToolRegistry>;
 }) {
-  const toolRegistry = makeToolRegistry();
+  const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   return new ConfiguredAgent({
     definition: options.definition,
     providerRegistry: makeProviderRegistry(),
     toolRegistry,
     store: options.store,
     workspaceRoot: options.workspaceRoot ?? tmpRoot,
+    depth: options.depth,
     backgroundTaskManager: options.btm as never,
     quotaEnforcer: options.quotaEnforcer,
     resolveAllowedTools: (definition, depth) => {
@@ -281,5 +313,58 @@ describe("ConfiguredAgent", () => {
     await createAgent({ definition: definitionWith({ includeMemoryInPrompt: false }) }).run("without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).not.toContain("<specra-memory-context>");
+  });
+
+  test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {
+    setupToolCallStreamText("capture_context");
+    let capturedAgentName: string | undefined;
+    let capturedDepth: number | undefined;
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      name: "capture_context",
+      description: "Capture execution context",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      execute: (_input, ctx) => {
+        capturedAgentName = ctx.agentName;
+        capturedDepth = ctx.currentDepth;
+        return "captured";
+      },
+    });
+
+    await createAgent({
+      definition: { ...orchestratorAgentDefinition, name: "Orchestrator", tools: { tools: ["capture_context"] } },
+      toolRegistry,
+    }).run("root context");
+
+    expect(capturedAgentName).toBe("Orchestrator");
+    expect(capturedDepth).toBe(0);
+  });
+
+  test("explorer tool execution context uses Explorer attribution at child depth", async () => {
+    setupToolCallStreamText("capture_context");
+    let capturedAgentName: string | undefined;
+    let capturedDepth: number | undefined;
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      name: "capture_context",
+      description: "Capture execution context",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: false },
+      execute: (_input, ctx) => {
+        capturedAgentName = ctx.agentName;
+        capturedDepth = ctx.currentDepth;
+        return "captured";
+      },
+    });
+
+    await createAgent({
+      definition: { ...exploreAgentDefinition, name: "Explorer", tools: { tools: ["capture_context"] } },
+      depth: 1,
+      toolRegistry,
+    }).run("explorer context");
+
+    expect(capturedAgentName).toBe("Explorer");
+    expect(capturedDepth).toBe(1);
   });
 });

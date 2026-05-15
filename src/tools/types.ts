@@ -4,6 +4,7 @@ import type { SessionStoreState } from "../store/index";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
 import type { AgentFactoryLike } from "../agents/factory-types";
+import type { PermissionApprovalRequest } from "./permission/policy-types";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -61,6 +62,10 @@ export type PermissionDecision = {
   prompt?: string;
   errorKind?: ToolErrorKind;
   errorCode?: string;
+  approval?: PermissionApprovalRequest;
+  source?: "builtin-policy" | "tool-guard" | "project-approval" | "mcp";
+  ruleId?: string;
+  display?: string;
 };
 
 export type ToolPermission = (
@@ -74,11 +79,24 @@ export interface ToolConfirmationRequest {
   input: unknown;
   description: string;
   reason?: string;
+  approval?: PermissionApprovalRequest;
+  agentName?: string;
+  currentDepth?: number;
+  decisionDisplay?: string;
+  ruleId?: string;
 }
+
+export type ToolConfirmationResult =
+  | "approve_once"
+  | "approve_always"
+  | "approve"
+  | "deny"
+  | "timeout";
 
 export type ToolConfirmationCallback = (
   request: ToolConfirmationRequest,
-) => Promise<"approve" | "deny" | "timeout">;
+  abortSignal?: AbortSignal,
+) => Promise<ToolConfirmationResult>;
 
 export interface AskUserQuestionOption {
   label: string;

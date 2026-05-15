@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useStore } from "zustand";
-import type { Agent, AgentRunOptions } from "../agents/types";
-import type { AskUserAnswer, AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest } from "../tools/index";
+import type { Agent } from "../agents/types";
+import type { AskUserAnswer, AskUserCallback, AskUserRequest, ToolConfirmationCallback, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/index";
 import { TranscriptView } from "./TranscriptView";
 import { UserInput } from "./UserInput";
 
@@ -12,7 +12,7 @@ interface AppProps {
 
 export interface PendingConfirmation {
   request: ToolConfirmationRequest;
-  resolve: (result: "approve" | "deny" | "timeout") => void;
+  resolve: (result: ToolConfirmationResult) => void;
 }
 
 export interface PendingAskUser {
@@ -29,9 +29,24 @@ export function shouldSubmit(text: string): boolean {
 export function createConfirmationCallback(
   setPending: (pending: PendingConfirmation | null) => void,
 ): ToolConfirmationCallback {
-  return async (request) => {
-    return new Promise<"approve" | "deny" | "timeout">((resolve) => {
+  return async (request, abortSignal) => {
+    return new Promise<ToolConfirmationResult>((resolve) => {
+      if (abortSignal?.aborted) {
+        resolve("timeout");
+        setPending(null);
+        return;
+      }
+
       setPending({ request, resolve });
+
+      if (abortSignal) {
+        const onAbort = () => {
+          resolve("timeout");
+          setPending(null);
+          abortSignal.removeEventListener("abort", onAbort);
+        };
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+      }
     });
   };
 }
@@ -94,7 +109,7 @@ export function App({ agent }: AppProps) {
     [setPendingAskUserWithRef],
   );
 
-  const handleConfirm = (result: "approve" | "deny") => {
+  const handleConfirm = (result: "approve_once" | "approve_always" | "deny") => {
     if (pendingConfirmation) {
       pendingConfirmation.resolve(result);
       setPendingConfirmation(null);
@@ -130,7 +145,8 @@ export function App({ agent }: AppProps) {
 
     try {
       await agent.run(text, { confirmPermission, askUser });
-    } catch {
+    } catch (error) {
+      console.error("Agent run failed", error);
     } finally {
       runningRef.current = false;
     }

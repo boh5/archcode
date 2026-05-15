@@ -1,6 +1,4 @@
-import type { ZodTypeAny } from "zod";
 import type {
-  ToolDescriptor,
   AnyToolDescriptor,
   AiToolInputSchema,
   Logger,
@@ -11,13 +9,10 @@ import type {
   ToolExecutionResult,
   ToolPermission,
   PermissionDecision,
-  PermissionErrorCode,
 } from "./types";
 import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
-import {
-  combinePermissionDecisions,
-  createPermissionErrorResult,
-} from "./permission";
+import { createPermissionErrorResult } from "./permission";
+import type { ProjectApprovalManager } from "./permission";
 import { redactString, redactValue } from "./security/redaction";
 import {
   createToolErrorResult,
@@ -30,6 +25,8 @@ import {
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
   private _logger: Logger | undefined;
+  private _projectApprovalManager: ProjectApprovalManager | undefined;
+  private _projectApprovalsWorkspaceRoot: string | undefined;
 
   globalHooks: { before: BeforeHook[]; after: AfterHook[] };
   globalPermissions: ToolPermission[];
@@ -39,6 +36,11 @@ export class ToolRegistry {
     this._logger = logger;
     this.globalHooks = { before: [], after: [] };
     this.globalPermissions = [];
+  }
+
+  setProjectApprovalManager(manager: ProjectApprovalManager): void {
+    this._projectApprovalManager = manager;
+    this._projectApprovalsWorkspaceRoot = undefined;
   }
 
   register(descriptor: AnyToolDescriptor): void {
@@ -241,37 +243,38 @@ export class ToolRegistry {
       );
     }
 
-    const decision = combinePermissionDecisions(decisions);
-    ctx.permissionOutcome = decision.outcome;
-    if (decision.outcome === "allow") {
+    const denyDecision = decisions.find((decision) => decision.outcome === "deny");
+    if (denyDecision) {
+      ctx.permissionOutcome = "deny";
+      return createDenyResult(denyDecision, ctx);
+    }
+
+    const askDecisions = decisions.filter((decision) => decision.outcome === "ask");
+    if (askDecisions.length === 0) {
+      ctx.permissionOutcome = "allow";
       return undefined;
     }
 
-    if (decision.outcome === "deny") {
-      const extractedCode = extractCode(decision.reason ?? "");
-      const code = decision.errorCode ?? extractedCode ?? "TOOL_PERMISSION_DENIED";
-      if (decision.errorKind || decision.errorCode || extractedCode) {
-        return createToolErrorResult({
-          kind: decision.errorKind ?? kindFromCode(code) ?? "permission-denied",
-          code,
-          message: decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
-          meta: {
-            permissionErrorCode: code,
-            skippedExecution: true,
-          },
-        });
-      }
+    ctx.permissionOutcome = "ask";
 
-      return createPermissionErrorResult(
-        "TOOL_PERMISSION_DENIED",
-        decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
-      );
+    const unsatisfiedAsk = this._projectApprovalManager
+      ? await this.findFirstUnsatisfiedAsk(askDecisions, ctx)
+      : askDecisions[0];
+    if (!unsatisfiedAsk) {
+      return undefined;
     }
 
     if (!ctx.confirmPermission) {
       return createPermissionErrorResult(
         "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE",
-        decision.reason ?? `Tool "${ctx.toolName}" requires confirmation`,
+        unsatisfiedAsk.reason ?? `Tool "${ctx.toolName}" requires confirmation`,
+      );
+    }
+
+    if (ctx.abort.aborted) {
+      return createPermissionErrorResult(
+        "TOOL_PERMISSION_CONFIRMATION_TIMEOUT",
+        unsatisfiedAsk.reason ?? `Tool "${ctx.toolName}" confirmation timeout`,
       );
     }
 
@@ -281,20 +284,44 @@ export class ToolRegistry {
         toolCallId: ctx.toolCallId,
         input: ctx.redactedInput ?? redactValue(input),
         description: descriptor.description,
-        reason: decision.prompt ?? decision.reason,
-      });
+        reason: unsatisfiedAsk.prompt ?? unsatisfiedAsk.reason,
+        ...(unsatisfiedAsk.approval ? { approval: unsatisfiedAsk.approval } : {}),
+        ...(ctx.agentName ? { agentName: ctx.agentName } : {}),
+        ...(ctx.currentDepth !== undefined ? { currentDepth: ctx.currentDepth } : {}),
+        ...(unsatisfiedAsk.display ? { decisionDisplay: unsatisfiedAsk.display } : {}),
+        ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
+      }, ctx.abort);
 
-      if (confirmation === "approve") {
+      if (ctx.abort.aborted || confirmation === "timeout") {
+        return createPermissionErrorResult(
+          "TOOL_PERMISSION_CONFIRMATION_TIMEOUT",
+          unsatisfiedAsk.reason ?? `Tool "${ctx.toolName}" confirmation timeout`,
+        );
+      }
+
+      if (confirmation === "approve" || confirmation === "approve_once") {
         return undefined;
       }
 
-      const code: PermissionErrorCode =
-        confirmation === "timeout"
-          ? "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"
-          : "TOOL_PERMISSION_CONFIRMATION_DENIED";
+      if (confirmation === "approve_always") {
+        const approval = unsatisfiedAsk.approval;
+        if (approval?.eligible === true && approval.scope) {
+          await this.ensureProjectApprovalsLoaded(ctx.workspaceRoot);
+          await this._projectApprovalManager?.addApproval(approval.scope, {
+            display: approval.display,
+            reason: approval.reason,
+            grantedBy: {
+              ...(ctx.agentName ? { agentName: ctx.agentName } : {}),
+              ...(ctx.currentDepth !== undefined ? { depth: ctx.currentDepth } : {}),
+            },
+          });
+        }
+        return undefined;
+      }
+
       return createPermissionErrorResult(
-        code,
-        decision.reason ?? `Tool "${ctx.toolName}" confirmation ${confirmation}`,
+        "TOOL_PERMISSION_CONFIRMATION_DENIED",
+        unsatisfiedAsk.reason ?? `Tool "${ctx.toolName}" confirmation ${confirmation}`,
       );
     } catch (err) {
       return createPermissionErrorResult(
@@ -302,6 +329,34 @@ export class ToolRegistry {
         errorMessage(err),
       );
     }
+  }
+
+  private async findFirstUnsatisfiedAsk(
+    askDecisions: PermissionDecision[],
+    ctx: ToolExecutionContext,
+  ): Promise<PermissionDecision | undefined> {
+    for (const decision of askDecisions) {
+      const approval = decision.approval;
+      if (approval?.eligible === true && approval.scope && this._projectApprovalManager) {
+        await this.ensureProjectApprovalsLoaded(ctx.workspaceRoot);
+        if (this._projectApprovalManager.hasApproval(approval.scope)) {
+          continue;
+        }
+      }
+      return decision;
+    }
+
+    return undefined;
+  }
+
+  private async ensureProjectApprovalsLoaded(workspaceRoot: string): Promise<void> {
+    if (!this._projectApprovalManager) return;
+    if (this._projectApprovalsWorkspaceRoot === workspaceRoot) {
+      await this._projectApprovalManager.reloadIfStale(workspaceRoot);
+      return;
+    }
+    await this._projectApprovalManager.load(workspaceRoot);
+    this._projectApprovalsWorkspaceRoot = workspaceRoot;
   }
 
   private async runGlobalAfterHooks(
@@ -362,7 +417,41 @@ function redactDecision(decision: PermissionDecision): PermissionDecision {
     ...(decision.prompt ? { prompt: redactString(decision.prompt) } : {}),
     ...(decision.errorKind ? { errorKind: decision.errorKind } : {}),
     ...(decision.errorCode ? { errorCode: decision.errorCode } : {}),
+    ...(decision.approval ? {
+      approval: {
+        ...decision.approval,
+        display: redactString(decision.approval.display),
+        reason: redactString(decision.approval.reason),
+      },
+    } : {}),
+    ...(decision.source ? { source: decision.source } : {}),
+    ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
+    ...(decision.display ? { display: redactString(decision.display) } : {}),
   };
+}
+
+function createDenyResult(
+  decision: PermissionDecision,
+  ctx: ToolExecutionContext,
+): ToolExecutionResult {
+  const extractedCode = extractCode(decision.reason ?? "");
+  const code = decision.errorCode ?? extractedCode ?? "TOOL_PERMISSION_DENIED";
+  if (decision.errorKind || decision.errorCode || extractedCode) {
+    return createToolErrorResult({
+      kind: decision.errorKind ?? kindFromCode(code) ?? "permission-denied",
+      code,
+      message: decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
+      meta: {
+        permissionErrorCode: code,
+        skippedExecution: true,
+      },
+    });
+  }
+
+  return createPermissionErrorResult(
+    "TOOL_PERMISSION_DENIED",
+    decision.reason ?? `Tool "${ctx.toolName}" permission denied`,
+  );
 }
 
 function isAllowedTool(ctx: ToolExecutionContext, name: string): boolean {
@@ -404,8 +493,12 @@ export class ResolvedToolSet {
 export function createRegistry(
   descriptors?: AnyToolDescriptor[],
   logger?: Logger,
+  projectApprovalManager?: ProjectApprovalManager,
 ): ToolRegistry {
   const registry = new ToolRegistry(logger);
+  if (projectApprovalManager) {
+    registry.setProjectApprovalManager(projectApprovalManager);
+  }
   if (descriptors) {
     registry.registerAll(descriptors);
   }

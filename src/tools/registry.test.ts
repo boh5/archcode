@@ -12,7 +12,6 @@ import type {
   ToolExecutionContext,
   ToolCallLike,
   ToolPermission,
-  PermissionDecision,
 } from "./types";
 import { DuplicateToolError } from "./types";
 import { DestructiveToolPermissionError } from "./types";
@@ -22,6 +21,8 @@ import { REDACTION_MARKER } from "./security/redaction";
 import { createRedactionHook } from "./hooks/redact";
 import { createOutputTruncator } from "./hooks/truncate";
 import { TOOL_ERROR_META_KEY } from "./errors";
+import { ProjectApprovalManager } from "./permission";
+import type { PermissionApprovalScope } from "./permission";
 import { jsonSchema } from "ai";
 
 
@@ -876,6 +877,219 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(order).toEqual(["global-perm", "confirm", "global-before", "executor"]);
     });
 
+    test("deny decisions skip confirmation even when approval exists", async () => {
+      const scope: PermissionApprovalScope = {
+        kind: "tool-operation",
+        toolName: "echo",
+        operation: "danger",
+      };
+      const manager = new ProjectApprovalManager();
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-deny-${crypto.randomUUID()}`);
+      await manager.load(workspaceRoot);
+      await manager.addApproval(scope, { display: "Existing approval", reason: "already trusted" });
+      registry.setProjectApprovalManager(manager);
+      registry.register({
+        ...makeDescriptor("echo"),
+        execute: mock(async () => "should not run"),
+        permissions: [async () => ({
+          outcome: "deny",
+          reason: "blocked despite approval",
+          approval: { eligible: true, scope, display: "Existing approval", reason: "already trusted" },
+        })],
+      });
+      const confirmPermission = mock(async () => "approve_once" as const);
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ workspaceRoot, confirmPermission }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+      expect(confirmPermission).not.toHaveBeenCalled();
+      expect(registry.get("echo")!.execute).not.toHaveBeenCalled();
+    });
+
+    test("eligible ask without matching approval prompts user", async () => {
+      const scope: PermissionApprovalScope = {
+        kind: "file-path",
+        operation: "write",
+        path: "notes.md",
+        pathMode: "exact",
+      };
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-prompt-${crypto.randomUUID()}`);
+      registry.setProjectApprovalManager(new ProjectApprovalManager());
+      registry.register({
+        ...makeDescriptor("echo"),
+        permissions: [async () => ({
+          outcome: "ask",
+          reason: "write notes",
+          prompt: "Allow writing notes?",
+          display: "Write notes.md",
+          ruleId: "file-write",
+          approval: { eligible: true, scope, display: "Write notes.md", reason: "write notes" },
+        })],
+      });
+      const confirmPermission = mock(async (request) => {
+        expect(request.approval).toEqual({
+          eligible: true,
+          scope,
+          display: "Write notes.md",
+          reason: "write notes",
+        });
+        expect(request.reason).toBe("Allow writing notes?");
+        expect(request.decisionDisplay).toBe("Write notes.md");
+        expect(request.ruleId).toBe("file-write");
+        return "approve_once" as const;
+      });
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ workspaceRoot, confirmPermission }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(confirmPermission).toHaveBeenCalledTimes(1);
+    });
+
+    test("redacts approval display and reason while preserving scope", async () => {
+      const scope: PermissionApprovalScope = {
+        kind: "bash-exact",
+        normalized: "curl https://example.com?api_key=sk-1234567890",
+        effects: ["network"],
+      };
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-redaction-${crypto.randomUUID()}`);
+      registry.setProjectApprovalManager(new ProjectApprovalManager());
+      registry.register({
+        ...makeDescriptor("echo"),
+        permissions: [async () => ({
+          outcome: "ask",
+          reason: "api_key=sk-1234567890",
+          approval: {
+            eligible: true,
+            scope,
+            display: "Run api_key=sk-1234567890",
+            reason: "Needed because token=ghp-1234567890",
+          },
+        })],
+      });
+      const confirmPermission = mock(async (request) => {
+        expect(request.approval).toEqual({
+          eligible: true,
+          scope,
+          display: `Run api_key=${REDACTION_MARKER}`,
+          reason: `Needed because token=${REDACTION_MARKER}`,
+        });
+        return "approve_once" as const;
+      });
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ workspaceRoot, confirmPermission }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(confirmPermission).toHaveBeenCalledTimes(1);
+    });
+
+    test("eligible ask with matching project approval executes without prompt", async () => {
+      const scope: PermissionApprovalScope = {
+        kind: "web-origin",
+        origin: "https://example.com",
+      };
+      const manager = new ProjectApprovalManager();
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-match-${crypto.randomUUID()}`);
+      await manager.load(workspaceRoot);
+      await manager.addApproval(scope, { display: "Fetch example.com", reason: "trusted origin" });
+      registry.setProjectApprovalManager(manager);
+      const desc = makeSpiedDescriptor("echo");
+      desc.permissions = [async () => ({
+        outcome: "ask",
+        reason: "fetch origin",
+        approval: { eligible: true, scope, display: "Fetch example.com", reason: "trusted origin" },
+      })];
+      registry.register(desc);
+      const confirmPermission = mock(async () => "deny" as const);
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ workspaceRoot, confirmPermission }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(desc.execute).toHaveBeenCalledTimes(1);
+      expect(confirmPermission).not.toHaveBeenCalled();
+    });
+
+    test("ineligible ask passes no persistent scope and approve always is not persisted", async () => {
+      const manager = new ProjectApprovalManager();
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-ineligible-${crypto.randomUUID()}`);
+      await manager.load(workspaceRoot);
+      registry.setProjectApprovalManager(manager);
+      registry.register({
+        ...makeDescriptor("echo"),
+        permissions: [async () => ({
+          outcome: "ask",
+          reason: "parser uncertain",
+          approval: { eligible: false, display: "Parser uncertain", reason: "cannot persist uncertainty" },
+        })],
+      });
+      const confirmPermission = mock(async (request) => {
+        expect(request.approval).toEqual({
+          eligible: false,
+          display: "Parser uncertain",
+          reason: "cannot persist uncertainty",
+        });
+        expect(request.approval?.scope).toBeUndefined();
+        return "approve_always" as const;
+      });
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({ workspaceRoot, confirmPermission }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(manager.listApprovals()).toEqual([]);
+    });
+
+    test("allow always persists exactly the structured approval scope", async () => {
+      const scope: PermissionApprovalScope = {
+        kind: "bash-exact",
+        normalized: "bun test src/tools/registry.test.ts",
+        effects: ["execute-code"],
+      };
+      const manager = new ProjectApprovalManager();
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-persist-${crypto.randomUUID()}`);
+      registry.setProjectApprovalManager(manager);
+      registry.register({
+        ...makeDescriptor("echo"),
+        permissions: [async () => ({
+          outcome: "ask",
+          reason: "run test command",
+          approval: { eligible: true, scope, display: "Run registry test", reason: "run test command" },
+        })],
+      });
+
+      const result = await registry.execute(
+        makeToolCall(),
+        makeContext({
+          workspaceRoot,
+          agentName: "Orchestrator",
+          currentDepth: 0,
+          confirmPermission: async () => "approve_always",
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+      const approvals = manager.listApprovals();
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].scope).toEqual(scope);
+      expect(approvals[0].display).toBe("Run registry test");
+      expect(approvals[0].reason).toBe("run test command");
+      expect(approvals[0].grantedBy).toEqual({ agentName: "Orchestrator", depth: 0 });
+    });
+
     test("permission ask approve runs before hooks and executor for safeTool", async () => {
       const order: string[] = [];
       const desc = makeSpiedDescriptor("safeTool");
@@ -1119,6 +1333,40 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       );
 
       expect(order).toEqual(["global-perm-1", "global-perm-2", "descriptor-perm"]);
+    });
+
+    test("permission confirmation request includes agent attribution and abort signal", async () => {
+      const desc = makeSpiedDescriptor("attributedTool");
+      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm attributed tool" })];
+      registry.register(desc);
+      const controller = new AbortController();
+      let capturedSignal: AbortSignal | undefined;
+      const confirmPermission = mock(async (_request, abortSignal?: AbortSignal) => {
+        capturedSignal = abortSignal;
+        return "approve_once" as const;
+      });
+
+      const result = await registry.execute(
+        makeToolCall({ toolName: "attributedTool" }),
+        makeContext({
+          toolName: "attributedTool",
+          allowedTools: new Set(["attributedTool"]),
+          abort: controller.signal,
+          agentName: "Explorer",
+          currentDepth: 2,
+          confirmPermission,
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(confirmPermission).toHaveBeenCalledTimes(1);
+      expect(confirmPermission.mock.calls[0]![0]).toMatchObject({
+        toolName: "attributedTool",
+        toolCallId: "call-1",
+        agentName: "Explorer",
+        currentDepth: 2,
+      });
+      expect(capturedSignal).toBe(controller.signal);
     });
   });
 });

@@ -286,14 +286,14 @@ describe("fileEditTool", () => {
     expect(result.output).toContain("modified since it was read");
   });
 
-  test("workspace permission denies paths outside workspace", async () => {
+  test("workspace ask falls through to read-before-edit when confirmation is unavailable", async () => {
     const result = await executeThroughRegistry(
       { path: "../outside.txt", edits: [{ oldString: "a", newString: "b" }] },
       makeCtx(),
     );
 
-    expectToolErrorKind(result, "workspace");
-    expect(result.output).toContain("outside workspace");
+    expectToolErrorKind(result, "read-before-write");
+    expect(result.output).toContain("has not been read first");
   });
 
   test("applies edits back-to-front so offsets remain stable", async () => {

@@ -52,7 +52,7 @@ describe("createBashPermission", () => {
 
   test("denies dangerous commands", async () => {
     const permission = createBashPermission(workspaceDir);
-    const decision = await permission({ command: "rm -rf ." }, makeCtx());
+    const decision = await permission({ command: "rm -rf /" }, makeCtx());
 
     expect(decision.outcome).toBe("deny");
   });

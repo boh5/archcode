@@ -5,7 +5,7 @@ import { z } from "zod";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import { createFileExistsPermission, createMemoryIndexPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
+import { createFileExistsPermission, createProtectedSpecraPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { refreshReadSnapshot } from "../hooks";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -35,7 +35,7 @@ export const fileWriteTool = defineTool({
     "Creates a new file at the specified path. Fails if the file already exists. Use file_edit to modify existing files.",
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createMemoryIndexPermission()],
+  permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedSpecraPermission()],
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
     if (!isWithinWorkspace) {

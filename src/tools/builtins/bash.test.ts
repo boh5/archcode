@@ -226,12 +226,12 @@ describe("bashTool", () => {
     Bun.spawn = spawnMock;
 
     const result = await registry.execute(
-      { toolName: "bash", toolCallId: "denied", input: { command: "rm -rf ." } },
+      { toolName: "bash", toolCallId: "denied", input: { command: "sudo echo hi" } },
       mockCtx(process.cwd()),
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("dangerous");
+    expect(result.output).toContain("Privilege escalation");
     expect(spawnMock).toHaveBeenCalledTimes(0);
   });
 

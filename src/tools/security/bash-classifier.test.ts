@@ -69,19 +69,21 @@ describe("classifyCommand denylist", () => {
   test("denies privileged and destructive commands", () => {
     for (const command of [
       "sudo ls",
+      "sudo echo hi",
       "su root",
-      "rm -rf .",
-      "rm -fr src",
-      "chmod 777 src/main.ts",
-      "chown bo src/main.ts",
-      "kill 123",
-      "pkill node",
+      "rm -rf /",
       "launchctl unload service",
-      "dd if=/dev/zero of=disk.img",
+      "dd if=/dev/zero of=/dev/disk2",
       "mkfs.ext4 /dev/sda",
       "diskutil eraseDisk JHFS+ Untitled disk0",
     ]) {
       expect(outcome(command)).toBe("deny");
+    }
+  });
+
+  test("asks for local mutating commands outside hard deny taxonomy", () => {
+    for (const command of ["chmod 777 src/main.ts", "chown bo src/main.ts", "kill 123", "pkill node", "dd if=/dev/zero of=disk.img", "rm -rf .", "rm -fr src"]) {
+      expect(outcome(command)).toBe("ask");
     }
   });
 
@@ -93,11 +95,11 @@ describe("classifyCommand denylist", () => {
   });
 
   test("denies any chain containing a dangerous segment", () => {
-    expect(outcome("pwd && rm -rf .")).toBe("deny");
+    expect(outcome("pwd && sudo echo hi")).toBe("deny");
   });
 
-  test("denies dangerous command inside substitution", () => {
-    expect(outcome("echo $(rm -rf .)")).toBe("deny");
+  test("asks for parser-uncertain command substitution", () => {
+    expect(outcome("echo $(rm -rf .)")).toBe("ask");
   });
 
   test("denies unquoted background operator", () => {
@@ -126,6 +128,10 @@ describe("classifyCommand ask cases", () => {
     expect(outcome("(pwd)")).toBe("ask");
   });
 
+  test("does not deny sudo text inside quoted parser-uncertain echo", () => {
+    expect(outcome('echo "sudo echo hi"')).toBe("ask");
+  });
+
   test("asks for read-only commands that may wait for stdin", () => {
     expect(outcome("cat")).toBe("ask");
     expect(outcome("grep needle")).toBe("ask");
@@ -141,9 +147,12 @@ describe("classifyCommand ask cases", () => {
     expect(outcome("cat ../outside/secret.txt")).toBe("ask");
   });
 
-  test("asks for bun run other than typecheck, bun test, and package managers", () => {
-    expect(outcome("bun run dev")).toBe("ask");
-    expect(outcome("bun test")).toBe("ask");
+  test("allows package manager run commands but asks for test shortcuts", () => {
+    expect(outcome("bun run dev")).toBe("allow");
+    expect(outcome("bun test")).toBe("allow");
+    expect(outcome("npm run build")).toBe("allow");
+    expect(outcome("yarn run build")).toBe("allow");
+    expect(outcome("pnpm run build")).toBe("allow");
     expect(outcome("npm test")).toBe("ask");
     expect(outcome("yarn test")).toBe("ask");
     expect(outcome("pnpm test")).toBe("ask");

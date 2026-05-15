@@ -141,7 +141,7 @@ describe("lspFindReferencesTool", () => {
     }
   });
 
-  test("workspace permission blocks ../ traversal through registry", async () => {
+  test("workspace permission asks for ../ traversal through registry when confirmation is unavailable", async () => {
     const registry = new ToolRegistry();
     registry.register(lspFindReferencesTool);
 
@@ -151,8 +151,7 @@ describe("lspFindReferencesTool", () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.meta?.permissionErrorCode).toBe("TOOL_FILE_OUTSIDE_WORKSPACE");
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-confirmation-unavailable");
   });
 
   test("execute returns workspace error for path outside workspace", async () => {

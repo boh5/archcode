@@ -35,8 +35,18 @@ describe("agentDefinitions", () => {
     });
   });
 
-  test("explore agent explicitly lists all depth-filtered tools", () => {
-    expect(exploreAgentDefinition.tools.tools).toEqual(EXPLORER_READ_ONLY_TOOLS);
+  test("explore agent gets read-only tools plus todo_write (intentional exception)", () => {
+    const exploreTools = exploreAgentDefinition.tools.tools;
+    // Each EXPLORER_READ_ONLY_TOOL is available to the explorer
+    for (const tool of EXPLORER_READ_ONLY_TOOLS) {
+      expect(exploreTools).toContain(tool);
+    }
+    // todo_write is explicitly added — it's not readOnly but explorers need it
+    // for the todo-continuation hook. This is the only intentional exception.
+    const extraTools = exploreTools.filter(
+      (t) => !(EXPLORER_READ_ONLY_TOOLS as readonly string[]).includes(t),
+    );
+    expect(extraTools).toEqual(["todo_write"]);
   });
 
   test("explore agent cannot delegate", () => {

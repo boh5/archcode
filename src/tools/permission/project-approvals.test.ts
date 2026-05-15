@@ -1,0 +1,187 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Logger } from "../types";
+import type { PermissionApprovalScope } from "./policy-types";
+import {
+  PermissionApprovalFileSchema,
+  ProjectApprovalManager,
+} from "./project-approvals";
+
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals");
+const WORKSPACE = join(TMP_DIR, "workspace");
+const PERMISSIONS_PATH = join(WORKSPACE, ".specra", "permissions.json");
+
+const FILE_SCOPE: PermissionApprovalScope = {
+  kind: "file-path",
+  operation: "write",
+  path: "src/main.ts",
+  pathMode: "exact",
+};
+
+const OTHER_FILE_SCOPE: PermissionApprovalScope = {
+  kind: "file-path",
+  operation: "write",
+  path: "src/other.ts",
+  pathMode: "exact",
+};
+
+function makeManager(logger?: Logger): ProjectApprovalManager {
+  return new ProjectApprovalManager(logger);
+}
+
+function readPermissionFile(): unknown {
+  return JSON.parse(readFileSync(PERMISSIONS_PATH, "utf8"));
+}
+
+beforeEach(() => {
+  rmSync(TMP_DIR, { recursive: true, force: true });
+  mkdirSync(WORKSPACE, { recursive: true });
+});
+
+afterEach(() => {
+  rmSync(TMP_DIR, { recursive: true, force: true });
+});
+
+describe("ProjectApprovalManager", () => {
+  test("missing permissions file loads empty approvals without error", async () => {
+    const manager = makeManager();
+
+    await manager.load(WORKSPACE);
+
+    expect(manager.listApprovals()).toEqual([]);
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
+    expect(existsSync(PERMISSIONS_PATH)).toBe(false);
+  });
+
+  test("malformed permissions file loads empty approvals and logs a warning", async () => {
+    mkdirSync(join(WORKSPACE, ".specra"), { recursive: true });
+    writeFileSync(PERMISSIONS_PATH, "{ malformed json");
+    const logger: Logger = { warn: mock() };
+    const manager = makeManager(logger);
+
+    await manager.load(WORKSPACE);
+
+    expect(manager.listApprovals()).toEqual([]);
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  test("writes deterministic strict JSON and reloads matching behavior", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+
+    const approval = await manager.addApproval(FILE_SCOPE, {
+      display: "Write src/main.ts",
+      reason: "User approved writing src/main.ts",
+      grantedBy: { agentName: "Orchestrator", depth: 0 },
+    });
+
+    const raw = readFileSync(PERMISSIONS_PATH, "utf8");
+    expect(raw.endsWith("\n")).toBe(true);
+    expect(raw).toContain('  "version": 1');
+    expect(raw).toContain('    {\n      "id"');
+    expect(PermissionApprovalFileSchema.parse(JSON.parse(raw)).approvals[0]).toEqual(approval);
+
+    const reloaded = makeManager();
+    await reloaded.load(WORKSPACE);
+
+    expect(reloaded.hasApproval(FILE_SCOPE)).toBe(true);
+    expect(reloaded.hasApproval(OTHER_FILE_SCOPE)).toBe(false);
+    expect(reloaded.listApprovals()).toEqual([approval]);
+  });
+
+  test("adding the same structured scope twice is idempotent", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+
+    const first = await manager.addApproval(FILE_SCOPE, {
+      display: "First display",
+      reason: "First reason",
+    });
+    const second = await manager.addApproval({ ...FILE_SCOPE }, {
+      display: "Second display",
+      reason: "Second reason",
+    });
+
+    expect(second).toEqual(first);
+    expect(manager.listApprovals()).toHaveLength(1);
+    expect(PermissionApprovalFileSchema.parse(readPermissionFile()).approvals).toHaveLength(1);
+  });
+
+  test("display text is not matching authority", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+    await manager.addApproval(FILE_SCOPE, {
+      display: "Shared display",
+      reason: "Structured scope is authoritative",
+    });
+
+    const file = PermissionApprovalFileSchema.parse(readPermissionFile());
+    file.approvals[0] = {
+      ...file.approvals[0]!,
+      display: "Changed display",
+    };
+    writeFileSync(PERMISSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`);
+
+    const reloaded = makeManager();
+    await reloaded.load(WORKSPACE);
+
+    expect(reloaded.hasApproval(FILE_SCOPE)).toBe(true);
+    expect(reloaded.hasApproval(OTHER_FILE_SCOPE)).toBe(false);
+  });
+
+  test("reloadIfStale reloads when permissions file mtime changes", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+    await manager.addApproval(FILE_SCOPE, {
+      display: "Write src/main.ts",
+      reason: "Initial approval",
+    });
+
+    const file = PermissionApprovalFileSchema.parse(readPermissionFile());
+    file.approvals = [{
+      ...file.approvals[0]!,
+      scope: OTHER_FILE_SCOPE,
+      display: "Write src/other.ts",
+      reason: "Externally updated approval",
+    }];
+    writeFileSync(PERMISSIONS_PATH, `${JSON.stringify(file, null, 2)}\n`);
+    const future = new Date(Date.now() + 5_000);
+    utimesSync(PERMISSIONS_PATH, future, future);
+
+    await manager.reloadIfStale(WORKSPACE);
+
+    expect(manager.hasApproval(FILE_SCOPE)).toBe(false);
+    expect(manager.hasApproval(OTHER_FILE_SCOPE)).toBe(true);
+    expect(manager.listApprovals()[0]?.display).toBe("Write src/other.ts");
+  });
+
+  test("serializes concurrent writes so the latest file contains all approvals", async () => {
+    const manager = makeManager();
+    await manager.load(WORKSPACE);
+    const bashScope: PermissionApprovalScope = {
+      kind: "bash-exact",
+      normalized: "bun test",
+      effects: ["execute-code"],
+    };
+
+    await Promise.all([
+      manager.addApproval(FILE_SCOPE, {
+        display: "Write file",
+        reason: "Concurrent file approval",
+      }),
+      manager.addApproval(bashScope, {
+        display: "Run tests",
+        reason: "Concurrent bash approval",
+      }),
+    ]);
+
+    const reloaded = makeManager();
+    await reloaded.load(WORKSPACE);
+
+    expect(reloaded.hasApproval(FILE_SCOPE)).toBe(true);
+    expect(reloaded.hasApproval(bashScope)).toBe(true);
+    expect(reloaded.listApprovals()).toHaveLength(2);
+  });
+});
