@@ -91,6 +91,7 @@ export function createAutoCompactHook(): AutoCompactHookResult {
           contextLimit,
           model: ctx.modelInfo.model,
           sessionId: state.sessionId,
+          modelOptions: ctx.modelOptions,
         },
         ctx.abort,
       );

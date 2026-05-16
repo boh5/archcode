@@ -56,9 +56,17 @@ async function writeConfig(config: Record<string, unknown>): Promise<string> {
 }
 
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
+  const config = {
+    provider: makeProviderConfig(),
+    agents: {
+      orchestrator: { model: "local:test-model" },
+      explore: { model: "local:test-model" },
+    },
+  };
+
   return mcp === undefined
-    ? { provider: makeProviderConfig() }
-    : { provider: makeProviderConfig(), mcp };
+    ? config
+    : { ...config, mcp };
 }
 
 function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor {

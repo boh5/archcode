@@ -127,6 +127,11 @@ describe("createMemoryExtractionTask", () => {
       store,
       modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
+      modelOptions: {
+        temperature: 0.55,
+        maxOutputTokens: 256,
+        providerOptions: { memoryExtraction: { mode: "archive" } },
+      },
     };
 
     await task.run(ctx as never);
@@ -151,6 +156,11 @@ describe("createMemoryExtractionTask", () => {
       store,
       modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
+      modelOptions: {
+        temperature: 0.55,
+        maxOutputTokens: 256,
+        providerOptions: { memoryExtraction: { mode: "archive" } },
+      },
     };
 
     await task.run(ctx as never);
@@ -200,11 +210,23 @@ describe("createMemoryExtractionTask", () => {
       store,
       modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
+      modelOptions: {
+        temperature: 0.55,
+        maxOutputTokens: 256,
+        providerOptions: { memoryExtraction: { mode: "archive" } },
+      },
     };
 
     await task.run(ctx as never);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        temperature: 0.55,
+        maxOutputTokens: 256,
+        providerOptions: { memoryExtraction: { mode: "archive" } },
+      }),
+    );
 
     // type: "user" should go to user preferences
     const fileManager = new MemoryFileManager(roots);

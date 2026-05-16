@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bu
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { createSessionStore, getSessionStore } from "../store/store";
@@ -95,13 +96,23 @@ function targetDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefini
 }
 
 function makeFactory(definitions: readonly AgentDefinition[] = [parentDefinition(), targetDefinition()]) {
+  const providerRegistry = makeProviderRegistry();
   return createAgentFactory({
     definitions,
-    providerRegistry: makeProviderRegistry(),
+    providerRegistry,
     toolRegistry: makeToolRegistry(),
     workspaceRoot: tmpRoot,
-    config: { provider: {} },
+    config: configForDefinitions(providerRegistry, definitions),
   });
+}
+
+function configForDefinitions(providerRegistry: ProviderRegistry, definitions: readonly AgentDefinition[]): SpecraConfig {
+  return {
+    provider: {},
+    agents: Object.fromEntries(
+      definitions.map((definition) => [definition.name, { model: providerRegistry.modelIds[0]! }]),
+    ),
+  } as SpecraConfig;
 }
 
 function setupResolvingStreamText(text = "child result") {
@@ -260,12 +271,14 @@ describe("AgentFactory.delegate", () => {
   test("delegated child title suppresses child title generation", async () => {
     setupResolvingStreamText();
     const btm = new RecordingBackgroundTaskManager();
+    const providerRegistry = makeProviderRegistry();
+    const definitions = [parentDefinition(), targetDefinition({ hooks: { ...exploreAgentDefinition.hooks, titleGeneration: "unless-supplied" } })];
     const factory = createAgentFactory({
-      definitions: [parentDefinition(), targetDefinition({ hooks: { ...exploreAgentDefinition.hooks, titleGeneration: "unless-supplied" } })],
-      providerRegistry: makeProviderRegistry(),
+      definitions,
+      providerRegistry,
       toolRegistry: makeToolRegistry(),
       workspaceRoot: tmpRoot,
-      config: { provider: {} },
+      config: configForDefinitions(providerRegistry, definitions),
       backgroundTaskManager: btm as never,
     });
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);

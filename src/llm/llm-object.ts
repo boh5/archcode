@@ -1,4 +1,5 @@
 import { generateText as aiGenerateText, tool, zodSchema } from "ai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { LlmObjectInput } from "./types";
 import { LlmObjectError, LlmSchemaValidationError } from "./errors";
 
@@ -15,10 +16,39 @@ export async function llmObject<T>(input: LlmObjectInput<T>): Promise<T> {
     system,
     prompt,
     abortSignal,
+    modelOptions,
     schemaName,
     schemaDescription,
   } = input;
   const toolName = schemaName ?? "result";
+
+  const generateTextOptions = {
+    ...(modelOptions?.maxOutputTokens !== undefined
+      ? { maxOutputTokens: modelOptions.maxOutputTokens }
+      : {}),
+    ...(modelOptions?.temperature !== undefined
+      ? { temperature: modelOptions.temperature }
+      : {}),
+    ...(modelOptions?.topP !== undefined ? { topP: modelOptions.topP } : {}),
+    ...(modelOptions?.topK !== undefined ? { topK: modelOptions.topK } : {}),
+    ...(modelOptions?.presencePenalty !== undefined
+      ? { presencePenalty: modelOptions.presencePenalty }
+      : {}),
+    ...(modelOptions?.frequencyPenalty !== undefined
+      ? { frequencyPenalty: modelOptions.frequencyPenalty }
+      : {}),
+    ...(modelOptions?.stopSequences !== undefined
+      ? { stopSequences: modelOptions.stopSequences }
+      : {}),
+    ...(modelOptions?.seed !== undefined ? { seed: modelOptions.seed } : {}),
+    ...(modelOptions?.maxRetries !== undefined
+      ? { maxRetries: modelOptions.maxRetries }
+      : {}),
+    ...(modelOptions?.timeout !== undefined ? { timeout: modelOptions.timeout } : {}),
+    ...(modelOptions?.providerOptions !== undefined
+      ? { providerOptions: modelOptions.providerOptions as ProviderOptions }
+      : {}),
+  };
 
   let result;
   try {
@@ -36,6 +66,7 @@ export async function llmObject<T>(input: LlmObjectInput<T>): Promise<T> {
         }),
       },
       toolChoice: { type: "tool", toolName },
+      ...generateTextOptions,
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AI_TypeValidationError") {

@@ -1,11 +1,13 @@
 import type { StoreApi } from "zustand";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
+import type { ModelCallOptions } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
 import type { SessionStoreState } from "../store/types";
 
 export interface CommandContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   circuitBreaker?: CircuitBreaker;
   abort?: AbortSignal;
 }

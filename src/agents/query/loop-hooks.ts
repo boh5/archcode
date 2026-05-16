@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import type { ModelCallOptions } from "../../config/provider";
 import type { ModelInfo } from "../../provider/model";
 import type { ModelMessage } from "ai";
 import type { RunEndEvent, SessionStoreState } from "../../store/types";
@@ -6,6 +7,7 @@ import type { RunEndEvent, SessionStoreState } from "../../store/types";
 export interface BeforeModelBuildContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   systemPrompt?: string;
 }
@@ -13,6 +15,7 @@ export interface BeforeModelBuildContext {
 export interface BeforeModelCallContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   /** Mutable. Modifications only affect this LLM call, NOT persisted to store.
    *  To persist changes, use store.getState().append() with StreamEvent. */
@@ -22,12 +25,14 @@ export interface BeforeModelCallContext {
 export interface AfterStepEndContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
 }
 
 export interface AfterLoopEndContext {
   store: StoreApi<SessionStoreState>;
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
   loopEndStatus: RunEndEvent["status"];
 }

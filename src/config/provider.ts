@@ -20,11 +20,29 @@ export const modelModalitiesSchema = z
   })
   .strict();
 
+export const modelCallOptionsSchema = z
+  .object({
+    maxOutputTokens: z.number().int().positive().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    topP: z.number().min(0).max(1).optional(),
+    topK: z.number().int().positive().optional(),
+    presencePenalty: z.number().min(-2).max(2).optional(),
+    frequencyPenalty: z.number().min(-2).max(2).optional(),
+    stopSequences: z.array(z.string()).optional(),
+    seed: z.number().int().optional(),
+    maxRetries: z.number().int().nonnegative().optional(),
+    timeout: z.number().int().nonnegative().optional(),
+    providerOptions: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
 export const modelConfigSchema = z
   .object({
     name: z.string().min(1),
     limit: modelLimitSchema,
     modalities: modelModalitiesSchema,
+    options: modelCallOptionsSchema.optional(),
+    variants: z.record(z.string(), modelCallOptionsSchema).optional(),
   })
   .strict();
 
@@ -65,6 +83,8 @@ export type ModelConfig = z.infer<typeof modelConfigSchema>;
 export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
 export type ProviderConfig = z.infer<typeof providerConfigSchema>;
 export type ProvidersConfig = z.infer<typeof providersConfigSchema>;
+
+export type ModelCallOptions = z.infer<typeof modelCallOptionsSchema>;
 
 export class UnsupportedProviderPackageError extends Error {
   constructor(public readonly npmPackage: string) {

@@ -4,7 +4,7 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand } from "../commands/index";
-import type { SpecraConfig } from "../config/schema";
+import type { ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
@@ -15,7 +15,7 @@ import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
-import { AgentRunningError, NoModelsConfiguredError } from "./errors";
+import { AgentRunningError } from "./errors";
 import type { AgentDefinition, AgentFactoryLike } from "./factory-types";
 import {
   createAutoCompactHook,
@@ -33,12 +33,13 @@ import type { Agent, AgentResult, AgentRunOptions } from "./types";
 export interface ConfiguredAgentOptions {
   readonly definition: AgentDefinition;
   readonly providerRegistry: ProviderRegistry;
+  readonly modelInfo: ModelInfo;
+  readonly modelOptions?: ModelCallOptions;
   readonly toolRegistry: ToolRegistry;
   readonly store?: StoreApi<SessionStoreState>;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
-  readonly config?: SpecraConfig;
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
@@ -59,9 +60,9 @@ function buildEnv(workspaceRoot: string): PromptEnv {
 export class ConfiguredAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   private readonly definition: AgentDefinition;
-  private readonly providerRegistry: ProviderRegistry;
   private readonly toolRegistry: ToolRegistry;
   private readonly modelInfo: ModelInfo;
+  private readonly modelOptions: ModelCallOptions | undefined;
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
   private readonly askUserDefault: AskUserCallback | undefined;
   private readonly workspaceRoot: string;
@@ -79,8 +80,9 @@ export class ConfiguredAgent implements Agent {
 
   constructor(options: ConfiguredAgentOptions) {
     this.definition = options.definition;
-    this.providerRegistry = options.providerRegistry;
     this.toolRegistry = options.toolRegistry;
+    this.modelInfo = options.modelInfo;
+    this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
     this.store = options.store ?? createSessionStore(crypto.randomUUID());
@@ -97,14 +99,15 @@ export class ConfiguredAgent implements Agent {
       user: join(homedir(), ".specra", "memory"),
     };
 
-    const modelIds = this.providerRegistry.modelIds;
-    if (modelIds.length === 0) {
-      throw new NoModelsConfiguredError();
-    }
-    this.modelInfo = this.providerRegistry.getModel(modelIds[0]);
-
     this.commandRegistry = new CommandRegistry();
-    this.commandRegistry.register(createCompactCommand(this.store, this.modelInfo, this.autoCompactHook.circuitBreaker));
+    this.commandRegistry.register(
+      createCompactCommand(
+        this.store,
+        this.modelInfo,
+        this.autoCompactHook.circuitBreaker,
+        this.modelOptions,
+      ),
+    );
   }
 
   async run(
@@ -143,6 +146,7 @@ export class ConfiguredAgent implements Agent {
         const result = await runQueryLoop(
           {
             modelInfo: this.modelInfo,
+            modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,
             workspaceRoot: this.workspaceRoot,

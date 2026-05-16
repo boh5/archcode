@@ -40,23 +40,45 @@ function makeTool(name: string): AnyToolDescriptor {
 }
 
 function makeProviderRegistry(): ProviderRegistry {
-  const model = new ModelInfo({
+  const fallbackModel = new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
     config: {
-      name: "Test Model",
+      name: "Fallback Model",
       limit: { context: 128_000, output: 8_192 },
       modalities: { input: ["text"], output: ["text"] },
     },
     providerId: "test",
-    modelId: "model",
+    modelId: "fallback",
+  });
+
+  const configuredModel = new ModelInfo({
+    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
+    config: {
+      name: "Configured Model",
+      limit: { context: 64_000, output: 4_096 },
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    providerId: "test",
+    modelId: "configured",
   });
 
   return {
     sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([[model.qualifiedId, model]]),
-    modelIds: [model.qualifiedId],
-    getModel: () => model,
+    models: new Map([
+      [fallbackModel.qualifiedId, fallbackModel],
+      [configuredModel.qualifiedId, configuredModel],
+    ]),
+    modelIds: [fallbackModel.qualifiedId, configuredModel.qualifiedId],
+    getModel: (qualifiedId: string) => {
+      if (qualifiedId === fallbackModel.qualifiedId) return fallbackModel;
+      if (qualifiedId === configuredModel.qualifiedId) return configuredModel;
+      throw new Error(`unexpected model lookup: ${qualifiedId}`);
+    },
   } as ProviderRegistry;
+}
+
+function makeModelInfo(): ModelInfo {
+  return makeProviderRegistry().getModel("test:configured");
 }
 
 function makeToolRegistry() {
@@ -130,22 +152,27 @@ function createAgent(options: {
   workspaceRoot?: string;
   depth?: number;
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
+  providerRegistry?: ProviderRegistry;
+  modelInfo?: ModelInfo;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
+  const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
   return new ConfiguredAgent({
     definition: options.definition,
-    providerRegistry: makeProviderRegistry(),
+    providerRegistry,
+    modelInfo: options.modelInfo ?? providerRegistry.getModel("test:configured"),
+    modelOptions: { temperature: 0.3 },
     toolRegistry,
     store: options.store,
     workspaceRoot: options.workspaceRoot ?? tmpRoot,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
     quotaEnforcer: options.quotaEnforcer,
-    resolveAllowedTools: (definition, depth) => {
-      const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
-      if (depth >= 2) {
-        return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
-      }
+      resolveAllowedTools: (definition, depth) => {
+        const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
+        if (depth >= 2) {
+          return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+        }
       return resolved;
     },
   });
@@ -208,6 +235,27 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
     expect(btm.drainCalls).toBe(1);
+  });
+
+  test("constructs without relying on provider registry model order when modelInfo is supplied", async () => {
+    setupMockStreamText("explicit model ok");
+    const providerRegistry = {
+      sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
+      models: new Map(),
+      modelIds: [],
+      getModel: () => {
+        throw new Error("unexpected fallback lookup");
+      },
+    } as ProviderRegistry;
+
+    const agent = createAgent({
+      definition: exploreAgentDefinition,
+      providerRegistry,
+      modelInfo: makeModelInfo(),
+    });
+
+    await expect(agent.run("explicit model"))
+      .resolves.toEqual({ text: "explicit model ok", steps: 0 });
   });
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {

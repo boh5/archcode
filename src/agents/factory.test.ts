@@ -1,11 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
+import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import { UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
+import { MissingAgentModelConfigError, NoModelsConfiguredError } from "./errors";
 import {
   DuplicateAgentDefinitionError,
   UnknownAgentDefinitionError,
@@ -24,22 +26,42 @@ function makeTool(name: string): AnyToolDescriptor {
 }
 
 function makeProviderRegistry(): ProviderRegistry {
-  const model = new ModelInfo({
+  const fallbackModel = new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
     config: {
-      name: "Test Model",
+      name: "Fallback Model",
       limit: { context: 1000, output: 100 },
       modalities: { input: ["text"], output: ["text"] },
     },
     providerId: "test",
-    modelId: "model",
+    modelId: "fallback",
+  });
+
+  const configuredModel = new ModelInfo({
+    model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
+    config: {
+      name: "Configured Model",
+      limit: { context: 2000, output: 200 },
+      modalities: { input: ["text"], output: ["text"] },
+    },
+    providerId: "test",
+    modelId: "configured",
+  });
+
+  const getModel = mock((qualifiedId: string) => {
+    if (qualifiedId === fallbackModel.qualifiedId) return fallbackModel;
+    if (qualifiedId === configuredModel.qualifiedId) return configuredModel;
+    throw new UnknownQualifiedIdError(qualifiedId, [fallbackModel.qualifiedId, configuredModel.qualifiedId]);
   });
 
   return {
     sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
-    models: new Map([[model.qualifiedId, model]]),
-    modelIds: [model.qualifiedId],
-    getModel: () => model,
+    models: new Map([
+      [fallbackModel.qualifiedId, fallbackModel],
+      [configuredModel.qualifiedId, configuredModel],
+    ]),
+    modelIds: [fallbackModel.qualifiedId, configuredModel.qualifiedId],
+    getModel,
   } as ProviderRegistry;
 }
 
@@ -62,17 +84,31 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   };
 }
 
-function makeFactory(definitions: readonly AgentDefinition[] = [definition()]) {
+function makeFactory(
+  definitions: readonly AgentDefinition[] = [definition()],
+  options: { providerRegistry?: ProviderRegistry; config?: Partial<SpecraConfig> } = {},
+) {
+  const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
+  const config: SpecraConfig = {
+    provider: {},
+    ...options.config,
+    agents:
+      options.config?.agents ??
+      Object.fromEntries(
+        definitions.map((definitionItem) => [definitionItem.name, { model: providerRegistry.modelIds[1] ?? providerRegistry.modelIds[0] }]),
+      ),
+  } as SpecraConfig;
+
   return createAgentFactory({
     definitions,
-    providerRegistry: makeProviderRegistry(),
+    providerRegistry,
     toolRegistry: createRegistry([
       makeTool("unknown_tool"),
       ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     workspaceRoot: import.meta.dir,
-    config: { provider: {} },
+    config,
   });
 }
 
@@ -108,6 +144,155 @@ describe("createAgentFactory", () => {
     expect(agent.store).toBe(store);
     expect(agent.store.getState().sessionId).toBe(store.getState().sessionId);
     expect(typeof agent.run).toBe("function");
+  });
+
+  test("resolves the configured model instead of the first registry entry", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: [definition()],
+      providerRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {
+          orchestrator: { model: providerRegistry.modelIds[1]! },
+        },
+      } as SpecraConfig,
+    });
+
+    factory.createRootAgent("orchestrator");
+
+    expect(providerRegistry.getModel).toHaveBeenCalledWith(providerRegistry.modelIds[1]);
+    expect(providerRegistry.getModel).not.toHaveBeenCalledWith(providerRegistry.modelIds[0]);
+  });
+
+  test("fails fast when orchestrator model config is missing", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: [definition()],
+      providerRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {},
+      } as SpecraConfig,
+    });
+
+    expect(() => factory.createRootAgent("orchestrator")).toThrow(MissingAgentModelConfigError);
+
+    try {
+      factory.createRootAgent("orchestrator");
+    } catch (error) {
+      expect(error).toBeInstanceOf(MissingAgentModelConfigError);
+      expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
+      expect((error as MissingAgentModelConfigError).agentName).toBe("orchestrator");
+      expect((error as MissingAgentModelConfigError).availableAgents).toEqual([]);
+    }
+  });
+
+  test("fails fast when explore model config is missing", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: [
+        definition(),
+        definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      ],
+      providerRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {
+          orchestrator: { model: providerRegistry.modelIds[1]! },
+        },
+      } as SpecraConfig,
+    });
+
+    expect(() => factory.createAgent("explore")).toThrow(MissingAgentModelConfigError);
+
+    try {
+      factory.createAgent("explore");
+    } catch (error) {
+      expect(error).toBeInstanceOf(MissingAgentModelConfigError);
+      expect((error as MissingAgentModelConfigError).name).toBe("MissingAgentModelConfigError");
+      expect((error as MissingAgentModelConfigError).agentName).toBe("explore");
+      expect((error as MissingAgentModelConfigError).availableAgents).toEqual(["orchestrator"]);
+    }
+  });
+
+  test("preserves NoModelsConfiguredError when the provider registry is empty", () => {
+    const emptyProviderRegistry = {
+      sdkRegistry: {} as ProviderRegistry["sdkRegistry"],
+      models: new Map(),
+      modelIds: [],
+      getModel: () => {
+        throw new Error("unexpected model lookup");
+      },
+    } as ProviderRegistry;
+
+    const factory = createAgentFactory({
+      definitions: [definition()],
+      providerRegistry: emptyProviderRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {
+          orchestrator: { model: "missing:model" },
+        },
+      } as SpecraConfig,
+    });
+
+    expect(() => factory.createRootAgent("orchestrator")).toThrow(NoModelsConfiguredError);
+  });
+
+  test("fails fast with named unknown model error from provider registry", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: [definition()],
+      providerRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {
+          orchestrator: { model: "test:missing" },
+        },
+      } as SpecraConfig,
+    });
+
+    try {
+      factory.createRootAgent("orchestrator");
+      throw new Error("Expected createRootAgent to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(UnknownQualifiedIdError);
+      const typedError = error as UnknownQualifiedIdError;
+      expect(typedError.name).toBe("UnknownQualifiedIdError");
+      expect(typedError.qualifiedId).toBe("test:missing");
+      expect(typedError.availableIds).toEqual(["test:fallback", "test:configured"]);
+    }
   });
 
   test("assigns title to root and child stores", () => {

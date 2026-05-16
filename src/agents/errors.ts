@@ -12,6 +12,30 @@ export class AgentRunningError extends Error {
   }
 }
 
+export class MissingAgentModelConfigError extends Error {
+  constructor(
+    public readonly agentName: string,
+    public readonly availableAgents: string[],
+  ) {
+    super(`Agent "${agentName}" must define a model in config.agents.${agentName}.model. Available agents: ${availableAgents.join(", ")}`);
+    this.name = "MissingAgentModelConfigError";
+  }
+}
+
+export class UnknownModelVariantError extends Error {
+  constructor(
+    public readonly agentName: string,
+    public readonly modelId: string,
+    public readonly requestedVariant: string,
+    public readonly availableVariants: string[],
+  ) {
+    super(
+      `Agent "${agentName}" requested unknown variant "${requestedVariant}" for model "${modelId}". Available variants: ${availableVariants.join(", ")}`,
+    );
+    this.name = "UnknownModelVariantError";
+  }
+}
+
 export class SubAgentError extends Error {
   constructor(message: string) {
     super(message);

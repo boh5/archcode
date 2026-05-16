@@ -13,6 +13,7 @@ const mockGenerateText = mock(
 );
 
 import { createTitleGenerationTask } from "./title-generation";
+import type { BackgroundTaskContext } from "../types";
 import type { ModelInfo } from "../../provider/model";
 
 function makeModelInfo(): ModelInfo {
@@ -75,6 +76,11 @@ describe("createTitleGenerationTask", () => {
       store,
       modelInfo: makeModelInfo(),
       workspaceRoot: "/tmp",
+      modelOptions: {
+        temperature: 0.25,
+        maxOutputTokens: 32,
+        providerOptions: { title: { style: "concise" } },
+      },
     };
 
     await task.run(ctx as never);
@@ -85,8 +91,87 @@ describe("createTitleGenerationTask", () => {
       expect.objectContaining({
         model: expect.any(Object),
         prompt: expect.stringContaining("authentication"),
+        temperature: 0.25,
+        maxOutputTokens: 32,
+        providerOptions: { title: { style: "concise" } },
       }),
     );
+  });
+
+  test("passes all whitelisted model options and strips variant", async () => {
+    const now = Date.now();
+    const providerOptions = { title: { mode: "full" } };
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              id: crypto.randomUUID(),
+              text: "Summarize this conversation",
+              createdAt: now,
+              completedAt: now,
+            },
+          ],
+          createdAt: now,
+          completedAt: now,
+        },
+      ],
+    });
+
+    const task = createTitleGenerationTask(store);
+    await task.run({
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+      modelOptions: {
+        maxOutputTokens: 64,
+        temperature: 0.15,
+        topP: 0.5,
+        topK: 8,
+        presencePenalty: -0.1,
+        frequencyPenalty: 0.1,
+        stopSequences: ["\n"],
+        seed: 11,
+        maxRetries: 1,
+        timeout: 5000,
+        providerOptions,
+        variant: "title-fast",
+      } as unknown as BackgroundTaskContext["modelOptions"],
+    });
+
+    const calls = mockGenerateText.mock.calls as unknown as Array<[Record<string, unknown>]>;
+    const callArg = calls[0]![0];
+    const pickedOptions = {
+      maxOutputTokens: callArg.maxOutputTokens,
+      temperature: callArg.temperature,
+      topP: callArg.topP,
+      topK: callArg.topK,
+      presencePenalty: callArg.presencePenalty,
+      frequencyPenalty: callArg.frequencyPenalty,
+      stopSequences: callArg.stopSequences,
+      seed: callArg.seed,
+      maxRetries: callArg.maxRetries,
+      timeout: callArg.timeout,
+      providerOptions: callArg.providerOptions,
+    };
+    expect(pickedOptions).toEqual({
+      maxOutputTokens: 64,
+      temperature: 0.15,
+      topP: 0.5,
+      topK: 8,
+      presencePenalty: -0.1,
+      frequencyPenalty: 0.1,
+      stopSequences: ["\n"],
+      seed: 11,
+      maxRetries: 1,
+      timeout: 5000,
+      providerOptions,
+    });
+    expect(callArg).not.toHaveProperty("variant");
   });
 
   test("does nothing when no user message exists", async () => {

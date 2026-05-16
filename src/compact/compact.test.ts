@@ -789,6 +789,141 @@ describe("compact", () => {
     expect(capturedOptions.tools).toBeUndefined();
   });
 
+  test("summary call receives configured model call options without variant", async () => {
+    let capturedOptions: Record<string, unknown> = {};
+    const providerOptions = { openai: { reasoningEffort: "medium" } };
+
+    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
+      capturedOptions = opts;
+      return {
+        text: Promise.resolve("## Current Objective\nTest"),
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "## Current Objective\nTest" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+        toolCalls: Promise.resolve([]),
+        toolResults: Promise.resolve([]),
+      };
+    }) as unknown as typeof import("ai").streamText;
+
+    __setStreamTextForTest(mockStreamTextFn);
+
+    const messages: StoredMessage[] = [
+      makeUserMessage("u1", "First message"),
+      makeAssistantMessage("a1", "First response"),
+      makeUserMessage("u2", "Second message"),
+      makeAssistantMessage("a2", "Second response"),
+      makeUserMessage("u3", "Third message"),
+      makeAssistantMessage("a3", "Third response"),
+      makeUserMessage("u4", "Fourth message"),
+      makeAssistantMessage("a4", "Fourth response"),
+      makeUserMessage("u5", "Fifth message"),
+      makeAssistantMessage("a5", "Fifth response"),
+      makeUserMessage("u6", "Sixth message (incomplete)"),
+    ];
+
+    await compact(
+      makeInput(messages, {
+        modelOptions: {
+          temperature: 0.3,
+          topP: 0.7,
+          maxOutputTokens: 1024,
+          providerOptions,
+          variant: "compact-fast",
+        } as unknown as CompactInput["modelOptions"],
+      }),
+    );
+
+    expect(capturedOptions.temperature).toBe(0.3);
+    expect(capturedOptions.topP).toBe(0.7);
+    expect(capturedOptions.maxOutputTokens).toBe(1024);
+    expect(capturedOptions.providerOptions).toBe(providerOptions);
+    expect(capturedOptions).not.toHaveProperty("variant");
+  });
+
+  test("summary call receives every whitelisted model option exactly", async () => {
+    let capturedOptions: Record<string, unknown> = {};
+    const providerOptions = { compact: { mode: "summary" } };
+
+    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
+      capturedOptions = opts;
+      return {
+        text: Promise.resolve("## Current Objective\nTest"),
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "## Current Objective\nTest" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+        toolCalls: Promise.resolve([]),
+        toolResults: Promise.resolve([]),
+      };
+    }) as unknown as typeof import("ai").streamText;
+
+    __setStreamTextForTest(mockStreamTextFn);
+
+    const messages: StoredMessage[] = [
+      makeUserMessage("u1", "First message"),
+      makeAssistantMessage("a1", "First response"),
+      makeUserMessage("u2", "Second message"),
+      makeAssistantMessage("a2", "Second response"),
+      makeUserMessage("u3", "Third message"),
+      makeAssistantMessage("a3", "Third response"),
+      makeUserMessage("u4", "Fourth message"),
+      makeAssistantMessage("a4", "Fourth response"),
+      makeUserMessage("u5", "Fifth message"),
+      makeAssistantMessage("a5", "Fifth response"),
+      makeUserMessage("u6", "Sixth message (incomplete)"),
+    ];
+
+    await compact(
+      makeInput(messages, {
+        modelOptions: {
+          maxOutputTokens: 2048,
+          temperature: 0.1,
+          topP: 0.5,
+          topK: 20,
+          presencePenalty: -0.2,
+          frequencyPenalty: 0.3,
+          stopSequences: ["END"],
+          seed: 7,
+          maxRetries: 1,
+          timeout: 15_000,
+          providerOptions,
+          variant: "compact-careful",
+        } as unknown as CompactInput["modelOptions"],
+      }),
+    );
+
+    const pickedOptions = {
+      maxOutputTokens: capturedOptions.maxOutputTokens,
+      temperature: capturedOptions.temperature,
+      topP: capturedOptions.topP,
+      topK: capturedOptions.topK,
+      presencePenalty: capturedOptions.presencePenalty,
+      frequencyPenalty: capturedOptions.frequencyPenalty,
+      stopSequences: capturedOptions.stopSequences,
+      seed: capturedOptions.seed,
+      maxRetries: capturedOptions.maxRetries,
+      timeout: capturedOptions.timeout,
+      providerOptions: capturedOptions.providerOptions,
+    };
+    expect(pickedOptions).toEqual({
+      maxOutputTokens: 2048,
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 20,
+      presencePenalty: -0.2,
+      frequencyPenalty: 0.3,
+      stopSequences: ["END"],
+      seed: 7,
+      maxRetries: 1,
+      timeout: 15_000,
+      providerOptions,
+    });
+    expect(capturedOptions).not.toHaveProperty("variant");
+  });
+
   // -------------------------------------------------------------------------
   // User content with <compact-summary> markers is not treated as real compaction
   // -------------------------------------------------------------------------

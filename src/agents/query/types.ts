@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import type { ModelCallOptions } from "../../config/provider";
 import type { ModelInfo } from "../../provider/model";
 import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreState } from "../../store/types";
@@ -11,6 +12,7 @@ export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeat
 
 export interface QueryLoopOptions {
   modelInfo: ModelInfo;
+  modelOptions?: ModelCallOptions;
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   workspaceRoot?: string;

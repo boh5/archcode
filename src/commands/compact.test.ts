@@ -5,6 +5,7 @@ import { createSessionStore } from "../store/store";
 import type { StoredMessage } from "../store/types";
 import { __setStreamTextForTest } from "../compact/compact";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
+import type { ModelCallOptions } from "../config";
 import { createCompactCommand } from "./compact";
 
 function makeUserMessage(id: string, text: string): StoredMessage {
@@ -96,6 +97,45 @@ describe("createCompactCommand", () => {
     expect(result.success).toBe(true);
     expect(result.message).toBe("Context compacted. 6 messages summarized. 5 messages preserved in tail.");
     expect(store.getState().messages.some((m) => m.parts.some((p) => p.type === "compaction"))).toBe(true);
+  });
+
+  test("passes context modelOptions into compact summary call", async () => {
+    let capturedOptions: Record<string, unknown> = {};
+    const providerOptions = { openai: { reasoningEffort: "high" } };
+    __setStreamTextForTest(
+      mock((opts: Record<string, unknown>) => {
+        capturedOptions = opts;
+        return {
+          text: Promise.resolve("## Current Objective\nSummarized"),
+          fullStream: (async function* () {})(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          toolCalls: Promise.resolve([]),
+          toolResults: Promise.resolve([]),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    );
+    const store = createSessionStore(`compact-command-options-${crypto.randomUUID()}`);
+    store.setState({ messages: compactableMessages() });
+
+    const result = await createCompactCommand(store, modelInfo).handler({
+      store,
+      modelInfo,
+      modelOptions: {
+        temperature: 0.4,
+        topP: 0.6,
+        maxOutputTokens: 4096,
+        providerOptions,
+        variant: "large-context",
+      } as unknown as ModelCallOptions,
+    });
+
+    expect(result.success).toBe(true);
+    expect(capturedOptions.temperature).toBe(0.4);
+    expect(capturedOptions.topP).toBe(0.6);
+    expect(capturedOptions.maxOutputTokens).toBe(4096);
+    expect(capturedOptions.providerOptions).toBe(providerOptions);
+    expect(capturedOptions).not.toHaveProperty("variant");
   });
 
   test("bypasses open circuit breaker and resets it on success", async () => {

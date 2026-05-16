@@ -551,18 +551,20 @@ describe("createAutoCompactHook", () => {
     });
 
     const abort = new AbortController().signal;
-    const ctx = createContext({ store, modelInfo: modelInfo as never, abort });
+    const modelOptions = { temperature: 0.2, maxOutputTokens: 2048 };
+    const ctx = createContext({ store, modelInfo: modelInfo as never, abort, modelOptions });
     await result.hook(ctx);
 
     expect(mockCompact).toHaveBeenCalledTimes(1);
     const call = mockCompact.mock.calls[0] as [
-      { messages: StoredMessage[]; contextLimit: number; model: unknown; sessionId: string },
+      { messages: StoredMessage[]; contextLimit: number; model: unknown; sessionId: string; modelOptions: unknown },
       AbortSignal | undefined,
     ];
     expect(call[0].messages).toBe(messages);
     expect(call[0].contextLimit).toBe(CONTEXT_LIMIT);
     expect(call[0].model).toBe(modelInfo.model);
     expect(call[0].sessionId).toBe("test-session");
+    expect(call[0].modelOptions).toBe(modelOptions);
     expect(call[1]).toBe(abort);
   });
 

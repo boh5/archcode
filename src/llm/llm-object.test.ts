@@ -91,6 +91,105 @@ describe("llmObject", () => {
     expect(getCallArg(0).system).toBe("You are a helper");
   });
 
+  test("passes safe model options through to generateText", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    mockGenerateText.mockResolvedValueOnce({
+      text: "",
+      toolCalls: [
+        {
+          type: "tool-call" as const,
+          toolCallId: "call_1",
+          toolName: "result",
+          input: { name: "Cara" },
+        },
+      ],
+    });
+
+    await llmObject(
+      makeInput({
+        schema,
+        modelOptions: {
+          temperature: 0.4,
+          maxOutputTokens: 128,
+          providerOptions: { testProvider: { foo: "bar" } },
+        },
+      }),
+    );
+
+    expect(getCallArg(0)).toEqual(
+      expect.objectContaining({
+        temperature: 0.4,
+        maxOutputTokens: 128,
+        providerOptions: { testProvider: { foo: "bar" } },
+      }),
+    );
+  });
+
+  test("passes every whitelisted model option and strips variant", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    const providerOptions = { testProvider: { mode: "full" } };
+    mockGenerateText.mockResolvedValueOnce({
+      text: "",
+      toolCalls: [
+        {
+          type: "tool-call" as const,
+          toolCallId: "call_1",
+          toolName: "result",
+          input: { name: "Dana" },
+        },
+      ],
+    });
+
+    await llmObject(
+      makeInput({
+        schema,
+        modelOptions: {
+          maxOutputTokens: 256,
+          temperature: 0.6,
+          topP: 0.75,
+          topK: 12,
+          presencePenalty: -0.5,
+          frequencyPenalty: 0.5,
+          stopSequences: ["DONE"],
+          seed: 42,
+          maxRetries: 2,
+          timeout: 20_000,
+          providerOptions,
+          variant: "never-forward",
+        } as unknown as LlmObjectInput<unknown>["modelOptions"],
+      }),
+    );
+
+    const callArg = getCallArg(0);
+    const pickedOptions = {
+      maxOutputTokens: callArg.maxOutputTokens,
+      temperature: callArg.temperature,
+      topP: callArg.topP,
+      topK: callArg.topK,
+      presencePenalty: callArg.presencePenalty,
+      frequencyPenalty: callArg.frequencyPenalty,
+      stopSequences: callArg.stopSequences,
+      seed: callArg.seed,
+      maxRetries: callArg.maxRetries,
+      timeout: callArg.timeout,
+      providerOptions: callArg.providerOptions,
+    };
+    expect(pickedOptions).toEqual({
+      maxOutputTokens: 256,
+      temperature: 0.6,
+      topP: 0.75,
+      topK: 12,
+      presencePenalty: -0.5,
+      frequencyPenalty: 0.5,
+      stopSequences: ["DONE"],
+      seed: 42,
+      maxRetries: 2,
+      timeout: 20_000,
+      providerOptions,
+    });
+    expect(callArg).not.toHaveProperty("variant");
+  });
+
   // 3. Schema validation failure
   test("throws LlmSchemaValidationError when tool input fails Zod parse", async () => {
     const schema = z.strictObject({ name: z.string() });

@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
 import { compact, commitCompact } from "../compact/compact";
+import type { ModelCallOptions } from "../config/index";
 import type { ModelInfo } from "../provider/model";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import type { CommandDescriptor } from "./types";
@@ -9,6 +10,7 @@ export function createCompactCommand(
   store: StoreApi<SessionStoreState>,
   modelInfo: ModelInfo,
   circuitBreaker?: CircuitBreaker,
+  modelOptions?: ModelCallOptions,
 ): CommandDescriptor {
   let isCompacting = false;
 
@@ -25,6 +27,7 @@ export function createCompactCommand(
       try {
         const activeStore = ctx.store ?? store;
         const activeModelInfo = ctx.modelInfo ?? modelInfo;
+        const activeModelOptions = ctx.modelOptions ?? modelOptions;
         const activeCircuitBreaker = ctx.circuitBreaker ?? circuitBreaker;
         const beforeMessages = activeStore.getState().messages;
         const result = await compact(
@@ -32,6 +35,7 @@ export function createCompactCommand(
             messages: beforeMessages,
             contextLimit: activeModelInfo.limit.context,
             model: activeModelInfo.model,
+            modelOptions: activeModelOptions,
             sessionId: activeStore.getState().sessionId,
           },
           ctx.abort,

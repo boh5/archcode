@@ -129,9 +129,23 @@ describe("createMemoryConsolidationTask", () => {
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run({
+      modelInfo: makeModelInfo(),
+      modelOptions: {
+        temperature: 0.15,
+        maxOutputTokens: 96,
+        providerOptions: { memoryConsolidation: { mode: "compact" } },
+      },
+    } as unknown as BackgroundTaskContext);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        temperature: 0.15,
+        maxOutputTokens: 96,
+        providerOptions: { memoryConsolidation: { mode: "compact" } },
+      }),
+    );
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("Merged Topic");

@@ -1,6 +1,8 @@
 import { streamText as aiStreamText } from "ai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
+import type { ModelCallOptions } from "../config/provider";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import { toModelMessagesFromStoredMessages } from "../store/projection";
 import { persistToolOutput } from "../tools/persist-output";
@@ -28,6 +30,7 @@ export interface CompactInput {
   messages: StoredMessage[];
   contextLimit: number;
   model: LanguageModelV3;
+  modelOptions?: ModelCallOptions;
   sessionId: string;
 }
 
@@ -73,6 +76,10 @@ Be thorough but concise. Preserve all important context that would be needed to 
 // ---------------------------------------------------------------------------
 
 let _streamText: typeof aiStreamText = aiStreamText;
+
+type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions"> & {
+  providerOptions?: ProviderOptions;
+};
 
 export function __setStreamTextForTest(fn: typeof aiStreamText): void {
   _streamText = fn;
@@ -235,6 +242,7 @@ async function pruneToolOutputs(
 async function summarizePrefix(
   clonedPrefix: StoredMessage[],
   model: LanguageModelV3,
+  modelOptions: ModelCallOptions | undefined,
   contextLimit: number,
   abort?: AbortSignal,
 ): Promise<string> {
@@ -255,6 +263,7 @@ async function summarizePrefix(
 
   const result = _streamText({
     model,
+    ...pickModelCallOptions(modelOptions),
     system: COMPACT_SYSTEM_PROMPT,
     messages: messagesToSummarize,
     abortSignal: abort,
@@ -267,6 +276,38 @@ async function summarizePrefix(
   }
 
   return summary.trim();
+}
+
+function pickModelCallOptions(modelOptions: ModelCallOptions | undefined): SafeModelCallOptions | undefined {
+  if (!modelOptions) return undefined;
+
+  const {
+    maxOutputTokens,
+    temperature,
+    topP,
+    topK,
+    presencePenalty,
+    frequencyPenalty,
+    stopSequences,
+    seed,
+    maxRetries,
+    timeout,
+    providerOptions,
+  } = modelOptions;
+
+  return {
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(topP !== undefined ? { topP } : {}),
+    ...(topK !== undefined ? { topK } : {}),
+    ...(presencePenalty !== undefined ? { presencePenalty } : {}),
+    ...(frequencyPenalty !== undefined ? { frequencyPenalty } : {}),
+    ...(stopSequences !== undefined ? { stopSequences } : {}),
+    ...(seed !== undefined ? { seed } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+    ...(providerOptions !== undefined ? { providerOptions: providerOptions as ProviderOptions } : {}),
+  };
 }
 
 function estimateTokensFromModelMessages(messages: import("ai").ModelMessage[]): number {
@@ -330,7 +371,7 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, sessionId } = input;
+  const { messages, contextLimit, model, modelOptions, sessionId } = input;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -356,7 +397,7 @@ export async function compact(
 
   let summary: string;
   try {
-    summary = await summarizePrefix(clonedPrefix, model, contextLimit, abort);
+    summary = await summarizePrefix(clonedPrefix, model, modelOptions, contextLimit, abort);
   } catch (err) {
     if (abort?.aborted) {
       throw new DOMException("Compaction aborted", "AbortError");

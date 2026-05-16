@@ -1,7 +1,9 @@
 import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
+import type { ModelCallOptions } from "../../config/provider";
 import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import type { ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
@@ -12,6 +14,10 @@ import { redactValue } from "../../tools/security";
 const DEFAULT_MAX_STEPS = 50;
 
 let _streamText: typeof aiStreamText = aiStreamText;
+
+type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions"> & {
+  providerOptions?: ProviderOptions;
+};
 
 export function __setStreamTextForTest(fn: typeof aiStreamText) {
   _streamText = fn;
@@ -89,13 +95,14 @@ export async function runQueryLoop(
 
     while (steps < maxSteps) {
       store.getState().append({ type: "step-start", step: steps });
-      await runHooks(beforeModelBuild, { store, modelInfo, abort, systemPrompt });
+      await runHooks(beforeModelBuild, { store, modelInfo, modelOptions: options.modelOptions, abort, systemPrompt });
       const messages = store.getState().toModelMessages();
-      await runHooks(beforeModelCall, { store, modelInfo, abort, messages });
+      await runHooks(beforeModelCall, { store, modelInfo, modelOptions: options.modelOptions, abort, messages });
       const resolved = toolRegistry.resolveForAgent(allowedTools);
 
       const result = _streamText({
         model: modelInfo.model,
+        ...pickModelCallOptions(options.modelOptions),
         messages,
         abortSignal: abort,
         ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
@@ -108,7 +115,7 @@ export async function runQueryLoop(
       lastText = await result.text;
 
       store.getState().append({ type: "step-end", step: steps, finishReason, usage });
-      await runHooks(afterStepEnd, { store, modelInfo, abort });
+      await runHooks(afterStepEnd, { store, modelInfo, modelOptions: options.modelOptions, abort });
 
       if (finishReason !== "tool-calls") break;
 
@@ -162,8 +169,40 @@ export async function runQueryLoop(
       status: runEndStatus,
       ...(failed ? { error: "Run failed" } : {}),
     });
-    await runHooks(afterLoopEnd, { store, modelInfo, abort, loopEndStatus: runEndStatus });
+    await runHooks(afterLoopEnd, { store, modelInfo, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus });
   }
+}
+
+function pickModelCallOptions(modelOptions: QueryLoopOptions["modelOptions"]): SafeModelCallOptions | undefined {
+  if (!modelOptions) return undefined;
+
+  const {
+    maxOutputTokens,
+    temperature,
+    topP,
+    topK,
+    presencePenalty,
+    frequencyPenalty,
+    stopSequences,
+    seed,
+    maxRetries,
+    timeout,
+    providerOptions,
+  } = modelOptions;
+
+  return {
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
+    ...(topP !== undefined ? { topP } : {}),
+    ...(topK !== undefined ? { topK } : {}),
+    ...(presencePenalty !== undefined ? { presencePenalty } : {}),
+    ...(frequencyPenalty !== undefined ? { frequencyPenalty } : {}),
+    ...(stopSequences !== undefined ? { stopSequences } : {}),
+    ...(seed !== undefined ? { seed } : {}),
+    ...(maxRetries !== undefined ? { maxRetries } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
+    ...(providerOptions !== undefined ? { providerOptions: providerOptions as ProviderOptions } : {}),
+  };
 }
 
 async function maybeHandleCommand(
@@ -171,7 +210,7 @@ async function maybeHandleCommand(
   userMessage: string,
   abort: AbortSignal,
 ): Promise<{ handled: boolean }> {
-  const { commandRegistry, store, modelInfo } = options;
+  const { commandRegistry, store, modelInfo, modelOptions } = options;
   const parsed = commandRegistry?.parse(userMessage);
   if (!parsed) return { handled: false };
 
@@ -188,7 +227,7 @@ async function maybeHandleCommand(
     return { handled: false };
   }
 
-  const result = await descriptor.handler({ store, modelInfo, abort }, parsed.args);
+  const result = await descriptor.handler({ store, modelInfo, modelOptions, abort }, parsed.args);
   store.getState().append({ type: "system-notice", message: result.message });
   return { handled: true };
 }

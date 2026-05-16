@@ -19,6 +19,7 @@ export function createTitleGenerationHook(
     btm.dispatch(task.name, () => task.run({
       store: ctx.store,
       modelInfo: ctx.modelInfo,
+      modelOptions: ctx.modelOptions,
       workspaceRoot: process.cwd(),
       abort: ctx.abort,
     }));

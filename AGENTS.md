@@ -67,7 +67,70 @@ partitionToolCalls → globalGuards (memory-index-guard) → tool guards (worksp
   → before hooks → execute → after hooks (edit-error-recovery) → global after (redact → truncate → audit → logger)
 ```
 
-**Config** (`.specra.json`): `provider.<id>.{npm, name, options, models}` + `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
+**Config** (`.specra.json`): `provider.<id>.{npm, name, options, models}` + `agents.<agentName>.{model, variant, options}` + `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
+
+**Model configuration** (`.specra.json`):
+- Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
+- `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `maxRetries`, `timeout`, and `providerOptions`.
+- `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
+- `agents.<agentName>.model` is required for every instantiated agent. Current instantiated agents are `orchestrator` and `explore`, so both must be configured during migration or creation fails fast.
+- `agents.<agentName>.options` overrides the selected model and variant options. Merge order is shallow: model `options` → selected `variants[variant]` → agent `options`.
+- `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
+- Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
+
+Minimal example:
+```json
+{
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "local",
+      "options": {
+        "baseURL": "http://localhost:8090/v1",
+        "apiKey": "${LOCAL_API_KEY:-local-dev-key}"
+      },
+      "models": {
+        "glm-5": {
+          "name": "GLM-5",
+          "limit": { "context": 200000, "output": 128000 },
+          "modalities": { "input": ["text"], "output": ["text"] },
+          "options": {
+            "maxOutputTokens": 64000,
+            "temperature": 0.2,
+            "topP": 0.95,
+            "providerOptions": {
+              "local": { "reasoningEffort": "high" }
+            }
+          },
+          "variants": {
+            "fast": {
+              "maxOutputTokens": 16000,
+              "temperature": 0.1
+            },
+            "deep": {
+              "maxOutputTokens": 128000,
+              "temperature": 0.3,
+              "topP": 0.9
+            }
+          }
+        }
+      }
+    }
+  },
+  "agents": {
+    "orchestrator": {
+      "model": "local:glm-5",
+      "variant": "deep",
+      "options": { "temperature": 0.25, "maxRetries": 2 }
+    },
+    "explore": {
+      "model": "local:glm-5",
+      "variant": "fast",
+      "options": { "temperature": 0, "maxOutputTokens": 12000 }
+    }
+  }
+}
+```
 
 ## Agent Architecture
 

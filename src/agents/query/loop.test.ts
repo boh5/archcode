@@ -221,6 +221,12 @@ function streamCallMessages(fn: ReturnType<typeof createMockStreamText>, callInd
   return args.messages as ModelMessage[];
 }
 
+function streamCallOptions(fn: ReturnType<typeof createMockStreamText>, callIndex: number): Parameters<typeof aiStreamText>[0] {
+  const args = fn.mock.calls[callIndex]?.[0];
+  if (!args) throw new Error("Expected streamText options");
+  return args;
+}
+
 beforeEach(() => {
   createMockStreamText([{ text: "default" }]);
 });
@@ -1242,9 +1248,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(receivedSystemPrompt).toEqual([undefined]);
     });
 
-    test("beforeModelBuild receives store, modelInfo, and abort in context", async () => {
+    test("hooks receive modelOptions in every loop context", async () => {
       const store = createStore();
       const abortController = new AbortController();
+      const modelOptions: QueryLoopOptions["modelOptions"] = { temperature: 0.2, maxOutputTokens: 1024 };
       const contexts: BeforeModelBuildContext[] = [];
       createMockStreamText([{ text: "ok" }]);
 
@@ -1252,16 +1259,26 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         makeOptions({
           store,
           abort: abortController.signal,
+          modelOptions,
           hooks: {
             beforeModelBuild: [async (ctx) => { contexts.push(ctx); }],
+            beforeModelCall: [async (ctx) => { contexts.push(ctx); }],
+            afterStepEnd: [async (ctx) => { contexts.push(ctx); }],
+            afterLoopEnd: [async (ctx) => { contexts.push(ctx); }],
           },
         }),
         "Hi",
       );
 
-      expect(contexts).toHaveLength(1);
+      expect(contexts).toHaveLength(4);
       expect(contexts[0].store).toBe(store);
       expect(contexts[0].modelInfo).toBe(dummyModelInfo);
+      expect(contexts.map((ctx) => ctx.modelOptions)).toEqual([
+        modelOptions,
+        modelOptions,
+        modelOptions,
+        modelOptions,
+      ]);
       expect(contexts[0].abort).toBe(abortController.signal);
       expect("messages" in contexts[0]).toBe(false);
     });
@@ -1367,6 +1384,85 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(makeOptions(), "Hi");
     expect("system" in streamFn.mock.calls[0][0]).toBe(false);
+  });
+
+  test("passes configured model call options to streamText without variant", async () => {
+    const streamFn = createMockStreamText([{ text: "ok" }]);
+    const providerOptions = { openai: { reasoningEffort: "low" } };
+
+    await runQueryLoop(
+      makeOptions({
+        modelOptions: {
+          temperature: 0.2,
+          topP: 0.8,
+          maxOutputTokens: 2048,
+          providerOptions,
+          variant: "fast",
+        } as unknown as QueryLoopOptions["modelOptions"],
+      }),
+      "Hi",
+    );
+
+    const options = streamCallOptions(streamFn, 0) as Record<string, unknown>;
+    expect(options.temperature).toBe(0.2);
+    expect(options.topP).toBe(0.8);
+    expect(options.maxOutputTokens).toBe(2048);
+    expect(options.providerOptions).toBe(providerOptions);
+    expect(options).not.toHaveProperty("variant");
+  });
+
+  test("passes all whitelisted model call options exactly to streamText", async () => {
+    const streamFn = createMockStreamText([{ text: "ok" }]);
+    const providerOptions = { provider: { mode: "strict" } };
+
+    await runQueryLoop(
+      makeOptions({
+        modelOptions: {
+          maxOutputTokens: 512,
+          temperature: 0.4,
+          topP: 0.6,
+          topK: 32,
+          presencePenalty: -0.1,
+          frequencyPenalty: 0.2,
+          stopSequences: ["STOP"],
+          seed: 99,
+          maxRetries: 4,
+          timeout: 10_000,
+          providerOptions,
+          variant: "never-forward",
+        } as unknown as QueryLoopOptions["modelOptions"],
+      }),
+      "Hi",
+    );
+
+    const options = streamCallOptions(streamFn, 0) as Record<string, unknown>;
+    const pickedOptions = {
+      maxOutputTokens: options.maxOutputTokens,
+      temperature: options.temperature,
+      topP: options.topP,
+      topK: options.topK,
+      presencePenalty: options.presencePenalty,
+      frequencyPenalty: options.frequencyPenalty,
+      stopSequences: options.stopSequences,
+      seed: options.seed,
+      maxRetries: options.maxRetries,
+      timeout: options.timeout,
+      providerOptions: options.providerOptions,
+    };
+    expect(pickedOptions).toEqual({
+      maxOutputTokens: 512,
+      temperature: 0.4,
+      topP: 0.6,
+      topK: 32,
+      presencePenalty: -0.1,
+      frequencyPenalty: 0.2,
+      stopSequences: ["STOP"],
+      seed: 99,
+      maxRetries: 4,
+      timeout: 10_000,
+      providerOptions,
+    });
+    expect(options).not.toHaveProperty("variant");
   });
 
   test("omits tools when registry resolves empty tool set", async () => {

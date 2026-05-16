@@ -13,11 +13,13 @@ import {
   DelegateTargetNotAllowedError,
   DelegationToolNotAllowedError,
   DepthLimitError,
+  NoModelsConfiguredError,
   SubAgentError,
 } from "./errors";
 import type { AgentDefinition, AgentName, AgentRunHandle, DelegateAgentOptions } from "./factory-types";
 import { DELEGATION_TOOLS } from "./constants";
 import type { Agent } from "./types";
+import { resolveAgentModel } from "./model-resolver";
 
 export type { AgentRunHandle, DelegateAgentOptions } from "./factory-types";
 
@@ -297,13 +299,20 @@ function createConfiguredAgent(
   options: CreateAgentOptions,
 ): Agent {
   const store = prepareStore(options);
+  if (config.providerRegistry.modelIds.length === 0) {
+    throw new NoModelsConfiguredError();
+  }
+
+  const resolvedConfig = config.config ?? ({ provider: {} } as SpecraConfig);
+  const { modelInfo, options: modelOptions } = resolveAgentModel(definition.name, resolvedConfig, config.providerRegistry);
 
   return new ConfiguredAgent({
     definition,
     providerRegistry: config.providerRegistry,
+    modelInfo,
+    modelOptions,
     toolRegistry: config.toolRegistry,
     workspaceRoot: config.workspaceRoot,
-    config: config.config,
     store,
     depth: options.depth,
     backgroundTaskManager: config.backgroundTaskManager,

@@ -82,6 +82,7 @@ export function createMemoryExtractionTask(
       try {
         result = await llmObject({
           model: ctx.modelInfo.model,
+          modelOptions: ctx.modelOptions,
           schema: MemoryExtractionResultSchema,
           prompt: `Extract durable knowledge, preferences, and feedback from this conversation.
 Focus on information that would be useful in future sessions:

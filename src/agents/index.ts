@@ -26,4 +26,13 @@ export type {
   AgentToolPolicy,
 } from "./factory-types";
 export { defaultAgentDefinitions, exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
-export { SubAgentError, ConcurrentLimitError, DepthLimitError, NoModelsConfiguredError, AgentRunningError } from "./errors";
+export { resolveAgentModel } from "./model-resolver";
+export {
+  AgentRunningError,
+  ConcurrentLimitError,
+  DepthLimitError,
+  MissingAgentModelConfigError,
+  NoModelsConfiguredError,
+  SubAgentError,
+  UnknownModelVariantError,
+} from "./errors";

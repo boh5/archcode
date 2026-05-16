@@ -1,5 +1,7 @@
 export {
+  agentConfigSchema,
   specraConfigSchema,
+  type AgentConfig,
   type SpecraConfig,
 } from "./schema";
 export {
@@ -11,6 +13,7 @@ export {
 } from "./load";
 export {
   OPENAI_COMPATIBLE_PROVIDER_PACKAGE,
+  type ModelCallOptions,
   type ModelConfig,
   type ModelLimit,
   type ModelModalities,
@@ -25,6 +28,7 @@ export {
   createProviderInstance,
   getModelConfig,
   getProviderConfig,
+  modelCallOptionsSchema,
   modelConfigSchema,
   modelLimitSchema,
   modelModalitiesSchema,

@@ -37,6 +37,7 @@ export function createMemoryExtractionHook(
       task.run({
         store: ctx.store,
         modelInfo: ctx.modelInfo,
+        modelOptions: ctx.modelOptions,
         workspaceRoot: memoryRoots.project,
         abort: ctx.abort,
       }),
