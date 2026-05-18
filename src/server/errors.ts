@@ -1,6 +1,7 @@
 export type ServerErrorCode =
   | "PROJECT_NOT_FOUND"
   | "SESSION_NOT_FOUND"
+  | "QUESTION_NOT_FOUND"
   | "PERMISSION_TIMEOUT"
   | "BAD_REQUEST"
   | "UNAUTHORIZED"
@@ -29,6 +30,13 @@ export class SessionNotFoundError extends ServerError {
   constructor(sessionId: string) {
     super("SESSION_NOT_FOUND", `Session not found: ${sessionId}`, 404);
     this.name = "SessionNotFoundError";
+  }
+}
+
+export class QuestionNotFoundError extends ServerError {
+  constructor(questionId: string) {
+    super("QUESTION_NOT_FOUND", `Question not found: ${questionId}`, 404);
+    this.name = "QuestionNotFoundError";
   }
 }
 

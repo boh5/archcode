@@ -2,7 +2,8 @@ import { AgentRunningError } from "../agents/errors";
 import type { Agent } from "../agents/types";
 import type { SpecraRuntime } from "../main";
 import { saveSessionTranscript } from "../store/helpers";
-import type { ToolConfirmationCallback } from "../tools/types";
+import type { AskUserCallback, ToolConfirmationCallback } from "../tools/types";
+import type { AskUserService } from "./ask-user-service";
 import type { PermissionService } from "./permission-service";
 import { ensureSessionRing } from "./routes/events";
 
@@ -17,10 +18,12 @@ export class AgentRunner {
   #jobs = new Map<string, RunningJob>();
   #runtime: SpecraRuntime;
   #permissionService?: PermissionService;
+  #askUserService?: AskUserService;
 
-  constructor(runtime: SpecraRuntime, permissionService?: PermissionService) {
+  constructor(runtime: SpecraRuntime, permissionService?: PermissionService, askUserService?: AskUserService) {
     this.#runtime = runtime;
     this.#permissionService = permissionService;
+    this.#askUserService = askUserService;
   }
 
   submit(sessionId: string, workspaceRoot: string, userMessage: string): RunningJob {
@@ -85,10 +88,17 @@ export class AgentRunner {
       const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
         ? (request, abortSignal) => this.#permissionService!.request(sessionId, request, ring, abortSignal)
         : undefined;
+      const askUser: AskUserCallback | undefined = this.#askUserService
+        ? (request) => {
+          const { abortSignal, ...serializableRequest } = request;
+          return this.#askUserService!.request(sessionId, serializableRequest, ring, abortSignal);
+        }
+        : undefined;
 
       await agent.run(userMessage, {
         abort: abortController.signal,
         ...(confirmPermission ? { confirmPermission } : {}),
+        ...(askUser ? { askUser } : {}),
       });
     } catch (error) {
       if (!abortController.signal.aborted) {

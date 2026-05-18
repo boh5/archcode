@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { SpecraRuntime } from "../main";
 import { AgentRunner } from "./agent-runner";
+import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -10,6 +11,7 @@ import { createEventsRoutes } from "./routes/events";
 import { createMessagesRoutes } from "./routes/messages";
 import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
+import { createQuestionsRoutes } from "./routes/questions";
 import { createSessionsRoutes } from "./routes/sessions";
 
 export interface CreateServerAppOptions {
@@ -66,11 +68,12 @@ export function createServerApp(
   const projects = createProjectsRoutes(runtime);
   const sessions = createSessionsRoutes(runtime);
   const permissionService = new PermissionService();
-  const agentRunner = new AgentRunner(runtime, permissionService);
+  const askUserService = new AskUserService();
+  const agentRunner = new AgentRunner(runtime, permissionService, askUserService);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const events = createEventsRoutes(runtime, agentRunner);
   const permissions = createPermissionRoutes(permissionService);
-  const questions = new Hono();
+  const questions = createQuestionsRoutes(askUserService);
   const commands = new Hono();
   const agents = new Hono();
   const workflow = new Hono();
