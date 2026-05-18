@@ -4,6 +4,7 @@ import { AppLayout } from "../layout/AppLayout";
 import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
 import { ChatHeader } from "../components/features/ChatHeader";
+import { ChatInput } from "../components/features/ChatInput";
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -28,6 +29,7 @@ export function SessionRoute() {
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-text-tertiary">Chat placeholder</p>
           </div>
+          <ChatInput slug={slug} sessionId={sessionId} />
         </div>
       }
       detailPanel={
