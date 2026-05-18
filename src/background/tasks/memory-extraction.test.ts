@@ -8,6 +8,7 @@ import { MemoryFileManager } from "../../memory/file-manager";
 import { __setGenerateTextForTest } from "../../llm";
 import { generateText } from "ai";
 import { createMemoryExtractionTask } from "./memory-extraction";
+import { buildMemoryManifest } from "../../memory/manifest";
 import type { ModelInfo } from "../../provider/model";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
@@ -504,6 +505,60 @@ describe("createMemoryExtractionTask", () => {
     expect(topic!.content).toBe("Some content");
   });
 
+  test("merges content when shouldCreate is true but topic already exists (write safety net)", async () => {
+    const roots = makeMemoryRoots("safety-net-merge");
+    await setupDirs(roots);
+
+    const fileManager = new MemoryFileManager(roots);
+    await fileManager.writeTopic(
+      "architecture",
+      { name: "Architecture", description: "Project architecture decisions", type: "project" },
+      "The project uses a monorepo structure.",
+    );
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "Architecture",
+            name: "architecture",
+            description: "Updated architecture decisions",
+            type: "project",
+            content: "Also uses Turborepo for builds.",
+            // shouldCreate: true, but topic already exists — should merge, not overwrite
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
+
+    const now = Date.now();
+    const longText = "A".repeat(300);
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage(longText, now),
+        makeAssistantMessage("Response", now),
+        makeUserMessage("Follow up", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    const ctx = {
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    };
+
+    await task.run(ctx as never);
+
+    const topic = await fileManager.readTopic("architecture");
+    expect(topic).not.toBeNull();
+    expect(topic!.name).toBe("Architecture");
+    // Content should be merged, not overwritten
+    expect(topic!.content).toBe("The project uses a monorepo structure.\n\n---\n\nAlso uses Turborepo for builds.");
+  });
+
   test("skips writing when LLM returns empty memories array", async () => {
     const roots = makeMemoryRoots("empty-memories");
     await setupDirs(roots);
@@ -830,5 +885,229 @@ describe("createMemoryExtractionTask", () => {
     } finally {
       console.warn = originalWarn;
     }
+  });
+
+  test("injects existing memories manifest into extraction prompt", async () => {
+    const roots = makeMemoryRoots("manifest-in-prompt");
+    await setupDirs(roots);
+
+    const fileManager = new MemoryFileManager(roots);
+    await fileManager.writeTopic("existing_topic", {
+      name: "Existing Topic",
+      description: "Already known convention",
+      type: "project",
+    }, "Use bun instead of npm.");
+    await fileManager.rebuildIndex();
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({ memories: [] }),
+    );
+
+    const now = Date.now();
+    const longText = "A".repeat(300);
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage(longText, now),
+        makeAssistantMessage("Response", now),
+        makeUserMessage("Follow up", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    const ctx = {
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    };
+
+    await task.run(ctx as never);
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    const call = mockGenerateText.mock.calls[0];
+    const callArgs = call[0] as Record<string, unknown>;
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain("Existing memories");
+    expect(prompt).toContain('name: "existing_topic"');
+    expect(prompt).toContain("Deduplication rules");
+  });
+
+  test("continues extraction even when manifest build encounters errors", async () => {
+    const roots = makeMemoryRoots("manifest-failure");
+    await setupDirs(roots);
+
+    mockGenerateText.mockImplementation(async () =>
+      makeGenerateTextResult({
+        memories: [
+          {
+            title: "New Topic",
+            name: "new_topic",
+            description: "A new topic",
+            type: "project",
+            content: "Some content",
+            shouldCreate: true,
+          },
+        ],
+      }),
+    );
+
+    const now = Date.now();
+    const longText = "A".repeat(300);
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage(longText, now),
+        makeAssistantMessage("Response", now),
+        makeUserMessage("Follow up", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    const ctx = {
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    };
+
+    await task.run(ctx as never);
+
+    expect(mockGenerateText).toHaveBeenCalled();
+
+    const fileManager = new MemoryFileManager(roots);
+    const topic = await fileManager.readTopic("new_topic");
+    expect(topic).not.toBeNull();
+    expect(topic!.name).toBe("New Topic");
+  });
+});
+
+describe("buildMemoryManifest", () => {
+  const tmpDirManifest = resolve(import.meta.dir, "__test_tmp_manifest__");
+
+  afterEach(async () => {
+    await rm(tmpDirManifest, { recursive: true, force: true });
+  });
+
+  function makeMemoryRoots(testName: string): MemoryRoots {
+    const projectRoot = join(tmpDirManifest, testName, "project");
+    const userRoot = join(tmpDirManifest, testName, "user");
+    return { project: projectRoot, user: userRoot };
+  }
+
+  async function setupDirsWithKnowledge(roots: MemoryRoots): Promise<MemoryFileManager> {
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(join(roots.project, "knowledge"), { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+
+    await fm.writeTopic("typescript_conventions", {
+      name: "TypeScript Conventions",
+      description: "Project uses strict TypeScript with ES2022",
+      type: "project",
+    }, "The project uses TypeScript strict mode. All imports use bundler resolution. No .js extensions in imports.");
+
+    await fm.writeTopic("api_patterns", {
+      name: "API Patterns",
+      description: "REST API design conventions",
+      type: "reference",
+    }, "All API endpoints follow REST conventions. Use Zod for request/response validation.");
+
+    await fm.writePreferences("The user prefers dark mode for all IDEs.\n\n---\n\nThe user prefers concise commits.");
+    await fm.rebuildIndex();
+
+    return fm;
+  }
+
+  test("returns empty string when no memories exist", async () => {
+    const roots = makeMemoryRoots("empty");
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+    const manifest = await buildMemoryManifest(fm);
+
+    expect(manifest).toBe("");
+  });
+
+  test("includes preferences in manifest", async () => {
+    const roots = makeMemoryRoots("prefs-only");
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+    await fm.writePreferences("The user prefers dark mode for all IDEs.");
+
+    const manifest = await buildMemoryManifest(fm);
+    expect(manifest).toContain("[user preferences]");
+    expect(manifest).toContain("dark mode");
+  });
+
+  test("includes knowledge topics with name/title/summary format", async () => {
+    const roots = makeMemoryRoots("topics-only");
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(join(roots.project, "knowledge"), { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+    await fm.writeTopic("typescript_conventions", {
+      name: "TypeScript Conventions",
+      description: "Strict TypeScript config",
+      type: "project",
+    }, "Use strict mode.");
+    await fm.rebuildIndex();
+
+    const manifest = await buildMemoryManifest(fm);
+    expect(manifest).toContain("[existing knowledge topics]");
+    expect(manifest).toContain('name: "typescript_conventions"');
+    expect(manifest).toContain('title: "TypeScript Conventions"');
+    expect(manifest).toContain('summary: "Strict TypeScript config"');
+  });
+
+  test("includes both preferences and topics in manifest", async () => {
+    const roots = makeMemoryRoots("full-manifest");
+    const fm = await setupDirsWithKnowledge(roots);
+
+    const manifest = await buildMemoryManifest(fm);
+
+    expect(manifest).toContain("[user preferences]");
+    expect(manifest).toContain("[existing knowledge topics]");
+    expect(manifest).toContain('name: "typescript_conventions"');
+    expect(manifest).toContain('name: "api_patterns"');
+    expect(manifest).toContain('title: "TypeScript Conventions"');
+    expect(manifest).toContain('title: "API Patterns"');
+  });
+
+  test("truncates long preferences in manifest", async () => {
+    const roots = makeMemoryRoots("long-prefs");
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+    const longPrefs = "y".repeat(500);
+    await fm.writePreferences(longPrefs);
+
+    const manifest = await buildMemoryManifest(fm);
+    expect(manifest).toContain("[user preferences]");
+    expect(manifest).toContain("...");
+  });
+
+  test("truncates manifest to max chars", async () => {
+    const roots = makeMemoryRoots("truncation");
+    await mkdir(roots.project, { recursive: true });
+    await mkdir(join(roots.project, "knowledge"), { recursive: true });
+    await mkdir(roots.user, { recursive: true });
+
+    const fm = new MemoryFileManager(roots);
+    for (let i = 0; i < 50; i++) {
+      await fm.writeTopic(`topic_${i}`, {
+        name: `Topic ${i}`,
+        description: `A topic description ${"x".repeat(100)}`,
+        type: "project",
+      }, "Content");
+    }
+    await fm.rebuildIndex();
+
+    const manifest = await buildMemoryManifest(fm);
+    expect(manifest).toContain("<!-- manifest truncated -->");
   });
 });

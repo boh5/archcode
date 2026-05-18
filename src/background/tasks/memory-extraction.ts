@@ -13,6 +13,7 @@ import {
   DEFAULT_EXTRACTION_MAX_MESSAGES,
 } from "../../memory/constants";
 import { containsSecretPattern } from "../../security/patterns";
+import { buildMemoryManifest } from "../../memory/manifest";
 
 /**
  * Create a background task that extracts durable memories from the
@@ -46,12 +47,26 @@ export function createMemoryExtractionTask(
       }, 0);
       if (totalContentLength < MIN_CONTENT_LENGTH_FOR_EXTRACTION) return;
 
-      // --- Build truncated conversation for LLM ------------------------------
+      // --- Build memory manifest (existing memories) -------------------------
+      const fileManager = new MemoryFileManager(memoryRoots);
+      let manifestSection = "";
+      try {
+        const manifest = await buildMemoryManifest(fileManager);
+        if (manifest.length > 0) {
+          manifestSection = `\nExisting memories (check these before creating new topics):\n\n${manifest}\n`;
+        }
+      } catch (err) {
+        console.warn(
+          "Memory extraction: failed to build manifest:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
+      // --- Build truncated conversation for LLM --------------------------------
       const maxMessages = DEFAULT_EXTRACTION_MAX_MESSAGES;
       const modelMessages = toModelMessagesFromStoredMessages(state.messages, { mode: "full-history" });
       const truncated = modelMessages.slice(-maxMessages);
 
-      // Truncate individual message content to a reasonable token limit
       const MAX_CONTENT_CHARS = 4000;
       const conversationText = truncated
         .map((msg) => {
@@ -77,7 +92,7 @@ export function createMemoryExtractionTask(
         })
         .join("\n\n");
 
-      // --- Call LLM ----------------------------------------------------------
+      // --- Call LLM ------------------------------------------------------------
       let result: MemoryExtractionResult;
       try {
         result = await llmObject({
@@ -92,8 +107,12 @@ Focus on information that would be useful in future sessions:
 - Important technical references → classify as type "reference" (these go to project knowledge)
 
 Exclude: secrets, temporary details, error messages, and anything session-specific.
-Prefer updating existing topics over creating duplicates.
 Memories with type "user" will be saved to the user's personal preferences (not project knowledge).
+${manifestSection}Deduplication rules:
+- The "name" field must exactly match the "name" value from the existing knowledge topics list above if the topic already exists.
+- If a knowledge topic matches an existing entry, set shouldCreate to false and reuse the exact same "name" — the new content will be appended to that topic.
+- If no matching topic exists, set shouldCreate to true with a new unique "name".
+- For type "user" memories, always set shouldCreate to true (these go to preferences, which always appends).
 
 Conversation:
 ${conversationText}`,
@@ -117,8 +136,6 @@ ${conversationText}`,
       if (result.memories.length === 0) return;
 
       // --- Write memories ----------
-      const fileManager = new MemoryFileManager(memoryRoots);
-
       const TOPIC_NAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
       for (const memory of result.memories) {
@@ -145,7 +162,21 @@ ${conversationText}`,
               continue;
             }
 
-            if (memory.shouldCreate) {
+            // Write safety net: always check if topic exists.
+            // If it exists, merge regardless of shouldCreate to prevent overwriting.
+            const existingTopic = await fileManager.readTopic(memory.name);
+            if (existingTopic) {
+              const mergedContent = `${existingTopic.content}\n\n---\n\n${memory.content}`;
+              await fileManager.writeTopic(
+                memory.name,
+                {
+                  name: memory.title,
+                  description: memory.description,
+                  type: memory.type,
+                },
+                mergedContent,
+              );
+            } else {
               await fileManager.writeTopic(
                 memory.name,
                 {
@@ -155,30 +186,6 @@ ${conversationText}`,
                 },
                 memory.content,
               );
-            } else {
-              const existing = await fileManager.readTopic(memory.name);
-              if (existing) {
-                const mergedContent = `${existing.content}\n\n---\n\n${memory.content}`;
-                await fileManager.writeTopic(
-                  memory.name,
-                  {
-                    name: memory.title,
-                    description: memory.description,
-                    type: memory.type,
-                  },
-                  mergedContent,
-                );
-              } else {
-                await fileManager.writeTopic(
-                  memory.name,
-                  {
-                    name: memory.title,
-                    description: memory.description,
-                    type: memory.type,
-                  },
-                  memory.content,
-                );
-              }
             }
           }
         } catch (err) {

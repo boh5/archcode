@@ -30,6 +30,10 @@ export const DEFAULT_EXTRACTION_MAX_MESSAGES = 50;
 export const INDEX_TRUNCATION_SUFFIX =
   "\n\n<!-- Memory index truncated. Use memory_read for full details. -->";
 
+export const DEFAULT_MAX_MANIFEST_CHARS = 2000;
+
+export const MANIFEST_PREFERENCES_SNIPPET_LENGTH = 200;
+
 export const MEMORY_CONTEXT_START = "<specra-memory-context>";
 export const MEMORY_CONTEXT_END = "</specra-memory-context>";
 export const PREFERENCES_MARKER_START = "<specra-memory-preferences>";
