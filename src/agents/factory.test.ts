@@ -319,7 +319,7 @@ describe("createAgentFactory", () => {
     expect(child.store.getState().parentSessionId).toBe("parent-session");
   });
 
-  test("resolves explicit tool lists and strips delegation tools at depth two", () => {
+  test("resolves explicit tool lists and strips delegation tools at depth three", () => {
     const factory = makeFactory();
     const customDefinition = definition({ tools: { tools: ["grep", "missing", "delegate"] } });
     const delegatingDefinition = definition({
@@ -333,13 +333,23 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS,
     ]);
     expect(factory.resolveAllowedTools(customDefinition, 0)).toEqual(["grep", "delegate"]);
-    expect(factory.resolveAllowedTools(customDefinition, 2)).toEqual(["grep"]);
+    // depth < MAX_SUB_AGENT_DEPTH (3): delegation tools still present
+    expect(factory.resolveAllowedTools(customDefinition, 2)).toEqual(["grep", "delegate"]);
+    // depth >= MAX_SUB_AGENT_DEPTH (3): delegation tools stripped
+    expect(factory.resolveAllowedTools(customDefinition, 3)).toEqual(["grep"]);
     expect(factory.resolveAllowedTools(delegatingDefinition, 1)).toEqual([
       "unknown_tool",
       ...EXPLORER_READ_ONLY_TOOLS,
       ...DELEGATION_TOOLS,
     ]);
-    expect(factory.resolveAllowedTools(delegatingDefinition, 2)).toEqual(["unknown_tool", ...EXPLORER_READ_ONLY_TOOLS]);
+    // depth 2 (< 3): delegation tools still present
+    expect(factory.resolveAllowedTools(delegatingDefinition, 2)).toEqual([
+      "unknown_tool",
+      ...EXPLORER_READ_ONLY_TOOLS,
+      ...DELEGATION_TOOLS,
+    ]);
+    // depth 3 (>= 3): delegation tools stripped
+    expect(factory.resolveAllowedTools(delegatingDefinition, 3)).toEqual(["unknown_tool", ...EXPLORER_READ_ONLY_TOOLS]);
   });
 
   test("resolves delegate targets only when depth allows delegation", () => {
@@ -354,7 +364,10 @@ describe("createAgentFactory", () => {
     });
 
     expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 1)).toEqual(["explore", "custom"]);
-    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual([]);
+    // depth 2 (< MAX_SUB_AGENT_DEPTH=3): delegation still allowed, targets returned
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 2)).toEqual(["explore", "custom"]);
+    // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
+    expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
   });
 });

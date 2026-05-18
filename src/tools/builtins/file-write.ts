@@ -1,14 +1,13 @@
 import { existsSync } from "node:fs";
-import { mkdir, rename } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
+import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import { createFileExistsPermission, createProtectedSpecraPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { refreshReadSnapshot } from "../hooks";
 import { resolveAndValidatePath } from "../security";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { ToolExecutionResult } from "../types";
 
 // ─── Input Schema ───
 
@@ -18,14 +17,6 @@ const FileWriteInputSchema = z
     content: z.string(),
   })
   .strict();
-
-async function cleanupTempFile(tmpPath: string): Promise<void> {
-  try {
-    await Bun.file(tmpPath).delete();
-  } catch {
-    // best-effort
-  }
-}
 
 // ─── Tool Definition ───
 
@@ -56,18 +47,7 @@ export const fileWriteTool = defineTool({
           });
         }
 
-        const parentDir = path.dirname(resolvedPath);
-        await mkdir(parentDir, { recursive: true });
-
-        const tmpPath = `${resolvedPath}.tmp.${crypto.randomUUID()}`;
-        await Bun.write(tmpPath, input.content);
-
-        try {
-          await rename(tmpPath, resolvedPath);
-        } catch (error) {
-          await cleanupTempFile(tmpPath);
-          throw error;
-        }
+        await atomicWrite(resolvedPath, input.content);
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.workspaceRoot);
         return `File written to ${input.path}`;

@@ -1,0 +1,127 @@
+import { z } from "zod/v4";
+import { defineTool } from "../../define-tool";
+import { createToolErrorResult } from "../../errors";
+import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
+import { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
+import {
+  processCriticDecision,
+  type CriticDecision,
+} from "../../../agents/workflow/critic-protocol";
+import { validateTransition, type ArtifactKind } from "../../../agents/workflow/guards";
+import {
+  WorkflowPathError,
+  WorkflowArtifactKindSchema,
+  WorkflowStageSchema,
+  WorkflowStateManager,
+  type WorkflowStage,
+} from "../../../agents/workflow/state";
+import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
+
+const WorkflowUpdateStageInputSchema = z.strictObject({
+  workflowId: z.string().min(1),
+  stage: WorkflowStageSchema,
+  hasUserApproval: z.boolean().default(false),
+  criticDecision: z.enum(["approved", "changes_requested", "rejected"]).optional(),
+  criticReportPath: z.string().min(1).optional(),
+  incrementRetry: z.boolean().default(false),
+});
+
+type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
+
+export function createWorkflowUpdateStageTool(
+  stateManager: WorkflowStateManager,
+  artifactManager: WorkflowArtifactManager,
+): AnyToolDescriptor {
+  return defineTool({
+    name: "workflow_update_stage",
+    description: "Update workflow stage. This is the only workflow tool that mutates stage/status.",
+    inputSchema: WorkflowUpdateStageInputSchema,
+    traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    execute: async (input: WorkflowUpdateStageInput): Promise<string | ToolExecutionResult> => {
+      try {
+        const currentState = await stateManager.read(input.workflowId);
+        if (input.criticDecision) {
+          const result = await processCriticDecision({
+            workflowId: input.workflowId,
+            decision: input.criticDecision as CriticDecision,
+            criticReportPath: input.criticReportPath,
+            currentStage: currentState.stage,
+          }, stateManager);
+          return JSON.stringify(result, null, 2);
+        }
+
+        const availableArtifacts = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
+        const transition = validateTransition({
+          workflowId: input.workflowId,
+          currentStage: currentState.stage,
+          targetStage: input.stage as WorkflowStage,
+          retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,
+          maxRetries: currentState.maxRetries,
+          hasArtifact: (kind: string) => availableArtifacts.has(kind as ArtifactKind),
+          hasUserApproval: input.hasUserApproval,
+        });
+        if (!transition.allowed) {
+          return createToolErrorResult({
+            kind: "execution",
+            code: "TOOL_WORKFLOW_TRANSITION_DENIED",
+            name: transition.errorName,
+            message: transition.error ?? "Workflow transition denied",
+          });
+        }
+
+        if (input.incrementRetry) await stateManager.incrementRetryCount(input.workflowId);
+        const state = await stateManager.updateStage(input.workflowId, input.stage as WorkflowStage);
+        return JSON.stringify(state, null, 2);
+      } catch (error) {
+        if (error instanceof WorkflowPathError) {
+          return createToolErrorResult({
+            kind: "workspace",
+            code: "TOOL_WORKFLOW_INVALID_ID",
+            message: error.message,
+          });
+        }
+        if (isNotFoundError(error)) {
+          return createToolErrorResult({
+            kind: "file-not-found",
+            code: "TOOL_FILE_NOT_FOUND",
+            message: `Workflow not found: ${input.workflowId}`,
+          });
+        }
+        return createToolErrorResult({
+          kind: "execution",
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+      }
+    },
+  });
+}
+
+async function collectAvailableArtifacts(
+  workflowId: string,
+  artifacts: Partial<Record<z.infer<typeof WorkflowArtifactKindSchema>, string | string[]>>,
+  artifactManager: WorkflowArtifactManager,
+): Promise<Set<ArtifactKind>> {
+  const available = new Set<ArtifactKind>();
+  for (const kind of ["PRD", "SPEC", "TASKS"] as const) {
+    const artifactPath = artifacts[kind];
+    if (typeof artifactPath !== "string") continue;
+    try {
+      const artifact = await artifactManager.read(workflowId, artifactPath);
+      if (kind === "TASKS") {
+        const validation = validateTasksMarkdown(artifact.body);
+        if (validation.valid && validation.tasks.length > 0) available.add(kind);
+      } else {
+        available.add(kind);
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+  return available;
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+export { WorkflowUpdateStageInputSchema };

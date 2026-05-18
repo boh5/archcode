@@ -10,6 +10,15 @@ import {
 } from "../tools/hooks";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
+import {
+  createArtifactReadTool,
+  createArtifactWriteTool,
+  createWorkflowCreateTool,
+  createWorkflowReadTool,
+  createWorkflowTaskCheckTool,
+  createWorkflowUpdateStageTool,
+} from "../tools/builtins/workflow";
+import { WorkflowArtifactManager, WorkflowStateManager } from "../agents/workflow";
 import { MemoryFileManager } from "../memory/file-manager";
 import { ProjectApprovalManager } from "../tools/permission";
 
@@ -28,6 +37,15 @@ export function registerBuiltinTools(
   const fileManager = new MemoryFileManager(memoryRoots);
   registry.register(createMemoryReadTool(fileManager));
   registry.register(createMemoryWriteTool(fileManager));
+
+  const workflowStateManager = new WorkflowStateManager(process.cwd());
+  const workflowArtifactManager = new WorkflowArtifactManager(process.cwd(), workflowStateManager);
+  registry.register(createWorkflowCreateTool(workflowStateManager));
+  registry.register(createWorkflowReadTool(workflowStateManager));
+  registry.register(createWorkflowUpdateStageTool(workflowStateManager, workflowArtifactManager));
+  registry.register(createArtifactReadTool(workflowArtifactManager));
+  registry.register(createArtifactWriteTool(workflowArtifactManager));
+  registry.register(createWorkflowTaskCheckTool(workflowStateManager, workflowArtifactManager));
 
   registry.globalHooks.after.push(createRedactionHook());
   registry.globalHooks.after.push(createOutputTruncator());

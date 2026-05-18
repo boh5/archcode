@@ -5,7 +5,12 @@ import {
   MAX_CONCURRENT_SUB_AGENTS,
   MAX_SUB_AGENT_DEPTH,
 } from "../constants";
-import { agentDefinitions, exploreAgentDefinition, orchestratorAgentDefinition } from "./index";
+import {
+  agentDefinitions,
+  exploreAgentDefinition,
+  foremanAgentDefinition,
+  orchestratorAgentDefinition,
+} from "./index";
 
 describe("agentDefinitions", () => {
   test("names are unique", () => {
@@ -16,6 +21,34 @@ describe("agentDefinitions", () => {
 
   test("orchestrator delegates to explore", () => {
     expect(orchestratorAgentDefinition.tools.delegateTargets).toContain("explore");
+  });
+
+  test("orchestrator includes workflow orchestration tools", () => {
+    const tools = orchestratorAgentDefinition.tools.tools;
+
+    expect(tools).toContain("workflow_create");
+    expect(tools).toContain("workflow_read");
+    expect(tools).toContain("workflow_update_stage");
+    expect(tools).toContain("artifact_read");
+    expect(tools).toContain("artifact_write");
+    expect(tools).toContain("workflow_task_check");
+  });
+
+  test("foreman includes Markdown-wave execution tools", () => {
+    const tools = foremanAgentDefinition.tools.tools;
+
+    expect(tools).toContain("artifact_read");
+    expect(tools).toContain("workflow_task_check");
+    expect(tools).toContain("todo_write");
+    expect(tools).toContain("delegate");
+    expect(tools).toContain("background_output");
+    expect(tools).toContain("wait_for_reminder");
+    expect(tools).toContain("view_tool_output");
+    expect(tools).toContain("grep");
+    expect(tools).toContain("glob");
+    expect(tools).toContain("lsp_symbols");
+    expect(tools).not.toContain("file_write");
+    expect(tools).not.toContain("file_edit");
   });
 
   test("definitions do not expose target-side canBeDelegated", () => {

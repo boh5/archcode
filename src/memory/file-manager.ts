@@ -1,12 +1,23 @@
-import { mkdir, readdir, realpath, rename, rm, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { MemoryIndexEntry, MemoryRoots, MemoryTopicFile } from "./types";
 import type { MemoryFrontmatter } from "./schemas";
 import { MemoryFrontmatterSchema } from "./schemas";
 import {
+  atomicWrite,
+  isContained,
+  resolveContainedPath,
+  SafePathError,
+} from "../utils/safe-file";
+import {
+  formatFrontmatter as formatGenericFrontmatter,
+  formatSimpleYaml,
+  parseFrontmatter as parseGenericFrontmatter,
+  parseSimpleYaml,
+} from "../utils/frontmatter";
+import {
   INDEX_FILE,
   KNOWLEDGE_DIR_NAME,
-  MEMORY_DIR_NAME,
   PREFERENCES_FILE,
 } from "./constants";
 
@@ -27,77 +38,14 @@ export class MemoryPathError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Atomic write helper
-// ---------------------------------------------------------------------------
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-  const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-
-  const tmpPath = join(dir, `.tmp-${crypto.randomUUID()}`);
-  try {
-    await Bun.write(tmpPath, content);
-  } catch (err) {
-    // Clean up temp file on write failure
-    try {
-      await rm(tmpPath);
-    } catch {
-      // Best-effort cleanup
-    }
-    throw new Error(
-      `Failed to write temp file "${tmpPath}": ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
-  }
-
-  try {
-    await rename(tmpPath, filePath);
-  } catch (err) {
-    // Clean up temp file on rename failure
-    try {
-      await rm(tmpPath);
-    } catch {
-      // Best-effort cleanup
-    }
-    throw new Error(
-      `Failed to rename "${tmpPath}" to "${filePath}": ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Frontmatter parsing
 // ---------------------------------------------------------------------------
-
-const FRONTMATTER_DELIMITER = "---";
 
 export function parseFrontmatter(content: string): {
   frontmatter: MemoryFrontmatter;
   body: string;
 } {
-  const trimmed = content.trimStart();
-
-  if (!trimmed.startsWith(FRONTMATTER_DELIMITER)) {
-    throw new Error("Content does not start with frontmatter delimiter '---'");
-  }
-
-  // Skip opening delimiter
-  const afterOpen = trimmed.slice(FRONTMATTER_DELIMITER.length);
-
-  // Find closing delimiter
-  const closeIndex = afterOpen.indexOf(`\n${FRONTMATTER_DELIMITER}`);
-  if (closeIndex === -1) {
-    throw new Error("No closing frontmatter delimiter found");
-  }
-
-  const yamlBlock = afterOpen.slice(0, closeIndex);
-  const body = afterOpen.slice(
-    closeIndex + 1 + FRONTMATTER_DELIMITER.length,
-  ).trimStart();
-
-  // Parse YAML manually (simple key: value format)
-  const parsed = parseSimpleYaml(yamlBlock);
+  const { frontmatter: parsed, body } = parseGenericFrontmatter(content);
   const frontmatter = MemoryFrontmatterSchema.parse(parsed);
 
   return { frontmatter, body };
@@ -107,33 +55,10 @@ export function formatFrontmatter(
   frontmatter: MemoryFrontmatter,
   body: string,
 ): string {
-  const yaml = formatSimpleYaml(frontmatter);
-  return `${FRONTMATTER_DELIMITER}\n${yaml}\n${FRONTMATTER_DELIMITER}\n${body}`;
+  return formatGenericFrontmatter(frontmatter, body);
 }
 
-// ---------------------------------------------------------------------------
-// Simple YAML parser/formatter (avoids adding a dependency)
-// ---------------------------------------------------------------------------
-
-function parseSimpleYaml(yaml: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of yaml.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) continue;
-    const colonIndex = trimmed.indexOf(":");
-    if (colonIndex === -1) continue;
-    const key = trimmed.slice(0, colonIndex).trim();
-    const value = trimmed.slice(colonIndex + 1).trim();
-    result[key] = value;
-  }
-  return result;
-}
-
-function formatSimpleYaml(obj: Record<string, string>): string {
-  return Object.entries(obj)
-    .map(([key, value]) => `${key}: ${value}`)
-    .join("\n");
-}
+export { formatSimpleYaml, parseSimpleYaml };
 
 // ---------------------------------------------------------------------------
 // Index parsing
@@ -191,51 +116,18 @@ export class MemoryFileManager {
   }
 
   async #resolvePath(relative: string, root: string): Promise<string> {
-    // Reject absolute paths
-    if (resolve(relative) === relative && !relative.startsWith(".")) {
-      throw new MemoryPathError(relative, "Absolute paths are not allowed");
-    }
-
-    // Reject path traversal
-    const normalized = resolve(root, relative);
-    if (!this.isContained(normalized, root)) {
-      throw new MemoryPathError(
-        relative,
-        "Path escapes the allowed root directory",
-      );
-    }
-
-    // Resolve symlinks and reject if they point outside root
-    const realPath = await this.#resolveSymlinkSafe(normalized, root);
-    return realPath;
-  }
-
-  async #resolveSymlinkSafe(resolvedPath: string, root: string): Promise<string> {
     try {
-      const realPath = await realpath(resolvedPath);
-      if (!this.isContained(realPath, root)) {
-        throw new MemoryPathError(
-          resolvedPath,
-          "Symlink resolves outside the allowed root directory",
-        );
-      }
-      return realPath;
+      return await resolveContainedPath(relative, root);
     } catch (error) {
-      if (error instanceof MemoryPathError) throw error;
-      // If the file doesn't exist yet, realpath will fail — that's fine,
-      // the path itself is already validated above.
-      return resolvedPath;
+      if (error instanceof SafePathError) {
+        throw new MemoryPathError(error.path, error.reason);
+      }
+      throw error;
     }
   }
 
   isContained(resolvedPath: string, root: string): boolean {
-    const normalizedResolved = resolve(resolvedPath);
-    const normalizedRoot = resolve(root);
-    // Ensure the resolved path starts with the root (with trailing separator for exact match)
-    return (
-      normalizedResolved === normalizedRoot ||
-      normalizedResolved.startsWith(normalizedRoot + "/")
-    );
+    return isContained(resolvedPath, root);
   }
 
   // -------------------------------------------------------------------------

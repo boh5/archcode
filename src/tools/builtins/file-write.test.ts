@@ -167,11 +167,9 @@ describe("fileWriteTool", () => {
 
     expect(output).toBe("File written to atomic.txt");
     expect(existsSync(join(testDir, "atomic.txt"))).toBe(true);
-    expect(existsSync(join(testDir, `atomic.txt.tmp.${process.pid}.${Date.now()}`))).toBe(
-      false,
-    );
+    expect(existsSync(join(testDir, `.tmp-${process.pid}-${Date.now()}`))).toBe(false);
     const parentEntries = await Array.fromAsync(
-      new Bun.Glob("atomic.txt.tmp.*").scan({ cwd: testDir }),
+      new Bun.Glob(".tmp-*").scan({ cwd: testDir }),
     );
     expect(parentEntries).toEqual([]);
   });

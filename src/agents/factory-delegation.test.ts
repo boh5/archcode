@@ -10,7 +10,16 @@ import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
-import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
+import {
+  agentDefinitions,
+  builderAgentDefinition,
+  foremanAgentDefinition,
+  productAgentDefinition,
+  exploreAgentDefinition,
+  orchestratorAgentDefinition,
+  reviewerAgentDefinition,
+} from "./definitions";
+import { workflowRoleToolPermissions } from "./workflow/permissions";
 import {
   ConcurrentLimitError,
   DelegateTargetNotAllowedError,
@@ -55,7 +64,26 @@ function makeProviderRegistry(): ProviderRegistry {
   } as ProviderRegistry;
 }
 
-function makeToolRegistry(toolNames = ["unknown_tool", ...EXPLORER_READ_ONLY_TOOLS, ...DELEGATION_TOOLS]) {
+const FACTORY_TEST_TOOL_NAMES = [
+  "unknown_tool",
+  "file_write",
+  "file_edit",
+  "bash",
+  "todo_write",
+  "view_tool_output",
+  "memory_read",
+  "memory_write",
+  "workflow_create",
+  "workflow_read",
+  "workflow_update_stage",
+  "artifact_read",
+  "artifact_write",
+  "workflow_task_check",
+  ...EXPLORER_READ_ONLY_TOOLS,
+  ...DELEGATION_TOOLS,
+] as const;
+
+function makeToolRegistry(toolNames: readonly string[] = FACTORY_TEST_TOOL_NAMES) {
   return createRegistry(toolNames.map(makeTool));
 }
 
@@ -311,6 +339,43 @@ describe("AgentFactory.delegate", () => {
     })).toThrow(DepthLimitError);
   });
 
+  test("allows Builder at depth 2 to delegate to Explore when maxDepth is 3", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory([
+      parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
+      targetDefinition(),
+    ]);
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+
+    const handle = factory.delegate({
+      parentStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "explore",
+      prompt: "builder delegates to explore",
+      currentDepth: 2,
+    });
+
+    await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
+  });
+
+  test("throws error at depth 3 when maxDepth is 3 (delegate tool unavailable)", () => {
+    const factory = makeFactory([
+      parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
+      targetDefinition(),
+    ]);
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+
+    // At depth 3, resolveAllowedTools strips "delegate" first (depth >= MAX_SUB_AGENT_DEPTH),
+    // so DelegationToolNotAllowedError fires before DepthLimitError.
+    expect(() => factory.delegate({
+      parentStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "explore",
+      prompt: "too deep",
+      currentDepth: 3,
+    })).toThrow(DelegationToolNotAllowedError);
+  });
+
   test("throws ConcurrentLimitError when active children reach the parent child policy", () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1, timeoutMs: 0 } }), targetDefinition()]);
@@ -465,6 +530,156 @@ describe("AgentFactory.delegate", () => {
       targetAgentName: "missing",
       prompt: "inspect",
     })).toThrow(UnknownAgentDefinitionError);
+  });
+
+  test("rejects duplicate agent definitions", () => {
+    const providerRegistry = makeProviderRegistry();
+
+    expect(() => createAgentFactory({
+      definitions: [productAgentDefinition, productAgentDefinition],
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, [productAgentDefinition]),
+    })).toThrow("Duplicate agent definition: product");
+  });
+
+  test("lists all registered workflow agent names", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+
+    expect(factory.listAgentNames()).toEqual([
+      "orchestrator",
+      "explore",
+      "product",
+      "spec",
+      "critic",
+      "foreman",
+      "builder",
+      "reviewer",
+      "librarian",
+    ]);
+  });
+
+  test("product resolves workflow artifact tools without source write tools", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+
+    const tools = factory.resolveAllowedTools(productAgentDefinition, 0);
+
+    expect(tools).toContain("artifact_write");
+    expect(tools).not.toContain("file_write");
+    expect(tools).not.toContain("file_edit");
+  });
+
+  test("foreman resolves task and delegation tools without workflow stage updates", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+
+    const tools = factory.resolveAllowedTools(foremanAgentDefinition, 0);
+
+    expect(tools).toContain("workflow_task_check");
+    expect(tools).toContain("delegate");
+    expect(tools).toContain("background_output");
+    expect(tools).toContain("todo_write");
+    expect(tools).not.toContain("workflow_update_stage");
+  });
+
+  test("builder resolves source edit, delegation, and evidence tools without progress tools", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+
+    const tools = factory.resolveAllowedTools(builderAgentDefinition, 0);
+
+    expect(tools).toContain("file_write");
+    expect(tools).toContain("file_edit");
+    expect(tools).toContain("bash");
+    expect(tools).toContain("delegate");
+    expect(tools).toContain("artifact_write");
+    expect(tools).not.toContain("workflow_task_check");
+    expect(tools).not.toContain("workflow_update_stage");
+  });
+
+  test("reviewer resolves evidence and memory read tools without source, delegation, or progress tools", () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+
+    const tools = factory.resolveAllowedTools(reviewerAgentDefinition, 0);
+
+    expect(tools).toContain("artifact_write");
+    expect(tools).toContain("memory_read");
+    expect(tools).not.toContain("delegate");
+    expect(tools).not.toContain("file_write");
+    expect(tools).not.toContain("file_edit");
+    expect(tools).not.toContain("bash");
+    expect(tools).not.toContain("workflow_task_check");
+    expect(tools).not.toContain("workflow_update_stage");
+  });
+
+  test("definitions derive workflow tools from the shared permission policy", () => {
+    expect(productAgentDefinition.tools.tools).toBe(workflowRoleToolPermissions.product);
+    expect(foremanAgentDefinition.tools.tools).toBe(workflowRoleToolPermissions.foreman);
+    expect(builderAgentDefinition.tools.tools).toBe(workflowRoleToolPermissions.builder);
+    expect(reviewerAgentDefinition.tools.tools).toBe(workflowRoleToolPermissions.reviewer);
+  });
+
+  test("delegate targets allow only declared workflow relationships", async () => {
+    const providerRegistry = makeProviderRegistry();
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: makeToolRegistry(),
+      workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions),
+    });
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    setupResolvingStreamText();
+
+    const handle = factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "build task",
+    });
+
+    expect(() => factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "librarian",
+      prompt: "not allowed",
+    })).toThrow(DelegateTargetNotAllowedError);
+    expect(factory.getDelegateTargetsFor(foremanAgentDefinition, 0)).toEqual(["builder", "reviewer"]);
+    await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
   });
 
 });

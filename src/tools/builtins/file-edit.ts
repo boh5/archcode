@@ -1,7 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { rename } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
+import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
@@ -304,14 +303,6 @@ function applyEdits(content: string, matches: EditMatch[]): string {
   return result;
 }
 
-async function cleanupTempFile(tmpPath: string): Promise<void> {
-  try {
-    await Bun.file(tmpPath).delete();
-  } catch {
-    // Best-effort cleanup only.
-  }
-}
-
 // ─── Tool Definition ───
 
 export const fileEditTool = defineTool({
@@ -351,13 +342,10 @@ export const fileEditTool = defineTool({
         const matches = matchResult;
 
         const modified = applyEdits(content, matches);
-        const tmpPath = `${resolvedPath}.tmp.${crypto.randomUUID()}`;
 
         try {
-          await Bun.write(tmpPath, modified);
-          await rename(tmpPath, resolvedPath);
+          await atomicWrite(resolvedPath, modified);
         } catch (error) {
-          await cleanupTempFile(tmpPath);
           return createToolErrorResult({
             kind: "execution",
             error: error instanceof Error ? error : new Error(String(error)),

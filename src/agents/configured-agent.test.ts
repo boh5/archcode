@@ -8,7 +8,7 @@ import { createSessionStore } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
-import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
+import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import { ConfiguredAgent } from "./configured-agent";
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
@@ -170,7 +170,7 @@ function createAgent(options: {
     quotaEnforcer: options.quotaEnforcer,
       resolveAllowedTools: (definition, depth) => {
         const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
-        if (depth >= 2) {
+        if (depth >= MAX_SUB_AGENT_DEPTH) {
           return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
         }
       return resolved;

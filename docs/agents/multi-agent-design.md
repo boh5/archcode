@@ -3,6 +3,18 @@
 > 状态：已确认，待实施
 > 日期：2026-05-17
 
+## 0. Correction Draft — 2026-05-18
+
+This document is retained as the original multi-agent pipeline design record. Some later sections still describe stale pre-implementation names and artifact shapes; treat this correction draft as authoritative when it conflicts with older text below.
+
+- **Current agent paths:** workflow agent code lives under `src/agents/definitions/` and is instantiated through `src/agents/factory.ts` using `AgentDefinition` and `ConfiguredAgent`.
+- **Updated depth architecture:** `MAX_SUB_AGENT_DEPTH` is now `3`, not `2`. Depth 2 workflow agents such as Builder and Reviewer may delegate to depth 3 Explorer/Librarian-style read-only investigation, while depth 3 strips delegation tools.
+- **Workflow agents:** the implemented workflow roles are `product`, `spec`, `critic`, `foreman`, `builder`, `reviewer`, and `librarian`.
+- **Workflow tools:** the current workflow tool set is `workflow_create`, `workflow_read`, `workflow_update_stage`, `artifact_read`, `artifact_write`, and `workflow_task_check`.
+- **Workflow state:** durable workflow metadata is stored at `.specra/workflows/{workflowId}/workflow.json`; there is no separate global `workflows.json` requirement in the current design.
+- **Artifacts:** there is **no `PLAN.md` artifact**. `TASKS.md` is the Markdown-only source of truth for executable task state.
+- **TASKS.md format:** executable tasks are top-level `- [ ] Tn. Title` / `- [x] Tn. Title` entries with required `Agent`, `Dependencies`, `Description`, `Acceptance`, and `QA` fields. Nested checkboxes under Acceptance/QA are validation details only, not executable tasks.
+
 ## 1. 设计哲学
 
 - **信任 Agent 能力**：充分信任各 Agent 的专业能力，不过度硬编码

@@ -25,7 +25,18 @@ export type {
   AgentName,
   AgentToolPolicy,
 } from "./factory-types";
-export { defaultAgentDefinitions, exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
+export {
+  builderAgentDefinition,
+  criticAgentDefinition,
+  defaultAgentDefinitions,
+  exploreAgentDefinition,
+  foremanAgentDefinition,
+  librarianAgentDefinition,
+  orchestratorAgentDefinition,
+  productAgentDefinition,
+  reviewerAgentDefinition,
+  specAgentDefinition,
+} from "./definitions";
 export { resolveAgentModel } from "./model-resolver";
 export {
   AgentRunningError,

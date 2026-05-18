@@ -17,7 +17,7 @@ import {
   SubAgentError,
 } from "./errors";
 import type { AgentDefinition, AgentName, AgentRunHandle, DelegateAgentOptions } from "./factory-types";
-import { DELEGATION_TOOLS } from "./constants";
+import { DELEGATION_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { resolveAgentModel } from "./model-resolver";
 
@@ -328,7 +328,7 @@ function factoryResolveAllowedTools(
 ): string[] {
   const resolved = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
 
-  if (depth >= 2) {
+  if (depth >= MAX_SUB_AGENT_DEPTH) {
     return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
   }
 

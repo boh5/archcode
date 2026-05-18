@@ -25,10 +25,8 @@ Validation order: `typecheck` → `test`.
 src/main.ts                         # CLI entry: createSpecraRuntime() → config → providers → tools → MCP → agent → Ink render
 src/config/                         # Config loading (JSON), Zod validation (.strict() on all schemas)
 src/provider/                       # Provider registry & ModelInfo (wraps AI SDK instances)
-src/agents/roles/                   # OrchestratorAgent (root) + ExplorerAgent (sub-agent)
-src/agents/agent-registry.ts        # AgentType enum ("explore"), factory — V1 only supports "explore"
-src/agents/sub-agent-manager.ts      # Max depth 2, max 10 concurrent, 20min timeout, abort cascading
-src/agents/tool-filter.ts           # getToolsForDepth(): restricts tools for sub-agents by depth
+src/agents/definitions/             # AgentDefinition records for orchestrator, explore, and workflow roles
+src/agents/factory.ts               # Agent creation and delegation through ConfiguredAgent
 src/agents/constants.ts             # EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS lists
 src/agents/errors.ts                # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError
 src/agents/query/loop.ts            # streamText + tool execution cycle (max 50 steps), doom detection
@@ -58,7 +56,7 @@ src/utils/                          # getSystemErrorCode
 ```
 .specra.json → config → providers → registerBuiltinTools + MCP → OrchestratorAgent → query loop → store → TUI
 
-Delegation: delegate tool → SubAgentManager → ExplorerAgent (filtered tools, own store) → reminder to parent
+Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered tools, own store) → reminder to parent
 ```
 
 **Tool execution pipeline:**

@@ -17,6 +17,7 @@ export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { viewToolOutputTool } from "./view-tool-output";
+export * from "./workflow";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";

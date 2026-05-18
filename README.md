@@ -196,7 +196,8 @@ All errors fail fast at agent creation time — not mid-stream.
 src/main.ts                         # CLI entry: createSpecraRuntime() → config → providers → tools → MCP → agent → Ink render
 src/config/                         # Config loading (JSON), Zod validation (.strict() on all schemas)
 src/provider/                        # Provider registry & ModelInfo (wraps AI SDK instances)
-src/agents/roles/                    # OrchestratorAgent (root) + ExplorerAgent (sub-agent)
+src/agents/definitions/              # AgentDefinition records for orchestrator, explore, and workflow roles
+src/agents/factory.ts                # Agent creation and delegation through ConfiguredAgent
 src/agents/model-resolver.ts         # Agent → model + resolved options (fail-fast)
 src/agents/query/loop.ts             # streamText + tool execution cycle (max 50 steps)
 src/compact/                         # 3-phase context compaction pipeline

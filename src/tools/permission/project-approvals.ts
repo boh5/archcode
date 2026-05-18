@@ -1,6 +1,6 @@
-import { mkdir, rename, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
+import { atomicWrite } from "../../utils/safe-file";
 import type { Logger } from "../types";
 import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
 
@@ -76,24 +76,6 @@ const EMPTY_APPROVAL_FILE: PermissionApprovalFile = {
   version: 1,
   approvals: [],
 };
-
-async function atomicWrite(filePath: string, content: string): Promise<void> {
-  const dir = dirname(filePath);
-  await mkdir(dir, { recursive: true });
-
-  const tmpPath = join(dir, `.permissions-${crypto.randomUUID()}.tmp`);
-  try {
-    await Bun.write(tmpPath, content);
-    await rename(tmpPath, filePath);
-  } catch (error) {
-    try {
-      await rm(tmpPath);
-    } catch {
-      // Best-effort cleanup for failed atomic writes.
-    }
-    throw error;
-  }
-}
 
 function cloneApprovalFile(file: PermissionApprovalFile): PermissionApprovalFile {
   return PermissionApprovalFileSchema.parse(structuredClone(file));
