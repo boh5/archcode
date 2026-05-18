@@ -39,7 +39,7 @@ async function createTestApp(testName: string) {
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
   return {
-    app: createServerApp(runtime, { dev: true }),
+    app: createServerApp(runtime, { dev: true }).app,
     project,
     workspaceRoot,
     projectRegistry,

@@ -83,7 +83,7 @@ async function createTestApp(testName: string, agent: Agent) {
   const runtime = createTestRuntime(projectRegistry, agent);
 
   return {
-    app: createServerApp(runtime, { dev: true }),
+    app: createServerApp(runtime, { dev: true }).app,
     project,
   };
 }

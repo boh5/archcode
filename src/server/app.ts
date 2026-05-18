@@ -25,7 +25,7 @@ export interface CreateServerAppOptions {
 export function createServerApp(
   runtime: SpecraRuntime,
   options: CreateServerAppOptions = {},
-): Hono {
+): { app: Hono; agentRunner: AgentRunner } {
   const app = new Hono();
 
   app.onError(errorHandler);
@@ -101,5 +101,5 @@ export function createServerApp(
     // Static files will be mounted after the web build pipeline exists.
   }
 
-  return app;
+  return { app, agentRunner };
 }

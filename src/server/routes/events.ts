@@ -12,13 +12,13 @@ import { BadRequestError, ProjectNotFoundError } from "../errors";
 
 const HEARTBEAT_INTERVAL_MS = 15000;
 
-interface SessionStreamState {
+export interface SessionStreamState {
   ring: EventRing;
   store?: StoreApi<SessionStoreState>;
   pushedEventCount: number;
 }
 
-const sessionStreams = new Map<string, SessionStreamState>();
+export const sessionStreams = new Map<string, SessionStreamState>();
 
 export function getSessionRing(sessionId: string): EventRing | undefined {
   return sessionStreams.get(sessionId)?.ring;

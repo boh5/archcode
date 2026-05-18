@@ -31,7 +31,7 @@ async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const runtime = createTestRuntime(new ProjectRegistry({ homeDir }));
-  return createServerApp(runtime, { dev: true });
+  return createServerApp(runtime, { dev: true }).app;
 }
 
 describe("projects routes", () => {

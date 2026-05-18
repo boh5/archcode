@@ -6,7 +6,7 @@ const mockRuntime = {} as SpecraRuntime;
 
 describe("createServerApp", () => {
   test("returns the health endpoint response", async () => {
-    const app = createServerApp(mockRuntime, { dev: true });
+    const { app } = createServerApp(mockRuntime, { dev: true });
 
     const res = await app.request("/api/health");
 
@@ -15,7 +15,7 @@ describe("createServerApp", () => {
   });
 
   test("adds wildcard CORS headers in dev mode", async () => {
-    const app = createServerApp(mockRuntime, { dev: true });
+    const { app } = createServerApp(mockRuntime, { dev: true });
 
     const res = await app.request("/api/health", {
       headers: { Origin: "http://localhost:5173" },
@@ -25,7 +25,7 @@ describe("createServerApp", () => {
   });
 
   test("requires Basic auth for API routes when a password is configured", async () => {
-    const app = createServerApp(mockRuntime, { dev: true, password: "secret" });
+    const { app } = createServerApp(mockRuntime, { dev: true, password: "secret" });
 
     const res = await app.request("/api/health");
 
@@ -36,7 +36,7 @@ describe("createServerApp", () => {
   });
 
   test("accepts Basic auth when the password matches", async () => {
-    const app = createServerApp(mockRuntime, { dev: true, password: "secret" });
+    const { app } = createServerApp(mockRuntime, { dev: true, password: "secret" });
 
     const res = await app.request("/api/health", {
       headers: { Authorization: `Basic ${btoa("user:secret")}` },

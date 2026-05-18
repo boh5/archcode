@@ -17,6 +17,8 @@ export interface RunningJob {
 }
 
 export class AgentRunner {
+  static #instances = new Set<AgentRunner>();
+
   #jobs = new Map<string, RunningJob>();
   #agents = new Map<string, Agent>();
   #runtime: SpecraRuntime;
@@ -27,6 +29,7 @@ export class AgentRunner {
     this.#runtime = runtime;
     this.#permissionService = permissionService;
     this.#askUserService = askUserService;
+    AgentRunner.#instances.add(this);
   }
 
   submit(sessionId: string, workspaceRoot: string, userMessage: string): RunningJob {
@@ -63,6 +66,19 @@ export class AgentRunner {
     job.abortController.abort();
     this.#jobs.delete(sessionId);
     return true;
+  }
+
+  async abortAll(): Promise<void> {
+    const jobs = AgentRunner.#runningJobs();
+    for (const job of jobs) {
+      job.abortController.abort();
+    }
+
+    await Promise.allSettled(jobs.map((job) => job.promise));
+  }
+
+  static #runningJobs(): RunningJob[] {
+    return [...AgentRunner.#instances].flatMap((runner) => [...runner.#jobs.values()]);
   }
 
   isRunning(sessionId: string): boolean {
