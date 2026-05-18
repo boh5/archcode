@@ -5,7 +5,9 @@ export type ServerErrorCode =
   | "PERMISSION_TIMEOUT"
   | "BAD_REQUEST"
   | "UNAUTHORIZED"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "WORKFLOW_NOT_FOUND"
+  | "ARTIFACT_NOT_FOUND";
 
 export class ServerError extends Error {
   constructor(
@@ -58,5 +60,23 @@ export class UnauthorizedError extends ServerError {
   constructor(message: string = "Unauthorized") {
     super("UNAUTHORIZED", message, 401);
     this.name = "UnauthorizedError";
+  }
+}
+
+export class WorkflowNotFoundError extends ServerError {
+  constructor(detail?: string) {
+    const message = detail ? `Workflow not found: ${detail}` : "Workflow not found for this session";
+    super("WORKFLOW_NOT_FOUND", message, 404);
+    this.name = "WorkflowNotFoundError";
+  }
+}
+
+export class ArtifactNotFoundError extends ServerError {
+  constructor(name: string, workflowId?: string) {
+    const message = workflowId
+      ? `Artifact not found: ${name} in workflow ${workflowId}`
+      : `Artifact not found: ${name}`;
+    super("ARTIFACT_NOT_FOUND", message, 404);
+    this.name = "ArtifactNotFoundError";
   }
 }

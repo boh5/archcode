@@ -14,6 +14,7 @@ import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
 import { createQuestionsRoutes } from "./routes/questions";
 import { createSessionsRoutes } from "./routes/sessions";
+import { createWorkflowRoutes } from "./routes/workflow";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
@@ -77,7 +78,7 @@ export function createServerApp(
   const questions = createQuestionsRoutes(askUserService);
   const commands = createCommandsRoutes(runtime, agentRunner);
   const agents = new Hono();
-  const workflow = new Hono();
+  const workflow = createWorkflowRoutes(runtime);
   const files = new Hono();
 
   app.route("/api/projects", projects);
@@ -85,12 +86,13 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/projects/:slug/sessions/:sessionId/events", events);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
+  app.route("/api/projects", workflow);
   app.route("/api/sessions", new Hono());
   app.route("/api/permissions", permissions);
   app.route("/api/questions", questions);
   app.route("/api/commands", new Hono());
   app.route("/api/agents", agents);
-  app.route("/api/workflow", workflow);
+  app.route("/api/workflow", new Hono());
   app.route("/api/files", files);
 
   if (!options.dev) {
