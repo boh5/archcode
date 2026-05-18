@@ -7,14 +7,23 @@
   "bin": {
     "specra": "./src/main.ts"
   },
+  "files": [
+    "src/**/*.ts",
+    "src/web/dist/**",
+    "package.json",
+    "README.md"
+  ],
   "scripts": {
-    "dev": "bun run src/main.ts",
-    "start": "bun src/main.ts",
     "server": "bun --hot src/main.ts",
+    "server:prod": "bun src/main.ts",
+    "web": "vite src/web",
+    "web:build": "vite build src/web",
+    "dev": "concurrently -n server,web -c blue,green \"bun run server\" \"bun run web\"",
+    "start": "bun src/main.ts",
+    "build": "bun run typecheck && bun run web:build",
+    "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "web:dev": "vite src/web",
-    "web:build": "vite build src/web"
+    "test": "bun test"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.45",
@@ -37,17 +46,18 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
     "@types/bun": "^1.3.13",
     "@types/jsdom": "^28.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^4.5.0",
-    "@tailwindcss/vite": "^4.1.0",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.2.1",
     "postcss": "^8.5.4",
     "tailwindcss": "^4.1.0",
-    "vite": "^6.3.0",
-    "@types/turndown": "^5.0.6",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vite": "^6.3.0"
   }
 }
