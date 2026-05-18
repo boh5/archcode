@@ -5,6 +5,7 @@ import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
 import { createProjectsRoutes } from "./routes/projects";
+import { createSessionsRoutes } from "./routes/sessions";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
@@ -58,7 +59,7 @@ export function createServerApp(
   app.get("/api/health", (c) => c.json({ ok: true }));
 
   const projects = createProjectsRoutes(runtime);
-  const sessions = new Hono();
+  const sessions = createSessionsRoutes(runtime);
   const permissions = new Hono();
   const questions = new Hono();
   const commands = new Hono();
@@ -67,7 +68,8 @@ export function createServerApp(
   const files = new Hono();
 
   app.route("/api/projects", projects);
-  app.route("/api/sessions", sessions);
+  app.route("/api/projects/:slug/sessions", sessions);
+  app.route("/api/sessions", new Hono());
   app.route("/api/permissions", permissions);
   app.route("/api/questions", questions);
   app.route("/api/commands", commands);
