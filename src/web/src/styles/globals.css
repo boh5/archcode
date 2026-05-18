@@ -1,1 +1,195 @@
 @import "tailwindcss";
+
+/* ─── Dark theme (default) ─── */
+:root {
+  --bg-base: #09090b;
+  --bg-surface: #111113;
+  --bg-elevated: #18181b;
+  --bg-overlay: #1c1c20;
+  --bg-hover: #1f1f23;
+  --bg-active: #27272a;
+
+  --border-default: #27272a;
+  --border-subtle: #1e1e22;
+  --border-strong: #3f3f46;
+
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-muted: #52525b;
+
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-muted: #4f46e520;
+  --accent-subtle: #6366f115;
+
+  --success: #22c55e;
+  --success-muted: #22c55e20;
+  --warning: #eab308;
+  --warning-muted: #eab30820;
+  --error: #ef4444;
+  --error-muted: #ef444420;
+  --info: #3b82f6;
+  --info-muted: #3b82f620;
+
+  --agent-orchestrator: #8b5cf6;
+  --agent-product: #6366f1;
+  --agent-spec: #3b82f6;
+  --agent-critic: #f59e0b;
+  --agent-foreman: #10b981;
+  --agent-builder: #06b6d4;
+  --agent-reviewer: #ec4899;
+  --agent-librarian: #8b5cf6;
+  --agent-explorer: #64748b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --font-sans: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ─── Light theme ─── */
+[data-theme="light"] {
+  --bg-base: #ffffff;
+  --bg-surface: #f9f9fb;
+  --bg-elevated: #f4f4f5;
+  --bg-overlay: #efefef;
+  --bg-hover: #e4e4e7;
+  --bg-active: #d4d4d8;
+
+  --border-default: #e4e4e7;
+  --border-subtle: #f0f0f0;
+  --border-strong: #a1a1aa;
+
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+  --text-muted: #a1a1aa;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-muted: #4f46e515;
+  --accent-subtle: #4f46e510;
+
+  --success: #16a34a;
+  --success-muted: #16a34a15;
+  --warning: #ca8a04;
+  --warning-muted: #ca8a0415;
+  --error: #dc2626;
+  --error-muted: #dc262615;
+  --info: #2563eb;
+  --info-muted: #2563eb15;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* ─── Tailwind v4 token mapping ─── */
+/* Using `inline` so Tailwind uses our CSS variables at runtime
+   instead of emitting duplicate custom properties */
+@theme inline {
+  /* Background */
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-overlay: var(--bg-overlay);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-active: var(--bg-active);
+
+  /* Border */
+  --color-border-default: var(--border-default);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  /* Text */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
+
+  /* Accent */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-muted: var(--accent-muted);
+  --color-accent-subtle: var(--accent-subtle);
+
+  /* Semantic */
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-error: var(--error);
+  --color-error-muted: var(--error-muted);
+  --color-info: var(--info);
+  --color-info-muted: var(--info-muted);
+
+  /* Agent */
+  --color-agent-orchestrator: var(--agent-orchestrator);
+  --color-agent-product: var(--agent-product);
+  --color-agent-spec: var(--agent-spec);
+  --color-agent-critic: var(--agent-critic);
+  --color-agent-foreman: var(--agent-foreman);
+  --color-agent-builder: var(--agent-builder);
+  --color-agent-reviewer: var(--agent-reviewer);
+  --color-agent-librarian: var(--agent-librarian);
+  --color-agent-explorer: var(--agent-explorer);
+
+  /* Shadows */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  /* Radii */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  /* Fonts */
+  --font-family-sans: var(--font-sans);
+  --font-family-mono: var(--font-mono);
+}
+
+/* ─── Base styles ─── */
+@layer base {
+  html {
+    font-size: 13.5px;
+    line-height: 1.55;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    background-color: var(--bg-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+  }
+}
