@@ -9,6 +9,7 @@ import { requestLogger } from "./logger";
 import { PermissionService } from "./permission-service";
 import { createCommandsRoutes } from "./routes/commands";
 import { createEventsRoutes } from "./routes/events";
+import { createFilesRoutes } from "./routes/files";
 import { createMessagesRoutes } from "./routes/messages";
 import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
@@ -79,7 +80,7 @@ export function createServerApp(
   const commands = createCommandsRoutes(runtime, agentRunner);
   const agents = new Hono();
   const workflow = createWorkflowRoutes(runtime);
-  const files = new Hono();
+  const files = createFilesRoutes(runtime);
 
   app.route("/api/projects", projects);
   app.route("/api/projects/:slug/sessions", sessions);
@@ -87,13 +88,14 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId/events", events);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", workflow);
+  app.route("/api/projects", files);
   app.route("/api/sessions", new Hono());
   app.route("/api/permissions", permissions);
   app.route("/api/questions", questions);
   app.route("/api/commands", new Hono());
   app.route("/api/agents", agents);
   app.route("/api/workflow", new Hono());
-  app.route("/api/files", files);
+  app.route("/api/files", new Hono());
 
   if (!options.dev) {
     // Static files will be mounted after the web build pipeline exists.
