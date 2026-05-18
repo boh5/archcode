@@ -1,5 +1,6 @@
 import { useParams } from "react-router-dom";
 import { AppLayout } from "../layout/AppLayout";
+import { ProjectBar } from "../components/features/ProjectBar";
 
 export function SessionRoute() {
   const { slug, sessionId } = useParams<{
@@ -16,11 +17,7 @@ export function SessionRoute() {
           </span>
         </div>
       }
-      projectBar={
-        <div className="flex h-full flex-col items-center border-r border-border-subtle bg-bg-surface py-2">
-          <div className="text-xs font-medium text-text-tertiary">PB</div>
-        </div>
-      }
+      projectBar={<ProjectBar />}
       sidebar={
         <div className="flex h-full flex-col border-r border-border-subtle bg-bg-surface">
           <div className="flex h-10 items-center border-b border-border-subtle px-3">
