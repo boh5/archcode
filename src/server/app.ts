@@ -24,7 +24,7 @@ export function createServerApp(
     "*",
     cors({
       origin: options.dev ? "*" : "",
-      credentials: true,
+      credentials: !options.dev,
     }),
   );
 

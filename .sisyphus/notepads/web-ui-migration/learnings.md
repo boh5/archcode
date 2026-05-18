@@ -160,3 +160,8 @@ Non-test `src/`: **CLEAN** (0 matches).
 - `startServer(app, options)` uses `Bun.serve({ fetch: app.fetch, idleTimeout: 0 })`, tries the preferred port first, and falls back to `port: 0` when the preferred port is busy. `server.port` can type as `number | undefined`; guard and stop the server if Bun ever reports no TCP port.
 - `bootServer(runtime)` now starts the server through `createServerApp` + `startServer`; dev mode is currently inferred from absence of `SPECRA_SERVER_PASSWORD`.
 - TDD evidence for RED/GREEN/test/typecheck/grep checks is recorded at `.sisyphus/evidence/task-w2s1-skeleton-tdd.log`.
+
+## [2026-05-18 W2.S1 CORS fix]
+
+- Hono CORS dev wildcard must not be combined with credentials. Use `origin: "*"` with `credentials: false` in dev mode, and keep credentials enabled only for non-dev same-origin mode.
+- Verification used `bun test src/server/app.test.ts`, `bun run typecheck`, and LSP diagnostics on `src/server/app.ts`.
