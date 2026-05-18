@@ -5,8 +5,10 @@ import { AgentRunner } from "./agent-runner";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
+import { PermissionService } from "./permission-service";
 import { createEventsRoutes } from "./routes/events";
 import { createMessagesRoutes } from "./routes/messages";
+import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
 
@@ -63,10 +65,11 @@ export function createServerApp(
 
   const projects = createProjectsRoutes(runtime);
   const sessions = createSessionsRoutes(runtime);
-  const agentRunner = new AgentRunner(runtime);
+  const permissionService = new PermissionService();
+  const agentRunner = new AgentRunner(runtime, permissionService);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const events = createEventsRoutes(runtime, agentRunner);
-  const permissions = new Hono();
+  const permissions = createPermissionRoutes(permissionService);
   const questions = new Hono();
   const commands = new Hono();
   const agents = new Hono();

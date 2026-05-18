@@ -2,6 +2,9 @@ import { AgentRunningError } from "../agents/errors";
 import type { Agent } from "../agents/types";
 import type { SpecraRuntime } from "../main";
 import { saveSessionTranscript } from "../store/helpers";
+import type { ToolConfirmationCallback } from "../tools/types";
+import type { PermissionService } from "./permission-service";
+import { ensureSessionRing } from "./routes/events";
 
 export interface RunningJob {
   jobId: string;
@@ -13,9 +16,11 @@ export interface RunningJob {
 export class AgentRunner {
   #jobs = new Map<string, RunningJob>();
   #runtime: SpecraRuntime;
+  #permissionService?: PermissionService;
 
-  constructor(runtime: SpecraRuntime) {
+  constructor(runtime: SpecraRuntime, permissionService?: PermissionService) {
     this.#runtime = runtime;
+    this.#permissionService = permissionService;
   }
 
   submit(sessionId: string, workspaceRoot: string, userMessage: string): RunningJob {
@@ -76,8 +81,15 @@ export class AgentRunner {
         return;
       }
 
-      // TODO(W2.S6/S7): inject confirmPermission/askUser services.
-      await agent.run(userMessage, { abort: abortController.signal });
+      const ring = ensureSessionRing(sessionId);
+      const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
+        ? (request, abortSignal) => this.#permissionService!.request(sessionId, request, ring, abortSignal)
+        : undefined;
+
+      await agent.run(userMessage, {
+        abort: abortController.signal,
+        ...(confirmPermission ? { confirmPermission } : {}),
+      });
     } catch (error) {
       if (!abortController.signal.aborted) {
         console.error(

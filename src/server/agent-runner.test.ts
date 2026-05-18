@@ -10,6 +10,8 @@ import { createSessionStore } from "../store/store";
 import type { SessionStoreState } from "../store/types";
 import type { ToolConfirmationCallback } from "../tools";
 import { AgentRunner } from "./agent-runner";
+import { PermissionService } from "./permission-service";
+import { getSessionRing } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
 
@@ -117,6 +119,34 @@ describe("AgentRunner", () => {
     expect(job.abortController.signal.aborted).toBe(false);
     await flushMicrotasks();
     expect(agent.runMock).toHaveBeenCalledWith("Hello", { abort: job.abortController.signal });
+  });
+
+  test("submit injects confirmPermission callback when PermissionService is provided", async () => {
+    const agent = createMockAgent("session-permission", Promise.resolve({ text: "Done", steps: 1 }));
+    const permissionService = new PermissionService();
+    const runner = new AgentRunner(createRuntime(agent), permissionService);
+
+    const job = runner.submit("session-permission", tempRoot, "Needs permission");
+    await job.promise;
+    await flushMicrotasks();
+
+    const [_message, options] = agent.runMock.mock.calls[0];
+    if (!options || options instanceof AbortSignal) {
+      throw new Error("Expected AgentRunOptions");
+    }
+
+    expect(typeof options.confirmPermission).toBe("function");
+    const promise = options.confirmPermission?.({
+      toolName: "bash",
+      toolCallId: "call-1",
+      input: {},
+      description: "Confirm",
+    });
+    const ring = getSessionRing("session-permission");
+    const permissionId = (JSON.parse(ring!.since(0)[0].data) as { id: string }).id;
+
+    expect(permissionService.respond(permissionId, "deny")).toBe(true);
+    await expect(promise).resolves.toBe("deny");
   });
 
   test("submit for same sessionId twice throws AgentRunningError", () => {

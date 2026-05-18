@@ -20,6 +20,24 @@ interface SessionStreamState {
 
 const sessionStreams = new Map<string, SessionStreamState>();
 
+export function getSessionRing(sessionId: string): EventRing | undefined {
+  return sessionStreams.get(sessionId)?.ring;
+}
+
+export function ensureSessionRing(sessionId: string): EventRing {
+  const existing = sessionStreams.get(sessionId);
+  if (existing) {
+    return existing.ring;
+  }
+
+  const state: SessionStreamState = {
+    ring: new EventRing(),
+    pushedEventCount: 0,
+  };
+  sessionStreams.set(sessionId, state);
+  return state.ring;
+}
+
 export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
   const app = new Hono();
 
