@@ -1,21 +1,27 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjects } from "../../api/queries";
+import { useTheme } from "../../hooks/use-theme";
+
+interface ProjectBarProps {
+  onAddProject?: () => void;
+}
 
 function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
 
-export function ProjectBar() {
+export function ProjectBar({ onAddProject }: ProjectBarProps) {
   const navigate = useNavigate();
   const { slug: activeSlug } = useParams<{ slug: string }>();
   const { data: projects } = useProjects();
+  const { theme, toggleTheme } = useTheme();
 
   const handleProjectClick = (slug: string) => {
     navigate(`/projects/${slug}`);
   };
 
   const handleAddProject = () => {
-    console.log("[ProjectBar] Add project clicked");
+    onAddProject?.();
   };
 
   return (
@@ -92,15 +98,15 @@ export function ProjectBar() {
           className="w-8 h-8 rounded-sm flex items-center justify-center text-text-muted cursor-pointer transition-all duration-150 text-[15px] hover:bg-bg-hover hover:text-text-secondary"
           role="button"
           tabIndex={0}
-          title="Toggle theme"
-          onClick={() => console.log("[ProjectBar] Theme toggle clicked")}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          onClick={toggleTheme}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
-              console.log("[ProjectBar] Theme toggle clicked");
+              toggleTheme();
             }
           }}
         >
-          ◐
+          {theme === "dark" ? "☀" : "🌙"}
         </div>
       </div>
     </div>

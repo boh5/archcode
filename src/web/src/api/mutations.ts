@@ -13,9 +13,9 @@ export function useAddProject() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ path }: { path: string }) => apiFetch<Project>("/api/projects", {
+    mutationFn: async ({ path, name }: { path: string; name?: string }) => apiFetch<Project>("/api/projects", {
       method: "POST",
-      body: { workspaceRoot: path },
+      body: { workspaceRoot: path, ...(name ? { name } : {}) },
     }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
