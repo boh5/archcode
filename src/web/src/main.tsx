@@ -1,9 +1,27 @@
 import { StrictMode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryCache, MutationCache, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
+import { ApiError } from "./api/client";
+import { ErrorBoundary } from "./components/composite/ErrorBoundary";
+import { ToastContainer } from "./components/composite/Toast";
+import { useToast } from "./hooks/use-toast";
 import { router } from "./router";
 import "./styles/globals.css";
+
+type ToastCallback = (message: string, variant: "error" | "success" | "warning" | "info") => void;
+
+let globalToast: ToastCallback = () => {};
+
+export function setGlobalToastCallback(cb: ToastCallback) {
+  globalToast = cb;
+}
+
+function handleQueryError(error: unknown) {
+  if (error instanceof ApiError && error.status >= 500) {
+    globalToast(error.message, "error");
+  }
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -12,12 +30,27 @@ const queryClient = new QueryClient({
       retry: 1,
     },
   },
+  queryCache: new QueryCache({ onError: handleQueryError }),
+  mutationCache: new MutationCache({ onError: handleQueryError }),
 });
+
+function App() {
+  const { toasts, show, dismiss } = useToast();
+
+  setGlobalToastCallback(show);
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary>
+        <RouterProvider router={router} />
+      </ErrorBoundary>
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+    </QueryClientProvider>
+  );
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <App />
   </StrictMode>,
 );

@@ -202,3 +202,8 @@
   0%, 100% { box-shadow: 0 0 0 3px var(--accent-muted); }
   50% { box-shadow: 0 0 0 6px var(--accent-muted); }
 }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
