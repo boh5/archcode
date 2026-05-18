@@ -5,6 +5,7 @@ import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
+import { DetailPanel } from "../components/features/DetailPanel";
 
 export function SessionRoute() {
   const { slug = "", sessionId = "" } = useParams<{
@@ -34,18 +35,7 @@ export function SessionRoute() {
       }
       detailPanel={
         detailPanelOpen ? (
-          <div className="flex h-full flex-col border-l border-border-subtle bg-bg-surface">
-            <div className="flex h-10 items-center border-b border-border-subtle px-3">
-              <span className="text-xs font-medium text-text-secondary uppercase tracking-wider">
-                Details
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              <div className="rounded-md px-3 py-2 text-sm text-text-tertiary">
-                Details placeholder
-              </div>
-            </div>
-          </div>
+          <DetailPanel />
         ) : (
           <div />
         )
