@@ -5,6 +5,7 @@ import { AgentRunner } from "./agent-runner";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
+import { createEventsRoutes } from "./routes/events";
 import { createMessagesRoutes } from "./routes/messages";
 import { createProjectsRoutes } from "./routes/projects";
 import { createSessionsRoutes } from "./routes/sessions";
@@ -64,6 +65,7 @@ export function createServerApp(
   const sessions = createSessionsRoutes(runtime);
   const agentRunner = new AgentRunner(runtime);
   const messages = createMessagesRoutes(runtime, agentRunner);
+  const events = createEventsRoutes(runtime, agentRunner);
   const permissions = new Hono();
   const questions = new Hono();
   const commands = new Hono();
@@ -74,6 +76,7 @@ export function createServerApp(
   app.route("/api/projects", projects);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
+  app.route("/api/projects/:slug/sessions/:sessionId/events", events);
   app.route("/api/sessions", new Hono());
   app.route("/api/permissions", permissions);
   app.route("/api/questions", questions);
