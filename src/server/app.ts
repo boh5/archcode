@@ -4,6 +4,7 @@ import type { SpecraRuntime } from "../main";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
+import { createProjectsRoutes } from "./routes/projects";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
@@ -14,8 +15,6 @@ export function createServerApp(
   runtime: SpecraRuntime,
   options: CreateServerAppOptions = {},
 ): Hono {
-  void runtime;
-
   const app = new Hono();
 
   app.onError(errorHandler);
@@ -58,7 +57,7 @@ export function createServerApp(
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
-  const projects = new Hono();
+  const projects = createProjectsRoutes(runtime);
   const sessions = new Hono();
   const permissions = new Hono();
   const questions = new Hono();
