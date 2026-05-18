@@ -2,8 +2,10 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { StoreApi } from "zustand";
+import { ConfiguredAgent } from "../agents/configured-agent";
 import { AgentRunningError } from "../agents/errors";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
+import type { CommandResult } from "../commands/types";
 import type { SpecraRuntime } from "../main";
 import { loadSessionTranscript } from "../store/helpers";
 import { createSessionStore } from "../store/store";
@@ -199,5 +201,32 @@ describe("AgentRunner", () => {
 
     const saved = await loadSessionTranscript("session-save", workspaceRoot);
     expect(saved.getState().messages).toHaveLength(1);
+  });
+
+  test("dispatchCommand returns null without running configured agent and delegates while running", async () => {
+    const run = deferred<AgentResult>();
+    const commandResult: CommandResult = { success: true, message: "dispatched" };
+    const dispatchCommand = mock(async (_name: string, _args?: string) => commandResult);
+    const agent = createMockAgent("session-command", run.promise) as MockAgent & ConfiguredAgent;
+    const agentRun = agent.run.bind(agent);
+    Object.setPrototypeOf(agent, ConfiguredAgent.prototype);
+    agent.run = agentRun;
+    agent.dispatchCommand = dispatchCommand;
+    const runner = new AgentRunner(createRuntime(agent));
+
+    const missingResult = await runner.dispatchCommand("missing", "compact");
+    expect(missingResult).toBeNull();
+
+    const job = runner.submit("session-command", tempRoot, "Hello");
+    await flushMicrotasks();
+
+    const runningResult = await runner.dispatchCommand("session-command", "compact", "now");
+    expect(runningResult).toEqual(commandResult);
+    expect(dispatchCommand).toHaveBeenCalledWith("compact", "now");
+
+    run.resolve({ text: "Done", steps: 1 });
+    await job.promise;
+    const completedResult = await runner.dispatchCommand("session-command", "compact");
+    expect(completedResult).toBeNull();
   });
 });

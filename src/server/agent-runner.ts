@@ -1,5 +1,7 @@
 import { AgentRunningError } from "../agents/errors";
+import { ConfiguredAgent } from "../agents/configured-agent";
 import type { Agent } from "../agents/types";
+import type { CommandResult } from "../commands/types";
 import type { SpecraRuntime } from "../main";
 import { saveSessionTranscript } from "../store/helpers";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/types";
@@ -16,6 +18,7 @@ export interface RunningJob {
 
 export class AgentRunner {
   #jobs = new Map<string, RunningJob>();
+  #agents = new Map<string, Agent>();
   #runtime: SpecraRuntime;
   #permissionService?: PermissionService;
   #askUserService?: AskUserService;
@@ -70,6 +73,15 @@ export class AgentRunner {
     return this.#jobs.get(sessionId);
   }
 
+  async dispatchCommand(sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
+    const agent = this.#agents.get(sessionId);
+    if (!(agent instanceof ConfiguredAgent)) {
+      return null;
+    }
+
+    return await agent.dispatchCommand(name, args);
+  }
+
   async #runJob(
     sessionId: string,
     workspaceRoot: string,
@@ -83,6 +95,7 @@ export class AgentRunner {
       if (abortController.signal.aborted) {
         return;
       }
+      this.#agents.set(sessionId, agent);
 
       const ring = ensureSessionRing(sessionId);
       const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
@@ -107,6 +120,7 @@ export class AgentRunner {
         );
       }
     } finally {
+      this.#agents.delete(sessionId);
       if (agent) {
         try {
           await saveSessionTranscript(agent.store.getState(), workspaceRoot);

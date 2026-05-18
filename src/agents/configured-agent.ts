@@ -4,6 +4,7 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand } from "../commands/index";
+import type { CommandResult } from "../commands/types";
 import type { ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import { ProjectContextResolver } from "../projects/context-resolver";
@@ -195,6 +196,23 @@ export class ConfiguredAgent implements Agent {
         await btm.drain(60000);
       }
     }
+  }
+
+  async dispatchCommand(name: string, args?: string): Promise<CommandResult> {
+    const descriptor = this.commandRegistry.get(name);
+    if (!descriptor) {
+      return { success: false, message: `Unknown command: ${name}` };
+    }
+
+    return descriptor.handler(
+      {
+        store: this.store,
+        modelInfo: this.modelInfo,
+        modelOptions: this.modelOptions,
+        abort: undefined,
+      },
+      args,
+    );
   }
 
   private parseRunOptions(
