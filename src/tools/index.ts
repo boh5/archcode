@@ -23,7 +23,7 @@ export type {
 } from "./types";
 
 // ─── Values ───
-export { DuplicateToolError, DestructiveToolPermissionError } from "./types";
+export { createToolExecutionContext, DuplicateToolError, DestructiveToolPermissionError } from "./types";
 export { defineTool } from "./define-tool";
 export { ToolRegistry, ResolvedToolSet, createRegistry } from "./registry";
 export { createOutputTruncator, type TruncatorOptions } from "./hooks";

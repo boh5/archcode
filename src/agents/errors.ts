@@ -12,6 +12,13 @@ export class AgentRunningError extends Error {
   }
 }
 
+export class MissingProjectContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MissingProjectContextError";
+  }
+}
+
 export class MissingAgentModelConfigError extends Error {
   constructor(
     public readonly agentName: string,

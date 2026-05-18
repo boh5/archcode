@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import type { SpecraConfig } from "../config/schema";
+import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { createSessionStore } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
@@ -27,9 +28,10 @@ export interface AgentFactoryConfig {
   readonly definitions: readonly AgentDefinition[];
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
-  readonly workspaceRoot?: string;
+  readonly workspaceRoot: string;
   readonly config?: SpecraConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
+  readonly projectContextResolver?: ProjectContextResolver;
 }
 
 export interface CreateAgentOptions {
@@ -316,6 +318,7 @@ function createConfiguredAgent(
     store,
     depth: options.depth,
     backgroundTaskManager: config.backgroundTaskManager,
+    projectContextResolver: config.projectContextResolver,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     agentFactory: factory,
   });

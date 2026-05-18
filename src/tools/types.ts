@@ -5,6 +5,7 @@ import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
 import type { AgentFactoryLike } from "../agents/factory-types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
+import type { ProjectContext } from "../projects/types";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -33,11 +34,27 @@ export interface ToolExecutionContext {
   startedAt: number;
   durationMs?: number;
   allowedTools: ReadonlySet<string>;
+  projectContext: ProjectContext;
+  /** Derived from projectContext.project.workspaceRoot by createToolExecutionContext(). */
   workspaceRoot: string;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
   agentFactory?: AgentFactoryLike;
   currentDepth?: number;
+}
+
+export function createToolExecutionContext(
+  base: Omit<ToolExecutionContext, "workspaceRoot">,
+): ToolExecutionContext {
+  const ctx = { ...base } as ToolExecutionContext;
+  Object.defineProperty(ctx, "workspaceRoot", {
+    enumerable: true,
+    configurable: false,
+    get() {
+      return this.projectContext.project.workspaceRoot;
+    },
+  });
+  return ctx;
 }
 
 export interface Logger {

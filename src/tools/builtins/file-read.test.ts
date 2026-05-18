@@ -17,6 +17,7 @@ import { createMockStore } from "../../store/test-helpers";
 import { fileReadTool } from "./file-read";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-read");
 
@@ -31,6 +32,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["file_read"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
     ...overrides,
   };
 }

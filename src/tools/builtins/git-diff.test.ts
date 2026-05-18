@@ -2,6 +2,7 @@ import { describe, expect, test, mock, afterEach } from "bun:test";
 import { gitDiffTool, buildArgs } from "./git-diff";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 // ─── Helpers ───
 
@@ -38,6 +39,7 @@ function mockCtx(): ToolExecutionContext {
     startedAt: Date.now(),
     allowedTools: new Set(["git_diff"]),
     workspaceRoot: "/tmp/workspace",
+    projectContext: createTestProjectContext("/tmp/workspace"),
   };
 }
 

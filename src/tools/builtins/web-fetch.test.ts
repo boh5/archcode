@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { WebFetchInputSchema, validateUrl, runWebFetch, webFetchTool } from "./web-fetch";
 import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 // ─── Helpers ───
 
@@ -16,6 +17,7 @@ function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContex
     startedAt: Date.now(),
     allowedTools: new Set(["web_fetch"]),
     workspaceRoot: process.cwd(),
+    projectContext: createTestProjectContext(process.cwd()),
     ...overrides,
   };
 }

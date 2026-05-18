@@ -21,6 +21,7 @@ import { createReadSnapshotAfterHook } from "../hooks";
 import { ToolRegistry } from "../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileEditTool } from "./file-edit";
+import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-edit");
 
@@ -35,6 +36,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["file_edit"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
     ...overrides,
   };
 }

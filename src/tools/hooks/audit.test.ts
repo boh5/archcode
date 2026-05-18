@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionContext } from "../types";
 import { createAuditHook, type AuditEvent } from "./audit";
 import { REDACTION_MARKER } from "../security";
+import { createTestProjectContext } from "../test-project-context";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
 
@@ -19,6 +20,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     durationMs: 25,
     allowedTools: new Set<string>(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

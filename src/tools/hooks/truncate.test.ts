@@ -6,6 +6,7 @@ import { REDACTION_MARKER } from "../security";
 import { createRedactionHook } from "./redact";
 import { createOutputTruncator } from "./truncate";
 import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
+import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 const OUTPUT_DIR = join(TMP_DIR, "tool-output");
@@ -26,6 +27,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     durationMs: overrides.durationMs ?? 42,
     allowedTools: new Set<string>(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

@@ -14,6 +14,7 @@ const mockGenerateText = mock(async () => ({ text: "Hook title" }));
 
 const mockBtm = { dispatch: mockDispatch };
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation-hook");
+const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
 
 function makeModelInfo(): ModelInfo {
   return {
@@ -35,7 +36,7 @@ describe("createTitleGenerationHook", () => {
     mockGenerateText.mockImplementation(async () => ({ text: "Hook title" }));
     __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
     await mkdir(TEST_TMP, { recursive: true });
-    __setSessionsDirForTest(TEST_TMP);
+    __setSessionsDirForTest(() => TEST_TMP);
   });
 
   afterEach(() => {
@@ -55,7 +56,7 @@ describe("createTitleGenerationHook", () => {
       modelInfo: makeModelInfo(),
       messages: [],
     };
-    const hook = createTitleGenerationHook(mockBtm as never);
+    const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
     await hook(ctx);
 
     expect(mockDispatch).toHaveBeenCalledTimes(1);
@@ -74,7 +75,7 @@ describe("createTitleGenerationHook", () => {
       modelInfo: makeModelInfo(),
       messages: [],
     };
-    const hook = createTitleGenerationHook(mockBtm as never);
+    const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
     await hook(ctx);
 
     expect(mockDispatch).not.toHaveBeenCalled();
@@ -88,7 +89,7 @@ describe("createTitleGenerationHook", () => {
       modelInfo: makeModelInfo(),
       messages: [],
     };
-    const hook = createTitleGenerationHook(mockBtm as never);
+    const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
 
     await hook(ctx);
     expect(mockDispatch).toHaveBeenCalledTimes(1);
@@ -129,7 +130,7 @@ describe("createTitleGenerationHook", () => {
       messages: [],
     };
 
-    const hook = createTitleGenerationHook(mockBtm as never);
+    const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
     await hook(ctx);
 
     expect(mockDispatch).toHaveBeenCalledTimes(1);

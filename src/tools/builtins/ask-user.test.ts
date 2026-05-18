@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
 import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 const SINGLE_QUESTION: AskUserQuestion = {
   question: "What is your name?",
@@ -50,6 +51,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["ask_user"]),
     workspaceRoot: "/tmp/test",
+    projectContext: createTestProjectContext("/tmp/test"),
     ...overrides,
   };
 }

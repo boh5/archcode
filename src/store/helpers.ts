@@ -216,8 +216,9 @@ export function getAssistantText(messages: StoredMessage[]): string {
 
 export async function saveSessionTranscript(
   state: PersistableSessionState,
+  workspaceRoot: string,
 ): Promise<void> {
-  const dir = getSessionsDir();
+  const dir = getSessionsDir(workspaceRoot);
 
   try {
     await mkdir(dir, { recursive: true });
@@ -257,8 +258,9 @@ export async function saveSessionTranscript(
 
 export async function loadSessionTranscript(
   sessionId: string,
+  workspaceRoot: string,
 ): Promise<StoreApi<SessionStoreState>> {
-  const dir = getSessionsDir();
+  const dir = getSessionsDir(workspaceRoot);
   const filePath = join(dir, `${sessionId}.json`);
   const raw = await Bun.file(filePath).text();
   const parsed = SessionFileSchema.parse(JSON.parse(raw));

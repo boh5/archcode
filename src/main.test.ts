@@ -10,14 +10,11 @@ import { createSessionStore } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
 import { createSpecraRuntime } from "./main";
+import { createTestProjectContext } from "./tools/test-project-context";
+import { bootServer } from "./server/boot";
 
-mock.module("ink", () => ({
-  render: mock(() => ({
-    clear: mock(() => {}),
-    unmount: mock(() => {}),
-    waitUntilExit: mock(async () => {}),
-  })),
-}));
+const mockBootServer = mock(() => Promise.resolve());
+mock.module("./server/boot", () => ({ bootServer: mockBootServer }));
 
 const tmpRoots: string[] = [];
 
@@ -48,11 +45,16 @@ function makeProviderConfig() {
 }
 
 async function writeConfig(config: Record<string, unknown>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "specra-main-"));
-  tmpRoots.push(root);
+  const root = await makeTempRoot();
   const configPath = join(root, ".specra.json");
   await Bun.write(configPath, JSON.stringify(config));
   return configPath;
+}
+
+async function makeTempRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "specra-main-"));
+  tmpRoots.push(root);
+  return root;
 }
 
 function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
@@ -100,10 +102,25 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
     startedAt: 0,
     allowedTools: new Set([toolName]),
     workspaceRoot: process.cwd(),
+    projectContext: createTestProjectContext(process.cwd()),
   };
 }
 
 describe("createSpecraRuntime", () => {
+  test("boots server exactly once with constructed runtime", async () => {
+    const configPath = await writeConfig(makeConfig({ servers: {} }));
+    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
+    const runtime = await createSpecraRuntime({
+      configPath,
+      mcpManagerFactory: () => manager,
+    });
+
+    await bootServer(runtime);
+
+    expect(mockBootServer).toHaveBeenCalledTimes(1);
+    expect(mockBootServer).toHaveBeenCalledWith(runtime);
+  });
+
   test("registers MCP descriptors before the agent run snapshot without calling run", async () => {
     const configPath = await writeConfig(makeConfig({ servers: {} }));
     const mcpDescriptor = makeMcpDescriptor();
@@ -140,6 +157,50 @@ describe("createSpecraRuntime", () => {
     expect(resolvedConfig).toEqual({ servers: {} });
     expect(runtime.agent).toBeDefined();
     expect(runtime.warnings).toEqual([]);
+  });
+
+  test("runtime exposes project registry and shared context resolver", async () => {
+    const configPath = await writeConfig(makeConfig());
+    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
+
+    const runtime = await createSpecraRuntime({
+      configPath,
+      mcpManagerFactory: () => manager,
+    });
+
+    expect(runtime.projectRegistry).toBeDefined();
+    expect(runtime.contextResolver).toBeDefined();
+  });
+
+  test("agentFor returns the same agent for the same workspaceRoot", async () => {
+    const configPath = await writeConfig(makeConfig());
+    const workspaceRoot = await makeTempRoot();
+    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
+
+    const runtime = await createSpecraRuntime({
+      configPath,
+      mcpManagerFactory: () => manager,
+    });
+    const agent1 = await runtime.agentFor(workspaceRoot);
+    const agent2 = await runtime.agentFor(workspaceRoot);
+
+    expect(agent1).toBe(agent2);
+  });
+
+  test("agentFor returns different agents for different workspaceRoots", async () => {
+    const configPath = await writeConfig(makeConfig());
+    const workspaceRootA = await makeTempRoot();
+    const workspaceRootB = await makeTempRoot();
+    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
+
+    const runtime = await createSpecraRuntime({
+      configPath,
+      mcpManagerFactory: () => manager,
+    });
+    const agentA = await runtime.agentFor(workspaceRootA);
+    const agentB = await runtime.agentFor(workspaceRootB);
+
+    expect(agentA).not.toBe(agentB);
   });
 
   test("starts with mcp.servers as an empty object", async () => {

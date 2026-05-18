@@ -8,12 +8,14 @@ import { createSessionStore } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
+import { createTestProjectContext } from "../../tools/test-project-context";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { __setStreamTextForTest, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
+import { MissingProjectContextError } from "../errors";
 
 type MockChunk =
   | { type: "text-delta"; text: string }
@@ -146,6 +148,8 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     toolRegistry: createRegistry(),
     store: createStore(),
     allowedTools: [],
+    projectContext: createTestProjectContext(process.cwd()),
+    workspaceRoot: process.cwd(),
     ...overrides,
   };
 }
@@ -1653,6 +1657,36 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(contextWorkspaceRoot).toBe("/canonical/workspace");
   });
 
+  test("returns MissingProjectContextError when tool execution lacks workspaceRoot", async () => {
+    const store = createStore();
+    const projectContext = createTestProjectContext("/canonical/workspace");
+    Object.defineProperty(projectContext.project, "workspaceRoot", {
+      configurable: true,
+      value: undefined,
+    });
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: createTestRegistry(),
+        allowedTools: ["echo"],
+        projectContext,
+        workspaceRoot: undefined,
+      }),
+      "Hi",
+    );
+
+    expect(store.getState().steps[0]).toMatchObject({
+      error: new MissingProjectContextError("Query loop requires options.workspaceRoot before executing tools").message,
+    });
+  });
+
   test("passes confirmPermission callback to tool execution context", async () => {
     const confirmPermission = mock(async () => "approve" as const);
     let contextConfirmPermission: ToolExecutionContext["confirmPermission"];
@@ -1827,8 +1861,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     // confirmation, so openTool executes before askTool.
     expect(events).toEqual([
       "perm:askTool",
-      "confirm:askTool",
       "execute:openTool",
+      "confirm:askTool",
       "execute:askTool",
     ]);
     expect(confirmPermission).toHaveBeenCalledTimes(1);

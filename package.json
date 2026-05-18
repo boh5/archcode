@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "bun run src/main.ts",
+    "start": "bun src/main.ts",
+    "server": "bun --hot src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

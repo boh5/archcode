@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolExecutionContext } from "../types";
 import { createProtectedSpecraPermission } from "./protected-specra";
+import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-specra-permission");
 const WORKSPACE = join(TMP_DIR, "workspace");
@@ -23,6 +24,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set<string>(),
     workspaceRoot: WORKSPACE,
+    projectContext: createTestProjectContext(WORKSPACE),
     ...overrides,
   };
 }

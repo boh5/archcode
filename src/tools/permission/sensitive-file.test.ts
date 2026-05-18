@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import type { ToolExecutionContext } from "../types";
 import { createSensitiveFilePermission, isSensitiveFile, SENSITIVE_PATTERNS } from "./sensitive-file";
+import { createTestProjectContext } from "../test-project-context";
 
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
@@ -15,6 +16,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set(["file_read", "file_edit", "file_write"]),
     workspaceRoot: "/workspace",
+    projectContext: createTestProjectContext("/workspace"),
     ...overrides,
   };
 }

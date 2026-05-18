@@ -138,9 +138,7 @@ async function readRawFile(path: string): Promise<string | null> {
 
 // ─── Tool Definition (factory) ───
 
-export function createMemoryReadTool(
-  fileManager: MemoryFileManager,
-): AnyToolDescriptor {
+export function createMemoryReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "memory_read",
     description:
@@ -152,8 +150,9 @@ export function createMemoryReadTool(
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (
       input: MemoryReadInput,
-      _ctx: ToolExecutionContext,
+      ctx: ToolExecutionContext,
     ): Promise<string | ToolExecutionResult> => {
+      const fileManager = ctx.projectContext.memory;
       if (!input.name) {
         return buildCombinedContext(fileManager);
       }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { defineTool } from "./define-tool";
+import { createTestProjectContext } from "./test-project-context";
 import type {
   ToolDescriptor,
   ToolExecutionContext,
@@ -20,6 +21,7 @@ function mockCtx(): ToolExecutionContext {
     startedAt: Date.now(),
     allowedTools: new Set(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
   };
 }
 

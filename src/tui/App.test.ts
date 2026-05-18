@@ -4,6 +4,7 @@ import type { ModelInfo } from "../provider/model";
 import { runQueryLoop, __setStreamTextForTest } from "../agents/query/loop";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/index";
+import { createTestProjectContext } from "../tools/test-project-context";
 import type { AskUserAnswer, AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/index";
 import { shouldSubmit, createConfirmationCallback, createAskUserCallback } from "./App";
 import type { PendingConfirmation, PendingAskUser } from "./App";
@@ -78,6 +79,7 @@ describe("App orchestration", () => {
         modelInfo: DUMMY_MODEL_INFO,
         toolRegistry: createRegistry([]),
         allowedTools: [],
+        projectContext: createTestProjectContext(process.cwd()),
         store,
       },
       "Hi App",
@@ -112,6 +114,7 @@ describe("App orchestration", () => {
         modelInfo: DUMMY_MODEL_INFO,
         toolRegistry: createRegistry([]),
         allowedTools: [],
+        projectContext: createTestProjectContext(process.cwd()),
         store,
       },
       "trigger error",

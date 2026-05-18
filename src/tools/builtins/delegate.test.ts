@@ -6,6 +6,7 @@ import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
+import { createTestProjectContext } from "../test-project-context";
 
 class ToolStubFactory implements AgentFactoryLike {
   lastOptions: DelegateAgentOptions | undefined;
@@ -36,6 +37,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     startedAt: 0,
     allowedTools: new Set(["delegate"]),
     workspaceRoot: import.meta.dir,
+    projectContext: createTestProjectContext(import.meta.dir),
     agentName: "orchestrator",
     ...overrides,
   };

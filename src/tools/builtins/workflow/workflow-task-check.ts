@@ -1,10 +1,10 @@
 import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
-import { ArtifactPathError, WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
+import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { ArtifactPathError } from "../../../agents/workflow/artifacts";
 import { toggleTaskCheckbox } from "../../../agents/workflow/tasks-format";
-import { WorkflowPathError, WorkflowStateManager } from "../../../agents/workflow/state";
+import { WorkflowPathError } from "../../../agents/workflow/state";
 
 const TASKS_ARTIFACT_PATH = "TASKS.md";
 
@@ -16,16 +16,15 @@ const WorkflowTaskCheckInputSchema = z.strictObject({
 
 type WorkflowTaskCheckInput = z.infer<typeof WorkflowTaskCheckInputSchema>;
 
-export function createWorkflowTaskCheckTool(
-  stateManager: WorkflowStateManager,
-  artifactManager: WorkflowArtifactManager,
-): AnyToolDescriptor {
+export function createWorkflowTaskCheckTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_task_check",
     description: "Toggle a top-level TASKS.md task checkbox by id, e.g. T1.",
     inputSchema: WorkflowTaskCheckInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    execute: async (input: WorkflowTaskCheckInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: WorkflowTaskCheckInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const stateManager = ctx.projectContext.workflowState;
+      const artifactManager = ctx.projectContext.artifacts;
       try {
         const state = await stateManager.read(input.workflowId);
         if (state.artifacts.TASKS !== undefined && state.artifacts.TASKS !== TASKS_ARTIFACT_PATH) {

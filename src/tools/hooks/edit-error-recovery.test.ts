@@ -7,6 +7,7 @@ import {
   TOOL_ERROR_META_KEY,
 } from "../errors";
 import { createEditErrorRecoveryHook } from "./edit-error-recovery";
+import { createTestProjectContext } from "../test-project-context";
 
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
@@ -21,6 +22,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set<string>(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

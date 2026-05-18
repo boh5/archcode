@@ -13,6 +13,7 @@ import { ConfiguredAgent } from "./configured-agent";
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { __setStreamTextForTest } from "./query/loop";
+import { MissingProjectContextError } from "./errors";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 
@@ -184,7 +185,7 @@ describe("ConfiguredAgent", () => {
     await mkdir(join(tmpRoot, ".specra", "memory"), { recursive: true });
     await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), "");
     await writeFile(join(tmpRoot, "AGENTS.md"), "# Test Project\n\nMinimal project context.");
-    __setSessionsDirForTest(join(tmpRoot, "sessions"));
+    __setSessionsDirForTest(() => join(tmpRoot, "sessions"));
   });
 
   afterEach(() => {
@@ -235,6 +236,20 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
     expect(btm.dispatched).toContain("title-generation");
     expect(btm.drainCalls).toBe(1);
+  });
+
+  test("throws MissingProjectContextError when workspaceRoot is not provided", () => {
+    const providerRegistry = makeProviderRegistry();
+
+    expect(() => new ConfiguredAgent({
+      definition: exploreAgentDefinition,
+      providerRegistry,
+      modelInfo: providerRegistry.getModel("test:configured"),
+      toolRegistry: makeToolRegistry(),
+      resolveAllowedTools: () => [],
+    })).toThrow(MissingProjectContextError);
+
+    expect(new MissingProjectContextError("missing context").name).toBe("MissingProjectContextError");
   });
 
   test("constructs without relying on provider registry model order when modelInfo is supplied", async () => {

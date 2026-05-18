@@ -12,7 +12,6 @@ import type {
 } from "./types";
 import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 import { createPermissionErrorResult } from "./permission";
-import type { ProjectApprovalManager } from "./permission";
 import { redactString, redactValue } from "./security/redaction";
 import {
   createToolErrorResult,
@@ -25,8 +24,6 @@ import {
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
   private _logger: Logger | undefined;
-  private _projectApprovalManager: ProjectApprovalManager | undefined;
-  private _projectApprovalsWorkspaceRoot: string | undefined;
 
   globalHooks: { before: BeforeHook[]; after: AfterHook[] };
   globalPermissions: ToolPermission[];
@@ -36,11 +33,6 @@ export class ToolRegistry {
     this._logger = logger;
     this.globalHooks = { before: [], after: [] };
     this.globalPermissions = [];
-  }
-
-  setProjectApprovalManager(manager: ProjectApprovalManager): void {
-    this._projectApprovalManager = manager;
-    this._projectApprovalsWorkspaceRoot = undefined;
   }
 
   register(descriptor: AnyToolDescriptor): void {
@@ -257,9 +249,7 @@ export class ToolRegistry {
 
     ctx.permissionOutcome = "ask";
 
-    const unsatisfiedAsk = this._projectApprovalManager
-      ? await this.findFirstUnsatisfiedAsk(askDecisions, ctx)
-      : askDecisions[0];
+    const unsatisfiedAsk = await this.findFirstUnsatisfiedAsk(askDecisions, ctx);
     if (!unsatisfiedAsk) {
       return undefined;
     }
@@ -306,8 +296,7 @@ export class ToolRegistry {
       if (confirmation === "approve_always") {
         const approval = unsatisfiedAsk.approval;
         if (approval?.eligible === true && approval.scope) {
-          await this.ensureProjectApprovalsLoaded(ctx.workspaceRoot);
-          await this._projectApprovalManager?.addApproval(approval.scope, {
+          await ctx.projectContext.approvals.addApproval(approval.scope, {
             display: approval.display,
             reason: approval.reason,
             grantedBy: {
@@ -337,9 +326,8 @@ export class ToolRegistry {
   ): Promise<PermissionDecision | undefined> {
     for (const decision of askDecisions) {
       const approval = decision.approval;
-      if (approval?.eligible === true && approval.scope && this._projectApprovalManager) {
-        await this.ensureProjectApprovalsLoaded(ctx.workspaceRoot);
-        if (this._projectApprovalManager.hasApproval(approval.scope)) {
+      if (approval?.eligible === true && approval.scope) {
+        if (ctx.projectContext.approvals.hasApproval(approval.scope)) {
           continue;
         }
       }
@@ -347,16 +335,6 @@ export class ToolRegistry {
     }
 
     return undefined;
-  }
-
-  private async ensureProjectApprovalsLoaded(workspaceRoot: string): Promise<void> {
-    if (!this._projectApprovalManager) return;
-    if (this._projectApprovalsWorkspaceRoot === workspaceRoot) {
-      await this._projectApprovalManager.reloadIfStale(workspaceRoot);
-      return;
-    }
-    await this._projectApprovalManager.load(workspaceRoot);
-    this._projectApprovalsWorkspaceRoot = workspaceRoot;
   }
 
   private async runGlobalAfterHooks(
@@ -493,12 +471,8 @@ export class ResolvedToolSet {
 export function createRegistry(
   descriptors?: AnyToolDescriptor[],
   logger?: Logger,
-  projectApprovalManager?: ProjectApprovalManager,
 ): ToolRegistry {
   const registry = new ToolRegistry(logger);
-  if (projectApprovalManager) {
-    registry.setProjectApprovalManager(projectApprovalManager);
-  }
   if (descriptors) {
     registry.registerAll(descriptors);
   }

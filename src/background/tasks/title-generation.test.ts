@@ -36,7 +36,7 @@ describe("createTitleGenerationTask", () => {
       async () => ({ text: "Short test title" }),
     );
     await mkdir(TEST_TMP, { recursive: true });
-    __setSessionsDirForTest(TEST_TMP);
+    __setSessionsDirForTest(() => TEST_TMP);
   });
 
   afterEach(() => {

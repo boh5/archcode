@@ -5,6 +5,7 @@ import { RipgrepNotFoundError } from "../ripgrep/service";
 import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
 import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 function mockReadableStream(data: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -31,6 +32,7 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
     startedAt: Date.now(),
     allowedTools: new Set(["glob"]),
     workspaceRoot: "/workspace",
+    projectContext: createTestProjectContext("/workspace"),
     ...overrides,
   };
 }

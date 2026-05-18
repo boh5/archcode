@@ -1,15 +1,15 @@
 import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { realpath } from "node:fs/promises";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
 import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
-import type { ToolExecutionContext } from "../../tools/index";
+import { createToolExecutionContext, type ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/security";
+import { MissingProjectContextError } from "../errors";
 
 const DEFAULT_MAX_STEPS = 50;
 
@@ -120,7 +120,13 @@ export async function runQueryLoop(
       if (finishReason !== "tool-calls") break;
 
       const toolCalls = await result.toolCalls;
-      resolvedWorkspaceRoot ??= await realpath(process.cwd());
+      if (resolvedWorkspaceRoot === undefined) {
+        resolvedWorkspaceRoot = options.projectContext.project.workspaceRoot;
+      }
+      if (resolvedWorkspaceRoot === undefined) {
+        throw new MissingProjectContextError("Query loop requires options.workspaceRoot before executing tools");
+      }
+      options.projectContext.project.workspaceRoot = resolvedWorkspaceRoot;
       await executeToolCalls(
         toolCalls,
         toolRegistry,
@@ -128,6 +134,7 @@ export async function runQueryLoop(
         steps,
         abort,
         allowedTools,
+        options.projectContext,
         resolvedWorkspaceRoot,
         confirmPermission,
         options.askUser,
@@ -310,6 +317,7 @@ async function executeToolCalls(
   step: number,
   abort: AbortSignal,
   allowedTools: readonly string[],
+  projectContext: QueryLoopOptions["projectContext"],
   workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
   askUser?: QueryLoopOptions["askUser"],
@@ -334,7 +342,7 @@ async function executeToolCalls(
     if (batch.type === "parallel") {
       await Promise.all(
         batch.calls.map(async (toolCall) => {
-          const ctx: ToolExecutionContext = {
+          const ctx = createToolExecutionContext({
             store,
             toolName: toolCall.toolName,
             toolCallId: toolCall.toolCallId,
@@ -344,20 +352,20 @@ async function executeToolCalls(
             abort,
             startedAt: Date.now(),
             allowedTools: new Set(allowedTools),
-            workspaceRoot,
+            projectContext,
             ...(confirmPermission ? { confirmPermission } : {}),
             ...(askUser ? { askUser } : {}),
             ...(agentFactory ? { agentFactory } : {}),
             ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
-          };
+          });
           const result = await registry.execute(toolCall, ctx);
           appendToolResult(store, toolCall, result.output, result.isError, result.meta);
         }),
       );
     } else {
       const toolCall = batch.call;
-      const ctx: ToolExecutionContext = {
+      const ctx = createToolExecutionContext({
         store,
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
@@ -367,13 +375,13 @@ async function executeToolCalls(
         abort,
         startedAt: Date.now(),
         allowedTools: new Set(allowedTools),
-        workspaceRoot,
+        projectContext,
         ...(confirmPermission ? { confirmPermission } : {}),
         ...(askUser ? { askUser } : {}),
         ...(agentFactory ? { agentFactory } : {}),
         ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
-      };
+      });
       const result = await registry.execute(toolCall, ctx);
       appendToolResult(store, toolCall, result.output, result.isError, result.meta);
     }

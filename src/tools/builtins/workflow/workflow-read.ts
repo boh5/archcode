@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
-import { WorkflowPathError, WorkflowStateManager } from "../../../agents/workflow/state";
+import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { WorkflowPathError } from "../../../agents/workflow/state";
 
 const WorkflowReadInputSchema = z.strictObject({
   workflowId: z.string().min(1),
@@ -10,15 +10,14 @@ const WorkflowReadInputSchema = z.strictObject({
 
 type WorkflowReadInput = z.infer<typeof WorkflowReadInputSchema>;
 
-export function createWorkflowReadTool(
-  stateManager: WorkflowStateManager,
-): AnyToolDescriptor {
+export function createWorkflowReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_read",
     description: "Read workflow state by workflow id.",
     inputSchema: WorkflowReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async (input: WorkflowReadInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: WorkflowReadInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const stateManager = ctx.projectContext.workflowState;
       try {
         const state = await stateManager.read(input.workflowId);
         return JSON.stringify(state, null, 2);

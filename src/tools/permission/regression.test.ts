@@ -21,6 +21,7 @@ import { createBashPermission } from "./bash";
 import { createProtectedSpecraPermission } from "./protected-specra";
 import { ProjectApprovalManager } from "./project-approvals";
 import type { PermissionApprovalScope } from "./policy-types";
+import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "permission-regression");
 const WORKSPACE = join(TMP_DIR, "workspace");
@@ -89,6 +90,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     startedAt: 0,
     allowedTools: new Set(["regression_tool"]),
     workspaceRoot: WORKSPACE,
+    projectContext: createTestProjectContext(WORKSPACE),
     ...overrides,
   };
 }
@@ -118,7 +120,7 @@ function bashTool(): ToolDescriptor<{ command: string; cwd?: string }> {
     description: "Bash permission regression probe",
     inputSchema: z.object({ command: z.string(), cwd: z.string().optional() }).strict(),
     traits: { readOnly: false, destructive: true, concurrencySafe: false },
-    permissions: [createBashPermission(WORKSPACE)],
+    permissions: [createBashPermission()],
     execute: async () => "executed",
   });
 }
@@ -140,10 +142,12 @@ async function executeWithConfirmation(
   confirmation: ToolConfirmationResult,
   manager = new ProjectApprovalManager({ warn: mock() }),
 ) {
+  await manager.load(WORKSPACE);
   const confirmPermission = mock(async (_request: ToolConfirmationRequest) => confirmation);
-  const registry = createRegistry([descriptor], undefined, manager);
+  const registry = createRegistry([descriptor]);
   const ctx = makeContext({
     input,
+    projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
     confirmPermission,
   });
 
@@ -212,8 +216,11 @@ describe("permission integration regressions", () => {
     );
 
     const confirmPermission = mock(async () => "deny" as ToolConfirmationResult);
-    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)], undefined, manager);
-    const result = await registry.execute(makeCall(), makeContext({ confirmPermission }));
+    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
+    const result = await registry.execute(makeCall(), makeContext({
+      confirmPermission,
+      projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
+    }));
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("executed");
@@ -241,9 +248,13 @@ describe("permission integration regressions", () => {
     const warn = mock();
     const manager = new ProjectApprovalManager({ warn });
     const confirmPermission = mock(async () => "approve_once" as ToolConfirmationResult);
-    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)], undefined, manager);
+    await manager.load(WORKSPACE);
+    const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
 
-    const result = await registry.execute(makeCall(), makeContext({ confirmPermission }));
+    const result = await registry.execute(makeCall(), makeContext({
+      confirmPermission,
+      projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
+    }));
 
     expect(result.isError).toBe(false);
     expect(confirmPermission).toHaveBeenCalledTimes(1);
@@ -311,10 +322,14 @@ describe("bash permission bypass regressions", () => {
       requests.push(request);
       return "deny" as ToolConfirmationResult;
     });
-    const registry = createRegistry([bashTool()], undefined, manager);
+    const registry = createRegistry([bashTool()]);
     const result = await registry.execute(
       makeCall({ command: "cargo check > ~/.zshrc" }),
-      makeContext({ input: { command: "cargo check > ~/.zshrc" }, confirmPermission }),
+      makeContext({
+        input: { command: "cargo check > ~/.zshrc" },
+        confirmPermission,
+        projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
+      }),
     );
 
     expect(result.isError).toBe(true);

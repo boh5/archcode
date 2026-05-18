@@ -18,6 +18,7 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { ToolRegistry } from "../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { fileWriteTool } from "./file-write";
+import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "file-write");
 
@@ -32,6 +33,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["file_write"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
     ...overrides,
   };
 }

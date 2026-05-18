@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
+import { WorkflowStateManager } from "../../agents/workflow/state";
 import { MemoryFileManager } from "../../memory/file-manager";
+import type { ProjectContext } from "../../projects/types";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
-import type { ToolExecutionResult } from "../types";
+import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { ProjectApprovalManager } from "../permission";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -15,8 +19,16 @@ function makeFileManager(): MemoryFileManager {
   });
 }
 
-function makeCtx(toolCallId = "call-1") {
-  return {
+function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExecutionContext {
+  const workflowState = new WorkflowStateManager(TMP_DIR);
+  const projectContext: ProjectContext = {
+    project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
+    workflowState,
+    memory: fileManager,
+    approvals: new ProjectApprovalManager(),
+    artifacts: new WorkflowArtifactManager(TMP_DIR, workflowState),
+  };
+  return createToolExecutionContext({
     store: createMockStore(),
     toolName: "memory_write" as const,
     toolCallId,
@@ -25,8 +37,8 @@ function makeCtx(toolCallId = "call-1") {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set<string>() as ReadonlySet<string>,
-    workspaceRoot: TMP_DIR,
-  };
+    projectContext,
+  });
 }
 
 function parseErrorResult(result: string | ToolExecutionResult): ToolExecutionResult {
@@ -153,7 +165,7 @@ describe("memory_write tool", () => {
   });
 
   it("writes a valid topic and rebuilds index", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = await tool.execute(
       {
         name: "test_topic",
@@ -162,7 +174,7 @@ describe("memory_write tool", () => {
         content: "This is test content.",
         scope: "project",
       },
-      makeCtx(),
+      makeCtx(fileManager),
     );
 
     expect(typeof result).toBe("string");
@@ -181,7 +193,7 @@ describe("memory_write tool", () => {
   });
 
   it("rejects writing to index name", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = parseErrorResult(
       await tool.execute(
         {
@@ -191,7 +203,7 @@ describe("memory_write tool", () => {
           content: "Bad",
           scope: "project",
         },
-        makeCtx("call-2"),
+        makeCtx(fileManager, "call-2"),
       ),
     );
 
@@ -200,7 +212,7 @@ describe("memory_write tool", () => {
   });
 
   it("rejects content containing API keys", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = parseErrorResult(
       await tool.execute(
         {
@@ -210,7 +222,7 @@ describe("memory_write tool", () => {
           content: "My api_key=sk_test_1234567890abcdef1234567890abcd",
           scope: "project",
         },
-        makeCtx("call-4"),
+        makeCtx(fileManager, "call-4"),
       ),
     );
 
@@ -219,7 +231,7 @@ describe("memory_write tool", () => {
   });
 
   it("rejects content containing passwords", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = parseErrorResult(
       await tool.execute(
         {
@@ -229,7 +241,7 @@ describe("memory_write tool", () => {
           content: "Login with password=supersecretvalue123",
           scope: "project",
         },
-        makeCtx("call-5"),
+        makeCtx(fileManager, "call-5"),
       ),
     );
 
@@ -238,7 +250,7 @@ describe("memory_write tool", () => {
   });
 
   it("updates existing file on duplicate name (idempotent)", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
 
     await tool.execute(
       {
@@ -248,7 +260,7 @@ describe("memory_write tool", () => {
         content: "First content",
         scope: "project",
       },
-      makeCtx("call-6"),
+      makeCtx(fileManager, "call-6"),
     );
 
     const result = await tool.execute(
@@ -259,7 +271,7 @@ describe("memory_write tool", () => {
         content: "Second content",
         scope: "project",
       },
-      makeCtx("call-7"),
+      makeCtx(fileManager, "call-7"),
     );
 
     expect(typeof result).toBe("string");
@@ -273,7 +285,7 @@ describe("memory_write tool", () => {
   });
 
   it("formats frontmatter correctly", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     await tool.execute(
       {
         name: "frontmatter_test",
@@ -282,7 +294,7 @@ describe("memory_write tool", () => {
         content: "Content here",
         scope: "project",
       },
-      makeCtx("call-8"),
+      makeCtx(fileManager, "call-8"),
     );
 
     const resolvedPath = await fileManager.resolveProjectPath("knowledge/frontmatter_test.md");
@@ -297,14 +309,14 @@ describe("memory_write tool", () => {
   });
 
   it("writes user preferences when name='preferences' and scope='user'", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = await tool.execute(
       {
         name: "preferences",
         content: "I prefer dark mode",
         scope: "user",
       },
-      makeCtx("call-9"),
+      makeCtx(fileManager, "call-9"),
     );
 
     expect(typeof result).toBe("string");
@@ -316,14 +328,14 @@ describe("memory_write tool", () => {
 
   it("merges user preferences when preferences already exist", async () => {
     await fileManager.writePreferences("Existing preference\n");
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = await tool.execute(
       {
         name: "preferences",
         content: "New preference",
         scope: "user",
       },
-      makeCtx("call-10"),
+      makeCtx(fileManager, "call-10"),
     );
 
     expect(typeof result).toBe("string");
@@ -333,7 +345,7 @@ describe("memory_write tool", () => {
   });
 
   it("rejects writing preferences with scope='project'", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = parseErrorResult(
       await tool.execute(
         {
@@ -341,7 +353,7 @@ describe("memory_write tool", () => {
           content: "Should fail",
           scope: "project",
         },
-        makeCtx("call-11"),
+        makeCtx(fileManager, "call-11"),
       ),
     );
 
@@ -350,13 +362,13 @@ describe("memory_write tool", () => {
   });
 
   it("defaults scope to user for preferences when scope not specified", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = await tool.execute(
       {
         name: "preferences",
         content: "I like vim",
       },
-      makeCtx("call-12"),
+      makeCtx(fileManager, "call-12"),
     );
 
     expect(typeof result).toBe("string");
@@ -367,13 +379,13 @@ describe("memory_write tool", () => {
   });
 
   it("defaults scope to project for topics when scope not specified", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = await tool.execute(
       {
         name: "architecture",
         content: "Monorepo structure",
       },
-      makeCtx("call-13"),
+      makeCtx(fileManager, "call-13"),
     );
 
     expect(typeof result).toBe("string");
@@ -385,7 +397,7 @@ describe("memory_write tool", () => {
   });
 
   it("rejects scope='user' for non-preferences names", async () => {
-    const tool = createMemoryWriteTool(fileManager);
+    const tool = createMemoryWriteTool();
     const result = parseErrorResult(
       await tool.execute(
         {
@@ -393,7 +405,7 @@ describe("memory_write tool", () => {
           content: "Should fail",
           scope: "user",
         },
-        makeCtx("call-14"),
+        makeCtx(fileManager, "call-14"),
       ),
     );
 

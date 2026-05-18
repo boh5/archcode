@@ -7,6 +7,7 @@ import { TOOL_OUTPUT_DIR } from "../persist-output";
 import type { ToolExecutionContext } from "../types";
 import type { CompletedToolPart, ErrorToolPart, ToolPart, StoredPart } from "../../store/types";
 import { executeViewToolOutput } from "./view-tool-output";
+import { createTestProjectContext } from "../test-project-context";
 
 const TEST_SESSION = `view-test-${randomUUID()}`;
 const TEST_DIR = join(TOOL_OUTPUT_DIR, TEST_SESSION);
@@ -34,6 +35,7 @@ function makeContext(): ToolExecutionContext {
     startedAt: 0,
     allowedTools: new Set(["view_tool_output"]),
     workspaceRoot: import.meta.dir,
+    projectContext: createTestProjectContext(import.meta.dir),
   };
 }
 

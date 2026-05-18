@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createExecutionLogger } from "./logger";
 import { REDACTION_MARKER } from "../security";
+import { createTestProjectContext } from "../test-project-context";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -15,6 +16,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     durationMs: overrides.durationMs ?? 42,
     allowedTools: new Set<string>(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

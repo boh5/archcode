@@ -3,6 +3,10 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
+import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
+import { WorkflowStateManager } from "../../agents/workflow/state";
+import type { ProjectContext } from "../../projects/types";
+import { ProjectApprovalManager } from "../permission";
 import {
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
@@ -17,7 +21,7 @@ import {
 } from "../../memory/constants";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { createMockStore } from "../../store/test-helpers";
-import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 
 // ---------------------------------------------------------------------------
 // Test setup
@@ -36,7 +40,7 @@ beforeAll(async () => {
   await mkdir(userDir, { recursive: true });
   await mkdir(knowledgeDir, { recursive: true });
   fileManager = new MemoryFileManager({ project: projectDir, user: userDir });
-  memoryReadTool = createMemoryReadTool(fileManager);
+  memoryReadTool = createMemoryReadTool();
 });
 
 beforeEach(async () => {
@@ -68,7 +72,16 @@ function createIndexEntries(n: number): string {
 }
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
+  const workspaceRoot = overrides.projectContext?.project.workspaceRoot ?? testDir;
+  const workflowState = new WorkflowStateManager(workspaceRoot);
+  const projectContext: ProjectContext = overrides.projectContext ?? {
+    project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
+    workflowState,
+    memory: fileManager,
+    approvals: new ProjectApprovalManager(),
+    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
+  };
+  return createToolExecutionContext({
     store: createMockStore(),
     toolName: "memory_read",
     toolCallId: "call-1",
@@ -77,9 +90,9 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["memory_read"]),
-    workspaceRoot: testDir,
+    projectContext,
     ...overrides,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

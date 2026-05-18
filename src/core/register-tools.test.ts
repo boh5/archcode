@@ -5,13 +5,18 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { EXPLORER_READ_ONLY_TOOLS } from "../agents/constants";
+import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
+import { WorkflowStateManager } from "../agents/workflow/state";
+import { MemoryFileManager } from "../memory/file-manager";
+import type { ProjectContext } from "../projects/types";
 import { createSessionStore } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import type { AuditEvent } from "../tools/hooks";
 import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
 import { REDACTION_MARKER } from "../tools/security";
 import { ToolRegistry } from "../tools/registry";
-import type { Logger, ToolDescriptor, ToolExecutionContext } from "../tools/types";
+import { createToolExecutionContext, type Logger, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
+import { ProjectApprovalManager } from "../tools/permission";
 import { registerBuiltinTools } from "./register-tools";
 
 const tmpRoots: string[] = [];
@@ -35,7 +40,8 @@ function makeContext(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   const input = overrides.input ?? {};
-  return {
+  const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
+  return createToolExecutionContext({
     store: createSessionStore(`register-tools-${crypto.randomUUID()}`),
     toolName,
     toolCallId: `${toolName}-call`,
@@ -44,8 +50,22 @@ function makeContext(
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(allowedTools),
-    workspaceRoot,
+    projectContext,
     ...overrides,
+  });
+}
+
+function makeProjectContext(workspaceRoot: string): ProjectContext {
+  const workflowState = new WorkflowStateManager(workspaceRoot);
+  return {
+    project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
+    workflowState,
+    memory: new MemoryFileManager({
+      project: join(workspaceRoot, ".specra", "memory"),
+      user: join(workspaceRoot, ".specra", "user-memory"),
+    }),
+    approvals: new ProjectApprovalManager(),
+    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }
 

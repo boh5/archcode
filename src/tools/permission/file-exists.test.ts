@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ToolExecutionContext } from "../types";
 import { createFileExistsPermission } from "./file-exists";
+import { createTestProjectContext } from "../test-project-context";
 
 let workspaceDir: string;
 
@@ -29,6 +30,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set<string>(),
     workspaceRoot: workspaceDir,
+    projectContext: createTestProjectContext(workspaceDir),
     ...overrides,
   };
 }

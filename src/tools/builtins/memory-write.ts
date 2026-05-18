@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { MemoryFileManager, MemoryPathError } from "../../memory/file-manager";
+import { MemoryPathError } from "../../memory/file-manager";
 import { INDEX_FILE, PREFERENCES_FILE } from "../../memory/constants";
 import { containsSecretPattern } from "../../security/patterns";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
-import type { ToolExecutionResult } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 // ---------------------------------------------------------------------------
 // Input schema
@@ -33,7 +33,7 @@ type MemoryWriteInput = z.infer<typeof MemoryWriteInputSchema>;
 // Tool factory
 // ---------------------------------------------------------------------------
 
-export function createMemoryWriteTool(fileManager: MemoryFileManager) {
+export function createMemoryWriteTool() {
   return defineTool({
     name: "memory_write",
     description:
@@ -44,7 +44,8 @@ export function createMemoryWriteTool(fileManager: MemoryFileManager) {
       "Knowledge topics automatically rebuild the memory index after writing.",
     inputSchema: MemoryWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    execute: async (input: MemoryWriteInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: MemoryWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const fileManager = ctx.projectContext.memory;
       // Resolve scope: preferences defaults to "user", topics default to "project"
       const resolvedScope = input.scope ?? (input.name === PREFERENCES_NAME ? "user" : "project");
 

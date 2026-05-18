@@ -214,7 +214,7 @@ describe("AgentFactory.delegate", () => {
     await mkdir(join(tmpRoot, ".specra", "memory"), { recursive: true });
     await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), "");
     await writeFile(join(tmpRoot, "AGENTS.md"), "# Test Project\n\nMinimal project context.");
-    __setSessionsDirForTest(join(tmpRoot, "sessions"));
+    __setSessionsDirForTest(() => join(tmpRoot, "sessions"));
   });
 
   afterEach(() => {

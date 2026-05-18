@@ -142,7 +142,7 @@ export const bashTool = defineTool({
     }
     return raw;
   },
-  permissions: [createBashPermission(process.cwd())],
+  permissions: [createBashPermission()],
   execute: async (input: BashInput, ctx: ToolExecutionContext) => {
     return runBashCommand(input, ctx);
   },

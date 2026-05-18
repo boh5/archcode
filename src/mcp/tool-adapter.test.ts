@@ -5,6 +5,7 @@ import { REDACTION_MARKER } from "../tools/security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../tools/types";
 import type { CallToolResultLike, McpClient } from "./client";
 import { adaptMcpTool } from "./tool-adapter";
+import { createTestProjectContext } from "../tools/test-project-context";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
     startedAt: 0,
     allowedTools: new Set(["mcp__context7__resolve-library-id"]),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

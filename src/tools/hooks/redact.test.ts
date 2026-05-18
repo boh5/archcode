@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionContext } from "../types";
 import { REDACTION_MARKER } from "../security";
 import { createRedactionHook } from "./redact";
+import { createTestProjectContext } from "../test-project-context";
 
 const RAW_SECRET = "sk_test_1234567890abcdef";
 
@@ -16,6 +17,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set<string>(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
     ...overrides,
   };
 }

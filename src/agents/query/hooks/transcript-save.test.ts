@@ -18,7 +18,7 @@ describe("createTranscriptSaveHook", () => {
   });
 
   beforeEach(() => {
-    __setSessionsDirForTest(TEST_TMP);
+    __setSessionsDirForTest(() => TEST_TMP);
   });
 
   test("reads store state and saves transcript with correct fields", async () => {
@@ -76,7 +76,7 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook()(ctx as never);
+    await createTranscriptSaveHook(undefined, "/tmp")(ctx as never);
 
     const filePath = join(TEST_TMP, `${sessionId}.json`);
     const file = Bun.file(filePath);
@@ -101,10 +101,10 @@ describe("createTranscriptSaveHook", () => {
       const ctx = { store, modelInfo: undefined as never };
 
       // Override sessions dir to an impossible path for this test only
-      __setSessionsDirForTest("/nonexistent/path/that/cannot/be/created/by/normal/user");
+      __setSessionsDirForTest(() => "/nonexistent/path/that/cannot/be/created/by/normal/user");
 
       await expect(
-        createTranscriptSaveHook()(ctx as never),
+        createTranscriptSaveHook(undefined, "/tmp")(ctx as never),
       ).resolves.toBeUndefined();
 
       expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -114,7 +114,7 @@ describe("createTranscriptSaveHook", () => {
       );
     } finally {
       console.warn = originalWarn;
-      __setSessionsDirForTest(TEST_TMP);
+      __setSessionsDirForTest(() => TEST_TMP);
     }
   });
 
@@ -136,7 +136,7 @@ describe("createTranscriptSaveHook", () => {
       modelInfo: undefined as never,
     };
 
-    await createTranscriptSaveHook()(ctx as never);
+    await createTranscriptSaveHook(undefined, "/tmp")(ctx as never);
 
     const filePath = join(TEST_TMP, `${sessionId}.json`);
     const file = Bun.file(filePath);

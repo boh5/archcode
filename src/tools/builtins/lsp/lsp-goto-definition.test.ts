@@ -11,6 +11,7 @@ import { inferToolErrorKindFromResult } from "../../errors";
 import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspGotoDefinitionTool } from "./lsp-goto-definition";
+import { createTestProjectContext } from "../../test-project-context";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-goto-definition");
 
@@ -224,6 +225,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["lsp_goto_definition"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
     ...overrides,
   };
 }

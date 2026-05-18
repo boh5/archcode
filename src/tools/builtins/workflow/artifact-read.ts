@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
-import { ArtifactPathError, WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
+import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { ArtifactPathError } from "../../../agents/workflow/artifacts";
 
 const ArtifactReadInputSchema = z.strictObject({
   workflowId: z.string().min(1),
@@ -11,15 +11,14 @@ const ArtifactReadInputSchema = z.strictObject({
 
 type ArtifactReadInput = z.infer<typeof ArtifactReadInputSchema>;
 
-export function createArtifactReadTool(
-  artifactManager: WorkflowArtifactManager,
-): AnyToolDescriptor {
+export function createArtifactReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_read",
     description: "Read a workflow artifact by workflow id and artifact path.",
     inputSchema: ArtifactReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
-    execute: async (input: ArtifactReadInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: ArtifactReadInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const artifactManager = ctx.projectContext.artifacts;
       try {
         const artifact = await artifactManager.read(input.workflowId, input.path);
         return JSON.stringify(artifact, null, 2);

@@ -5,6 +5,7 @@ import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import type { ProjectContext } from "../../projects/types";
 import type { AgentFactoryLike } from "../factory-types";
 import type { QueryLoopHooks } from "./loop-hooks";
 
@@ -16,6 +17,7 @@ export interface QueryLoopOptions {
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
   workspaceRoot?: string;
+  projectContext: ProjectContext;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
   abort?: AbortSignal;

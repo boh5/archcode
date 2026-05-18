@@ -14,6 +14,7 @@ import type { SessionStoreState } from "../../store/index";
 import { createMockStore } from "../../store/test-helpers";
 import type { ToolExecutionContext } from "../types";
 import { createReadBeforeEditPermission } from "./read-before-edit";
+import { createTestProjectContext } from "../test-project-context";
 
 let workspaceDir: string;
 
@@ -39,6 +40,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set(["file_read", "file_edit", "file_write"]),
     workspaceRoot: workspaceDir,
+    projectContext: createTestProjectContext(workspaceDir),
     ...overrides,
   };
 }

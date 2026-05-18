@@ -83,6 +83,7 @@ export function createTitleGenerationTask(
             steps: updatedState.steps,
             todos: updatedState.todos,
           },
+          ctx.workspaceRoot,
         );
       } catch (err) {
         console.warn(

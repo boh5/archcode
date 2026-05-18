@@ -17,6 +17,7 @@ import {
   invalidateReadSnapshot,
 } from "./read-snapshot";
 import { resolveAndValidatePath } from "../security";
+import { createTestProjectContext } from "../test-project-context";
 
 // ─── Test dirs ───
 
@@ -46,6 +47,7 @@ function makeCtx(
     startedAt: Date.now(),
     allowedTools: new Set(["file_read", "file_edit", "file_write"]),
     workspaceRoot: workspaceDir,
+    projectContext: createTestProjectContext(workspaceDir),
     ...overrides,
   };
 }
@@ -214,6 +216,7 @@ describe("LRU eviction", () => {
       store,
       input: { path: file },
       workspaceRoot: workspaceDir,
+    projectContext: createTestProjectContext(workspaceDir),
     });
 
     const hook = createReadSnapshotAfterHook();
@@ -240,6 +243,7 @@ describe("LRU eviction", () => {
       store,
       input: { path: file },
       workspaceRoot: workspaceDir,
+    projectContext: createTestProjectContext(workspaceDir),
     });
 
     const hook = createReadSnapshotAfterHook();

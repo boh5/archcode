@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
-import { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
+import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
+import type { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
 import {
   processCriticDecision,
   type CriticDecision,
@@ -12,7 +12,6 @@ import {
   WorkflowPathError,
   WorkflowArtifactKindSchema,
   WorkflowStageSchema,
-  WorkflowStateManager,
   type WorkflowStage,
 } from "../../../agents/workflow/state";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
@@ -28,16 +27,15 @@ const WorkflowUpdateStageInputSchema = z.strictObject({
 
 type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
 
-export function createWorkflowUpdateStageTool(
-  stateManager: WorkflowStateManager,
-  artifactManager: WorkflowArtifactManager,
-): AnyToolDescriptor {
+export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_update_stage",
     description: "Update workflow stage. This is the only workflow tool that mutates stage/status.",
     inputSchema: WorkflowUpdateStageInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    execute: async (input: WorkflowUpdateStageInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const stateManager = ctx.projectContext.workflowState;
+      const artifactManager = ctx.projectContext.artifacts;
       try {
         const currentState = await stateManager.read(input.workflowId);
         if (input.criticDecision) {

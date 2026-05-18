@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { parseGitStatusOutput, gitStatusTool } from "./git-status";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 function exec(cmd: string, args: string[], cwd: string): void {
   const result = Bun.spawnSync([cmd, ...args], { cwd });
@@ -38,6 +39,7 @@ function mockCtx(
     startedAt: Date.now(),
     allowedTools: new Set(["git_status"]),
     workspaceRoot: tmpDir,
+    projectContext: createTestProjectContext(tmpDir),
     ...overrides,
   };
 }

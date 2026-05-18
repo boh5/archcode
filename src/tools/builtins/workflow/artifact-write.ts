@@ -1,23 +1,21 @@
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
-import type { AnyToolDescriptor, ToolExecutionResult } from "../../types";
+import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import {
   ArtifactPathError,
-  WorkflowArtifactManager,
   WorkflowArtifactWriteInputSchema,
   type WorkflowArtifactWriteInput,
 } from "../../../agents/workflow/artifacts";
 import { WorkflowPathError } from "../../../agents/workflow/state";
 
-export function createArtifactWriteTool(
-  artifactManager: WorkflowArtifactManager,
-): AnyToolDescriptor {
+export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_write",
     description: "Write a workflow artifact and update artifact metadata without changing workflow stage or status.",
     inputSchema: WorkflowArtifactWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    execute: async (input: WorkflowArtifactWriteInput): Promise<string | ToolExecutionResult> => {
+    execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
+      const artifactManager = ctx.projectContext.artifacts;
       try {
         const result = await artifactManager.write(input);
         return JSON.stringify(result, null, 2);

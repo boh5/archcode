@@ -4,6 +4,7 @@ import { RipgrepNotFoundError } from "../ripgrep/service";
 import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
 import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 // ─── Helpers ───
 
@@ -28,6 +29,7 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
     startedAt: Date.now(),
     allowedTools: new Set(["grep"]),
     workspaceRoot: "/workspace",
+    projectContext: createTestProjectContext("/workspace"),
     ...overrides,
   };
 }

@@ -5,6 +5,7 @@ import { createSessionStore } from "../../store/store";
 import type { Reminder, SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors, waitForReminderTool, WaitForReminderInputSchema } from "./index";
+import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder");
 
@@ -25,6 +26,7 @@ function makeCtx(store: StoreApi<SessionStoreState>, abort = new AbortController
     startedAt: Date.now(),
     allowedTools: new Set(["wait_for_reminder"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
   };
 }
 

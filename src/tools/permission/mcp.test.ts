@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createMcpDestructivePermission } from "./mcp";
 import type { ToolExecutionContext } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 function mockCtx(): ToolExecutionContext {
   return {
@@ -13,6 +14,7 @@ function mockCtx(): ToolExecutionContext {
     startedAt: Date.now(),
     allowedTools: new Set(),
     workspaceRoot: "/tmp",
+    projectContext: createTestProjectContext("/tmp"),
   };
 }
 

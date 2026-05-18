@@ -4,6 +4,7 @@ import { createTitleGenerationTask } from "../../../background/tasks/title-gener
 
 export function createTitleGenerationHook(
   btm: BackgroundTaskManager,
+  workspaceRoot: string,
 ): (ctx: BeforeModelCallContext) => Promise<void> {
   let triggered = false;
 
@@ -20,7 +21,7 @@ export function createTitleGenerationHook(
       store: ctx.store,
       modelInfo: ctx.modelInfo,
       modelOptions: ctx.modelOptions,
-      workspaceRoot: process.cwd(),
+      workspaceRoot,
       abort: ctx.abort,
     }));
   };

@@ -1,6 +1,6 @@
-import React from "react";
-import { render } from "ink";
 import { loadConfig } from "./config/load";
+import { realpath } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
@@ -21,7 +21,9 @@ import {
   type ToolRegistry,
 } from "./tools/index";
 import { registerBuiltinTools } from "./core/index";
-import { App } from "./tui/App";
+import { bootServer } from "./server/boot";
+import { ProjectContextResolver } from "./projects/context-resolver";
+import { ProjectRegistry } from "./projects/registry";
 import {
   BUILTIN_MCP_SERVERS,
   McpManager,
@@ -34,16 +36,21 @@ const DEFAULT_CONFIG_PATH = ".specra.json";
 
 export interface SpecraRuntimeOptions {
   configPath?: string;
+  workspaceRoot?: string;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
   warn?: (warning: McpWarning) => void;
 }
 
 export interface SpecraRuntime {
-  agent: Agent;
-  mcpManager: McpManager;
-  toolRegistry: ToolRegistry;
-  providerRegistry: ProviderRegistry;
-  warnings: McpWarning[];
+  /** @deprecated Use agentFor(workspaceRoot) instead. Points to the first resolved project's agent. */
+  readonly agent: Agent;
+  readonly mcpManager: McpManager;
+  readonly toolRegistry: ToolRegistry;
+  readonly providerRegistry: ProviderRegistry;
+  readonly warnings: McpWarning[];
+  readonly projectRegistry: ProjectRegistry;
+  readonly contextResolver: ProjectContextResolver;
+  agentFor(workspaceRoot: string): Promise<Agent>;
 }
 
 export async function createSpecraRuntime(
@@ -103,20 +110,56 @@ export async function createSpecraRuntime(
       }
     }
 
-    const workspaceRoot = process.cwd();
-    const factory = createAgentFactory({
-      definitions: defaultAgentDefinitions,
-      providerRegistry,
+    const defaultWorkspaceRoot = await resolveWorkspaceRoot(options);
+    const projectRegistry = new ProjectRegistry();
+    const contextResolver = new ProjectContextResolver();
+    const agentCache = new Map<string, Agent>();
+
+    function createAgentForWorkspace(workspaceRoot: string): Agent {
+      const factory = createAgentFactory({
+        definitions: defaultAgentDefinitions,
+        providerRegistry,
+        toolRegistry,
+        workspaceRoot,
+        config,
+        projectContextResolver: contextResolver,
+      });
+      return factory.createRootAgent("orchestrator");
+    }
+
+    const agent = createAgentForWorkspace(defaultWorkspaceRoot);
+    agentCache.set(defaultWorkspaceRoot, agent);
+
+    async function agentFor(workspaceRoot: string): Promise<Agent> {
+      const cached = agentCache.get(workspaceRoot);
+      if (cached) return cached;
+
+      const agent = createAgentForWorkspace(workspaceRoot);
+      agentCache.set(workspaceRoot, agent);
+      return agent;
+    }
+
+    return {
+      agent,
+      mcpManager,
       toolRegistry,
-      workspaceRoot,
-      config,
-    });
-    const agent = factory.createRootAgent("orchestrator");
-    return { agent, mcpManager, toolRegistry, providerRegistry, warnings };
+      providerRegistry,
+      warnings,
+      projectRegistry,
+      contextResolver,
+      agentFor,
+    };
   } catch (err) {
     await closeMcpManagerBestEffort(mcpManager, recordWarning);
     throw err;
   }
+}
+
+async function resolveWorkspaceRoot(options: SpecraRuntimeOptions): Promise<string> {
+  if (options.workspaceRoot) return options.workspaceRoot;
+  if (Bun.env.SPECRA_WORKSPACE_ROOT) return Bun.env.SPECRA_WORKSPACE_ROOT;
+
+  return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
 }
 
 async function discoverMcpTools(
@@ -214,7 +257,7 @@ async function main() {
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 
-  render(React.createElement(App, { agent: runtime.agent }));
+  await bootServer(runtime);
 }
 
 // Only run main() when this module is the entry point

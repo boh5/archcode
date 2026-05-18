@@ -8,6 +8,7 @@ import { createRegistry } from "../registry";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { todoWriteTool, TodoWriteInputSchema } from "./todo-write";
+import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "todo-write");
 
@@ -26,6 +27,7 @@ function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {
     startedAt: Date.now(),
     allowedTools: new Set(["todo_write"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
   };
 }
 

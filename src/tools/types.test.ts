@@ -15,7 +15,23 @@ import type {
   PermissionDecision,
   ToolPermission,
 } from "./types";
-import { DuplicateToolError } from "./types";
+import { createToolExecutionContext, DuplicateToolError } from "./types";
+import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
+import { WorkflowStateManager } from "../agents/workflow/state";
+import { MemoryFileManager } from "../memory/file-manager";
+import type { ProjectContext } from "../projects/types";
+import { ProjectApprovalManager } from "./permission";
+
+function makeProjectContext(workspaceRoot: string): ProjectContext {
+  const workflowState = new WorkflowStateManager(workspaceRoot);
+  return {
+    project: { slug: "types-test", name: "Types Test", workspaceRoot, addedAt: new Date().toISOString() },
+    workflowState,
+    memory: new MemoryFileManager({ project: `${workspaceRoot}/memory`, user: `${workspaceRoot}/user-memory` }),
+    approvals: new ProjectApprovalManager(),
+    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
+  };
+}
 
 // ─── DuplicateToolError ───
 
@@ -227,7 +243,7 @@ describe("PermissionErrorCode", () => {
 // ─── Extended ToolExecutionContext ───
 
 test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
-  const ctx: ToolExecutionContext = {
+  const ctx = createToolExecutionContext({
     store: {} as any,
     toolName: "test",
     toolCallId: "call_1",
@@ -238,14 +254,14 @@ test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
     startedAt: Date.now(),
     durationMs: 10,
     allowedTools: new Set(["echo"]),
-    workspaceRoot: "/tmp/workspace",
-  };
+    projectContext: makeProjectContext("/tmp/workspace"),
+  });
   expect(ctx.allowedTools.has("echo")).toBe(true);
   expect(ctx.workspaceRoot).toBe("/tmp/workspace");
 });
 
 test("ToolExecutionContext confirmPermission is optional", () => {
-  const ctx: ToolExecutionContext = {
+  const ctx = createToolExecutionContext({
     store: {} as any,
     toolName: "test",
     toolCallId: "call_1",
@@ -254,8 +270,8 @@ test("ToolExecutionContext confirmPermission is optional", () => {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(),
-    workspaceRoot: "/tmp",
-  };
+    projectContext: makeProjectContext("/tmp"),
+  });
   expect(ctx.confirmPermission).toBeUndefined();
 });
 
@@ -376,7 +392,7 @@ describe("ToolDescriptor — permissions field", () => {
 
 describe("ToolExecutionContext — permissionOutcome preserved", () => {
   test("permissionOutcome receives allow/deny/ask from permission decisions", () => {
-    const ctx: ToolExecutionContext = {
+    const ctx = createToolExecutionContext({
       store: {} as any,
       toolName: "test",
       toolCallId: "call_1",
@@ -385,9 +401,9 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
       abort: new AbortController().signal,
       startedAt: Date.now(),
       allowedTools: new Set(),
-      workspaceRoot: "/tmp",
+      projectContext: makeProjectContext("/tmp"),
       permissionOutcome: "allow",
-    };
+    });
     expect(ctx.permissionOutcome).toBe("allow");
 
     const ctx2: ToolExecutionContext = {
@@ -404,7 +420,7 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
   });
 
   test("permissionOutcome is optional", () => {
-    const ctx: ToolExecutionContext = {
+    const ctx = createToolExecutionContext({
       store: {} as any,
       toolName: "test",
       toolCallId: "call_1",
@@ -413,8 +429,8 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
       abort: new AbortController().signal,
       startedAt: Date.now(),
       allowedTools: new Set(),
-      workspaceRoot: "/tmp",
-    };
+      projectContext: makeProjectContext("/tmp"),
+    });
     expect(ctx.permissionOutcome).toBeUndefined();
   });
 });

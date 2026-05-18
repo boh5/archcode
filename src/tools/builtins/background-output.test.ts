@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createSessionStore } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { executeBackgroundOutput } from "./background-output";
+import { createTestProjectContext } from "../test-project-context";
 
 function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): ToolExecutionContext {
   return {
@@ -14,6 +15,7 @@ function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): Too
     startedAt: 0,
     allowedTools: new Set(["background_output"]),
     workspaceRoot: import.meta.dir,
+    projectContext: createTestProjectContext(import.meta.dir),
   };
 }
 

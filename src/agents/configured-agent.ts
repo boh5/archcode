@@ -6,6 +6,8 @@ import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../backgr
 import { CommandRegistry, createCompactCommand } from "../commands/index";
 import type { ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
+import { ProjectContextResolver } from "../projects/context-resolver";
+import type { ProjectContext } from "../projects/types";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
@@ -15,7 +17,7 @@ import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
-import { AgentRunningError } from "./errors";
+import { AgentRunningError, MissingProjectContextError } from "./errors";
 import type { AgentDefinition, AgentFactoryLike } from "./factory-types";
 import {
   createAutoCompactHook,
@@ -42,6 +44,7 @@ export interface ConfiguredAgentOptions {
   readonly workspaceRoot?: string;
   readonly depth?: number;
   readonly backgroundTaskManager?: BackgroundTaskManager;
+  readonly projectContextResolver?: ProjectContextResolver;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly agentFactory?: AgentFactoryLike;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
@@ -66,6 +69,7 @@ export class ConfiguredAgent implements Agent {
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
   private readonly askUserDefault: AskUserCallback | undefined;
   private readonly workspaceRoot: string;
+  private readonly projectContextResolver: ProjectContextResolver;
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
@@ -86,7 +90,11 @@ export class ConfiguredAgent implements Agent {
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
     this.store = options.store ?? createSessionStore(crypto.randomUUID());
-    this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+    if (options.workspaceRoot === undefined) {
+      throw new MissingProjectContextError("ConfiguredAgent requires options.workspaceRoot");
+    }
+    this.workspaceRoot = options.workspaceRoot;
+    this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
     this.depth = options.depth ?? 0;
     this.backgroundTaskManager = options.backgroundTaskManager;
     this.resolveAllowedTools = options.resolveAllowedTools;
@@ -130,6 +138,7 @@ export class ConfiguredAgent implements Agent {
       await this.ensureAgentsMd();
 
       const allowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
+      const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const promptContext: PromptContext = {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
@@ -149,6 +158,7 @@ export class ConfiguredAgent implements Agent {
             modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,
+            projectContext,
             workspaceRoot: this.workspaceRoot,
             confirmPermission: confirm,
             askUser,
@@ -253,7 +263,7 @@ export class ConfiguredAgent implements Agent {
       policy.titleGeneration === "enabled" ||
       (policy.titleGeneration === "unless-supplied" && !this.store.getState().title?.trim())
     ) {
-      beforeModelCall.push(createTitleGenerationHook(btm));
+      beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot));
     }
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
@@ -266,7 +276,7 @@ export class ConfiguredAgent implements Agent {
       afterLoopEnd.push(todoContinuation.afterLoopEnd);
     }
     if (policy.transcriptSave) {
-      afterLoopEnd.push(createTranscriptSaveHook(btm));
+      afterLoopEnd.push(createTranscriptSaveHook(btm, this.workspaceRoot));
     }
     if (policy.memoryExtraction) {
       afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots));

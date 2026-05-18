@@ -6,6 +6,10 @@ import { z } from "zod";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
+import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
+import { WorkflowStateManager } from "../agents/workflow/state";
+import { MemoryFileManager } from "../memory/file-manager";
+import type { ProjectContext } from "../projects/types";
 import type {
   ToolDescriptor,
   Logger,
@@ -13,7 +17,7 @@ import type {
   ToolCallLike,
   ToolPermission,
 } from "./types";
-import { DuplicateToolError } from "./types";
+import { createToolExecutionContext, DuplicateToolError } from "./types";
 import { DestructiveToolPermissionError } from "./types";
 import { createExecutionLogger } from "./hooks/logger";
 import { createAuditHook, type AuditEvent } from "./hooks/audit";
@@ -49,6 +53,28 @@ function makeLogger(): Logger & { warn: ReturnType<typeof mock> } {
     warn: mock((_message: string, _meta?: Record<string, unknown>) => {}),
     debug: mock(() => {}),
     info: mock(() => {}),
+  };
+}
+
+function makeProjectContext(
+  workspaceRoot: string,
+  approvals = new ProjectApprovalManager(),
+): ProjectContext {
+  const workflowState = new WorkflowStateManager(workspaceRoot);
+  return {
+    project: {
+      slug: "test-project",
+      name: "Test Project",
+      workspaceRoot,
+      addedAt: new Date().toISOString(),
+    },
+    workflowState,
+    memory: new MemoryFileManager({
+      project: join(workspaceRoot, ".specra", "memory"),
+      user: join(workspaceRoot, ".specra", "user-memory"),
+    }),
+    approvals,
+    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }
 
@@ -212,7 +238,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     overrides?: Partial<ToolExecutionContext>,
   ): ToolExecutionContext {
     const ac = new AbortController();
-    return {
+    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+    return createToolExecutionContext({
       store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
       toolName: "echo",
       toolCallId: "call-1",
@@ -221,9 +248,9 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       abort: ac.signal,
       startedAt: 0,
       allowedTools: new Set(["echo"]),
-      workspaceRoot: "/tmp",
+      projectContext: makeProjectContext(workspaceRoot),
       ...overrides,
-    };
+    });
   }
 
   function makeToolCall(
@@ -887,7 +914,6 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-deny-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Existing approval", reason: "already trusted" });
-      registry.setProjectApprovalManager(manager);
       registry.register({
         ...makeDescriptor("echo"),
         execute: mock(async () => "should not run"),
@@ -901,7 +927,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       const result = await registry.execute(
         makeToolCall(),
-        makeContext({ workspaceRoot, confirmPermission }),
+        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
       expect(result.isError).toBe(true);
@@ -918,7 +944,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         pathMode: "exact",
       };
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-prompt-${crypto.randomUUID()}`);
-      registry.setProjectApprovalManager(new ProjectApprovalManager());
+      const manager = new ProjectApprovalManager();
+      await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
         permissions: [async () => ({
@@ -945,7 +972,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       const result = await registry.execute(
         makeToolCall(),
-        makeContext({ workspaceRoot, confirmPermission }),
+        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
       expect(result.isError).toBe(false);
@@ -959,7 +986,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         effects: ["network"],
       };
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-redaction-${crypto.randomUUID()}`);
-      registry.setProjectApprovalManager(new ProjectApprovalManager());
+      const manager = new ProjectApprovalManager();
+      await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
         permissions: [async () => ({
@@ -985,7 +1013,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       const result = await registry.execute(
         makeToolCall(),
-        makeContext({ workspaceRoot, confirmPermission }),
+        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
       expect(result.isError).toBe(false);
@@ -1001,7 +1029,6 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-match-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Fetch example.com", reason: "trusted origin" });
-      registry.setProjectApprovalManager(manager);
       const desc = makeSpiedDescriptor("echo");
       desc.permissions = [async () => ({
         outcome: "ask",
@@ -1013,7 +1040,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       const result = await registry.execute(
         makeToolCall(),
-        makeContext({ workspaceRoot, confirmPermission }),
+        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
       expect(result.isError).toBe(false);
@@ -1025,7 +1052,6 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const manager = new ProjectApprovalManager();
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-ineligible-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
-      registry.setProjectApprovalManager(manager);
       registry.register({
         ...makeDescriptor("echo"),
         permissions: [async () => ({
@@ -1046,7 +1072,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
 
       const result = await registry.execute(
         makeToolCall(),
-        makeContext({ workspaceRoot, confirmPermission }),
+        makeContext({ projectContext: makeProjectContext(workspaceRoot, manager), confirmPermission }),
       );
 
       expect(result.isError).toBe(false);
@@ -1061,7 +1087,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       };
       const manager = new ProjectApprovalManager();
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-persist-${crypto.randomUUID()}`);
-      registry.setProjectApprovalManager(manager);
+      await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
         permissions: [async () => ({
@@ -1074,7 +1100,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       const result = await registry.execute(
         makeToolCall(),
         makeContext({
-          workspaceRoot,
+          projectContext: makeProjectContext(workspaceRoot, manager),
           agentName: "Orchestrator",
           currentDepth: 0,
           confirmPermission: async () => "approve_always",
@@ -1583,7 +1609,8 @@ describe("hook integration with registry", () => {
     overrides?: Partial<ToolExecutionContext>,
   ): ToolExecutionContext {
     const ac = new AbortController();
-    return {
+    const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+    return createToolExecutionContext({
       store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
       toolName: "echo",
       toolCallId: "call-1",
@@ -1592,9 +1619,9 @@ describe("hook integration with registry", () => {
       abort: ac.signal,
       startedAt: 0,
       allowedTools: new Set(["echo"]),
-      workspaceRoot: "/tmp",
+      projectContext: makeProjectContext(workspaceRoot),
       ...overrides,
-    };
+    });
   }
 
   function makeToolCall(
@@ -1875,7 +1902,8 @@ describe("Permission API contract — registry", () => {
       overrides?: Partial<ToolExecutionContext>,
     ): ToolExecutionContext {
       const ac = new AbortController();
-      return {
+      const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
+      return createToolExecutionContext({
         store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
         toolName: "echo",
         toolCallId: "call-1",
@@ -1884,9 +1912,9 @@ describe("Permission API contract — registry", () => {
         abort: ac.signal,
         startedAt: 0,
         allowedTools: new Set(["echo"]),
-        workspaceRoot: "/tmp",
+        projectContext: makeProjectContext(workspaceRoot),
         ...overrides,
-      };
+      });
     }
 
     function makeToolCall(

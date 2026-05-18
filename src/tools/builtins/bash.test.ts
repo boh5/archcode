@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { bashTool, buildBashEnv, formatBashOutput, runBashCommand } from "./bash";
 import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 function stringToStream(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -46,6 +47,7 @@ function mockCtx(
     startedAt: Date.now(),
     allowedTools: new Set(["bash"]),
     workspaceRoot,
+    projectContext: createTestProjectContext(workspaceRoot),
     ...overrides,
   };
 }

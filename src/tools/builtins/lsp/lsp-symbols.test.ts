@@ -11,6 +11,7 @@ import { inferToolErrorKindFromResult } from "../../errors";
 import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspSymbolsTool } from "./lsp-symbols";
+import { createTestProjectContext } from "../../test-project-context";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-symbols");
 
@@ -240,6 +241,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     startedAt: Date.now(),
     allowedTools: new Set(["lsp_symbols"]),
     workspaceRoot: testDir,
+    projectContext: createTestProjectContext(testDir),
     ...overrides,
   };
 }
