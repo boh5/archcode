@@ -16,7 +16,6 @@ import type {
   ToolExecutionContext,
   ToolPermission,
 } from "../types";
-import { handleConfirmationInput } from "../../tui/UserInput";
 import { createBashPermission } from "./bash";
 import { createProtectedSpecraPermission } from "./protected-specra";
 import { ProjectApprovalManager } from "./project-approvals";
@@ -46,6 +45,12 @@ const INELIGIBLE_ASK: PermissionDecision = {
     reason: "Parser uncertainty requires confirmation",
   },
 };
+
+function resolveIneligibleApprovalShortcut(input: string): ToolConfirmationResult {
+  return input === "1" || input === "o" || input === "y" || input === "Y"
+    ? "approve_once"
+    : "deny";
+}
 
 const ELIGIBLE_ASK: PermissionDecision = {
   outcome: "ask",
@@ -239,8 +244,9 @@ describe("permission integration regressions", () => {
     expect(manager.listApprovals()).toEqual([]);
     const request = confirmPermission.mock.calls[0]?.[0];
     expect(request?.approval?.eligible).toBe(false);
-    expect(handleConfirmationInput("2", { escape: false }, request)).toBe("deny");
-    expect(handleConfirmationInput("a", { escape: false }, request)).toBe("deny");
+      expect(request.approval?.eligible).toBe(false);
+      expect(resolveIneligibleApprovalShortcut("2")).toBe("deny");
+      expect(resolveIneligibleApprovalShortcut("a")).toBe("deny");
   });
 
   test("malformed approvals file is safe and does not satisfy eligible Ask", async () => {

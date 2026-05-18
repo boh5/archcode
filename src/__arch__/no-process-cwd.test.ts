@@ -1,21 +1,21 @@
 /**
- * Architecture regression test: prevent process.cwd() from reappearing
+ * Architecture regression test: prevent implicit current-working-directory lookup from reappearing
  * in non-test source files.
  *
- * M5 removed all implicit process.cwd() fallbacks from:
+ * M5 removed all implicit cwd fallbacks from:
  *   - src/main.ts         → workspaceRoot from config path
  *   - src/agents/query/loop.ts  → MissingProjectContextError
  *   - src/agents/configured-agent.ts → MissingProjectContextError
  *   - src/agents/query/hooks/title-generation.ts → explicit workspaceRoot arg
  *   - src/tools/builtins/bash.ts → ctx.workspaceRoot via ProjectContext
  *
- * This test locks in M5's win by failing if anyone reintroduces process.cwd()
+ * This test locks in M5's win by failing if anyone reintroduces implicit cwd lookup
  * outside of .test.ts files or __test_tmp__/ test fixtures.
  */
 
 import { test, expect } from "bun:test";
 
-test("no process.cwd in non-test src/ files", () => {
+test("no implicit cwd lookup in non-test src/ files", () => {
   const proc = Bun.spawnSync([
     "grep",
     "-rn",
@@ -39,7 +39,7 @@ test("no process.cwd in non-test src/ files", () => {
 
   const message =
     violations.length > 0
-      ? `Found process.cwd in non-test files:\n${violations.join("\n")}`
+      ? `Found implicit cwd lookup in non-test files:\n${violations.join("\n")}`
       : "no violations (all matches are in test files or fixtures)";
   expect(violations, message).toEqual([]);
 });

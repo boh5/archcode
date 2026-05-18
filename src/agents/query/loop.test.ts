@@ -143,13 +143,14 @@ function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder
 }
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
+  const workspaceRoot = import.meta.dir;
   return {
     modelInfo: dummyModelInfo,
     toolRegistry: createRegistry(),
     store: createStore(),
     allowedTools: [],
-    projectContext: createTestProjectContext(process.cwd()),
-    workspaceRoot: process.cwd(),
+    projectContext: createTestProjectContext(workspaceRoot),
+    workspaceRoot,
     ...overrides,
   };
 }
@@ -901,7 +902,8 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       { text: "Done" },
     ]);
 
-    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Hi");
+    const workspaceRoot = import.meta.dir;
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], workspaceRoot }), "Hi");
 
     expect(executedIds).toEqual(["tc-1", "tc-2"]);
     expect(executeSpy).toHaveBeenCalledTimes(2);
@@ -1524,7 +1526,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       { text: "Done" },
     ]);
 
-    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"] }), "Hi");
+    const workspaceRoot = import.meta.dir;
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], workspaceRoot }),
+      "Hi",
+    );
 
     expect(executeSpy.mock.calls[0][0]).toEqual({
       toolCallId: "tc-1",
@@ -1537,7 +1543,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       toolCallId: "tc-1",
       input: { message: "x" },
       step: 0,
-      workspaceRoot: process.cwd(),
+      workspaceRoot,
     });
     expect([...contexts[0]!.allowedTools]).toEqual(["echo"]);
     expect(assistantMessages(store)[0].parts[0]).toMatchObject({

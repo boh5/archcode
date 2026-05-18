@@ -7,6 +7,7 @@ import { createTestProjectContext } from "../test-project-context";
 // ─── Helpers ───
 
 function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
+  const workspaceRoot = import.meta.dir;
   return {
     store: {} as any,
     toolName: "web_fetch",
@@ -16,8 +17,8 @@ function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContex
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["web_fetch"]),
-    workspaceRoot: process.cwd(),
-    projectContext: createTestProjectContext(process.cwd()),
+    workspaceRoot,
+    projectContext: createTestProjectContext(workspaceRoot),
     ...overrides,
   };
 }

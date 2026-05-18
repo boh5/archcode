@@ -92,6 +92,7 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error): McpManager {
 }
 
 function makeContext(toolName: string, input: unknown): ToolExecutionContext {
+  const workspaceRoot = import.meta.dir;
   return {
     store: createSessionStore(`main-test-${crypto.randomUUID()}`),
     toolName,
@@ -101,8 +102,8 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set([toolName]),
-    workspaceRoot: process.cwd(),
-    projectContext: createTestProjectContext(process.cwd()),
+    workspaceRoot,
+    projectContext: createTestProjectContext(workspaceRoot),
   };
 }
 

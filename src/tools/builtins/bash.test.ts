@@ -54,6 +54,7 @@ function mockCtx(
 
 describe("bashTool", () => {
   const originalSpawn = Bun.spawn;
+  const testWorkspaceRoot = realpathSync.native(import.meta.dir);
 
   afterEach(() => {
     Bun.spawn = originalSpawn;
@@ -162,7 +163,7 @@ describe("bashTool", () => {
     // @ts-expect-error — Bun.spawn is mutable in test environment
     Bun.spawn = mock(() => mockSpawnResult("", "boom\n", 7));
 
-    const result = await runBashCommand({ command: "pwd" }, mockCtx(process.cwd()));
+    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
     const nonzeroParsed = JSON.parse(result.output);
@@ -183,7 +184,7 @@ describe("bashTool", () => {
       kill,
     }));
 
-    const result = await runBashCommand({ command: "pwd", timeoutMs: 1 }, mockCtx(process.cwd()));
+    const result = await runBashCommand({ command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
 
     expect(kill).toHaveBeenCalledTimes(1);
     const timeoutParsed = JSON.parse(result.output);
@@ -208,7 +209,7 @@ describe("bashTool", () => {
 
     const promise = runBashCommand(
       { command: "pwd" },
-      mockCtx(process.cwd(), { abort: abortController.signal }),
+      mockCtx(testWorkspaceRoot, { abort: abortController.signal }),
     );
     abortController.abort();
 
@@ -229,7 +230,7 @@ describe("bashTool", () => {
 
     const result = await registry.execute(
       { toolName: "bash", toolCallId: "denied", input: { command: "sudo echo hi" } },
-      mockCtx(process.cwd()),
+      mockCtx(testWorkspaceRoot),
     );
 
     expect(result.isError).toBe(true);
