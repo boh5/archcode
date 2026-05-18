@@ -1,15 +1,38 @@
 # Specra
 
-Long-running coding CLI agent with two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
+Long-running coding agent with a Hono server, React Web UI, two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Quick Start
 
 ```sh
 bun install
-bun run dev          # Run CLI entry point
 bun run typecheck    # Type check
 bun test             # Run tests
 ```
+
+| Scenario | Command | Description |
+|---|---|---|
+| Debug (recommended): separate logs | Terminal 1 `bun run server` + Terminal 2 `bun run web` | Hono and Vite as separate processes, logs don't interfere |
+| One-click dev (merged logs) | `bun run dev` | concurrently starts both, output with `[server]` / `[web]` prefix |
+| Production | `bun run build && bun run start` | Vite outputs static → Hono single-port serves API + UI |
+
+`bun run server` starts the Hono API/SSE server from `src/main.ts`; `bun run web` starts the Vite React frontend from `src/web`. They can run separately for cleaner logs while developing. `bun run dev` runs both at once through `concurrently`.
+
+### Server Environment
+
+| Variable | Default | Description |
+|---|---|---|
+| `SPECRA_PORT` | `4096` | Hono server port. If the preferred port is unavailable, the server falls back to an ephemeral port. |
+| `SPECRA_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Unset means development mode with permissive CORS. |
+| `SPECRA_HOST` | unset | Host value for deployments or clients that need an externally advertised host. |
+| `SPECRA_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
+| `SPECRA_PROJECTS_DIR` | unset | Base directory used by project-selection flows that need a projects root. |
+
+### Projects and Web UI
+
+Specra is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, memory, workflow state, approvals, and artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
+
+Use the Web UI **Add Project** flow to register an existing workspace directory. The server validates that the path is an absolute existing directory, stores it in the registry, assigns a stable slug, and then opens project-specific sessions against that workspace.
 
 ## Configuration (`.specra.json`)
 
@@ -193,13 +216,16 @@ All errors fail fast at agent creation time — not mid-stream.
 ## Architecture
 
 ```
-src/main.ts                         # CLI entry: createSpecraRuntime() → config → providers → tools → MCP → agent → Ink render
+src/main.ts                         # Headless server entry: createSpecraRuntime() → config → providers → tools → MCP → boot Hono
 src/config/                         # Config loading (JSON), Zod validation (.strict() on all schemas)
 src/provider/                        # Provider registry & ModelInfo (wraps AI SDK instances)
 src/agents/definitions/              # AgentDefinition records for orchestrator, explore, and workflow roles
 src/agents/factory.ts                # Agent creation and delegation through ConfiguredAgent
 src/agents/model-resolver.ts         # Agent → model + resolved options (fail-fast)
 src/agents/query/loop.ts             # streamText + tool execution cycle (max 50 steps)
+src/projects/                        # Multi-project registry and per-workspace context resolver
+src/server/                          # Hono REST + SSE server with auth, CORS, errors, lifecycle
+src/web/                             # Vite + React + Tailwind frontend
 src/compact/                         # 3-phase context compaction pipeline
 src/memory/                          # Persistent memory (atomic writes, frontmatter, index)
 src/lsp/                             # LSP client pool (18 language servers, 50+ ext mappings)
@@ -209,13 +235,17 @@ src/tools/                           # 21 builtin tools with guard/hook pipeline
 **Data flow:**
 ```
 .specra.json → config → resolveAgentModel() → ModelInfo + resolvedOptions
-  → OrchestratorAgent → query loop → store → TUI
+  → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
 ```
 
 ## Development
 
 ```sh
-bun run dev          # Run CLI
+bun run server       # Start Hono API/SSE server with hot reload
+bun run web          # Start Vite Web UI dev server
+bun run dev          # Start server + web together with prefixed merged logs
+bun run build        # Type check + build Web UI assets
+bun run start        # Start production server
 bun run typecheck    # Type check (run first)
 bun test             # Run tests
 ```
