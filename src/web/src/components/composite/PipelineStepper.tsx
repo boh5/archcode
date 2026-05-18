@@ -1,7 +1,6 @@
 import { useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
 
-/** The 6 visible steps in the pipeline stepper. */
 const PIPELINE_STEPS = [
   { icon: "P", label: "product" },
   { icon: "C", label: "critic" },
@@ -13,11 +12,6 @@ const PIPELINE_STEPS = [
 
 type StepStatus = "completed" | "current" | "pending";
 
-/**
- * Map a WorkflowStage to an array of step statuses for the 6 pipeline steps.
- *
- * Steps: P(product) → C(critic) → S(spec) → C(critic) → F(foreman) → ✓(done)
- */
 export function getStepStatuses(stage: string): StepStatus[] {
   const statuses: StepStatus[] = [
     "pending",
@@ -28,8 +22,6 @@ export function getStepStatuses(stage: string): StepStatus[] {
     "pending",
   ];
 
-  // Index at which each step becomes "current" (0-based).
-  // All steps before that index are "completed".
   const currentStepIndex: Record<string, number> = {
     idle: -1,
     product_drafting: 0,
@@ -39,8 +31,8 @@ export function getStepStatuses(stage: string): StepStatus[] {
     awaiting_user_approval: 4,
     foreman_executing: 4,
     final_review: 5,
-    complete: 6, // past last index → all completed
-    failed: 6, // past last index → all completed (with ✗ override)
+    complete: 6,
+    failed: 6,
   };
 
   const idx = currentStepIndex[stage] ?? -1;
@@ -58,6 +50,18 @@ export function getStepStatuses(stage: string): StepStatus[] {
   return statuses;
 }
 
+const STEP_ICON_CLASSES: Record<StepStatus, string> = {
+  completed: "bg-success text-white",
+  current: "bg-accent text-white shadow-[0_0_0_3px_var(--accent-muted)] animate-[pulse-ring_2s_ease-in-out_infinite]",
+  pending: "bg-bg-active text-text-muted border-[1.5px] border-border-strong",
+};
+
+const STEP_LABEL_CLASSES: Record<StepStatus, string> = {
+  completed: "text-text-tertiary",
+  current: "text-text-primary font-medium",
+  pending: "text-text-muted",
+};
+
 interface PipelineStepperProps {
   slug: string;
   sessionId: string;
@@ -72,20 +76,23 @@ export function PipelineStepper({ slug, sessionId }: PipelineStepperProps) {
   const isFailed = stage === "failed";
 
   return (
-    <div className="pipeline-stepper">
+    <div className="flex items-center gap-0 px-5 py-2.5 bg-bg-surface border-b border-border-subtle shrink-0 overflow-x-auto">
       {PIPELINE_STEPS.map((step, i) => {
         const status = statuses[i];
         const isLast = i === PIPELINE_STEPS.length - 1;
-        // Override last step icon for failed state
         const displayIcon = isLast && isFailed ? "✗" : step.icon;
         const displayLabel = isLast && isFailed ? "failed" : step.label;
 
         return (
-          <div className="pipeline-step" key={i}>
-            <div className={`pipeline-step-icon ${status}`}>{displayIcon}</div>
-            <span className={`pipeline-step-label ${status}`}>{displayLabel}</span>
+          <div className="flex items-center gap-1.5 shrink-0" key={i}>
+            <div className={`w-[22px] h-[22px] rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${STEP_ICON_CLASSES[status]}`}>
+              {displayIcon}
+            </div>
+            <span className={`text-xs whitespace-nowrap ${STEP_LABEL_CLASSES[status]}`}>
+              {displayLabel}
+            </span>
             {!isLast && (
-              <div className={`pipeline-connector ${statuses[i] === "completed" ? "completed" : ""}`} />
+              <div className={`w-7 h-0.5 shrink-0 mx-1 ${statuses[i] === "completed" ? "bg-success" : "bg-border-default"}`} />
             )}
           </div>
         );

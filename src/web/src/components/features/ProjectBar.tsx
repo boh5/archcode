@@ -1,20 +1,6 @@
-/**
- * ProjectBar — Column 1 of the 4-column layout.
- *
- * Renders project icons with tooltips, active state accent bar,
- * and bottom settings/theme/add buttons.
- *
- * Design spec: design/web-ui.html → .project-bar
- */
-
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjects } from "../../api/queries";
 
-/**
- * Extract initials from a project slug (first 2 characters).
- * Slugs are typically kebab-case; we take the first 2 chars of the
- * slug for a compact visual identifier.
- */
 function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
@@ -29,20 +15,25 @@ export function ProjectBar() {
   };
 
   const handleAddProject = () => {
-    // Placeholder — full add-project flow to be implemented later
     console.log("[ProjectBar] Add project clicked");
   };
 
   return (
-    <div className="project-bar">
-      <div className="project-bar-logo">S</div>
+    <div className="flex flex-col items-center py-2 gap-0.5 z-10">
+      <div className="w-8 h-8 rounded-md bg-gradient-to-br from-accent to-agent-orchestrator flex items-center justify-center font-bold text-sm text-white mb-2 shrink-0">
+        S
+      </div>
 
       {projects?.map((project) => {
         const isActive = project.slug === activeSlug;
         return (
           <div
             key={project.slug}
-            className={`project-item${isActive ? " active" : ""}`}
+            className={`group w-9 h-9 rounded-md flex items-center justify-center font-semibold text-[13px] cursor-pointer transition-all duration-150 relative shrink-0 ${
+              isActive
+                ? "bg-accent-muted text-accent"
+                : "text-text-tertiary hover:bg-bg-hover hover:text-text-secondary"
+            }`}
             onClick={() => handleProjectClick(project.slug)}
             role="button"
             tabIndex={0}
@@ -52,14 +43,19 @@ export function ProjectBar() {
               }
             }}
           >
+            {isActive && (
+              <div className="absolute -left-2 top-2 bottom-2 w-[3px] rounded-r-sm bg-accent" />
+            )}
             {getInitials(project.slug)}
-            <div className="project-tooltip">{project.name}</div>
+            <div className="absolute left-12 bg-bg-elevated border border-border-default text-text-primary px-2.5 py-1 rounded-sm text-xs whitespace-nowrap pointer-events-none shadow-md z-50 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              {project.name}
+            </div>
           </div>
         );
       })}
 
       <div
-        className="project-item"
+        className="group w-9 h-9 rounded-md flex items-center justify-center font-semibold text-[13px] text-text-tertiary cursor-pointer transition-all duration-150 relative shrink-0 hover:bg-bg-hover hover:text-text-secondary"
         onClick={handleAddProject}
         role="button"
         tabIndex={0}
@@ -70,14 +66,16 @@ export function ProjectBar() {
         }}
       >
         +
-        <div className="project-tooltip">Open project</div>
+        <div className="absolute left-12 bg-bg-elevated border border-border-default text-text-primary px-2.5 py-1 rounded-sm text-xs whitespace-nowrap pointer-events-none shadow-md z-50 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+          Open project
+        </div>
       </div>
 
-      <div className="project-bar-spacer" />
+      <div className="flex-1" />
 
-      <div className="project-bar-bottom">
+      <div className="flex flex-col items-center gap-1 pt-2 border-t border-border-subtle mt-2">
         <div
-          className="project-bar-icon"
+          className="w-8 h-8 rounded-sm flex items-center justify-center text-text-muted cursor-pointer transition-all duration-150 text-[15px] hover:bg-bg-hover hover:text-text-secondary"
           role="button"
           tabIndex={0}
           title="Settings"
@@ -91,7 +89,7 @@ export function ProjectBar() {
           ⚙
         </div>
         <div
-          className="project-bar-icon"
+          className="w-8 h-8 rounded-sm flex items-center justify-center text-text-muted cursor-pointer transition-all duration-150 text-[15px] hover:bg-bg-hover hover:text-text-secondary"
           role="button"
           tabIndex={0}
           title="Toggle theme"

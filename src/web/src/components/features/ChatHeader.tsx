@@ -22,16 +22,16 @@ export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps)
   const pipelineStage = wf ? (wf.currentStep ?? wf.stage ?? null) : null;
 
   return (
-    <div className="chat-header">
-      <div className="chat-header-left">
-        <span className="chat-title">{title ?? "Untitled"}</span>
+    <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
+      <div className="flex items-center gap-2.5">
+        <span className="font-semibold text-sm text-text-primary">{title ?? "Untitled"}</span>
         {pipelineStage && (
-          <span className="chat-subtitle">· Pipeline: {pipelineStage}</span>
+          <span className="text-xs text-text-muted">· Pipeline: {pipelineStage}</span>
         )}
       </div>
-      <div className="chat-header-right">
+      <div className="flex items-center gap-1.5">
         <button
-          className="chat-header-btn"
+          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
           title="Compact context"
           onClick={handleCompact}
           disabled={postCommand.isPending}
@@ -39,7 +39,7 @@ export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps)
           ⦻
         </button>
         <button
-          className="chat-header-btn"
+          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
           title="Toggle detail panel"
           onClick={onToggleDetail}
         >
