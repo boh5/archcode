@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSessionStore } from "../../store/session-store";
+import { MarkdownContent } from "../primitives/MarkdownContent";
 import type {
   StoredMessage,
   StoredPart,
@@ -97,7 +98,7 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
       </button>
       {expanded && (
         <div className="px-2.5 pb-2 text-[12.5px] text-text-secondary italic leading-relaxed border-t border-border-subtle">
-          {part.text}
+          <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
       )}
     </div>
@@ -252,7 +253,7 @@ function PartRenderer({ part }: { part: StoredPart }) {
     case "text":
       return (
         <div className="text-[13.5px] leading-relaxed text-text-primary">
-          {part.text}
+          <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
       );
     case "reasoning":
