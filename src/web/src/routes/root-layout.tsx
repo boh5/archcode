@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { useAddProjectModal } from "../context/add-project-modal";
 import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
+import { DetailPanel } from "../components/features/DetailPanel";
 
 /**
  * RootLayout — always-visible 4-column grid shell.
@@ -31,7 +32,7 @@ export function RootLayout() {
       </div>
 
       <div className="col-start-4 col-end-5 row-start-2 row-end-3 max-[1100px]:hidden">
-        {/* Detail panel placeholder — will be wired later */}
+        <DetailPanel />
       </div>
     </div>
   );
