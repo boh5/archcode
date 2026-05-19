@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useCreateSession } from "../../api/mutations";
 import { useSessions, useWorkflow } from "../../api/queries";
 import type { Session, WorkflowState } from "../../api/types";
 
@@ -175,9 +176,18 @@ export function Sidebar() {
     sessionId: string;
   }>();
   const [searchQuery, setSearchQuery] = useState("");
+  const createSession = useCreateSession();
 
   const { data: sessions } = useSessions(slug);
   const { data: workflow } = useWorkflow(slug, sessionId);
+
+  const handleNewSession = () => {
+    createSession.mutate({ slug }, {
+      onSuccess: (session) => {
+        navigate(`/projects/${slug}/sessions/${session.sessionId ?? session.id}`);
+      },
+    });
+  };
 
   const filteredSessions = useMemo(() => {
     if (!sessions) return [];
@@ -268,6 +278,14 @@ export function Sidebar() {
           {slug}
           <span className="text-text-secondary font-normal">/ sessions</span>
         </div>
+        <button
+          className="w-6 h-6 rounded-sm flex items-center justify-center text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors duration-150 text-sm"
+          title="New session"
+          onClick={handleNewSession}
+          disabled={createSession.isPending}
+        >
+          +
+        </button>
       </div>
 
       <div className="px-3 py-2 shrink-0">

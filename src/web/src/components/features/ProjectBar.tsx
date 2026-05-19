@@ -25,7 +25,7 @@ export function ProjectBar({ onAddProject }: ProjectBarProps) {
   };
 
   return (
-    <div className="flex flex-col items-center py-2 gap-0.5 z-10">
+    <div className="flex flex-col items-center py-2 gap-0.5 z-10 h-full">
       <div className="w-8 h-8 rounded-md bg-gradient-to-br from-accent to-agent-orchestrator flex items-center justify-center font-bold text-sm text-white mb-2 shrink-0">
         S
       </div>
