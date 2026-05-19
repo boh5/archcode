@@ -240,3 +240,11 @@ F2 quality review completed on 2026-05-19.
 - Required grep checks can pass while the higher-level Web API boundary still fails: `StateTab.tsx` directly used `useQuery` and `apiFetch` inside a feature component. Future checks should scan for `apiFetch(` and React Query hooks outside `src/web/src/api` and `src/web/src/hooks`.
 - Decorative section-banner comments (`// ─── ... ───`) appeared across new UI files and were treated as AI-slop noise unless they explain non-obvious behavior.
 - `DetailPanel` should compose existing `StateTab`/`TodoTab` components rather than keeping placeholders when dedicated feature modules already exist.
+
+## F1 plan compliance audit - 2026-05-19
+- Verified all 49 W* tasks in `.sisyphus/plans/web-ui-migration.md` are checked.
+- `bun run typecheck`, `bun test`, and `bun run web:build` all passed.
+- `src/tui/` is absent; no `src/e2e/`, `**/e2e/**`, `@playwright/test`, `*.e2e.ts`, `*.spec.ts`, or `playwright.config.*` found.
+- Production server with `SPECRA_SERVER_PASSWORD=secret` served root HTML after `bun run web:build` generated `src/web/dist`.
+- Direct Vite dev server without `SPECRA_SERVER_PASSWORD` served HTML on `localhost:5173`; earlier 127.0.0.1 curls failed because Vite bound localhost/IPv6 in this environment.
+- Verdict: APPROVE.

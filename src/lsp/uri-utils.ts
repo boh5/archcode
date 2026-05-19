@@ -20,7 +20,7 @@ import { resolveAndValidatePath } from "../tools/security";
  * @example
  *   pathToFileUri("/home/user/file.ts")          // "file:///home/user/file.ts"
  *   pathToFileUri("/home/user/my file.ts")       // "file:///home/user/my%20file.ts"
- *   pathToFileUri("/home/user/文件.ts")           // "file:///home/user/%E6%96%87%E4%BB%B6.ts"
+ *   pathToFileUri("/home/user/café.ts")            // "file:///home/user/caf%C3%A9.ts"
  */
 export function pathToFileUri(absolutePath: string): string {
   // Normalize backslashes to forward slashes (Windows compat)

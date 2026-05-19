@@ -14,8 +14,8 @@ describe("pathToFileUri", () => {
   });
 
   it("encodes unicode characters", () => {
-    const uri = pathToFileUri("/home/user/文件.ts");
-    expect(uri).toContain("%E6%96%87%E4%BB%B6");
+    const uri = pathToFileUri("/home/user/café.ts");
+    expect(uri).toContain("%C3%A9");
   });
 
   it("encodes special characters", () => {
@@ -42,8 +42,8 @@ describe("fileUriToPath", () => {
   });
 
   it("decodes percent-encoded unicode", () => {
-    const p = fileUriToPath("file:///home/user/%E6%96%87%E4%BB%B6.ts");
-    expect(p).toBe("/home/user/文件.ts");
+    const p = fileUriToPath("file:///home/user/caf%C3%A9.ts");
+    expect(p).toBe("/home/user/café.ts");
   });
 
   it("decodes %23 back to #", () => {
@@ -63,9 +63,9 @@ describe("round-trip path ↔ URI", () => {
     const paths = [
       "/home/user/file.ts",
       "/home/user/my file.ts",
-      "/home/user/文件.ts",
+      "/home/user/café.ts",
       "/home/user/file#name.ts",
-      "/home/user/special chars+溢价.ts",
+      "/home/user/special chars+naïve.ts",
     ];
 
     for (const originalPath of paths) {
