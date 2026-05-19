@@ -2,8 +2,6 @@ import { useState, useCallback } from "react";
 import { useAttentionQueue } from "../../hooks/use-attention-queue";
 import type { PermissionRequest, QuestionRequest, PermissionDecision } from "../../api/types";
 
-// ─── Agent badge colors ───
-
 const AGENT_TYPES = [
   "orchestrator",
   "product",
@@ -34,8 +32,6 @@ function isValidAgentType(value: string): value is AgentType {
   return (AGENT_TYPES as readonly string[]).includes(value);
 }
 
-// ─── Border type for confirmation cards ───
-
 type BorderType = "default" | "file_write" | "destructive";
 
 function getConfirmationBorderType(toolName: string, input: unknown): BorderType {
@@ -65,8 +61,6 @@ const CMD_BORDER_CLASSES: Record<BorderType, string> = {
   destructive: "border-error/30 text-error",
 };
 
-// ─── Format tool input for display ───
-
 function formatInputSnippet(input: unknown, toolName: string): string {
   if (input === null || input === undefined) return "";
   if (typeof input === "string") return input;
@@ -89,8 +83,6 @@ function formatInputSnippet(input: unknown, toolName: string): string {
   return String(input);
 }
 
-// ─── Question type (from AskUserQuestion) ───
-
 interface QuestionData {
   question: string;
   header: string;
@@ -98,8 +90,6 @@ interface QuestionData {
   multiple?: boolean;
   custom: boolean;
 }
-
-// ─── ConfirmationCard ───
 
 function ConfirmationCard({
   permission,
@@ -166,8 +156,6 @@ function ConfirmationCard({
     </div>
   );
 }
-
-// ─── QuestionCard ───
 
 function QuestionCard({
   questionRequest,
@@ -334,8 +322,6 @@ function QuestionCard({
   );
 }
 
-// ─── Single question pane ───
-
 function QuestionPane({
   question,
   qIndex,
@@ -454,8 +440,6 @@ function QuestionPane({
     </div>
   );
 }
-
-// ─── AttentionQueue (main export) ───
 
 export interface AttentionQueueProps {
   sessionId: string;

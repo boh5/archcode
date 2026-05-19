@@ -14,7 +14,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
   const [name, setName] = useState("");
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // ─── Reset form on open ───
   useEffect(() => {
     if (open) {
       setPath("");
@@ -22,7 +21,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     }
   }, [open]);
 
-  // ─── Close on Escape ───
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -50,7 +48,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
     [path, addProject, navigate, onClose],
   );
 
-  // ─── Click outside to close ───
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === overlayRef.current) onClose();
@@ -74,7 +71,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
       onClick={handleOverlayClick}
     >
       <div className="w-[min(480px,90vw)] max-h-[80vh] overflow-y-auto rounded-lg border border-border-default bg-bg-surface shadow-lg">
-        {/* ─── Header ─── */}
         <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
           <h2 className="text-base font-semibold text-text-primary">
             Add Project
@@ -89,7 +85,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           </button>
         </div>
 
-        {/* ─── Body ─── */}
         <form onSubmit={handleSubmit} className="p-5">
           <div className="mb-4">
             <label
@@ -134,7 +129,6 @@ export function AddProjectModal({ open, onClose }: AddProjectModalProps) {
           )}
         </form>
 
-        {/* ─── Actions ─── */}
         <div className="flex justify-end gap-2 border-t border-border-subtle px-5 py-3">
           <button
             type="button"

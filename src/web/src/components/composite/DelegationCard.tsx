@@ -1,7 +1,5 @@
 import { useNavigate } from "react-router-dom";
 
-// ─── Agent constants (matching Sidebar.tsx pattern) ───
-
 const AGENT_TYPES = [
   "orchestrator",
   "product",
@@ -44,8 +42,6 @@ function isValidAgentType(value: string): value is AgentType {
   return (AGENT_TYPES as readonly string[]).includes(value);
 }
 
-// ─── Helpers ───
-
 function formatElapsed(startedAt: number): string {
   const elapsed = Date.now() - startedAt;
   const seconds = Math.floor(elapsed / 1000);
@@ -56,8 +52,6 @@ function formatElapsed(startedAt: number): string {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${hours}h ${minutes % 60}m`;
 }
-
-// ─── Badge ───
 
 type BadgeStatus = "running" | "completed" | "pending";
 
@@ -72,8 +66,6 @@ const BADGE_LABELS: Record<BadgeStatus, string> = {
   completed: "Completed",
   pending: "Pending",
 };
-
-// ─── Tool chip ───
 
 type ToolStatus = "success" | "error" | "default";
 
@@ -94,8 +86,6 @@ function ToolChip({ name, status }: { name: string; status: ToolStatus }) {
     </span>
   );
 }
-
-// ─── Props ───
 
 export interface DelegationCardProps {
   /** Unique identifier for the sub-agent session */
@@ -119,8 +109,6 @@ export interface DelegationCardProps {
   /** Current parent session ID (for building navigation link) */
   parentSessionId: string;
 }
-
-// ─── Main component ───
 
 export function DelegationCard({
   agentId,

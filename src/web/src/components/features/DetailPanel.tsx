@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { DiffTab } from "./DiffTab";
+import { StateTab } from "./StateTab";
+import { TodoTab } from "./TodoTab";
 
 type TabId = "diff" | "state" | "todo";
 
@@ -17,7 +19,7 @@ const TABS: TabDef[] = [
 
 export function DetailPanel() {
   const [activeTab, setActiveTab] = useState<TabId>("diff");
-  const { slug = "" } = useParams<{ slug: string }>();
+  const { slug = "", sessionId = "" } = useParams<{ slug: string; sessionId: string }>();
 
   return (
     <div className="flex h-full flex-col border-l border-border-subtle bg-bg-surface">
@@ -39,17 +41,9 @@ export function DetailPanel() {
 
       <div className="flex-1 overflow-hidden">
         {activeTab === "diff" && <DiffTab slug={slug} />}
-        {activeTab === "state" && <PlaceholderTab label="State" />}
-        {activeTab === "todo" && <PlaceholderTab label="Todo" />}
+        {activeTab === "state" && <StateTab slug={slug} sessionId={sessionId} />}
+        {activeTab === "todo" && <TodoTab sessionId={sessionId} />}
       </div>
-    </div>
-  );
-}
-
-function PlaceholderTab({ label }: { label: string }) {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <p className="text-sm text-text-tertiary">{label} — coming soon</p>
     </div>
   );
 }

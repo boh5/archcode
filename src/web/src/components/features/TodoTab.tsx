@@ -1,8 +1,6 @@
 import type { StoredTodo, StoredTodoStatus } from "../../../../store/types";
 import { useSessionStore } from "../../store/session-store";
 
-// ─── Priority extraction from content ───
-
 type Priority = "high" | "medium" | "low";
 
 const PRIORITY_PATTERN = /\b(P0|P1|P2)\b/i;
@@ -28,8 +26,6 @@ const PRIORITY_CLASSES: Record<Priority, string> = {
   low: "bg-bg-active text-text-muted",
 };
 
-// ─── Status icon ───
-
 const STATUS_CLASSES: Record<StoredTodoStatus, string> = {
   completed: "bg-success text-white",
   in_progress: "border-2 border-accent text-accent",
@@ -50,8 +46,6 @@ const TEXT_CLASSES: Record<StoredTodoStatus, string> = {
   pending: "text-text-secondary",
   cancelled: "line-through text-text-muted opacity-50",
 };
-
-// ─── TodoItem ───
 
 function TodoItem({ todo }: { todo: StoredTodo }) {
   const priority = extractPriority(todo.content);
@@ -83,8 +77,6 @@ function TodoItem({ todo }: { todo: StoredTodo }) {
     </div>
   );
 }
-
-// ─── TodoTab (export) ───
 
 export interface TodoTabProps {
   sessionId: string;

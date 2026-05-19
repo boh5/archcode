@@ -10,8 +10,6 @@ import type {
   TextPart,
 } from "../../../../store/types";
 
-// ─── Agent constants ───
-
 const AGENT_TYPES = [
   "orchestrator",
   "product",
@@ -62,8 +60,6 @@ const AGENT_DISPLAY_NAMES: Record<AgentType, string> = {
   explorer: "Explorer",
 };
 
-// ─── Helpers ───
-
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp;
@@ -83,8 +79,6 @@ function formatRelativeTime(timestamp: number): string {
 function isValidAgentType(value: string): value is AgentType {
   return (AGENT_TYPES as readonly string[]).includes(value);
 }
-
-// ─── Sub-components ───
 
 function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
@@ -273,8 +267,6 @@ function PartRenderer({ part }: { part: StoredPart }) {
       return null;
   }
 }
-
-// ─── Main component ───
 
 interface ChatMessagesProps {
   sessionId: string;

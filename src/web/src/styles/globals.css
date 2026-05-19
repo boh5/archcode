@@ -1,6 +1,5 @@
 @import "tailwindcss";
 
-/* ─── Dark theme (default) ─── */
 :root {
   --bg-base: #09090b;
   --bg-surface: #111113;
@@ -54,7 +53,6 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
-/* ─── Light theme ─── */
 [data-theme="light"] {
   --bg-base: #ffffff;
   --bg-surface: #f9f9fb;
@@ -91,7 +89,6 @@
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
-/* ─── Tailwind v4 token mapping ─── */
 @theme inline {
   /* Background */
   --color-bg-base: var(--bg-base);
@@ -154,7 +151,6 @@
   --font-family-mono: var(--font-mono);
 }
 
-/* ─── Base styles ─── */
 @layer base {
   html {
     font-size: 13.5px;
@@ -192,7 +188,6 @@
   }
 }
 
-/* ─── Keyframe animations (cannot be expressed in Tailwind) ─── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

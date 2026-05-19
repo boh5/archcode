@@ -2,15 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePostMessage, usePostCommand } from "../../api/mutations";
 import { useSessionStore } from "../../store/session-store";
 
-// ─── Slash command definitions (v1) ───
-
 const SLASH_COMMANDS = [
   { name: "/compact", description: "Compact conversation context" },
 ] as const;
 
 type SlashCommand = (typeof SLASH_COMMANDS)[number];
-
-// ─── Component ───
 
 interface ChatInputProps {
   slug: string;
@@ -34,13 +30,9 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const isPending = postMessage.isPending || postCommand.isPending;
   const canSend = value.trim().length > 0 && !isPending;
 
-  // ─── Filtered slash commands ───
-
   const filteredCommands = SLASH_COMMANDS.filter((cmd) =>
     cmd.name.startsWith(`/ ${slashFilter}`.replace(/\s/g, "")),
   );
-
-  // ─── Auto-resize textarea ───
 
   const adjustHeight = useCallback(() => {
     const el = textareaRef.current;
@@ -54,9 +46,7 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
     adjustHeight();
   }, [value, adjustHeight]);
 
-  // ─── Close slash menu on outside click ───
-
-  useEffect(() => {
+useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (
         slashMenuRef.current &&
@@ -72,8 +62,6 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [showSlashMenu]);
-
-  // ─── Send message ───
 
   const sendMessage = useCallback(() => {
     const trimmed = value.trim();
@@ -102,8 +90,6 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
     });
   }, [value, isPending, slug, sessionId, postMessage, postCommand]);
 
-  // ─── Handle slash command selection ───
-
   const selectSlashCommand = useCallback(
     (cmd: SlashCommand) => {
       postCommand.mutate(
@@ -117,8 +103,6 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
     },
     [slug, sessionId, postCommand],
   );
-
-  // ─── Keyboard handling ───
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -175,8 +159,6 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
       postCommand,
     ],
   );
-
-  // ─── Handle input change ───
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {

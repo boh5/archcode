@@ -1,11 +1,8 @@
 import { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useWorkflow } from "../../api/queries";
-import { apiFetch } from "../../api/client";
+import { useArtifactContent } from "../../hooks/use-artifact-content";
 import type { WorkflowState } from "../../api/types";
 import { PipelineStepper } from "../composite/PipelineStepper";
-
-// ─── Constants ───
 
 const AGENT_TYPES = [
   "orchestrator",
@@ -58,8 +55,6 @@ const STAGE_LABELS: Record<string, string> = {
   failed: "Failed",
 };
 
-// ─── Helpers ───
-
 function getArtifactStatus(
   wf: WorkflowState,
   kind: ArtifactKind,
@@ -102,34 +97,6 @@ function formatTime(isoString: string): string {
     return isoString;
   }
 }
-
-// ─── Artifact content query ───
-
-function useArtifactContent(
-  slug: string,
-  workflowId: string | undefined,
-  artifactName: string,
-) {
-  return useQuery({
-    queryKey: [
-      "projects",
-      slug,
-      "workflows",
-      workflowId,
-      "artifacts",
-      artifactName,
-    ],
-    queryFn: async () => {
-      const result = await apiFetch<{ body: string }>(
-        `/api/projects/${encodeURIComponent(slug)}/workflows/${encodeURIComponent(workflowId!)}/artifacts/${artifactName}`,
-      );
-      return result.body;
-    },
-    enabled: !!workflowId,
-  });
-}
-
-// ─── Sub-components ───
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -217,8 +184,6 @@ function ArtifactRow({
   );
 }
 
-// ─── Artifact Drawer ───
-
 function ArtifactDrawer({
   title,
   content,
@@ -266,8 +231,6 @@ function ArtifactDrawer({
     </div>
   );
 }
-
-// ─── Main component ───
 
 interface StateTabProps {
   slug: string;

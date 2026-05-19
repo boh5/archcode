@@ -221,3 +221,22 @@
 - Design spec CSS mapping: `.modal-overlay` → `fixed inset-0 z-50 flex items-center justify-center bg-black/50`, `.modal` → `w-[min(480px,90vw)] max-h-[80vh] overflow-y-auto rounded-lg border border-border-default bg-bg-surface shadow-lg`, `.modal-header` → `flex items-center justify-between border-b border-border-subtle px-5 py-4`, `.modal-title` → `text-base font-semibold text-text-primary`, `.modal-close` → `flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-bg-hover hover:text-text-secondary`, `.modal-body` → `p-5`, `.modal-input` → `w-full rounded-sm border border-border-default bg-bg-base px-3 py-2.5 text-[13.5px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none`, `.modal-label` → `mb-1.5 block text-xs font-medium text-text-secondary`, `.modal-error` → `text-xs text-error`, `.modal-actions` → `flex justify-end gap-2 border-t border-border-subtle px-5 py-3`, `.btn-primary` → `rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40`, `.btn-secondary` → `rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary hover:bg-bg-hover`
 - All Tailwind utility classes, no custom CSS added to globals.css
 - typecheck and web:build both pass
+F2 quality review completed on 2026-05-19.
+- Verdict: REJECT due to production console.log statements in src/web/src/components/features/ProjectBar.tsx settings handlers.
+- Validation: architecture greps clean, architecture test passed, typecheck passed, full test failure matched known use-session-events flaky test and passed in isolation, fetch centralized in api layer, no Chinese UI text/comments found.
+
+## F4 Scope Fidelity Check
+- F4 verdict: REJECT due to literal server↔agents cross-dependency guardrail violation. Server production files import agent modules in `src/server/agent-runner.ts`, `src/server/routes/messages.ts`, and `src/server/routes/workflow.ts`.
+- Other forbidden scope items passed: no Next.js dependency, SQLite, WebSocket in server/web, @ai-sdk/react/useChat, Ink, E2E/Playwright test code, SSR/pre-render references, or `process.cwd()` under `src`.
+
+## 2026-05-19 useSessionEvents flaky test
+- Full-suite React module pollution from tests using `mock.module("react")` can break later imports of `react-dom/client` and JSX dev runtime via missing `ReactSharedInternals` fields.
+- For `src/web/src/hooks/use-session-events.test.tsx`, the stable fix is to avoid real React/ReactDOM entirely: mock `react` with only `act` + synchronous `useEffect`, mock `react-dom/client` with a tiny `createRoot`, and render the harness using a plain element object instead of JSX.
+- If a previous test also mocks `../store/session-store`, protect this test by mocking its own minimal `createWebSessionStore` implementation in `beforeAll` before importing the hook under test.
+- Verified after fix: isolated `bun test src/web/src/hooks/use-session-events.test.tsx`, `bun run typecheck`, and full `bun test` all pass.
+
+
+## F2 quality review - 2026-05-19
+- Required grep checks can pass while the higher-level Web API boundary still fails: `StateTab.tsx` directly used `useQuery` and `apiFetch` inside a feature component. Future checks should scan for `apiFetch(` and React Query hooks outside `src/web/src/api` and `src/web/src/hooks`.
+- Decorative section-banner comments (`// ─── ... ───`) appeared across new UI files and were treated as AI-slop noise unless they explain non-obvious behavior.
+- `DetailPanel` should compose existing `StateTab`/`TodoTab` components rather than keeping placeholders when dedicated feature modules already exist.

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import type { SpecraRuntime } from "../main";
 import { AgentRunner } from "./agent-runner";
@@ -98,7 +99,19 @@ export function createServerApp(
   app.route("/api/files", new Hono());
 
   if (!options.dev) {
-    // Static files will be mounted after the web build pipeline exists.
+    app.use("/*", serveStatic({ root: "./src/web/dist" }));
+
+    app.get("/*", async (c) => {
+      const path = new URL(c.req.url).pathname;
+      if (path.startsWith("/api") || path.startsWith("/assets/")) {
+        return c.notFound();
+      }
+
+      const index = Bun.file("./src/web/dist/index.html");
+      return new Response(index, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    });
   }
 
   return { app, agentRunner };
