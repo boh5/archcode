@@ -26,6 +26,7 @@ interface SessionFileBody {
   title?: string | null;
   messages: unknown[];
   steps?: unknown[];
+  eventCursor?: number;
 }
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
@@ -174,6 +175,32 @@ describe("sessions routes", () => {
     expect(await res.json()).toEqual({
       error: { code: "SESSION_NOT_FOUND", message: "Session not found: missing-session" },
     });
+  });
+
+  test("GET /api/projects/:slug/sessions/:sessionId returns eventCursor from live store without resetting events", async () => {
+    const { app, project, workspaceRoot } = await createTestApp("live-store-events");
+    const sessionId = crypto.randomUUID();
+
+    // Create a store and register it (simulating an active session)
+    const store = createScopedSessionStore(sessionId, workspaceRoot);
+
+    // Append events to simulate an active session
+    store.getState().append({ type: "text-delta", text: "Hello" });
+    store.getState().append({ type: "text-delta", text: "World" });
+
+    const nextEventId = store.getState().nextEventId;
+    const eventsBefore = store.getState().events.length;
+
+    // GET session — should hit Priority 2: registered store
+    const res = await app.request(`/api/projects/${project.slug}/sessions/${sessionId}`);
+    const body = (await res.json()) as SessionFileBody;
+
+    expect(res.status).toBe(200);
+    // eventCursor should be nextEventId - 1 (not -1)
+    expect(body.eventCursor).toBe(nextEventId - 1);
+    // The live store's events must NOT be reset
+    expect(store.getState().events.length).toBe(eventsBefore);
+    expect(store.getState().nextEventId).toBe(nextEventId);
   });
 
   test("DELETE /api/projects/:slug/sessions/:sessionId returns ok", async () => {

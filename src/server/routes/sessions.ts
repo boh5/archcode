@@ -9,7 +9,7 @@ import {
   type SessionFile,
 } from "../../store/helpers";
 import { getSessionsDir } from "../../store/sessions-dir";
-import { createSessionStore } from "../../store/store";
+import { createSessionStore, getSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, ProjectNotFoundError, SessionNotFoundError } from "../errors";
@@ -56,6 +56,21 @@ export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
 
     try {
+      // Priority 1: active job agent store
+      const jobAgent = agentRunner.getJob(project.workspaceRoot, sessionId)
+        ? runtime.sessionAgentManager.get(project.workspaceRoot, sessionId)
+        : undefined;
+      if (jobAgent) {
+        return c.json(toSessionFile(jobAgent.store.getState()));
+      }
+
+      // Priority 2: registered store (from previous load or SSE connection)
+      const registered = getSessionStore(sessionId, project.workspaceRoot);
+      if (registered) {
+        return c.json(toSessionFile(registered.getState()));
+      }
+
+      // Priority 3: load from disk (cold session)
       const store = await loadSessionTranscript(sessionId, project.workspaceRoot);
       return c.json(toSessionFile(store.getState()));
     } catch (error) {
