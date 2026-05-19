@@ -5,8 +5,12 @@ import { reduceStreamEvent } from "../../../store/reduce";
 import type {
   PermissionTerminalEvent,
   QuestionTerminalEvent,
+  Reminder,
   SessionEventPayload,
   SessionStoreState,
+  StepInfo,
+  StoredMessage,
+  StoredTodo,
   StreamEvent,
 } from "../../../store/types";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
@@ -27,6 +31,17 @@ export interface WebSessionStoreState extends SessionStoreState {
   resetTransientState: () => void;
   setConnectionState: (state: ConnectionState) => void;
   setLastEventId: (id: string | null) => void;
+  initializeFromSnapshot: (data: {
+    messages?: StoredMessage[];
+    steps?: StepInfo[];
+    todos?: StoredTodo[];
+    reminders?: Reminder[];
+    title?: string | null;
+    createdAt?: number;
+    childSessionIds?: string[];
+    parentSessionId?: string;
+    subAgentDescriptions?: [string, string][];
+  }) => void;
 }
 
 const sessionRegistry = new Map<string, StoreApi<WebSessionStoreState>>();
@@ -148,10 +163,50 @@ export function createWebSessionStore(
     setLastEventId: (lastEventId: string | null) => {
       set({ lastEventId });
     },
+    initializeFromSnapshot: (data) => {
+      set((state) => {
+        const updates: Partial<WebSessionStoreState> = {};
+        if (data.messages && data.messages.length > 0) {
+          updates.messages = data.messages as StoredMessage[];
+        }
+        if (data.steps && data.steps.length > 0) {
+          updates.steps = data.steps as StepInfo[];
+        }
+        if (data.todos && data.todos.length > 0) {
+          updates.todos = data.todos as StoredTodo[];
+        }
+        if (data.reminders && data.reminders.length > 0) {
+          updates.reminders = data.reminders as Reminder[];
+        }
+        if (data.title !== undefined && data.title !== null) {
+          updates.title = data.title;
+        }
+        if (data.createdAt !== undefined && data.createdAt > 0) {
+          updates.createdAt = data.createdAt;
+        }
+        if (data.childSessionIds && data.childSessionIds.length > 0) {
+          updates.childSessionIds = new Set(data.childSessionIds);
+        }
+        if (data.parentSessionId !== undefined) {
+          updates.parentSessionId = data.parentSessionId;
+        }
+        if (data.subAgentDescriptions && data.subAgentDescriptions.length > 0) {
+          updates.subAgentDescriptions = new Map(data.subAgentDescriptions);
+        }
+        return updates;
+      });
+    },
   }));
 
   sessionRegistry.set(key, store);
   return store;
+}
+
+export function getWebSessionStore(
+  sessionId: string,
+  slug?: string,
+): StoreApi<WebSessionStoreState> {
+  return createWebSessionStore(sessionId, slug);
 }
 
 export function useSessionStore<T>(
