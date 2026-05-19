@@ -1,8 +1,5 @@
-import { useState, useCallback } from "react";
 import { useWorkflow } from "../../api/queries";
-import { useArtifactContent } from "../../hooks/use-artifact-content";
 import type { WorkflowState } from "../../api/types";
-import { PipelineStepper } from "../composite/PipelineStepper";
 
 const AGENT_TYPES = [
   "orchestrator",
@@ -34,12 +31,13 @@ const DISPLAY_ARTIFACTS = ["PRD", "SPEC", "TASKS"] as const;
 
 type ArtifactKind = (typeof DISPLAY_ARTIFACTS)[number];
 
-type ArtifactStatus = "missing" | "draft" | "finalized";
+type ArtifactStatus = "missing" | "draft" | "pending" | "finalized";
 
-const STATUS_CLASSES: Record<ArtifactStatus, string> = {
-  missing: "bg-bg-active text-text-muted",
-  draft: "bg-warning-muted text-warning",
-  finalized: "bg-success-muted text-success",
+const ARTIFACT_STATUS_COLORS: Record<ArtifactStatus, string> = {
+  missing: "text-text-muted",
+  draft: "text-warning",
+  pending: "text-text-muted",
+  finalized: "text-success",
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -60,7 +58,7 @@ function getArtifactStatus(
   kind: ArtifactKind,
 ): ArtifactStatus {
   const value = wf.artifacts?.[kind];
-  if (!value) return "missing";
+  if (!value) return "pending";
   const finalizationStages: Record<ArtifactKind, string[]> = {
     PRD: [
       "critic_prd_review",
@@ -136,98 +134,22 @@ function StateRow({
 function AgentRow({
   name,
   agentType,
+  depth,
   status,
 }: {
   name: string;
   agentType: AgentType;
+  depth: number;
   status: string;
 }) {
   const colorClass = AGENT_COLORS[agentType] ?? "text-text-secondary";
+  const isActive = status === "working" || status === "running" || status === "researching";
   return (
     <div className="flex items-center justify-between py-1 text-xs border-t border-border-subtle first:border-t-0">
       <span className={`font-medium ${colorClass}`}>{name}</span>
-      <span
-        className={
-          status === "working" || status === "running"
-            ? "text-success"
-            : "text-text-muted"
-        }
-      >
-        {status}
+      <span className={isActive ? "text-success" : "text-text-muted"}>
+        {`depth ${depth} · ${status}`}
       </span>
-    </div>
-  );
-}
-
-function ArtifactRow({
-  name,
-  status,
-  onClick,
-}: {
-  name: string;
-  status: ArtifactStatus;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center justify-between w-full py-1 text-xs border-t border-border-subtle first:border-t-0 cursor-pointer hover:bg-bg-hover transition-colors duration-150 rounded-none"
-    >
-      <span className="text-text-primary font-mono">{name}</span>
-      <span
-        className={`px-2 py-0.5 rounded-sm text-[10.5px] font-semibold ${STATUS_CLASSES[status]}`}
-      >
-        {status}
-      </span>
-    </button>
-  );
-}
-
-function ArtifactDrawer({
-  title,
-  content,
-  isLoading,
-  error,
-  onClose,
-}: {
-  title: string;
-  content: string | null;
-  isLoading: boolean;
-  error: string | null;
-  onClose: () => void;
-}) {
-  return (
-    <div className="absolute inset-0 z-10 flex bg-bg-surface">
-      <div className="flex flex-col w-full h-full">
-        <div className="flex items-center justify-between px-3 h-10 border-b border-border-subtle shrink-0">
-          <span className="text-xs font-semibold text-text-primary font-mono">
-            {title}
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-6 h-6 flex items-center justify-center text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-3">
-          {isLoading && (
-            <div className="flex items-center justify-center py-8 text-text-muted text-xs">
-              Loading...
-            </div>
-          )}
-          {error && (
-            <div className="text-error text-xs py-4">{error}</div>
-          )}
-          {content && (
-            <pre className="whitespace-pre-wrap break-words text-xs text-text-primary font-mono leading-relaxed">
-              {content}
-            </pre>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -241,21 +163,6 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
   const { data: workflow } = useWorkflow(slug, sessionId);
   const wf = workflow as WorkflowState | null | undefined;
 
-  const [selectedArtifact, setSelectedArtifact] = useState<ArtifactKind | null>(
-    null,
-  );
-
-  const { data: artifactContent, isLoading: artifactLoading, error: artifactError } =
-    useArtifactContent(slug, wf?.id, selectedArtifact ?? "");
-
-  const handleArtifactClick = useCallback((kind: ArtifactKind) => {
-    setSelectedArtifact(kind);
-  }, []);
-
-  const handleCloseDrawer = useCallback(() => {
-    setSelectedArtifact(null);
-  }, []);
-
   const stage = wf ? (wf.currentStep ?? wf.stage ?? "idle") : "idle";
   const status = wf?.status ?? "unknown";
   const retryCount = wf?.retryCount ?? 0;
@@ -267,12 +174,14 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
         const result: Array<{
           name: string;
           type: AgentType;
+          depth: number;
           status: string;
         }> = [];
 
         result.push({
           name: "Orchestrator",
           type: "orchestrator",
+          depth: 0,
           status: stage === "idle" ? "waiting" : "working",
         });
 
@@ -288,6 +197,7 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
           result.push({
             name: stageName.charAt(0).toUpperCase() + stageName.slice(1),
             type: stageName as AgentType,
+            depth: 1,
             status: isCurrentStep
               ? "working"
               : stageCompleted
@@ -302,7 +212,8 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
           result.push({
             name: taskName.charAt(0).toUpperCase() + taskName.slice(1),
             type: taskName as AgentType,
-            status: "pending",
+            depth: 2,
+            status: "researching",
           });
         }
 
@@ -312,10 +223,6 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
 
   return (
     <div className="relative flex flex-col h-full overflow-y-auto p-3.5">
-      <div className="mb-3.5">
-        <PipelineStepper slug={slug} sessionId={sessionId} />
-      </div>
-
       <div className="mb-3.5">
         <SectionLabel>Workflow</SectionLabel>
         <StateCard>
@@ -374,6 +281,7 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
                 key={`${agent.type}-${i}`}
                 name={agent.name}
                 agentType={agent.type}
+                depth={agent.depth}
                 status={agent.status}
               />
             ))}
@@ -385,14 +293,18 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
         <SectionLabel>Artifacts</SectionLabel>
         <StateCard>
           {wf ? (
-            DISPLAY_ARTIFACTS.map((kind) => (
-              <ArtifactRow
-                key={kind}
-                name={`${kind}.md`}
-                status={getArtifactStatus(wf, kind)}
-                onClick={() => handleArtifactClick(kind)}
-              />
-            ))
+            DISPLAY_ARTIFACTS.map((kind) => {
+              const artifactStatus = getArtifactStatus(wf, kind);
+              return (
+                <StateRow
+                  key={kind}
+                  label={`${kind}.md`}
+                  className={ARTIFACT_STATUS_COLORS[artifactStatus]}
+                >
+                  {artifactStatus}
+                </StateRow>
+              );
+            })
           ) : (
             <div className="py-2 text-xs text-text-muted text-center">
               No artifacts
@@ -400,16 +312,6 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
           )}
         </StateCard>
       </div>
-
-      {selectedArtifact && (
-        <ArtifactDrawer
-          title={`${selectedArtifact}.md`}
-          content={artifactContent ?? null}
-          isLoading={artifactLoading}
-          error={artifactError?.message ?? null}
-          onClose={handleCloseDrawer}
-        />
-      )}
     </div>
   );
 }

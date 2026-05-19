@@ -24,10 +24,12 @@
 
   --success: #22c55e;
   --success-muted: #22c55e20;
+  --success-muted-opaque: #132a1e;
   --warning: #eab308;
   --warning-muted: #eab30820;
   --error: #ef4444;
   --error-muted: #ef444420;
+  --error-muted-opaque: #2a1313;
   --info: #3b82f6;
   --info-muted: #3b82f620;
 
@@ -77,10 +79,12 @@
 
   --success: #16a34a;
   --success-muted: #16a34a15;
+  --success-muted-opaque: #e8f5ec;
   --warning: #ca8a04;
   --warning-muted: #ca8a0415;
   --error: #dc2626;
   --error-muted: #dc262615;
+  --error-muted-opaque: #f5e8e8;
   --info: #2563eb;
   --info-muted: #2563eb15;
 
@@ -118,10 +122,12 @@
   /* Semantic */
   --color-success: var(--success);
   --color-success-muted: var(--success-muted);
+  --color-success-muted-opaque: var(--success-muted-opaque);
   --color-warning: var(--warning);
   --color-warning-muted: var(--warning-muted);
   --color-error: var(--error);
   --color-error-muted: var(--error-muted);
+  --color-error-muted-opaque: var(--error-muted-opaque);
   --color-info: var(--info);
   --color-info-muted: var(--info-muted);
 

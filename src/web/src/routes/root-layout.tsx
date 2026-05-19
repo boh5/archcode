@@ -31,7 +31,7 @@ export function RootLayout() {
         <Outlet />
       </div>
 
-      <div className="col-start-4 col-end-5 row-start-2 row-end-3 max-[1100px]:hidden">
+      <div className="col-start-4 col-end-5 row-start-2 row-end-3 max-[1100px]:hidden overflow-hidden">
         <DetailPanel />
       </div>
     </div>
