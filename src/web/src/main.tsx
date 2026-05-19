@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router-dom";
 import { ApiError } from "./api/client";
 import { ErrorBoundary } from "./components/composite/ErrorBoundary";
 import { ToastContainer } from "./components/composite/Toast";
+import { AddProjectModalProvider } from "./context/add-project-modal";
 import { useToast } from "./hooks/use-toast";
 import { router } from "./router";
 import "./styles/globals.css";
@@ -41,10 +42,12 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ErrorBoundary>
-        <RouterProvider router={router} />
-      </ErrorBoundary>
-      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      <AddProjectModalProvider>
+        <ErrorBoundary>
+          <RouterProvider router={router} />
+        </ErrorBoundary>
+        <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      </AddProjectModalProvider>
     </QueryClientProvider>
   );
 }

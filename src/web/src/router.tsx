@@ -1,26 +1,29 @@
-import { createBrowserRouter } from "react-router-dom";
-import { WelcomeRoute } from "./routes/welcome";
+import { createBrowserRouter, Outlet } from "react-router-dom";
+import { RootLayout } from "./routes/root-layout";
+import { EmptyState } from "./routes/empty-state";
 import { ProjectRoute } from "./routes/project";
 import { SessionRoute } from "./routes/session";
 import { NotFoundRoute } from "./routes/not-found";
+import { AddProjectModalRenderer } from "./context/add-project-modal";
 
 export const router = createBrowserRouter([
   {
-    path: "/",
-    element: <WelcomeRoute />,
-  },
-  {
-    path: "/projects/:slug",
-    element: <ProjectRoute />,
+    element: (
+      <>
+        <AddProjectModalRenderer />
+        <Outlet />
+      </>
+    ),
     children: [
       {
-        path: "sessions/:sessionId",
-        element: <SessionRoute />,
+        element: <RootLayout />,
+        children: [
+          { path: "/", element: <EmptyState /> },
+          { path: "/projects/:slug", element: <ProjectRoute /> },
+          { path: "/projects/:slug/sessions/:sessionId", element: <SessionRoute /> },
+          { path: "*", element: <NotFoundRoute /> },
+        ],
       },
     ],
-  },
-  {
-    path: "*",
-    element: <NotFoundRoute />,
   },
 ]);
