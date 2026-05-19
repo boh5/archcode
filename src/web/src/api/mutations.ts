@@ -67,7 +67,7 @@ export function usePostMessage() {
       `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/messages`,
       {
         method: "POST",
-        body: { content },
+        body: { text: content },
       },
     ),
   });
