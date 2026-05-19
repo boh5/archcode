@@ -23,7 +23,7 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
-  const isRunning = useSessionStore(sessionId, (s) => s.isRunning);
+  const isRunning = useSessionStore(sessionId, (s) => s.isRunning, slug);
   const postMessage = usePostMessage();
   const postCommand = usePostCommand();
 

@@ -83,8 +83,13 @@ function createMockRoot(_container: Element | DocumentFragment): Root {
   } as Root;
 }
 
-function createMockSessionStore(sessionId: string): ReturnType<WebSessionStoreFactory> {
-  const existing = sessionRegistry.get(sessionId);
+function scopedMockKey(sessionId: string, slug?: string): string {
+  return slug === undefined ? sessionId : `${slug}\0${sessionId}`;
+}
+
+function createMockSessionStore(sessionId: string, slug?: string): ReturnType<WebSessionStoreFactory> {
+  const key = scopedMockKey(sessionId, slug);
+  const existing = sessionRegistry.get(key);
   if (existing) return existing;
 
   let state: MockSessionState = {
@@ -110,7 +115,7 @@ function createMockSessionStore(sessionId: string): ReturnType<WebSessionStoreFa
     subscribe: () => () => {},
   } as unknown as ReturnType<WebSessionStoreFactory>;
 
-  sessionRegistry.set(sessionId, store);
+  sessionRegistry.set(key, store);
   return store;
 }
 
@@ -248,7 +253,7 @@ describe("useSessionEvents", () => {
 
   test("receiving stream events calls store.append", () => {
     const sessionId = "stream-session";
-    const store = createWebSessionStore(sessionId);
+    const store = createWebSessionStore(sessionId, "demo");
     const append = mock(() => {});
     store.setState({ append });
     const rendered = renderHook("demo", sessionId);
@@ -264,7 +269,7 @@ describe("useSessionEvents", () => {
 
   test("receiving permission.request calls store.addPermissionRequest", () => {
     const sessionId = "permission-session";
-    const store = createWebSessionStore(sessionId);
+    const store = createWebSessionStore(sessionId, "demo");
     const addPermissionRequest = mock(() => {});
     store.setState({ addPermissionRequest });
     const rendered = renderHook("demo", sessionId);
@@ -287,7 +292,7 @@ describe("useSessionEvents", () => {
 
   test("receiving question.request calls store.addQuestionRequest", () => {
     const sessionId = "question-session";
-    const store = createWebSessionStore(sessionId);
+    const store = createWebSessionStore(sessionId, "demo");
     const addQuestionRequest = mock(() => {});
     store.setState({ addQuestionRequest });
     const rendered = renderHook("demo", sessionId);
@@ -309,7 +314,7 @@ describe("useSessionEvents", () => {
 
   test("onerror triggers close and reconnect with lastEventId in URL", () => {
     const sessionId = "reconnect-session";
-    const store = createWebSessionStore(sessionId);
+    const store = createWebSessionStore(sessionId, "demo");
     store.setState({ lastEventId: "event-9" });
     const rendered = renderHook("demo", sessionId);
     const source = MockEventSource.instances[0]!;
@@ -405,5 +410,17 @@ describe("useSessionEvents", () => {
       advanceTimers(1_000);
     });
     expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  test("createWebSessionStore scopes same session id by slug", () => {
+    const slugAStore = createWebSessionStore("same-session", "slug-a");
+    const slugBStore = createWebSessionStore("same-session", "slug-b");
+    const unscopedStore = createWebSessionStore("same-session");
+
+    expect(slugAStore).not.toBe(slugBStore);
+    expect(slugAStore).not.toBe(unscopedStore);
+    expect(slugBStore).not.toBe(unscopedStore);
+    expect(createWebSessionStore("same-session", "slug-a")).toBe(slugAStore);
+    expect(createWebSessionStore("same-session")).toBe(unscopedStore);
   });
 });

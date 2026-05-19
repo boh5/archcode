@@ -98,4 +98,25 @@ describe("PermissionService", () => {
     await expect(first).resolves.toBe("timeout");
     await expect(second).resolves.toBe("timeout");
   });
+
+  test("cleanup with workspaceRoot only clears matching entries", async () => {
+    const service = new PermissionService();
+    const workspaceA = "/tmp/specra-workspace-a";
+    const workspaceB = "/tmp/specra-workspace-b";
+    const ringA = new EventRing();
+    const ringB = new EventRing();
+    const first = service.request("same-session", workspaceA, request, ringA);
+    const second = service.request("same-session", workspaceB, request, ringB);
+    const firstId = (JSON.parse(ringA.since(0)[0].data) as { id: string }).id;
+    const secondId = (JSON.parse(ringB.since(0)[0].data) as { id: string }).id;
+
+    service.cleanup("same-session", workspaceA);
+
+    expect(service.has(firstId)).toBe(false);
+    expect(service.has(secondId)).toBe(true);
+    await expect(first).resolves.toBe("timeout");
+
+    expect(service.respond(secondId, "approve_once")).toBe(true);
+    await expect(second).resolves.toBe("approve_once");
+  });
 });

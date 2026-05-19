@@ -126,4 +126,25 @@ describe("AskUserService", () => {
     await promise;
     expect(service.has(id)).toBe(false);
   });
+
+  test("cleanup with workspaceRoot only clears matching entries", async () => {
+    const service = new AskUserService();
+    const workspaceA = "/tmp/specra-workspace-a";
+    const workspaceB = "/tmp/specra-workspace-b";
+    const ringA = new EventRing();
+    const ringB = new EventRing();
+    const first = service.request("same-session", workspaceA, request, ringA);
+    const second = service.request("same-session", workspaceB, request, ringB);
+    const firstId = (JSON.parse(ringA.since(0)[0].data) as { id: string }).id;
+    const secondId = (JSON.parse(ringB.since(0)[0].data) as { id: string }).id;
+
+    service.cleanup("same-session", workspaceA);
+
+    expect(service.has(firstId)).toBe(false);
+    expect(service.has(secondId)).toBe(true);
+    await expect(first).resolves.toEqual({ isError: true, reason: "Cancelled" });
+
+    expect(service.respond(secondId, { answers: [["Later"]] })).toBe(true);
+    await expect(second).resolves.toEqual({ answers: [["Later"]] });
+  });
 });

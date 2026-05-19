@@ -57,6 +57,17 @@ export class ConcurrentLimitError extends Error {
   }
 }
 
+export class ConcurrentSessionLimitError extends Error {
+  constructor(
+    public readonly workspaceRoot: string,
+    public readonly current: number,
+    public readonly max: number,
+  ) {
+    super(`Workspace "${workspaceRoot}" has ${current} active sessions (max: ${max})`);
+    this.name = "ConcurrentSessionLimitError";
+  }
+}
+
 export class DepthLimitError extends Error {
   constructor(public readonly currentDepth: number) {
     super(`Maximum sub-agent delegation depth reached: ${currentDepth}`);

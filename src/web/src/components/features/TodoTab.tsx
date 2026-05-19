@@ -79,11 +79,12 @@ function TodoItem({ todo }: { todo: StoredTodo }) {
 }
 
 export interface TodoTabProps {
+  slug: string;
   sessionId: string;
 }
 
-export function TodoTab({ sessionId }: TodoTabProps) {
-  const todos = useSessionStore(sessionId, (s) => s.todos);
+export function TodoTab({ slug, sessionId }: TodoTabProps) {
+  const todos = useSessionStore(sessionId, (s) => s.todos, slug);
 
   if (todos.length === 0) {
     return (

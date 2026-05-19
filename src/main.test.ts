@@ -130,16 +130,11 @@ describe("createSpecraRuntime", () => {
       configPath,
       mcpManagerFactory: () => manager,
     });
-    const runSpy = mock(() => Promise.resolve({ text: "", steps: 0 }));
 
     expect(runtime.toolRegistry.get(mcpDescriptor.name)).toBe(mcpDescriptor);
-    expect(runtime.agent.run).not.toBe(runSpy);
-
-    runtime.agent.run = runSpy as unknown as typeof runtime.agent.run;
     const namesAtRun = runtime.toolRegistry.getAll().map((descriptor) => descriptor.name);
 
     expect(namesAtRun).toContain(mcpDescriptor.name);
-    expect(runSpy).not.toHaveBeenCalled();
   });
 
   test("starts with no mcp config", async () => {
@@ -156,7 +151,6 @@ describe("createSpecraRuntime", () => {
     });
 
     expect(resolvedConfig).toEqual({ servers: {} });
-    expect(runtime.agent).toBeDefined();
     expect(runtime.warnings).toEqual([]);
   });
 
@@ -173,19 +167,22 @@ describe("createSpecraRuntime", () => {
     expect(runtime.contextResolver).toBeDefined();
   });
 
-  test("agentFor returns the same agent for the same workspaceRoot", async () => {
+  test("agentFor returns the same agent for the same workspaceRoot and sessionId", async () => {
     const configPath = await writeConfig(makeConfig());
     const workspaceRoot = await makeTempRoot();
+    const sessionId = `session-${crypto.randomUUID()}`;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createSpecraRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
-    const agent1 = await runtime.agentFor(workspaceRoot);
-    const agent2 = await runtime.agentFor(workspaceRoot);
+    const agent1 = await runtime.agentFor(workspaceRoot, sessionId);
+    const agent2 = await runtime.agentFor(workspaceRoot, sessionId);
+    const otherSessionAgent = await runtime.agentFor(workspaceRoot, `session-${crypto.randomUUID()}`);
 
     expect(agent1).toBe(agent2);
+    expect(agent1).not.toBe(otherSessionAgent);
   });
 
   test("agentFor returns different agents for different workspaceRoots", async () => {
@@ -198,8 +195,8 @@ describe("createSpecraRuntime", () => {
       configPath,
       mcpManagerFactory: () => manager,
     });
-    const agentA = await runtime.agentFor(workspaceRootA);
-    const agentB = await runtime.agentFor(workspaceRootB);
+    const agentA = await runtime.agentFor(workspaceRootA, `session-${crypto.randomUUID()}`);
+    const agentB = await runtime.agentFor(workspaceRootB, `session-${crypto.randomUUID()}`);
 
     expect(agentA).not.toBe(agentB);
   });
@@ -218,7 +215,6 @@ describe("createSpecraRuntime", () => {
     });
 
     expect(resolvedConfig).toEqual({ servers: {} });
-    expect(runtime.agent).toBeDefined();
     expect(runtime.warnings).toEqual([]);
   });
 
@@ -244,7 +240,6 @@ describe("createSpecraRuntime", () => {
       warn: (warning) => warned.push(warning),
     });
 
-    expect(runtime.agent).toBeDefined();
     expect(runtime.warnings).toHaveLength(1);
     expect(warned).toEqual(runtime.warnings);
     expect(runtime.warnings[0].message).toContain(REDACTION_MARKER);
@@ -285,7 +280,6 @@ describe("createSpecraRuntime", () => {
       mcpManagerFactory: () => manager,
     });
 
-    expect(runtime.agent).toBeDefined();
     expect(runtime.toolRegistry.get("file_read")).not.toBe(duplicateBuiltin);
     expect(runtime.warnings).toEqual([
       {

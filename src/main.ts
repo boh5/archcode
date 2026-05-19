@@ -7,10 +7,10 @@ import {
   type ResolvedMcpServerConfig,
 } from "./config/mcp";
 import {
-  createAgentFactory,
   defaultAgentDefinitions,
   type Agent,
 } from "./agents";
+import { SessionAgentManager } from "./agents/session-agent-manager";
 import {
   createRegistry as createProviderRegistry,
   type Registry as ProviderRegistry,
@@ -42,15 +42,14 @@ export interface SpecraRuntimeOptions {
 }
 
 export interface SpecraRuntime {
-  /** @deprecated Use agentFor(workspaceRoot) instead. Points to the first resolved project's agent. */
-  readonly agent: Agent;
+  readonly sessionAgentManager: SessionAgentManager;
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
   readonly providerRegistry: ProviderRegistry;
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
-  agentFor(workspaceRoot: string): Promise<Agent>;
+  agentFor(workspaceRoot: string, sessionId: string): Promise<Agent>;
 }
 
 export async function createSpecraRuntime(
@@ -110,37 +109,23 @@ export async function createSpecraRuntime(
       }
     }
 
-    const defaultWorkspaceRoot = await resolveWorkspaceRoot(options);
+    await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry();
     const contextResolver = new ProjectContextResolver();
-    const agentCache = new Map<string, Agent>();
+    const sessionAgentManager = new SessionAgentManager({
+      definitions: defaultAgentDefinitions,
+      providerRegistry,
+      toolRegistry,
+      config,
+      projectContextResolver: contextResolver,
+    });
 
-    function createAgentForWorkspace(workspaceRoot: string): Agent {
-      const factory = createAgentFactory({
-        definitions: defaultAgentDefinitions,
-        providerRegistry,
-        toolRegistry,
-        workspaceRoot,
-        config,
-        projectContextResolver: contextResolver,
-      });
-      return factory.createRootAgent("orchestrator");
-    }
-
-    const agent = createAgentForWorkspace(defaultWorkspaceRoot);
-    agentCache.set(defaultWorkspaceRoot, agent);
-
-    async function agentFor(workspaceRoot: string): Promise<Agent> {
-      const cached = agentCache.get(workspaceRoot);
-      if (cached) return cached;
-
-      const agent = createAgentForWorkspace(workspaceRoot);
-      agentCache.set(workspaceRoot, agent);
-      return agent;
+    async function agentFor(workspaceRoot: string, sessionId: string): Promise<Agent> {
+      return await sessionAgentManager.getOrCreate(workspaceRoot, sessionId);
     }
 
     return {
-      agent,
+      sessionAgentManager,
       mcpManager,
       toolRegistry,
       providerRegistry,
@@ -181,7 +166,7 @@ async function discoverMcpTools(
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -190,7 +175,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     }, timeoutMs);
   });
 
-  return Promise.race([promise, timeout]).finally(() => {
+  return await Promise.race([promise, timeout]).finally(() => {
     if (timer) clearTimeout(timer);
   });
 }
@@ -253,6 +238,7 @@ async function main() {
 
   const close = () => {
     void closeMcpManagerBestEffort(runtime.mcpManager, logMcpWarning);
+    runtime.sessionAgentManager.disposeAll();
   };
   process.once("SIGINT", close);
   process.once("SIGTERM", close);

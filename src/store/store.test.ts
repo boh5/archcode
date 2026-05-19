@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
-import { createSessionStore, getSessionStore } from "./store";
+import { createSessionStore, getSessionStore, scopedKey } from "./store";
 
 function uniqueSessionId(label: string): string {
   return `${label}-${crypto.randomUUID()}`;
@@ -79,6 +79,17 @@ describe("createSessionStore", () => {
   test("returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
     expect(createSessionStore(sessionId)).toBe(createSessionStore(sessionId));
+  });
+
+  test("scopes stores by workspace root when provided", () => {
+    const sessionId = uniqueSessionId("scoped-store");
+    const left = createSessionStore(sessionId, "/workspace/left");
+    const right = createSessionStore(sessionId, "/workspace/right");
+
+    expect(scopedKey("/workspace/left", sessionId)).toBe(`/workspace/left\0${sessionId}`);
+    expect(left).not.toBe(right);
+    expect(getSessionStore(sessionId, "/workspace/left")).toBe(left);
+    expect(getSessionStore(sessionId, "/workspace/right")).toBe(right);
   });
 
   test("getSessionStore returns undefined for unknown sessions and existing stores after creation", () => {

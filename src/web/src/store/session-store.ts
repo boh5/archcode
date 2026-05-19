@@ -22,10 +22,16 @@ export interface WebSessionStoreState extends SessionStoreState {
 
 const sessionRegistry = new Map<string, StoreApi<WebSessionStoreState>>();
 
+function scopedWebKey(slug: string, sessionId: string): string {
+  return `${slug}\0${sessionId}`;
+}
+
 export function createWebSessionStore(
   sessionId: string,
+  slug?: string,
 ): StoreApi<WebSessionStoreState> {
-  const existing = sessionRegistry.get(sessionId);
+  const key = slug === undefined ? sessionId : scopedWebKey(slug, sessionId);
+  const existing = sessionRegistry.get(key);
   if (existing) return existing;
 
   const store = createStore<WebSessionStoreState>((set) => ({
@@ -90,13 +96,14 @@ export function createWebSessionStore(
     },
   }));
 
-  sessionRegistry.set(sessionId, store);
+  sessionRegistry.set(key, store);
   return store;
 }
 
 export function useSessionStore<T>(
   sessionId: string,
   selector: (state: WebSessionStoreState) => T,
+  slug?: string,
 ): T {
-  return useStore(createWebSessionStore(sessionId), selector);
+  return useStore(createWebSessionStore(sessionId, slug), selector);
 }

@@ -11,16 +11,28 @@ import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
+    sessionAgentManager: {
+      get: () => undefined,
+      getOrCreate: async () => undefined,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     projectRegistry,
-    agent: undefined,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async () => undefined,
+    agentFor: async (_root: string, _sid: string) => undefined,
   } as unknown as SpecraRuntime;
 }
 
@@ -50,7 +62,7 @@ async function saveEmptySession(
   workspaceRoot: string,
   sessionId: string,
 ): Promise<void> {
-  const store = createSessionStore(sessionId);
+  const store = createScopedSessionStore(sessionId, workspaceRoot);
   store.setState({
     sessionId,
     createdAt: Date.now(),

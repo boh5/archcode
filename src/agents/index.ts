@@ -41,6 +41,7 @@ export { resolveAgentModel } from "./model-resolver";
 export {
   AgentRunningError,
   ConcurrentLimitError,
+  ConcurrentSessionLimitError,
   DepthLimitError,
   MissingAgentModelConfigError,
   NoModelsConfiguredError,

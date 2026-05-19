@@ -22,12 +22,12 @@ export function createCommandsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
       throw new BadRequestError(`Invalid command request: ${parsed.error.message}`);
     }
 
-    await resolveProject(runtime, slug);
-    if (!agentRunner.isRunning(sessionId)) {
+    const project = await resolveProject(runtime, slug);
+    if (!agentRunner.isRunning(project.workspaceRoot, sessionId)) {
       throw new SessionNotFoundError(sessionId);
     }
 
-    const result = await agentRunner.dispatchCommand(sessionId, parsed.data.name, parsed.data.args);
+    const result = await agentRunner.dispatchCommand(project.workspaceRoot, sessionId, parsed.data.name, parsed.data.args);
     if (!result) {
       throw new SessionNotFoundError(sessionId);
     }

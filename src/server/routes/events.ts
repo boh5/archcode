@@ -4,7 +4,7 @@ import type { StoreApi } from "zustand";
 import type { SpecraRuntime } from "../../main";
 import type { ProjectInfo } from "../../projects/types";
 import { loadSessionTranscript } from "../../store/helpers";
-import { getSessionStore } from "../../store/store";
+import { createSessionStore, getSessionStore, scopedKey } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { EventRing, type RingEntry } from "../event-ring";
 import { AgentRunner } from "../agent-runner";
@@ -20,12 +20,13 @@ export interface SessionStreamState {
 
 export const sessionStreams = new Map<string, SessionStreamState>();
 
-export function getSessionRing(sessionId: string): EventRing | undefined {
-  return sessionStreams.get(sessionId)?.ring;
+export function getSessionRing(workspaceRoot: string, sessionId: string): EventRing | undefined {
+  return sessionStreams.get(scopedKey(workspaceRoot, sessionId))?.ring;
 }
 
-export function ensureSessionRing(sessionId: string): EventRing {
-  const existing = sessionStreams.get(sessionId);
+export function ensureSessionRing(workspaceRoot: string, sessionId: string): EventRing {
+  const key = scopedKey(workspaceRoot, sessionId);
+  const existing = sessionStreams.get(key);
   if (existing) {
     return existing.ring;
   }
@@ -34,8 +35,12 @@ export function ensureSessionRing(sessionId: string): EventRing {
     ring: new EventRing(),
     pushedEventCount: 0,
   };
-  sessionStreams.set(sessionId, state);
+  sessionStreams.set(key, state);
   return state.ring;
+}
+
+export function removeSessionStream(workspaceRoot: string, sessionId: string): void {
+  sessionStreams.delete(scopedKey(workspaceRoot, sessionId));
 }
 
 export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
@@ -111,7 +116,8 @@ async function getSessionStreamState(
   sessionId: string,
   workspaceRoot: string,
 ): Promise<SessionStreamState> {
-  const existing = sessionStreams.get(sessionId);
+  const key = scopedKey(workspaceRoot, sessionId);
+  const existing = sessionStreams.get(key);
   if (existing) {
     existing.store = await resolveStore(runtime, agentRunner, sessionId, workspaceRoot, existing.store);
     existing.pushedEventCount = countStoreEvents(existing.store.getState());
@@ -124,7 +130,7 @@ async function getSessionStreamState(
     store,
     pushedEventCount: countStoreEvents(store.getState()),
   };
-  sessionStreams.set(sessionId, state);
+  sessionStreams.set(key, state);
   return state;
 }
 
@@ -135,19 +141,19 @@ async function resolveStore(
   workspaceRoot: string,
   fallback?: StoreApi<SessionStoreState>,
 ): Promise<StoreApi<SessionStoreState>> {
-  const runningStore = agentRunner.getJob(sessionId)
-    ? (await runtime.agentFor(workspaceRoot)).store
+  const jobAgent = agentRunner.getJob(workspaceRoot, sessionId)
+    ? runtime.sessionAgentManager.get(workspaceRoot, sessionId)
     : undefined;
-  if (runningStore) return runningStore;
+  if (jobAgent) return jobAgent.store;
 
-  const registered = getSessionStore(sessionId);
+  const registered = getSessionStore(sessionId, workspaceRoot);
   if (registered) return registered;
   if (fallback) return fallback;
 
   try {
     return await loadSessionTranscript(sessionId, workspaceRoot);
   } catch {
-    return (await runtime.agentFor(workspaceRoot)).store;
+    return createSessionStore(sessionId, workspaceRoot);
   }
 }
 

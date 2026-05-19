@@ -15,14 +15,16 @@ import { createEventsRoutes } from "./events";
 
 const tempRoot = resolve(import.meta.dir, "..", "__test_tmp__", "events-routes");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
 class MockAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   readonly runMock: RunMock;
 
-  constructor(sessionId: string) {
-    this.store = createSessionStore(sessionId);
+  constructor(sessionId: string, workspaceRoot: string) {
+    this.store = createScopedSessionStore(sessionId, workspaceRoot);
     this.runMock = mock(async () => ({ text: "ok", steps: 1 }));
   }
 
@@ -35,28 +37,41 @@ class MockAgent implements Agent {
   run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
     return this.runMock(userMessage, options);
   }
+
+  dispose(): void {}
 }
 
 function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): SpecraRuntime {
+  const sessionId = agent.store.getState().sessionId;
   return {
+    sessionAgentManager: {
+      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
+      getOrCreate: async () => agent,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     projectRegistry,
-    agent,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async () => agent,
+    agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
   } as unknown as SpecraRuntime;
 }
 
-async function createTestApp(testName: string) {
+async function createTestApp(testName: string, sessionId: string) {
   const homeDir = join(tempRoot, "homes", testName);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
   await mkdir(homeDir, { recursive: true });
   await mkdir(workspaceRoot, { recursive: true });
 
-  const agent = new MockAgent(`session-${testName}`);
+  const agent = new MockAgent(sessionId, workspaceRoot);
   const projectRegistry = new ProjectRegistry({ homeDir });
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
   const runtime = createTestRuntime(projectRegistry, agent);
@@ -110,7 +125,7 @@ describe("events routes", () => {
   });
 
   test("SSE connection receives events from store", async () => {
-    const { agent, app, project } = await createTestApp("live-events");
+    const { agent, app, project } = await createTestApp("live-events", "live-session");
     const response = await app.request(eventPath(project.slug, "live-session"));
 
     agent.store.getState().append({ type: "system-notice", message: "hello" });
@@ -122,7 +137,7 @@ describe("events routes", () => {
   });
 
   test("Last-Event-ID header triggers replay of missed events", async () => {
-    const { agent, app, project } = await createTestApp("header-replay");
+    const { agent, app, project } = await createTestApp("header-replay", "header-session");
     const first = await app.request(eventPath(project.slug, "header-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
@@ -139,7 +154,7 @@ describe("events routes", () => {
   });
 
   test("lastEventId query parameter triggers replay", async () => {
-    const { agent, app, project } = await createTestApp("query-replay");
+    const { agent, app, project } = await createTestApp("query-replay", "query-session");
     const first = await app.request(eventPath(project.slug, "query-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
@@ -154,7 +169,7 @@ describe("events routes", () => {
   });
 
   test("query lastEventId takes priority over Last-Event-ID header", async () => {
-    const { agent, app, project } = await createTestApp("query-priority");
+    const { agent, app, project } = await createTestApp("query-priority", "priority-session");
     const first = await app.request(eventPath(project.slug, "priority-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
@@ -170,7 +185,7 @@ describe("events routes", () => {
   });
 
   test("heartbeat is sent within 20 seconds", async () => {
-    const { app, project } = await createTestApp("heartbeat");
+    const { app, project } = await createTestApp("heartbeat", "heartbeat-session");
     const response = await app.request(eventPath(project.slug, "heartbeat-session"));
 
     const text = await readUntil(response, (chunk) => chunk.includes("event: heartbeat"));
@@ -178,7 +193,7 @@ describe("events routes", () => {
   }, 22000);
 
   test("client disconnect cleans up subscription", async () => {
-    const { agent, app, project } = await createTestApp("disconnect");
+    const { agent, app, project } = await createTestApp("disconnect", "disconnect-session");
     const response = await app.request(eventPath(project.slug, "disconnect-session"));
     const reader = response.body?.getReader();
     if (!reader) throw new Error("Expected response body");

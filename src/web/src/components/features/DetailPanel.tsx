@@ -42,7 +42,7 @@ export function DetailPanel() {
       <div className="min-w-0 flex-1 overflow-hidden">
         {activeTab === "diff" && <DiffTab slug={slug} />}
         {activeTab === "state" && <StateTab slug={slug} sessionId={sessionId} />}
-        {activeTab === "todo" && <TodoTab sessionId={sessionId} />}
+        {activeTab === "todo" && <TodoTab slug={slug} sessionId={sessionId} />}
       </div>
     </div>
   );

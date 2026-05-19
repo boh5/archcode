@@ -13,14 +13,16 @@ import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
 class MockAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   readonly runMock: RunMock;
 
-  constructor(sessionId: string, result: Promise<AgentResult>) {
-    this.store = createSessionStore(sessionId);
+  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string) {
+    this.store = createScopedSessionStore(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -36,10 +38,12 @@ class MockAgent implements Agent {
   run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
     return this.runMock(userMessage, options);
   }
+
+  dispose(): void {}
 }
 
-function createMockAgent(sessionId: string, result: Promise<AgentResult>): MockAgent {
-  return new MockAgent(sessionId, result);
+function createMockAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent {
+  return new MockAgent(sessionId, result, workspaceRoot);
 }
 
 async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -61,15 +65,26 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 }
 
 function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): SpecraRuntime {
+  const sessionId = agent.store.getState().sessionId;
   return {
+    sessionAgentManager: {
+      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
+      getOrCreate: async () => agent,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     projectRegistry,
-    agent: undefined,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async () => agent,
+    agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
   } as unknown as SpecraRuntime;
 }
 

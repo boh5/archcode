@@ -13,6 +13,9 @@ import { ensureSessionRing, sessionStreams } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "lifecycle");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+const ensureScopedSessionRing = ensureSessionRing as unknown as (workspaceRoot: string, sessionId: string) => ReturnType<typeof ensureSessionRing>;
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -20,12 +23,16 @@ interface Deferred<T> {
 
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
+function isJobRunning(runner: AgentRunner, workspaceRoot: string, sessionId: string): boolean {
+  return (runner.isRunning as unknown as (workspaceRoot: string, sessionId: string) => boolean)(workspaceRoot, sessionId);
+}
+
 class MockAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   readonly runMock: RunMock;
 
-  constructor(sessionId: string, result: Promise<AgentResult>) {
-    this.store = createSessionStore(sessionId);
+  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
+    this.store = createScopedSessionStore(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -41,6 +48,8 @@ class MockAgent implements Agent {
   run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
     return this.runMock(userMessage, options);
   }
+
+  dispose(): void {}
 }
 
 class ExitError extends Error {
@@ -63,15 +72,26 @@ function deferred<T>(): Deferred<T> {
 }
 
 function createRuntime(agent: Agent): SpecraRuntime {
+  const sessionId = agent.store.getState().sessionId;
   return {
-    agent: undefined,
+    sessionAgentManager: {
+      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
+      getOrCreate: async () => agent,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     projectRegistry: undefined,
     contextResolver: undefined,
-    agentFor: async () => agent,
+    agentFor: async (_root: string, _sid: string) => agent,
   } as unknown as SpecraRuntime;
 }
 
@@ -134,8 +154,8 @@ describe("server lifecycle", () => {
 
     expect(jobOne.abortController.signal.aborted).toBe(true);
     expect(jobTwo.abortController.signal.aborted).toBe(true);
-    expect(runnerOne.isRunning("abort-all-one")).toBe(false);
-    expect(runnerTwo.isRunning("abort-all-two")).toBe(false);
+    expect(isJobRunning(runnerOne, tempRoot, "abort-all-one")).toBe(false);
+    expect(isJobRunning(runnerTwo, tempRoot, "abort-all-two")).toBe(false);
   });
 
   test("setupGracefulShutdown registers signal handlers", () => {
@@ -163,7 +183,7 @@ describe("server lifecycle", () => {
     const job = runner.submit("sequence-session", tempRoot, "work");
     await flushMicrotasks();
 
-    const ring = ensureSessionRing("sequence-session");
+    const ring = ensureScopedSessionRing(tempRoot, "sequence-session");
     const server = { stop: mock(() => order.push("stop")) };
     const { handlers, processRef } = createProcess();
     const originalAbortAll = runner.abortAll.bind(runner);

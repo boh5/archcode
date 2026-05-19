@@ -19,14 +19,16 @@ function mapValuesSortedById<T extends { id: string }>(items: Map<string, T>): T
   return [...items.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function useAttentionQueue(sessionId: string): AttentionQueue {
+export function useAttentionQueue(sessionId: string, slug: string): AttentionQueue {
   const pendingPermissions = useSessionStore(
     sessionId,
     (state) => state.pendingPermissions,
+    slug,
   );
   const pendingQuestions = useSessionStore(
     sessionId,
     (state) => state.pendingQuestions,
+    slug,
   );
   const { mutate: postPermissionResponse } = usePostPermissionResponse();
   const { mutate: postQuestionAnswer } = usePostQuestionAnswer();
@@ -46,12 +48,12 @@ export function useAttentionQueue(sessionId: string): AttentionQueue {
         { id, decision: response },
         {
           onSuccess: () => {
-            createWebSessionStore(sessionId).getState().removePermissionRequest(id);
+            createWebSessionStore(sessionId, slug).getState().removePermissionRequest(id);
           },
         },
       );
     },
-    [postPermissionResponse, sessionId],
+    [postPermissionResponse, sessionId, slug],
   );
 
   const respondQuestion = useCallback(
@@ -60,12 +62,12 @@ export function useAttentionQueue(sessionId: string): AttentionQueue {
         { id, body },
         {
           onSuccess: () => {
-            createWebSessionStore(sessionId).getState().removeQuestionRequest(id);
+            createWebSessionStore(sessionId, slug).getState().removeQuestionRequest(id);
           },
         },
       );
     },
-    [postQuestionAnswer, sessionId],
+    [postQuestionAnswer, sessionId, slug],
   );
 
   return {

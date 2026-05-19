@@ -442,12 +442,13 @@ function QuestionPane({
 }
 
 export interface AttentionQueueProps {
+  slug: string;
   sessionId: string;
 }
 
-export function AttentionQueue({ sessionId }: AttentionQueueProps) {
+export function AttentionQueue({ slug, sessionId }: AttentionQueueProps) {
   const { permissions, questions, respondPermission, respondQuestion } =
-    useAttentionQueue(sessionId);
+    useAttentionQueue(sessionId, slug);
 
   const totalItems = permissions.length + questions.length;
 

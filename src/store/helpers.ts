@@ -271,7 +271,7 @@ export async function loadSessionTranscript(
     );
   }
 
-  const store = createSessionStore(sessionId);
+  const store = createSessionStore(sessionId, workspaceRoot);
   store.setState({
     sessionId: parsed.sessionId,
     createdAt: parsed.createdAt,

@@ -4,6 +4,7 @@ export type ServerErrorCode =
   | "QUESTION_NOT_FOUND"
   | "PERMISSION_TIMEOUT"
   | "BAD_REQUEST"
+  | "CONCURRENT_SESSION_LIMIT"
   | "UNAUTHORIZED"
   | "INTERNAL_ERROR"
   | "WORKFLOW_NOT_FOUND"
@@ -60,6 +61,16 @@ export class UnauthorizedError extends ServerError {
   constructor(message: string = "Unauthorized") {
     super("UNAUTHORIZED", message, 401);
     this.name = "UnauthorizedError";
+  }
+}
+
+export class ConcurrentSessionLimitHttpError extends ServerError {
+  constructor(current: number, max: number) {
+    super("CONCURRENT_SESSION_LIMIT", `Workspace has ${current} active sessions (max: ${max})`, 429, {
+      current,
+      max,
+    });
+    this.name = "ConcurrentSessionLimitHttpError";
   }
 }
 

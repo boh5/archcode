@@ -29,15 +29,17 @@ const questionMutate = mock(
 let mockState: MockSessionState;
 
 const getState = mock(() => mockState);
-const createWebSessionStore = mock((_sessionId: string) => ({ getState }));
-const useSessionStore = mock(<T,>(_sessionId: string, selector: Selector<T>): T => {
+const createWebSessionStore = mock((_sessionId: string, _slug?: string) => ({ getState }));
+const useSessionStore = mock(<T,>(_sessionId: string, selector: Selector<T>, _slug?: string): T => {
   return selector(mockState);
 });
 const usePostPermissionResponse = mock(() => ({ mutate: permissionMutate }));
 const usePostQuestionAnswer = mock(() => ({ mutate: questionMutate }));
 
 mock.module("react", () => ({
+  act: (callback: () => void) => callback(),
   useCallback: <T extends (...args: never[]) => unknown,>(callback: T) => callback,
+  useEffect: (callback: () => void | (() => void)) => callback(),
   useMemo: <T,>(factory: () => T) => factory(),
 }));
 
@@ -108,7 +110,7 @@ describe("useAttentionQueue", () => {
   });
 
   test("initial state has empty arrays", () => {
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
 
     expect(rendered.result.current.permissions).toEqual([]);
     expect(rendered.result.current.questions).toEqual([]);
@@ -120,7 +122,7 @@ describe("useAttentionQueue", () => {
       ["permission-a", makePermission("permission-a")],
     ]);
 
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
 
     expect(rendered.result.current.permissions.map((permission) => permission.id)).toEqual([
       "permission-a",
@@ -134,7 +136,7 @@ describe("useAttentionQueue", () => {
       ["question-a", makeQuestion("question-a")],
     ]);
 
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
 
     expect(rendered.result.current.questions.map((question) => question.id)).toEqual([
       "question-a",
@@ -146,7 +148,7 @@ describe("useAttentionQueue", () => {
     permissionMutate.mockImplementation((_variables, options) => {
       options?.onSuccess?.();
     });
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
 
     rendered.result.current.respondPermission("permission-1", "approve_once");
 
@@ -154,7 +156,7 @@ describe("useAttentionQueue", () => {
       id: "permission-1",
       decision: "approve_once",
     });
-    expect(createWebSessionStore).toHaveBeenCalledWith("session-1");
+    expect(createWebSessionStore).toHaveBeenCalledWith("session-1", "demo");
     expect(removePermissionRequest).toHaveBeenCalledWith("permission-1");
   });
 
@@ -162,7 +164,7 @@ describe("useAttentionQueue", () => {
     questionMutate.mockImplementation((_variables, options) => {
       options?.onSuccess?.();
     });
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
     const body: QuestionAnswerBody = { answers: [["yes"]] };
 
     rendered.result.current.respondQuestion("question-1", body);
@@ -171,13 +173,13 @@ describe("useAttentionQueue", () => {
       id: "question-1",
       body,
     });
-    expect(createWebSessionStore).toHaveBeenCalledWith("session-1");
+    expect(createWebSessionStore).toHaveBeenCalledWith("session-1", "demo");
     expect(removeQuestionRequest).toHaveBeenCalledWith("question-1");
   });
 
   test("respondPermission does not remove on mutation failure", () => {
     permissionMutate.mockImplementation(() => {});
-    const rendered = renderHook(() => useAttentionQueue("session-1"));
+    const rendered = renderHook(() => useAttentionQueue("session-1", "demo"));
 
     rendered.result.current.respondPermission("permission-1", "deny");
 

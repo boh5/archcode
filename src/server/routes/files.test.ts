@@ -14,14 +14,24 @@ interface DiffResponseBody {
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
+    sessionAgentManager: {
+      get: () => undefined,
+      getOrCreate: async () => undefined,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     projectRegistry,
-    agent: undefined,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async () => undefined,
+    agentFor: async (_root: string, _sid: string) => undefined,
   } as unknown as SpecraRuntime;
 }
 

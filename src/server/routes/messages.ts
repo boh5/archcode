@@ -1,9 +1,14 @@
 import { Hono } from "hono";
-import { AgentRunningError } from "../../agents/errors";
+import { AgentRunningError, ConcurrentSessionLimitError } from "../../agents/errors";
 import type { SpecraRuntime } from "../../main";
 import type { ProjectInfo } from "../../projects/types";
 import { AgentRunner } from "../agent-runner";
-import { BadRequestError, ProjectNotFoundError, ServerError } from "../errors";
+import {
+  BadRequestError,
+  ConcurrentSessionLimitHttpError,
+  ProjectNotFoundError,
+  ServerError,
+} from "../errors";
 
 interface MessageBody {
   text?: unknown;
@@ -33,13 +38,18 @@ export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentR
       if (error instanceof AgentRunningError) {
         throw new AgentAlreadyRunningError();
       }
+      if (error instanceof ConcurrentSessionLimitError) {
+        throw new ConcurrentSessionLimitHttpError(error.current, error.max);
+      }
       throw error;
     }
   });
 
-  app.post("/abort", (c) => {
+  app.post("/abort", async (c) => {
+    const slug = requiredParam(c.req.param("slug"), "slug");
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
-    const aborted = agentRunner.abort(sessionId);
+    const project = await resolveProject(runtime, slug);
+    const aborted = agentRunner.abort(project.workspaceRoot, sessionId);
 
     return c.json({ ok: true, aborted });
   });

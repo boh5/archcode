@@ -1,0 +1,175 @@
+import type { SpecraConfig } from "../config/index";
+import type { ProjectContextResolver } from "../projects/context-resolver";
+import type { Registry as ProviderRegistry } from "../provider/index";
+import { loadSessionTranscript } from "../store/helpers";
+import { createSessionStore, deleteSessionStore, scopedKey } from "../store/store";
+import type { SessionStoreState } from "../store/types";
+import type { ToolRegistry } from "../tools/index";
+import type { StoreApi } from "zustand";
+import { ConcurrentSessionLimitError } from "./errors";
+import { createAgentFactory } from "./factory";
+import type { AgentFactory } from "./factory";
+import type { AgentDefinition } from "./factory-types";
+import type { Agent } from "./types";
+
+export interface SessionAgentManagerConfig {
+  readonly definitions: readonly AgentDefinition[];
+  readonly providerRegistry: ProviderRegistry;
+  readonly toolRegistry: ToolRegistry;
+  readonly config?: SpecraConfig;
+  readonly projectContextResolver?: ProjectContextResolver;
+  readonly maxConcurrentSessions?: number;
+  readonly tombstoneTtlMs?: number;
+}
+
+const DEFAULT_TOMBSTONE_TTL_MS = 300000;
+
+export class SessionAgentManager {
+  #agents = new Map<string, Agent>();
+  #pendingAgents = new Map<string, Promise<Agent>>();
+  #factories = new Map<string, AgentFactory>();
+  #tombstones = new Map<string, number>();
+  #activeJobsByWorkspace = new Map<string, Set<string>>();
+  #config: SessionAgentManagerConfig;
+  readonly maxConcurrentSessions: number;
+  readonly tombstoneTtlMs: number;
+
+  constructor(config: SessionAgentManagerConfig) {
+    this.#config = config;
+    this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
+    this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
+  }
+
+  async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
+    const key = scopedKey(workspaceRoot, sessionId);
+    if (this.#isTombstonedKey(key)) {
+      throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
+    }
+
+    const existing = this.#agents.get(key);
+    if (existing) return existing;
+
+    const pending = this.#pendingAgents.get(key);
+    if (pending) return pending;
+
+    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key);
+    this.#pendingAgents.set(key, promise);
+    return promise;
+  }
+
+  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string): Promise<Agent> {
+    try {
+      const agent = await this.#createAgent(workspaceRoot, sessionId);
+      if (this.#isTombstonedKey(key)) {
+        agent.dispose();
+        throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
+      }
+
+      this.#agents.set(key, agent);
+      return agent;
+    } finally {
+      this.#pendingAgents.delete(key);
+    }
+  }
+
+  async #createAgent(workspaceRoot: string, sessionId: string): Promise<Agent> {
+    const factory = this.#getFactory(workspaceRoot);
+    let store: StoreApi<SessionStoreState>;
+    try {
+      store = await loadSessionTranscript(sessionId, workspaceRoot);
+    } catch {
+      store = createSessionStore(sessionId, workspaceRoot);
+    }
+    return factory.createRootAgent("orchestrator", { store });
+  }
+
+  get(workspaceRoot: string, sessionId: string): Agent | undefined {
+    return this.#agents.get(scopedKey(workspaceRoot, sessionId));
+  }
+
+  dispose(workspaceRoot: string, sessionId: string): void {
+    const key = scopedKey(workspaceRoot, sessionId);
+    this.#tombstones.set(key, Date.now());
+    const agent = this.#agents.get(key);
+    if (!agent) {
+      deleteSessionStore(sessionId, workspaceRoot);
+      return;
+    }
+
+    agent.dispose();
+    this.#agents.delete(key);
+    deleteSessionStore(sessionId, workspaceRoot);
+  }
+
+  isTombstoned(workspaceRoot: string, sessionId: string): boolean {
+    return this.#isTombstonedKey(scopedKey(workspaceRoot, sessionId));
+  }
+
+  clearTombstone(workspaceRoot: string, sessionId: string): boolean {
+    return this.#tombstones.delete(scopedKey(workspaceRoot, sessionId));
+  }
+
+  acquireSlot(workspaceRoot: string, sessionId: string): void {
+    const active = this.#activeJobsByWorkspace.get(workspaceRoot) ?? new Set<string>();
+    if (!active.has(sessionId) && active.size >= this.maxConcurrentSessions) {
+      throw new ConcurrentSessionLimitError(workspaceRoot, active.size, this.maxConcurrentSessions);
+    }
+
+    active.add(sessionId);
+    this.#activeJobsByWorkspace.set(workspaceRoot, active);
+  }
+
+  releaseSlot(workspaceRoot: string, sessionId: string): void {
+    const active = this.#activeJobsByWorkspace.get(workspaceRoot);
+    if (!active) return;
+
+    active.delete(sessionId);
+    if (active.size === 0) {
+      this.#activeJobsByWorkspace.delete(workspaceRoot);
+    }
+  }
+
+  disposeAll(): void {
+    for (const key of [...this.#agents.keys()]) {
+      const [workspaceRoot, sessionId] = key.split("\0");
+      if (workspaceRoot !== undefined && sessionId !== undefined) {
+        this.dispose(workspaceRoot, sessionId);
+      }
+    }
+  }
+
+  getByWorkspace(workspaceRoot: string): Agent[] {
+    const prefix = `${workspaceRoot}\0`;
+    return [...this.#agents]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, agent]) => agent);
+  }
+
+  #getFactory(workspaceRoot: string): AgentFactory {
+    let factory = this.#factories.get(workspaceRoot);
+    if (!factory) {
+      factory = createAgentFactory({
+        definitions: this.#config.definitions,
+        providerRegistry: this.#config.providerRegistry,
+        toolRegistry: this.#config.toolRegistry,
+        workspaceRoot,
+        config: this.#config.config,
+        projectContextResolver: this.#config.projectContextResolver,
+      });
+      this.#factories.set(workspaceRoot, factory);
+    }
+    return factory;
+  }
+
+  #isTombstonedKey(key: string): boolean {
+    const tombstonedAt = this.#tombstones.get(key);
+    if (tombstonedAt === undefined) return false;
+
+    if (Date.now() - tombstonedAt > this.tombstoneTtlMs) {
+      this.#tombstones.delete(key);
+      return false;
+    }
+
+    return true;
+  }
+}

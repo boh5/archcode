@@ -14,6 +14,8 @@ import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "commands-routes");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -26,8 +28,8 @@ class MockAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   readonly runMock: RunMock;
 
-  constructor(sessionId: string, result: Promise<AgentResult>) {
-    this.store = createSessionStore(sessionId);
+  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string) {
+    this.store = createScopedSessionStore(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -43,6 +45,8 @@ class MockAgent implements Agent {
   run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
     return this.runMock(userMessage, options);
   }
+
+  dispose(): void {}
 }
 
 function deferred<T>(): Deferred<T> {
@@ -56,8 +60,8 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve: resolveValue, reject: rejectValue };
 }
 
-function createCommandAgent(sessionId: string, result: Promise<AgentResult>): MockAgent & ConfiguredAgent {
-  const agent = new MockAgent(sessionId, result) as MockAgent & ConfiguredAgent;
+function createCommandAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent & ConfiguredAgent {
+  const agent = new MockAgent(sessionId, result, workspaceRoot) as MockAgent & ConfiguredAgent;
   const agentRun = agent.run.bind(agent);
   Object.setPrototypeOf(agent, ConfiguredAgent.prototype);
   agent.run = agentRun;
@@ -90,15 +94,26 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 }
 
 function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): SpecraRuntime {
+  const sessionId = agent.store.getState().sessionId;
   return {
+    sessionAgentManager: {
+      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
+      getOrCreate: async () => agent,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     projectRegistry,
-    agent: undefined,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async () => agent,
+    agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
   } as unknown as SpecraRuntime;
 }
 

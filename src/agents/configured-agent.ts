@@ -75,13 +75,15 @@ export class ConfiguredAgent implements Agent {
   private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
   private readonly autoCompactHook = createAutoCompactHook();
-  private readonly backgroundTaskManager: BackgroundTaskManager | undefined;
+  private readonly backgroundTaskManager: BackgroundTaskManager;
+  private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   private readonly agentFactory: AgentFactoryLike | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private agentsMd: string | undefined;
   private agentsMdLoaded = false;
   private running = false;
+  private disposed = false;
 
   constructor(options: ConfiguredAgentOptions) {
     this.definition = options.definition;
@@ -97,7 +99,8 @@ export class ConfiguredAgent implements Agent {
     this.workspaceRoot = options.workspaceRoot;
     this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
     this.depth = options.depth ?? 0;
-    this.backgroundTaskManager = options.backgroundTaskManager;
+    this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager();
+    this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.agentFactory = options.agentFactory;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
@@ -124,6 +127,10 @@ export class ConfiguredAgent implements Agent {
     abortOrOptions?: AbortSignal | AgentRunOptions,
     confirmPermission?: ToolConfirmationCallback,
   ): Promise<AgentResult> {
+    if (this.disposed) {
+      throw new Error("Agent has been disposed");
+    }
+
     const { abort, confirm, askUser } = this.parseRunOptions(abortOrOptions, confirmPermission);
 
     if (this.running) {
@@ -131,8 +138,8 @@ export class ConfiguredAgent implements Agent {
     }
 
     this.running = true;
-    const btm = this.backgroundTaskManager ?? new DefaultBackgroundTaskManager();
-    const shouldDrainBackgroundTasks = this.backgroundTaskManager === undefined || this.definition.enforceToolOutputQuota === true;
+    const btm = this.backgroundTaskManager;
+    const shouldDrainBackgroundTasks = this.ownsBackgroundTaskManager || this.definition.enforceToolOutputQuota === true;
 
     try {
       await this.enforceToolOutputQuotaIfNeeded();
@@ -199,6 +206,10 @@ export class ConfiguredAgent implements Agent {
   }
 
   async dispatchCommand(name: string, args?: string): Promise<CommandResult> {
+    if (this.disposed) {
+      throw new Error("Agent has been disposed");
+    }
+
     const descriptor = this.commandRegistry.get(name);
     if (!descriptor) {
       return { success: false, message: `Unknown command: ${name}` };
@@ -213,6 +224,14 @@ export class ConfiguredAgent implements Agent {
       },
       args,
     );
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.ownsBackgroundTaskManager) {
+      this.backgroundTaskManager.cancelAll();
+    }
   }
 
   private parseRunOptions(
@@ -268,6 +287,7 @@ export class ConfiguredAgent implements Agent {
   private buildHooks(btm: BackgroundTaskManager): QueryLoopHooks {
     const hooks: QueryLoopHooks = {};
     const policy = this.definition.hooks;
+    const isCancelled = () => this.disposed;
 
     if (policy.autoCompact) {
       hooks.beforeModelBuild = [this.autoCompactHook.hook];
@@ -281,7 +301,7 @@ export class ConfiguredAgent implements Agent {
       policy.titleGeneration === "enabled" ||
       (policy.titleGeneration === "unless-supplied" && !this.store.getState().title?.trim())
     ) {
-      beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot));
+      beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot, isCancelled));
     }
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
@@ -294,13 +314,13 @@ export class ConfiguredAgent implements Agent {
       afterLoopEnd.push(todoContinuation.afterLoopEnd);
     }
     if (policy.transcriptSave) {
-      afterLoopEnd.push(createTranscriptSaveHook(btm, this.workspaceRoot));
+      afterLoopEnd.push(createTranscriptSaveHook(btm, this.workspaceRoot, isCancelled));
     }
     if (policy.memoryExtraction) {
-      afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots));
+      afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots, isCancelled));
     }
     if (policy.memoryConsolidation) {
-      afterLoopEnd.push(createMemoryConsolidationHook(btm, this.memoryRoots));
+      afterLoopEnd.push(createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled));
     }
     if (afterLoopEnd.length > 0) {
       hooks.afterLoopEnd = afterLoopEnd;

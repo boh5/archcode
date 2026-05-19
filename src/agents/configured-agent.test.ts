@@ -20,6 +20,7 @@ const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 class RecordingBackgroundTaskManager {
   readonly dispatched: string[] = [];
   drainCalls = 0;
+  cancelAllCalls = 0;
 
   dispatch(name: string): void {
     this.dispatched.push(name);
@@ -27,6 +28,10 @@ class RecordingBackgroundTaskManager {
 
   async drain(): Promise<void> {
     this.drainCalls += 1;
+  }
+
+  cancelAll(): void {
+    this.cancelAllCalls += 1;
   }
 }
 
@@ -250,6 +255,15 @@ describe("ConfiguredAgent", () => {
     })).toThrow(MissingProjectContextError);
 
     expect(new MissingProjectContextError("missing context").name).toBe("MissingProjectContextError");
+  });
+
+  test("dispose does not cancel a provided shared background task manager", () => {
+    const btm = new RecordingBackgroundTaskManager();
+    const agent = createAgent({ definition: orchestratorAgentDefinition, btm });
+
+    agent.dispose();
+
+    expect(btm.cancelAllCalls).toBe(0);
   });
 
   test("constructs without relying on provider registry model order when modelInfo is supplied", async () => {

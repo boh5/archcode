@@ -16,6 +16,8 @@ export interface Agent {
     confirmPermission?: ToolConfirmationCallback,
   ): Promise<AgentResult>;
   run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
+  /** Clean up session-scoped resources. After disposal, agent should not be used. */
+  dispose(): void;
 }
 
 export interface AgentResult {

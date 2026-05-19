@@ -17,6 +17,9 @@ import { getSessionRing } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
 
+const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+const getScopedSessionRing = getSessionRing as unknown as (workspaceRoot: string, sessionId: string) => ReturnType<typeof getSessionRing>;
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -25,12 +28,35 @@ interface Deferred<T> {
 
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
+function abortJob(runner: AgentRunner, workspaceRoot: string, sessionId: string): boolean {
+  return (runner.abort as unknown as (workspaceRoot: string, sessionId: string) => boolean)(workspaceRoot, sessionId);
+}
+
+function isJobRunning(runner: AgentRunner, workspaceRoot: string, sessionId: string): boolean {
+  return (runner.isRunning as unknown as (workspaceRoot: string, sessionId: string) => boolean)(workspaceRoot, sessionId);
+}
+
+async function dispatchRunnerCommand(
+  runner: AgentRunner,
+  workspaceRoot: string,
+  sessionId: string,
+  name: string,
+  args?: string,
+): Promise<CommandResult | null> {
+  return await (runner.dispatchCommand as unknown as (
+    workspaceRoot: string,
+    sessionId: string,
+    name: string,
+    args?: string,
+  ) => Promise<CommandResult | null>)(workspaceRoot, sessionId, name, args);
+}
+
 class MockAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
   readonly runMock: RunMock;
 
-  constructor(sessionId: string, result: Promise<AgentResult>) {
-    this.store = createSessionStore(sessionId);
+  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
+    this.store = createScopedSessionStore(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -46,6 +72,8 @@ class MockAgent implements Agent {
   run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
     return this.runMock(userMessage, options);
   }
+
+  dispose(): void {}
 }
 
 function deferred<T>(): Deferred<T> {
@@ -59,20 +87,46 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve: resolveValue, reject: rejectValue };
 }
 
-function createMockAgent(sessionId: string, result: Promise<AgentResult>): MockAgent {
-  return new MockAgent(sessionId, result);
+function createMockAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent {
+  return new MockAgent(sessionId, result, workspaceRoot);
 }
 
 function createRuntime(agent: Agent): SpecraRuntime {
+  const sessionId = agent.store.getState().sessionId;
+  const runningSessions = new Set<string>();
+  let runningAgent: Agent | undefined;
   return {
-    agent: undefined,
+    sessionAgentManager: {
+      get: (_workspaceRoot: string, requestedSessionId: string) => {
+        const isRunning = runningSessions.has(requestedSessionId);
+        if (!isRunning || runningAgent === undefined) return undefined;
+
+        const activeAgent = runningAgent;
+        runningAgent = undefined;
+        return activeAgent;
+      },
+      getOrCreate: async () => agent,
+      dispose: () => undefined,
+      disposeAll: () => undefined,
+      getByWorkspace: () => [],
+      isTombstoned: () => false,
+      acquireSlot: () => undefined,
+      releaseSlot: () => undefined,
+      abortAndDispose: async () => undefined,
+    },
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     projectRegistry: undefined,
     contextResolver: undefined,
-    agentFor: async () => agent,
+    agentFor: async (_workspaceRoot: string, requestedSessionId: string) => {
+      if (requestedSessionId === sessionId) {
+        runningSessions.add(requestedSessionId);
+        runningAgent = agent;
+      }
+      return agent;
+    },
   } as unknown as SpecraRuntime;
 }
 
@@ -117,6 +171,7 @@ describe("AgentRunner", () => {
     const job = runner.submit("session-start", tempRoot, "Hello");
 
     expect(job.sessionId).toBe("session-start");
+    expect(job.workspaceRoot).toBe(tempRoot);
     expect(typeof job.jobId).toBe("string");
     expect(job.abortController.signal.aborted).toBe(false);
     await flushMicrotasks();
@@ -144,7 +199,7 @@ describe("AgentRunner", () => {
       input: {},
       description: "Confirm",
     });
-    const ring = getSessionRing("session-permission");
+    const ring = getScopedSessionRing(tempRoot, "session-permission");
     const permissionId = (JSON.parse(ring!.since(0)[0].data) as { id: string }).id;
 
     expect(permissionService.respond(permissionId, "deny")).toBe(true);
@@ -167,12 +222,12 @@ describe("AgentRunner", () => {
     const runner = new AgentRunner(createRuntime(agent));
 
     const job = runner.submit("session-running", tempRoot, "Hello");
-    expect(runner.isRunning("session-running")).toBe(true);
+    expect(isJobRunning(runner, tempRoot, "session-running")).toBe(true);
 
     run.resolve({ text: "Done", steps: 1 });
     await job.promise;
 
-    expect(runner.isRunning("session-running")).toBe(false);
+    expect(isJobRunning(runner, tempRoot, "session-running")).toBe(false);
   });
 
   test("abort cancels the job and isRunning becomes false", async () => {
@@ -180,18 +235,18 @@ describe("AgentRunner", () => {
     const runner = new AgentRunner(createRuntime(agent));
 
     const job = runner.submit("session-abort", tempRoot, "Stop me");
-    const aborted = runner.abort("session-abort");
+    const aborted = abortJob(runner, tempRoot, "session-abort");
     await job.promise;
 
     expect(aborted).toBe(true);
     expect(job.abortController.signal.aborted).toBe(true);
-    expect(runner.isRunning("session-abort")).toBe(false);
+    expect(isJobRunning(runner, tempRoot, "session-abort")).toBe(false);
   });
 
   test("after agent.run completes, session transcript is saved", async () => {
     const workspaceRoot = join(tempRoot, "workspace-save");
     await mkdir(workspaceRoot, { recursive: true });
-    const agent = createMockAgent("session-save", Promise.resolve({ text: "Saved", steps: 1 }));
+    const agent = createMockAgent("session-save", Promise.resolve({ text: "Saved", steps: 1 }), workspaceRoot);
     agent.store.getState().append({ type: "user-message", content: "persist me" });
     const runner = new AgentRunner(createRuntime(agent));
 
@@ -201,6 +256,45 @@ describe("AgentRunner", () => {
 
     const saved = await loadSessionTranscript("session-save", workspaceRoot);
     expect(saved.getState().messages).toHaveLength(1);
+  });
+
+  test("does not save transcript when session is tombstoned before job settles", async () => {
+    const workspaceRoot = join(tempRoot, "workspace-tombstone");
+    await mkdir(workspaceRoot, { recursive: true });
+    const run = deferred<AgentResult>();
+    const agent = createMockAgent("session-tombstone", run.promise, workspaceRoot);
+    agent.store.getState().append({ type: "user-message", content: "do not resurrect" });
+    let tombstoned = false;
+    const runtime = createRuntime(agent);
+    runtime.sessionAgentManager.isTombstoned = () => tombstoned;
+    const runner = new AgentRunner(runtime);
+
+    const job = runner.submit("session-tombstone", workspaceRoot, "delete me");
+    await flushMicrotasks();
+    tombstoned = true;
+    run.resolve({ text: "Done", steps: 1 });
+    await job.promise;
+
+    await expect(loadSessionTranscript("session-tombstone", workspaceRoot)).rejects.toThrow();
+  });
+
+  test("acquires and releases per-workspace session slots", async () => {
+    const run = deferred<AgentResult>();
+    const agent = createMockAgent("session-slot", run.promise);
+    const runtime = createRuntime(agent);
+    const acquired: string[] = [];
+    const released: string[] = [];
+    runtime.sessionAgentManager.acquireSlot = (_workspaceRoot: string, sessionId: string) => acquired.push(sessionId);
+    runtime.sessionAgentManager.releaseSlot = (_workspaceRoot: string, sessionId: string) => released.push(sessionId);
+    const runner = new AgentRunner(runtime);
+
+    const job = runner.submit("session-slot", tempRoot, "Hello");
+    expect(acquired).toEqual(["session-slot"]);
+
+    run.resolve({ text: "Done", steps: 1 });
+    await job.promise;
+
+    expect(released).toEqual(["session-slot"]);
   });
 
   test("dispatchCommand returns null without running configured agent and delegates while running", async () => {
@@ -214,19 +308,19 @@ describe("AgentRunner", () => {
     agent.dispatchCommand = dispatchCommand;
     const runner = new AgentRunner(createRuntime(agent));
 
-    const missingResult = await runner.dispatchCommand("missing", "compact");
+    const missingResult = await dispatchRunnerCommand(runner, tempRoot, "missing", "compact");
     expect(missingResult).toBeNull();
 
     const job = runner.submit("session-command", tempRoot, "Hello");
     await flushMicrotasks();
 
-    const runningResult = await runner.dispatchCommand("session-command", "compact", "now");
+    const runningResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact", "now");
     expect(runningResult).toEqual(commandResult);
     expect(dispatchCommand).toHaveBeenCalledWith("compact", "now");
 
     run.resolve({ text: "Done", steps: 1 });
     await job.promise;
-    const completedResult = await runner.dispatchCommand("session-command", "compact");
+    const completedResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact");
     expect(completedResult).toBeNull();
   });
 });

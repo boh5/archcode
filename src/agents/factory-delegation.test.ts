@@ -134,6 +134,21 @@ function makeFactory(definitions: readonly AgentDefinition[] = [parentDefinition
   });
 }
 
+function makeFactoryWithBackgroundTaskManager(
+  backgroundTaskManager: RecordingBackgroundTaskManager,
+  definitions: readonly AgentDefinition[] = [parentDefinition(), targetDefinition()],
+) {
+  const providerRegistry = makeProviderRegistry();
+  return createAgentFactory({
+    definitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    workspaceRoot: tmpRoot,
+    config: configForDefinitions(providerRegistry, definitions),
+    backgroundTaskManager: backgroundTaskManager as never,
+  });
+}
+
 function configForDefinitions(providerRegistry: ProviderRegistry, definitions: readonly AgentDefinition[]): SpecraConfig {
   return {
     provider: {},
@@ -206,6 +221,8 @@ class RejectingAgent implements Agent {
   async run(): Promise<AgentResult> {
     throw new Error("boom");
   }
+
+  dispose(): void {}
 }
 
 describe("AgentFactory.delegate", () => {
@@ -248,6 +265,20 @@ describe("AgentFactory.delegate", () => {
     expect(handle.abort).toBeFunction();
     expect(getSessionStore(handle.sessionId)?.getState().sessionId).toBe(handle.sessionId);
     await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
+  });
+
+  test("root agents do not use factory shared background task manager", async () => {
+    setupResolvingStreamText();
+    const btm = new RecordingBackgroundTaskManager();
+    const factory = makeFactoryWithBackgroundTaskManager(btm);
+
+    const rootAgent = factory.createRootAgent("orchestrator", {
+      store: createSessionStore(`factory-root-${crypto.randomUUID()}`),
+    });
+    await rootAgent.run("root run");
+
+    expect(btm.dispatched).toEqual([]);
+    expect(btm.drainCalls).toBe(0);
   });
 
   test("links parent and child metadata", async () => {
@@ -438,6 +469,7 @@ describe("AgentFactory.delegate", () => {
       return {
         store: options.store ?? createSessionStore(`abort-${crypto.randomUUID()}`),
         run: async () => new Promise<AgentResult>(() => {}),
+        dispose: () => undefined,
       };
     };
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);

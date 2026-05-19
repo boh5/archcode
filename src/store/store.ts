@@ -10,10 +10,20 @@ import {
 
 const sessionRegistry = new Map<string, StoreApi<SessionStoreState>>();
 
+export function scopedKey(workspaceRoot: string, sessionId: string): string {
+  return `${workspaceRoot}\0${sessionId}`;
+}
+
+function registryKey(sessionId: string, workspaceRoot?: string): string {
+  return workspaceRoot === undefined ? sessionId : scopedKey(workspaceRoot, sessionId);
+}
+
 export function createSessionStore(
   sessionId: string,
+  workspaceRoot?: string,
 ): StoreApi<SessionStoreState> {
-  const existing = sessionRegistry.get(sessionId);
+  const key = registryKey(sessionId, workspaceRoot);
+  const existing = sessionRegistry.get(key);
   if (existing) return existing;
 
   const store = createStore<SessionStoreState>((set, get) => ({
@@ -45,12 +55,21 @@ export function createSessionStore(
       toModelMessagesFromStoredMessages(get().messages),
   }));
 
-  sessionRegistry.set(sessionId, store);
+  sessionRegistry.set(key, store);
   return store;
 }
 
 export function getSessionStore(
   sessionId: string,
+  workspaceRoot?: string,
 ): StoreApi<SessionStoreState> | undefined {
-  return sessionRegistry.get(sessionId);
+  return sessionRegistry.get(registryKey(sessionId, workspaceRoot));
+}
+
+export function deleteSessionStore(sessionId: string, workspaceRoot?: string): boolean {
+  return sessionRegistry.delete(registryKey(sessionId, workspaceRoot));
+}
+
+export function clearAllSessionStores(): void {
+  sessionRegistry.clear();
 }

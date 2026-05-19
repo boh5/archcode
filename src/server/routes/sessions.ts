@@ -11,7 +11,9 @@ import {
 import { getSessionsDir } from "../../store/sessions-dir";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
+import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, ProjectNotFoundError, SessionNotFoundError } from "../errors";
+import { removeSessionStream } from "./events";
 
 interface SessionSummary {
   sessionId: string;
@@ -30,7 +32,7 @@ interface SessionTimestamps {
   updatedAt?: number;
 }
 
-export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
+export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => {
@@ -42,7 +44,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
 
   app.post("/", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const store = createSessionStore(crypto.randomUUID());
+    const store = createSessionStore(crypto.randomUUID(), project.workspaceRoot);
 
     await saveSessionTranscript(store.getState(), project.workspaceRoot);
 
@@ -67,6 +69,12 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
   app.delete("/:sessionId", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
+
+    await agentRunner.abortAndWait(project.workspaceRoot, sessionId);
+    runtime.sessionAgentManager.dispose(project.workspaceRoot, sessionId);
+    removeSessionStream(project.workspaceRoot, sessionId);
+    agentRunner.cleanupSession(project.workspaceRoot, sessionId);
+
     const path = join(getSessionsDir(project.workspaceRoot), `${sessionId}.json`);
 
     if (await Bun.file(path).exists()) {

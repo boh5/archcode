@@ -4,14 +4,18 @@ import type { Agent } from "../agents/types";
 import type { CommandResult } from "../commands/types";
 import type { SpecraRuntime } from "../main";
 import { saveSessionTranscript } from "../store/helpers";
+import { scopedKey } from "../store/store";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/types";
 import type { AskUserService } from "./ask-user-service";
 import type { PermissionService } from "./permission-service";
 import { ensureSessionRing } from "./routes/events";
 
+const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
+
 export interface RunningJob {
   jobId: string;
   sessionId: string;
+  workspaceRoot: string;
   abortController: AbortController;
   promise: Promise<void>;
 }
@@ -20,7 +24,6 @@ export class AgentRunner {
   static #instances = new Set<AgentRunner>();
 
   #jobs = new Map<string, RunningJob>();
-  #agents = new Map<string, Agent>();
   #runtime: SpecraRuntime;
   #permissionService?: PermissionService;
   #askUserService?: AskUserService;
@@ -33,39 +36,60 @@ export class AgentRunner {
   }
 
   submit(sessionId: string, workspaceRoot: string, userMessage: string): RunningJob {
-    if (this.#jobs.has(sessionId)) {
+    const key = scopedKey(workspaceRoot, sessionId);
+    if (this.#jobs.has(key)) {
       throw new AgentRunningError();
     }
 
+    this.#runtime.sessionAgentManager.acquireSlot(workspaceRoot, sessionId);
     const abortController = new AbortController();
     const jobId = crypto.randomUUID();
     let job: RunningJob;
 
     const promise = this.#runJob(sessionId, workspaceRoot, userMessage, abortController)
       .finally(() => {
-        this.#jobs.delete(sessionId);
+        this.#jobs.delete(key);
+        this.#runtime.sessionAgentManager.releaseSlot(workspaceRoot, sessionId);
       });
 
     job = {
       jobId,
       sessionId,
+      workspaceRoot,
       abortController,
       promise,
     };
-    this.#jobs.set(sessionId, job);
+    this.#jobs.set(key, job);
 
     return job;
   }
 
-  abort(sessionId: string): boolean {
-    const job = this.#jobs.get(sessionId);
+  abort(workspaceRoot: string, sessionId: string): boolean {
+    const key = scopedKey(workspaceRoot, sessionId);
+    const job = this.#jobs.get(key);
     if (!job) {
       return false;
     }
 
     job.abortController.abort();
-    this.#jobs.delete(sessionId);
+    this.#jobs.delete(key);
     return true;
+  }
+
+  async abortAndWait(workspaceRoot: string, sessionId: string): Promise<void> {
+    const key = scopedKey(workspaceRoot, sessionId);
+    const job = this.#jobs.get(key);
+    if (!job) return;
+
+    job.abortController.abort();
+    this.#jobs.delete(key);
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, ABORT_AND_WAIT_TIMEOUT_MS));
+    await Promise.race([job.promise.catch(() => {}), timeout]);
+  }
+
+  cleanupSession(workspaceRoot: string, sessionId: string): void {
+    this.#permissionService?.cleanup(sessionId, workspaceRoot);
+    this.#askUserService?.cleanup(sessionId, workspaceRoot);
   }
 
   async abortAll(): Promise<void> {
@@ -81,16 +105,16 @@ export class AgentRunner {
     return [...AgentRunner.#instances].flatMap((runner) => [...runner.#jobs.values()]);
   }
 
-  isRunning(sessionId: string): boolean {
-    return this.#jobs.has(sessionId);
+  isRunning(workspaceRoot: string, sessionId: string): boolean {
+    return this.#jobs.has(scopedKey(workspaceRoot, sessionId));
   }
 
-  getJob(sessionId: string): RunningJob | undefined {
-    return this.#jobs.get(sessionId);
+  getJob(workspaceRoot: string, sessionId: string): RunningJob | undefined {
+    return this.#jobs.get(scopedKey(workspaceRoot, sessionId));
   }
 
-  async dispatchCommand(sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
-    const agent = this.#agents.get(sessionId);
+  async dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
+    const agent = this.#runtime.sessionAgentManager.get(workspaceRoot, sessionId);
     if (!(agent instanceof ConfiguredAgent)) {
       return null;
     }
@@ -107,20 +131,19 @@ export class AgentRunner {
     let agent: Agent | undefined;
 
     try {
-      agent = await this.#runtime.agentFor(workspaceRoot);
+      agent = await this.#runtime.agentFor(workspaceRoot, sessionId);
       if (abortController.signal.aborted) {
         return;
       }
-      this.#agents.set(sessionId, agent);
 
-      const ring = ensureSessionRing(sessionId);
+      const ring = ensureSessionRing(workspaceRoot, sessionId);
       const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
-        ? (request, abortSignal) => this.#permissionService!.request(sessionId, request, ring, abortSignal)
+        ? (request, abortSignal) => this.#permissionService!.request(sessionId, workspaceRoot, request, ring, abortSignal)
         : undefined;
       const askUser: AskUserCallback | undefined = this.#askUserService
         ? (request) => {
           const { abortSignal, ...serializableRequest } = request;
-          return this.#askUserService!.request(sessionId, serializableRequest, ring, abortSignal);
+          return this.#askUserService!.request(sessionId, workspaceRoot, serializableRequest, ring, abortSignal);
         }
         : undefined;
 
@@ -136,8 +159,7 @@ export class AgentRunner {
         );
       }
     } finally {
-      this.#agents.delete(sessionId);
-      if (agent) {
+      if (agent && !this.#runtime.sessionAgentManager.isTombstoned(workspaceRoot, sessionId)) {
         try {
           await saveSessionTranscript(agent.store.getState(), workspaceRoot);
         } catch (error) {

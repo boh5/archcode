@@ -15,7 +15,7 @@ type SessionEventType =
 
 export function useSessionEvents(slug: string, sessionId: string): void {
   useEffect(() => {
-    const store = createWebSessionStore(sessionId);
+    const store = createWebSessionStore(sessionId, slug);
     let eventSource: EventSource | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;

@@ -10,7 +10,7 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps) {
-  const title = useSessionStore(sessionId, (s) => s.title);
+  const title = useSessionStore(sessionId, (s) => s.title, slug);
   const { data: workflow } = useWorkflow(slug, sessionId);
   const postCommand = usePostCommand();
 

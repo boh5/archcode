@@ -70,10 +70,10 @@ export function createServerApp(
   app.get("/api/health", (c) => c.json({ ok: true }));
 
   const projects = createProjectsRoutes(runtime);
-  const sessions = createSessionsRoutes(runtime);
   const permissionService = new PermissionService();
   const askUserService = new AskUserService();
   const agentRunner = new AgentRunner(runtime, permissionService, askUserService);
+  const sessions = createSessionsRoutes(runtime, agentRunner);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const events = createEventsRoutes(runtime, agentRunner);
   const permissions = createPermissionRoutes(permissionService);

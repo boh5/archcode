@@ -81,7 +81,8 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
 
   const factory: AgentFactory = {
     createRootAgent(name, options = {}) {
-      return createConfiguredAgent(agentConfig, factory, factory.getDefinition(name), options);
+      const rootConfig = { ...agentConfig, backgroundTaskManager: undefined };
+      return createConfiguredAgent(rootConfig, factory, factory.getDefinition(name), options);
     },
 
     createAgent(name, options = {}) {

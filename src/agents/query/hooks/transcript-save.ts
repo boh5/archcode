@@ -5,10 +5,16 @@ import type { AfterLoopEndContext } from "../loop-hooks";
 export function createTranscriptSaveHook(
   btm: BackgroundTaskManager | undefined,
   workspaceRoot: string,
+  isCancelled?: () => boolean,
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
+    if (isCancelled?.()) return;
+
     if (btm !== undefined) {
-      btm.dispatch("transcript-save", async () => saveTranscript(ctx, workspaceRoot));
+      btm.dispatch("transcript-save", async () => {
+        if (isCancelled?.()) return;
+        await saveTranscript(ctx, workspaceRoot);
+      });
       return;
     }
 

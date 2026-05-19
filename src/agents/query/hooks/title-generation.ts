@@ -5,11 +5,13 @@ import { createTitleGenerationTask } from "../../../background/tasks/title-gener
 export function createTitleGenerationHook(
   btm: BackgroundTaskManager,
   workspaceRoot: string,
+  isCancelled?: () => boolean,
 ): (ctx: BeforeModelCallContext) => Promise<void> {
   let triggered = false;
 
   return async (ctx: BeforeModelCallContext) => {
     if (triggered) return;
+    if (isCancelled?.()) return;
 
     const state = ctx.store.getState();
     if (state.title) return;
@@ -17,12 +19,15 @@ export function createTitleGenerationHook(
     triggered = true;
 
     const task = createTitleGenerationTask(ctx.store);
-    btm.dispatch(task.name, () => task.run({
-      store: ctx.store,
-      modelInfo: ctx.modelInfo,
-      modelOptions: ctx.modelOptions,
-      workspaceRoot,
-      abort: ctx.abort,
-    }));
+    btm.dispatch(task.name, () => {
+      if (isCancelled?.()) return Promise.resolve();
+      return task.run({
+        store: ctx.store,
+        modelInfo: ctx.modelInfo,
+        modelOptions: ctx.modelOptions,
+        workspaceRoot,
+        abort: ctx.abort,
+      });
+    });
   };
 }

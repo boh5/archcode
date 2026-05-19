@@ -9,6 +9,7 @@ type SerializableAskUserRequest = Omit<AskUserRequest, "abortSignal">;
 
 interface PendingQuestion {
   sessionId: string;
+  workspaceRoot?: string;
   request: SerializableAskUserRequest;
   resolve(result: AskUserResponse): void;
   reject(error: Error): void;
@@ -22,10 +23,15 @@ export class AskUserService {
 
   request(
     sessionId: string,
-    req: AskUserRequest,
-    ring: EventRing,
+    workspaceRootOrReq: string | AskUserRequest,
+    reqOrRing: AskUserRequest | EventRing,
+    ringOrAbortSignal?: EventRing | AbortSignal,
     abortSignal?: AbortSignal,
   ): Promise<AskUserResponse> {
+    const workspaceRoot = typeof workspaceRootOrReq === "string" ? workspaceRootOrReq : undefined;
+    const req = (workspaceRoot ? reqOrRing : workspaceRootOrReq) as AskUserRequest;
+    const ring = (workspaceRoot ? ringOrAbortSignal : reqOrRing) as EventRing;
+    const signal = (workspaceRoot ? abortSignal : ringOrAbortSignal) as AbortSignal | undefined;
     const questionId = crypto.randomUUID();
     const serializedRequest: SerializableAskUserRequest = {
       toolName: req.toolName,
@@ -35,13 +41,14 @@ export class AskUserService {
 
     ring.push("question.request", JSON.stringify({ id: questionId, sessionId, ...serializedRequest }));
 
-    if (abortSignal?.aborted) {
+    if (signal?.aborted) {
       return Promise.resolve(CANCELLED_RESPONSE);
     }
 
     return new Promise<AskUserResponse>((resolve, reject) => {
       const pending: PendingQuestion = {
         sessionId,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
         request: serializedRequest,
         resolve,
         reject,
@@ -54,9 +61,9 @@ export class AskUserService {
         resolve(CANCELLED_RESPONSE);
       };
 
-      if (abortSignal) {
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => abortSignal.removeEventListener("abort", onAbort);
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+        pending.cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
       }
 
       this.#pending.set(questionId, pending);
@@ -79,9 +86,12 @@ export class AskUserService {
     return this.#pending.has(questionId);
   }
 
-  cleanup(sessionId?: string): void {
+  cleanup(sessionId?: string, workspaceRoot?: string): void {
     for (const [questionId, pending] of this.#pending) {
       if (sessionId !== undefined && pending.sessionId !== sessionId) {
+        continue;
+      }
+      if (workspaceRoot !== undefined && pending.workspaceRoot !== workspaceRoot) {
         continue;
       }
 

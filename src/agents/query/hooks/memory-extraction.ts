@@ -11,8 +11,11 @@ import type { TextPart } from "../../../store/types";
 export function createMemoryExtractionHook(
   btm: BackgroundTaskManager,
   memoryRoots: MemoryRoots,
+  isCancelled?: () => boolean,
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
+    if (isCancelled?.()) return;
+
     const state = ctx.store.getState();
 
     const userMessages = state.messages.filter((m) => m.role === "user");
@@ -34,13 +37,15 @@ export function createMemoryExtractionHook(
     );
 
     btm.dispatch(task.name, () =>
-      task.run({
-        store: ctx.store,
-        modelInfo: ctx.modelInfo,
-        modelOptions: ctx.modelOptions,
-        workspaceRoot: memoryRoots.project,
-        abort: ctx.abort,
-      }),
+      isCancelled?.()
+        ? Promise.resolve()
+        : task.run({
+            store: ctx.store,
+            modelInfo: ctx.modelInfo,
+            modelOptions: ctx.modelOptions,
+            workspaceRoot: memoryRoots.project,
+            abort: ctx.abort,
+          }),
     );
   };
 }

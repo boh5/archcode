@@ -6,6 +6,7 @@ import type { EventRing } from "./event-ring";
 
 interface PendingPermission {
   sessionId: string;
+  workspaceRoot?: string;
   request: ToolConfirmationRequest;
   resolve(result: ToolConfirmationResult): void;
   reject(error: Error): void;
@@ -17,21 +18,27 @@ export class PermissionService {
 
   request(
     sessionId: string,
-    req: ToolConfirmationRequest,
-    ring: EventRing,
+    workspaceRootOrReq: string | ToolConfirmationRequest,
+    reqOrRing: ToolConfirmationRequest | EventRing,
+    ringOrAbortSignal?: EventRing | AbortSignal,
     abortSignal?: AbortSignal,
   ): Promise<ToolConfirmationResult> {
+    const workspaceRoot = typeof workspaceRootOrReq === "string" ? workspaceRootOrReq : undefined;
+    const req = (workspaceRoot ? reqOrRing : workspaceRootOrReq) as ToolConfirmationRequest;
+    const ring = (workspaceRoot ? ringOrAbortSignal : reqOrRing) as EventRing;
+    const signal = (workspaceRoot ? abortSignal : ringOrAbortSignal) as AbortSignal | undefined;
     const permissionId = crypto.randomUUID();
 
     ring.push("permission.request", JSON.stringify({ id: permissionId, sessionId, ...req }));
 
-    if (abortSignal?.aborted) {
+    if (signal?.aborted) {
       return Promise.resolve("timeout");
     }
 
     return new Promise<ToolConfirmationResult>((resolve, reject) => {
       const pending: PendingPermission = {
         sessionId,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
         request: req,
         resolve,
         reject,
@@ -44,9 +51,9 @@ export class PermissionService {
         resolve("timeout");
       };
 
-      if (abortSignal) {
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => abortSignal.removeEventListener("abort", onAbort);
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+        pending.cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
       }
 
       this.#pending.set(permissionId, pending);
@@ -69,9 +76,12 @@ export class PermissionService {
     return this.#pending.has(permissionId);
   }
 
-  cleanup(sessionId?: string): void {
+  cleanup(sessionId?: string, workspaceRoot?: string): void {
     for (const [permissionId, pending] of this.#pending) {
       if (sessionId !== undefined && pending.sessionId !== sessionId) {
+        continue;
+      }
+      if (workspaceRoot !== undefined && pending.workspaceRoot !== workspaceRoot) {
         continue;
       }
 
