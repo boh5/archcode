@@ -4,8 +4,11 @@ import { createStore } from "zustand/vanilla";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
 import {
+  type SessionEventEnvelope,
+  type SessionEventPayload,
   type SessionStoreState,
   type StreamEvent,
+  MAX_EVENTS,
 } from "./types";
 
 const sessionRegistry = new Map<string, StoreApi<SessionStoreState>>();
@@ -39,7 +42,6 @@ export function createSessionStore(
     subAgentDescriptions: new Map(),
     isRunning: false,
     isStreamingModel: false,
-    streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
     lastTodoWriteStepIndex: null,
@@ -48,8 +50,32 @@ export function createSessionStore(
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
-    append: (event: StreamEvent) => {
-      set((state) => reduceStreamEvent(state, event));
+    events: [],
+    eventOffset: 0,
+    nextEventId: 0,
+    append: (event: SessionEventPayload) => {
+      set((state) => {
+        const envelope: SessionEventEnvelope = {
+          id: state.nextEventId,
+          createdAt: Date.now(),
+          kind: event.type,
+          payload: event,
+        };
+
+        const events = [...state.events, envelope];
+        let eventOffset = state.eventOffset;
+        const nextEventId = state.nextEventId + 1;
+
+        if (events.length > MAX_EVENTS) {
+          const dropCount = events.length - MAX_EVENTS;
+          events.splice(0, dropCount);
+          eventOffset += dropCount;
+        }
+
+        const partial = reduceStreamEvent(state, event as StreamEvent);
+
+        return { ...partial, events, eventOffset, nextEventId };
+      });
     },
     toModelMessages: (): ModelMessage[] =>
       toModelMessagesFromStoredMessages(get().messages),

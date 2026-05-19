@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { CommandRegistry } from "../../commands/registry";
 import { createSessionStore } from "../../store/store";
-import type { Reminder, RunEndEvent, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
+import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import { createTestProjectContext } from "../../tools/test-project-context";
@@ -115,8 +115,8 @@ function createStore(): StoreApi<SessionStoreState> {
   return createSessionStore(crypto.randomUUID());
 }
 
-function captureEvents(store: StoreApi<SessionStoreState>): StreamEvent[] {
-  const events: StreamEvent[] = [];
+function captureEvents(store: StoreApi<SessionStoreState>): SessionEventPayload[] {
+  const events: SessionEventPayload[] = [];
   const append = store.getState().append;
   store.setState({
     append: (event) => {
@@ -391,7 +391,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(store.getState().streamingText).toBeUndefined();
     expect(lastAssistant(store).parts[0]).toMatchObject({ type: "text", text: "Only" });
   });
 

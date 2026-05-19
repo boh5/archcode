@@ -1,19 +1,21 @@
-import { useEffect } from "react";
-import type { StreamEvent } from "../../../store/types";
+import { useEffect, useRef } from "react";
+import type { SessionEventPayload } from "../../../store/types";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import { createWebSessionStore } from "../store/session-store";
 
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-type SessionEventType =
-  | "stream"
-  | "permission.request"
-  | "question.request"
-  | "heartbeat"
-  | "shutdown";
+type SessionEventType = "stream" | "heartbeat" | "reset";
 
-export function useSessionEvents(slug: string, sessionId: string): void {
+export function useSessionEvents(
+  slug: string,
+  sessionId: string,
+  options?: { eventCursor?: number; onReset?: () => void },
+): void {
+  const onResetRef = useRef(options?.onReset);
+  onResetRef.current = options?.onReset;
+
   useEffect(() => {
     const store = createWebSessionStore(sessionId, slug);
     let eventSource: EventSource | null = null;
@@ -42,34 +44,63 @@ export function useSessionEvents(slug: string, sessionId: string): void {
     const buildUrl = () => {
       const baseUrl = `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/events`;
       const lastEventId = store.getState().lastEventId;
-      if (!lastEventId) return baseUrl;
-
-      return `${baseUrl}?lastEventId=${encodeURIComponent(lastEventId)}`;
+      if (lastEventId) {
+        return `${baseUrl}?lastEventId=${encodeURIComponent(lastEventId)}`;
+      }
+      if (options?.eventCursor !== undefined) {
+        return `${baseUrl}?lastEventId=${encodeURIComponent(String(options.eventCursor))}`;
+      }
+      return baseUrl;
     };
 
-    const handleEvent = (type: SessionEventType, event: MessageEvent<string>) => {
+    const handleStreamEvent = (payload: SessionEventPayload) => {
       if (disposed) return;
-
       const state = store.getState();
-      switch (type) {
-        case "stream":
-          state.append(JSON.parse(event.data) as StreamEvent);
+
+      switch (payload.type) {
+        case "permission.request": {
+          const mapped: PermissionRequest = {
+            id: payload.permissionId,
+            sessionId,
+            toolName: payload.toolName,
+            toolCallId: "",
+            input: payload.args,
+            description: payload.description ?? "",
+          };
+          state.addPermissionRequest(mapped);
           break;
-        case "permission.request":
-          state.addPermissionRequest(JSON.parse(event.data) as PermissionRequest);
+        }
+        case "question.request": {
+          let parsed: { toolName?: string; toolCallId?: string; questions?: unknown[] } = {};
+          try {
+            parsed = JSON.parse(payload.question);
+          } catch {
+            parsed = {};
+          }
+          const mapped: QuestionRequest = {
+            id: payload.questionId,
+            sessionId,
+            toolName: parsed.toolName ?? "ask_user",
+            toolCallId: parsed.toolCallId ?? "",
+            questions: parsed.questions ?? [{ text: payload.question }],
+          };
+          state.addQuestionRequest(mapped);
           break;
-        case "question.request":
-          state.addQuestionRequest(JSON.parse(event.data) as QuestionRequest);
+        }
+        case "permission.terminal":
+          state.handlePermissionTerminal(payload);
           break;
-        case "heartbeat":
+        case "question.terminal":
+          state.handleQuestionTerminal(payload);
           break;
         case "shutdown":
           state.setConnectionState("closed");
           closeEventSource();
           break;
+        default:
+          state.append(payload);
+          break;
       }
-
-      updateLastEventId(event);
     };
 
     const connect = () => {
@@ -103,19 +134,21 @@ export function useSessionEvents(slug: string, sessionId: string): void {
       };
 
       source.addEventListener("stream", (event) => {
-        handleEvent("stream", event as MessageEvent<string>);
+        let payload: SessionEventPayload;
+        try {
+          payload = JSON.parse((event as MessageEvent<string>).data) as SessionEventPayload;
+        } catch {
+          return;
+        }
+        handleStreamEvent(payload);
+        updateLastEventId(event as MessageEvent<string>);
       });
-      source.addEventListener("permission.request", (event) => {
-        handleEvent("permission.request", event as MessageEvent<string>);
-      });
-      source.addEventListener("question.request", (event) => {
-        handleEvent("question.request", event as MessageEvent<string>);
-      });
-      source.addEventListener("heartbeat", (event) => {
-        handleEvent("heartbeat", event as MessageEvent<string>);
-      });
-      source.addEventListener("shutdown", (event) => {
-        handleEvent("shutdown", event as MessageEvent<string>);
+      source.addEventListener("heartbeat", () => {});
+      source.addEventListener("reset", () => {
+        if (disposed) return;
+        store.getState().resetTransientState();
+        closeEventSource();
+        onResetRef.current?.();
       });
     };
 
@@ -126,5 +159,5 @@ export function useSessionEvents(slug: string, sessionId: string): void {
       clearReconnectTimeout();
       closeEventSource();
     };
-  }, [sessionId, slug]);
+  }, [sessionId, slug, options?.eventCursor]);
 }

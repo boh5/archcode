@@ -28,9 +28,6 @@ export type {
   StoredPart,
   StoredMessage,
   StepInfo,
-  StreamingTextState,
-  StreamingReasoningState,
-  StreamingToolState,
   SessionStoreState,
 } from "./types";
 export { BusyError } from "./types";

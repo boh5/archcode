@@ -91,9 +91,8 @@ async function runShutdown(
 }
 
 function pushShutdownEvents(): void {
-  const data = JSON.stringify({ reason: "server_shutdown" });
   for (const state of sessionStreams.values()) {
-    state.ring.push("shutdown", data);
+    state.store?.getState().append({ type: "shutdown", reason: "server_shutdown" });
   }
 }
 

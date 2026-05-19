@@ -8,7 +8,7 @@ import { scopedKey } from "../store/store";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/types";
 import type { AskUserService } from "./ask-user-service";
 import type { PermissionService } from "./permission-service";
-import { ensureSessionRing } from "./routes/events";
+import { sessionStreams } from "./routes/events";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
@@ -136,18 +136,23 @@ export class AgentRunner {
         return;
       }
 
-      const ring = ensureSessionRing(workspaceRoot, sessionId);
+      const activeAgent = agent;
+      sessionStreams.set(scopedKey(workspaceRoot, sessionId), {
+        store: activeAgent.store,
+        lastSentEventId: activeAgent.store.getState().nextEventId - 1,
+      });
+
       const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
-        ? (request, abortSignal) => this.#permissionService!.request(sessionId, workspaceRoot, request, ring, abortSignal)
+        ? (request, abortSignal) => this.#permissionService!.request(sessionId, workspaceRoot, request, activeAgent.store, abortSignal)
         : undefined;
       const askUser: AskUserCallback | undefined = this.#askUserService
         ? (request) => {
           const { abortSignal, ...serializableRequest } = request;
-          return this.#askUserService!.request(sessionId, workspaceRoot, serializableRequest, ring, abortSignal);
+          return this.#askUserService!.request(sessionId, workspaceRoot, serializableRequest, activeAgent.store, abortSignal);
         }
         : undefined;
 
-      await agent.run(userMessage, {
+      await activeAgent.run(userMessage, {
         abort: abortController.signal,
         ...(confirmPermission ? { confirmPermission } : {}),
         ...(askUser ? { askUser } : {}),

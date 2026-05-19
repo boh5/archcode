@@ -1,5 +1,6 @@
+import type { StoreApi } from "zustand";
+import type { SessionStoreState } from "../store/types";
 import type { AskUserAnswer, AskUserRequest } from "../tools/types";
-import type { EventRing } from "./event-ring";
 
 export type AskUserResponse =
   | { answers: AskUserAnswer[] }
@@ -9,8 +10,9 @@ type SerializableAskUserRequest = Omit<AskUserRequest, "abortSignal">;
 
 interface PendingQuestion {
   sessionId: string;
-  workspaceRoot?: string;
+  workspaceRoot: string;
   request: SerializableAskUserRequest;
+  store: StoreApi<SessionStoreState>;
   resolve(result: AskUserResponse): void;
   reject(error: Error): void;
   cleanupAbortListener?(): void;
@@ -23,33 +25,39 @@ export class AskUserService {
 
   request(
     sessionId: string,
-    workspaceRootOrReq: string | AskUserRequest,
-    reqOrRing: AskUserRequest | EventRing,
-    ringOrAbortSignal?: EventRing | AbortSignal,
+    workspaceRoot: string,
+    request: AskUserRequest,
+    store: StoreApi<SessionStoreState>,
     abortSignal?: AbortSignal,
   ): Promise<AskUserResponse> {
-    const workspaceRoot = typeof workspaceRootOrReq === "string" ? workspaceRootOrReq : undefined;
-    const req = (workspaceRoot ? reqOrRing : workspaceRootOrReq) as AskUserRequest;
-    const ring = (workspaceRoot ? ringOrAbortSignal : reqOrRing) as EventRing;
-    const signal = (workspaceRoot ? abortSignal : ringOrAbortSignal) as AbortSignal | undefined;
     const questionId = crypto.randomUUID();
     const serializedRequest: SerializableAskUserRequest = {
-      toolName: req.toolName,
-      toolCallId: req.toolCallId,
-      questions: req.questions,
+      toolName: request.toolName,
+      toolCallId: request.toolCallId,
+      questions: request.questions,
     };
 
-    ring.push("question.request", JSON.stringify({ id: questionId, sessionId, ...serializedRequest }));
+    store.getState().append({
+      type: "question.request",
+      questionId,
+      question: JSON.stringify(serializedRequest),
+    });
 
-    if (signal?.aborted) {
+    if (abortSignal?.aborted) {
+      store.getState().append({
+        type: "question.terminal",
+        questionId,
+        status: "cancelled",
+      });
       return Promise.resolve(CANCELLED_RESPONSE);
     }
 
     return new Promise<AskUserResponse>((resolve, reject) => {
       const pending: PendingQuestion = {
         sessionId,
-        ...(workspaceRoot ? { workspaceRoot } : {}),
+        workspaceRoot,
         request: serializedRequest,
+        store,
         resolve,
         reject,
       };
@@ -58,12 +66,17 @@ export class AskUserService {
         if (!this.#pending.has(questionId)) return;
         this.#pending.delete(questionId);
         pending.cleanupAbortListener?.();
+        pending.store.getState().append({
+          type: "question.terminal",
+          questionId,
+          status: "cancelled",
+        });
         resolve(CANCELLED_RESPONSE);
       };
 
-      if (signal) {
-        signal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        pending.cleanupAbortListener = () => abortSignal.removeEventListener("abort", onAbort);
       }
 
       this.#pending.set(questionId, pending);
@@ -79,6 +92,13 @@ export class AskUserService {
     this.#pending.delete(questionId);
     pending.cleanupAbortListener?.();
     pending.resolve(response);
+    const answer = "isError" in response ? undefined : JSON.stringify(response.answers);
+    pending.store.getState().append({
+      type: "question.terminal",
+      questionId,
+      status: answer === undefined ? "denied" : "resolved",
+      answer,
+    });
     return true;
   }
 
@@ -98,6 +118,11 @@ export class AskUserService {
       this.#pending.delete(questionId);
       pending.cleanupAbortListener?.();
       pending.resolve(CANCELLED_RESPONSE);
+      pending.store.getState().append({
+        type: "question.terminal",
+        questionId,
+        status: "cancelled",
+      });
     }
   }
 }

@@ -215,9 +215,6 @@ describe("session transcript serialization", () => {
     expect(state.isStreamingModel).toBe(false);
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
-    expect(state.streamingText).toBeUndefined();
-    expect(state.streamingReasoning).toBeUndefined();
-    expect(state.streamingTools).toEqual({});
   });
 
   test("load defaults missing todos to an empty list", async () => {
@@ -514,9 +511,6 @@ describe("session transcript serialization", () => {
 
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.streamingText).toBeUndefined();
-    expect(state.streamingReasoning).toBeUndefined();
-    expect(state.streamingTools).toEqual({});
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
   });
@@ -592,6 +586,47 @@ describe("session transcript serialization", () => {
     const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
 
     expect(loaded.getState().readSnapshots.size).toBe(0);
+  });
+
+  test("save excludes transient events fields from persisted file", async () => {
+    const sessionId = uniqueSessionId("no-events-in-save");
+    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+
+    expect("events" in parsed).toBe(false);
+    expect("eventOffset" in parsed).toBe(false);
+    expect("nextEventId" in parsed).toBe(false);
+  });
+
+  test("loadSessionTranscript resets events runtime fields", async () => {
+    const sessionId = uniqueSessionId("events-reset");
+    await saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+    const state = loaded.getState();
+
+    expect(state.events).toEqual([]);
+    expect(state.eventOffset).toBe(0);
+    expect(state.nextEventId).toBe(0);
+  });
+
+  test("append after load uses correct nextEventId starting from 0", async () => {
+    const sessionId = uniqueSessionId("append-next-event-id");
+    await saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
+    const loaded = await loadSessionTranscript(sessionId, TMP_DIR);
+
+    expect(loaded.getState().nextEventId).toBe(0);
+    expect(loaded.getState().events).toHaveLength(0);
+
+    loaded.getState().append({ type: "run-start", runId: "first-run" });
+    expect(loaded.getState().nextEventId).toBe(1);
+    expect(loaded.getState().events).toHaveLength(1);
+    expect(loaded.getState().events[0]?.id).toBe(0);
+
+    loaded.getState().append({ type: "user-message", content: "second event" });
+    expect(loaded.getState().nextEventId).toBe(2);
+    expect(loaded.getState().events).toHaveLength(2);
+    expect(loaded.getState().events[1]?.id).toBe(1);
   });
 });
 

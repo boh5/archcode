@@ -2,12 +2,14 @@ import type {
   ToolConfirmationRequest,
   ToolConfirmationResult,
 } from "../tools/types";
-import type { EventRing } from "./event-ring";
+import type { StoreApi } from "zustand";
+import type { SessionStoreState } from "../store/types";
 
 interface PendingPermission {
   sessionId: string;
-  workspaceRoot?: string;
+  workspaceRoot: string;
   request: ToolConfirmationRequest;
+  store: StoreApi<SessionStoreState>;
   resolve(result: ToolConfirmationResult): void;
   reject(error: Error): void;
   cleanupAbortListener?(): void;
@@ -18,28 +20,36 @@ export class PermissionService {
 
   request(
     sessionId: string,
-    workspaceRootOrReq: string | ToolConfirmationRequest,
-    reqOrRing: ToolConfirmationRequest | EventRing,
-    ringOrAbortSignal?: EventRing | AbortSignal,
+    workspaceRoot: string,
+    request: ToolConfirmationRequest,
+    store: StoreApi<SessionStoreState>,
     abortSignal?: AbortSignal,
   ): Promise<ToolConfirmationResult> {
-    const workspaceRoot = typeof workspaceRootOrReq === "string" ? workspaceRootOrReq : undefined;
-    const req = (workspaceRoot ? reqOrRing : workspaceRootOrReq) as ToolConfirmationRequest;
-    const ring = (workspaceRoot ? ringOrAbortSignal : reqOrRing) as EventRing;
-    const signal = (workspaceRoot ? abortSignal : ringOrAbortSignal) as AbortSignal | undefined;
     const permissionId = crypto.randomUUID();
 
-    ring.push("permission.request", JSON.stringify({ id: permissionId, sessionId, ...req }));
+    store.getState().append({
+      type: "permission.request",
+      permissionId,
+      toolName: request.toolName,
+      args: request.input,
+      description: request.description,
+    });
 
-    if (signal?.aborted) {
+    if (abortSignal?.aborted) {
+      store.getState().append({
+        type: "permission.terminal",
+        permissionId,
+        status: "timeout",
+      });
       return Promise.resolve("timeout");
     }
 
     return new Promise<ToolConfirmationResult>((resolve, reject) => {
       const pending: PendingPermission = {
         sessionId,
-        ...(workspaceRoot ? { workspaceRoot } : {}),
-        request: req,
+        workspaceRoot,
+        request,
+        store,
         resolve,
         reject,
       };
@@ -48,12 +58,17 @@ export class PermissionService {
         if (!this.#pending.has(permissionId)) return;
         this.#pending.delete(permissionId);
         pending.cleanupAbortListener?.();
+        pending.store.getState().append({
+          type: "permission.terminal",
+          permissionId,
+          status: "timeout",
+        });
         resolve("timeout");
       };
 
-      if (signal) {
-        signal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => signal.removeEventListener("abort", onAbort);
+      if (abortSignal) {
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        pending.cleanupAbortListener = () => abortSignal.removeEventListener("abort", onAbort);
       }
 
       this.#pending.set(permissionId, pending);
@@ -69,6 +84,11 @@ export class PermissionService {
     this.#pending.delete(permissionId);
     pending.cleanupAbortListener?.();
     pending.resolve(response);
+    pending.store.getState().append({
+      type: "permission.terminal",
+      permissionId,
+      status: response === "timeout" ? "timeout" : response === "deny" ? "denied" : "resolved",
+    });
     return true;
   }
 
@@ -88,6 +108,11 @@ export class PermissionService {
       this.#pending.delete(permissionId);
       pending.cleanupAbortListener?.();
       pending.resolve("timeout");
+      pending.store.getState().append({
+        type: "permission.terminal",
+        permissionId,
+        status: "cancelled",
+      });
     }
   }
 }

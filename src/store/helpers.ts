@@ -186,6 +186,7 @@ const SessionFileSchema = z.strictObject({
   childSessionIds: z.array(z.string()).default([]),
   parentSessionId: z.string().optional(),
   subAgentDescriptions: z.array(z.tuple([z.string(), z.string()])).default([]),
+  eventCursor: z.number().optional(),
 });
 
 export type SessionFile = z.infer<typeof SessionFileSchema>;
@@ -287,10 +288,10 @@ export async function loadSessionTranscript(
     isStreamingModel: false,
     currentRunId: undefined,
     currentAssistantMessageId: undefined,
-    streamingText: undefined,
-    streamingReasoning: undefined,
-    streamingTools: {},
     readSnapshots: new Map(),
+    events: [],
+    eventOffset: 0,
+    nextEventId: 0,
   });
 
   return store;

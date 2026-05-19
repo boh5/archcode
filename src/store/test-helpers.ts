@@ -16,7 +16,6 @@ export function createMockStore(
     subAgentDescriptions: new Map(),
     isRunning: false,
     isStreamingModel: false,
-    streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
     lastTodoWriteStepIndex: null,
@@ -25,6 +24,9 @@ export function createMockStore(
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
+    events: [],
+    eventOffset: 0,
+    nextEventId: 0,
     append: (event) => {
       switch (event.type) {
         case "reminder": {

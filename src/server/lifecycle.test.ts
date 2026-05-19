@@ -1,21 +1,22 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import { Hono } from "hono";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import type { SpecraRuntime } from "../main";
+import { ProjectRegistry } from "../projects/registry";
 import { createSessionStore } from "../store/store";
 import type { SessionStoreState } from "../store/types";
 import type { ToolConfirmationCallback } from "../tools";
 import { AgentRunner } from "./agent-runner";
+import { errorHandler } from "./error-handler";
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
-import { ensureSessionRing, sessionStreams } from "./routes/events";
+import { createEventsRoutes, sessionStreams } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "lifecycle");
 
 const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
-const ensureScopedSessionRing = ensureSessionRing as unknown as (workspaceRoot: string, sessionId: string) => ReturnType<typeof ensureSessionRing>;
-
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -117,6 +118,52 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+async function readUntilDone(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Expected response body");
+
+  const decoder = new TextDecoder();
+  let text = "";
+  const deadline = Date.now() + 20000;
+
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("Timed out waiting for SSE close")), remaining);
+      }),
+    ]);
+    if (result.done) return text;
+    text += decoder.decode(result.value, { stream: true });
+  }
+
+  await reader.cancel().catch(() => undefined);
+  throw new Error(`SSE stream did not close. Received: ${text}`);
+}
+
+async function createLifecycleEventsApp(
+  testName: string,
+  agent: Agent,
+  runner: AgentRunner,
+  workspaceRoot: string,
+) {
+  const homeDir = resolve(tempRoot, "homes", testName);
+  await mkdir(homeDir, { recursive: true });
+  const projectRegistry = new ProjectRegistry({ homeDir });
+  await mkdir(workspaceRoot, { recursive: true });
+  const project = await projectRegistry.add({ workspaceRoot, name: testName });
+  const runtime = {
+    ...createRuntime(agent),
+    projectRegistry,
+  } as SpecraRuntime;
+  const app = new Hono();
+  app.onError(errorHandler);
+  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, runner));
+
+  return { app, project };
+}
+
 async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return await promise;
 
@@ -183,7 +230,6 @@ describe("server lifecycle", () => {
     const job = runner.submit("sequence-session", tempRoot, "work");
     await flushMicrotasks();
 
-    const ring = ensureScopedSessionRing(tempRoot, "sequence-session");
     const server = { stop: mock(() => order.push("stop")) };
     const { handlers, processRef } = createProcess();
     const originalAbortAll = runner.abortAll.bind(runner);
@@ -209,11 +255,63 @@ describe("server lifecycle", () => {
     await shutdownPromise;
     await job.promise;
 
-    expect(ring.since(0)).toEqual([
-      { id: 1, event: "shutdown", data: JSON.stringify({ reason: "server_shutdown" }) },
-    ]);
+    expect(agent.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
     expect(order).toEqual(["abort", "wait", "stop", "exit:0"]);
   });
+
+  test("shutdown appends terminal events for every active session before aborting", async () => {
+    const order: string[] = [];
+    const agentOne = new MockAgent("terminal-one", new Promise(() => undefined), resolve(tempRoot, "workspace-one"));
+    const agentTwo = new MockAgent("terminal-two", new Promise(() => undefined), resolve(tempRoot, "workspace-two"));
+    sessionStreams.set("one", { store: agentOne.store, lastSentEventId: -1 });
+    sessionStreams.set("two", { store: agentTwo.store, lastSentEventId: -1 });
+    const runner = new AgentRunner(createRuntime(agentOne));
+    runner.abortAll = mock(async () => {
+      order.push("abort");
+      expect(agentOne.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
+      expect(agentTwo.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
+    });
+    const server = { stop: mock(() => order.push("stop")) };
+    const { processRef } = createProcess();
+    processRef.exit = mock((code?: number): never => {
+      order.push(`exit:${code}`);
+      throw new ExitError(code);
+    });
+
+    const handle = setupGracefulShutdown(server, runner, { process: processRef, log: () => undefined });
+
+    await expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({ name: "ExitError", code: 0 });
+    expect(order).toEqual(["abort", "stop", "exit:0"]);
+    expect(agentOne.store.getState().events.filter((event) => event.payload.type === "shutdown")).toHaveLength(1);
+    expect(agentTwo.store.getState().events.filter((event) => event.payload.type === "shutdown")).toHaveLength(1);
+  });
+
+  test("shutdown stream sends terminal event before SSE connection closes", async () => {
+    const workspaceRoot = resolve(tempRoot, "shutdown-sse-workspace");
+    const agent = new MockAgent("shutdown-sse-session", Promise.resolve({ text: "ok", steps: 1 }), workspaceRoot);
+    const runtime = createRuntime(agent);
+    const runner = new AgentRunner(runtime);
+    const { app, project } = await createLifecycleEventsApp("shutdown-sse", agent, runner, workspaceRoot);
+    const server = Bun.serve({ port: 0, idleTimeout: 30, fetch: app.fetch });
+    const { processRef } = createProcess();
+    processRef.exit = mock((code?: number): never => {
+      throw new ExitError(code);
+    });
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/projects/${project.slug}/sessions/shutdown-sse-session/events`);
+      const textPromise = readUntilDone(response);
+      const handle = setupGracefulShutdown(server, runner, { process: processRef, log: () => undefined });
+
+      await expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({ name: "ExitError", code: 0 });
+      const text = await textPromise;
+
+      expect(text).toContain("event: stream");
+      expect(text).toContain('data: {"type":"shutdown","reason":"server_shutdown"}');
+    } finally {
+      server.stop(true);
+    }
+  }, 22000);
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
     const server = { stop: mock(() => undefined) };

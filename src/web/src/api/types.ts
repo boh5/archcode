@@ -99,6 +99,7 @@ export interface Session {
   childSessionIds?: string[];
   parentSessionId?: string;
   subAgentDescriptions?: [string, string][];
+  eventCursor?: number;
 }
 
 export interface WorkflowState {

@@ -1,10 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import type { AskUserRequest } from "../../tools/types";
+import { createSessionStore } from "../../store/store";
 import { AskUserService } from "../ask-user-service";
 import { errorHandler } from "../error-handler";
-import { EventRing } from "../event-ring";
 import { createQuestionsRoutes } from "./questions";
+
+const tmpRoots: string[] = [];
 
 const askRequest: AskUserRequest = {
   toolName: "ask_user",
@@ -27,10 +32,23 @@ function createTestApp(askUserService: AskUserService): Hono {
 }
 
 async function createQuestion(askUserService: AskUserService): Promise<string> {
-  const ring = new EventRing();
-  void askUserService.request("session-1", askRequest, ring);
+  const sessionId = `session-${crypto.randomUUID()}`;
+  const workspaceRoot = await createWorkspaceRoot();
+  const store = createSessionStore(sessionId, workspaceRoot);
+  void askUserService.request(sessionId, workspaceRoot, askRequest, store);
 
-  return (JSON.parse(ring.since(0)[0].data) as { id: string }).id;
+  const event = store.getState().events.find((entry) => entry.kind === "question.request");
+  if (!event) {
+    throw new Error("question request event missing");
+  }
+
+  return (event.payload as { questionId: string }).questionId;
+}
+
+async function createWorkspaceRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "specra-questions-routes-"));
+  tmpRoots.push(root);
+  return root;
 }
 
 describe("question routes", () => {
@@ -95,4 +113,8 @@ describe("question routes", () => {
       error: { code: "QUESTION_NOT_FOUND", message: "Question not found: missing" },
     });
   });
+});
+
+afterAll(async () => {
+  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
 });

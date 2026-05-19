@@ -2,14 +2,24 @@ import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "
 import { JSDOM } from "jsdom";
 import type { Root } from "react-dom/client";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
-import type { StreamEvent } from "../../../store/types";
+import type {
+  PermissionTerminalEvent,
+  QuestionTerminalEvent,
+  SessionEventPayload,
+  StreamEvent,
+} from "../../../store/types";
 
 type UseSessionEventsHook = typeof import("./use-session-events").useSessionEvents;
 type WebSessionStoreFactory = typeof import("../store/session-store").createWebSessionStore;
 type MockSessionState = {
-  append: (event: StreamEvent) => void;
+  append: (event: SessionEventPayload) => void;
   addPermissionRequest: (request: PermissionRequest) => void;
   addQuestionRequest: (request: QuestionRequest) => void;
+  handlePermissionTerminal: (event: PermissionTerminalEvent) => void;
+  handleQuestionTerminal: (event: QuestionTerminalEvent) => void;
+  resetTransientState: () => void;
+  pendingPermissions: Map<string, PermissionRequest>;
+  pendingQuestions: Map<string, QuestionRequest>;
   connectionState: "connecting" | "open" | "reconnecting" | "closed";
   lastEventId: string | null;
   setConnectionState: (state: "connecting" | "open" | "reconnecting" | "closed") => void;
@@ -38,6 +48,13 @@ class MockEventSource {
 
   dispatch(type: string, data: unknown, lastEventId = "event-1"): void {
     const event = { data: JSON.stringify(data), lastEventId } as MessageEvent<string>;
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+
+  dispatchRaw(type: string, rawData: string, lastEventId = "event-1"): void {
+    const event = { data: rawData, lastEventId } as MessageEvent<string>;
     for (const listener of this.listeners.get(type) ?? []) {
       listener(event);
     }
@@ -94,8 +111,37 @@ function createMockSessionStore(sessionId: string, slug?: string): ReturnType<We
 
   let state: MockSessionState = {
     append: () => {},
-    addPermissionRequest: () => {},
-    addQuestionRequest: () => {},
+    addPermissionRequest: (request) => {
+      const pendingPermissions = new Map(state.pendingPermissions);
+      pendingPermissions.set(request.id, request);
+      state = { ...state, pendingPermissions };
+    },
+    addQuestionRequest: (request) => {
+      const pendingQuestions = new Map(state.pendingQuestions);
+      pendingQuestions.set(request.id, request);
+      state = { ...state, pendingQuestions };
+    },
+    handlePermissionTerminal: (event) => {
+      const pendingPermissions = new Map(state.pendingPermissions);
+      pendingPermissions.delete(event.permissionId);
+      state = { ...state, pendingPermissions };
+    },
+    handleQuestionTerminal: (event) => {
+      const pendingQuestions = new Map(state.pendingQuestions);
+      pendingQuestions.delete(event.questionId);
+      state = { ...state, pendingQuestions };
+    },
+    resetTransientState: () => {
+      state = {
+        ...state,
+        pendingPermissions: new Map(),
+        pendingQuestions: new Map(),
+        connectionState: "connecting",
+        lastEventId: null,
+      };
+    },
+    pendingPermissions: new Map(),
+    pendingQuestions: new Map(),
     connectionState: "connecting",
     lastEventId: null,
     setConnectionState: (connectionState) => {
@@ -172,18 +218,29 @@ function advanceTimers(ms: number): void {
   currentTime = targetTime;
 }
 
-function TestHarness(props: { slug: string; sessionId: string }) {
-  useSessionEvents(props.slug, props.sessionId);
+function TestHarness(props: {
+  slug: string;
+  sessionId: string;
+  options?: { eventCursor?: number; onReset?: () => void };
+}) {
+  useSessionEvents(props.slug, props.sessionId, props.options);
   return null;
 }
 
-function renderHook(slug: string, sessionId: string): { root: Root; container: HTMLDivElement } {
+function renderHook(
+  slug: string,
+  sessionId: string,
+  options?: { eventCursor?: number; onReset?: () => void },
+): { root: Root; container: HTMLDivElement } {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
 
   act(() => {
-    root.render({ type: TestHarness, props: { slug, sessionId } } as unknown as React.ReactNode);
+    root.render({
+      type: TestHarness,
+      props: { slug, sessionId, options },
+    } as unknown as React.ReactNode);
   });
 
   return { root, container };
@@ -206,6 +263,7 @@ describe("useSessionEvents", () => {
           activeRoot.cleanup = cleanup;
         }
       },
+      useRef: (initial: unknown) => ({ current: initial }),
     }));
     mock.module("react-dom/client", () => ({
       createRoot: createMockRoot,
@@ -251,6 +309,52 @@ describe("useSessionEvents", () => {
     unmount(rendered);
   });
 
+  test("initial connection uses eventCursor in URL when provided", () => {
+    const sessionId = "cursor-session";
+    const rendered = renderHook("demo", sessionId, { eventCursor: 42 });
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0]?.url).toBe(
+      "/api/projects/demo/sessions/cursor-session/events?lastEventId=42",
+    );
+
+    unmount(rendered);
+  });
+
+  test("eventCursor not used when store already has lastEventId", () => {
+    const sessionId = "cursor-priority-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    store.setState({ lastEventId: "existing-5" });
+    const rendered = renderHook("demo", sessionId, { eventCursor: 99 });
+
+    expect(MockEventSource.instances[0]?.url).toBe(
+      "/api/projects/demo/sessions/cursor-priority-session/events?lastEventId=existing-5",
+    );
+
+    unmount(rendered);
+  });
+
+  test("browser refresh reconnects with eventCursor from the refreshed session snapshot", () => {
+    const sessionId = "refresh-session";
+    const firstRender = renderHook("demo", sessionId, { eventCursor: 7 });
+    const firstSource = MockEventSource.instances[0]!;
+
+    MockEventSource.instances[0]?.dispatch("stream", { type: "system-notice", message: "before-refresh" }, "12");
+    unmount(firstRender);
+
+    expect(firstSource.close).toHaveBeenCalled();
+    const store = createWebSessionStore(sessionId, "demo");
+    store.setState({ lastEventId: null });
+    const secondRender = renderHook("demo", sessionId, { eventCursor: 12 });
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]?.url).toBe(
+      "/api/projects/demo/sessions/refresh-session/events?lastEventId=12",
+    );
+
+    unmount(secondRender);
+  });
+
   test("receiving stream events calls store.append", () => {
     const sessionId = "stream-session";
     const store = createWebSessionStore(sessionId, "demo");
@@ -267,49 +371,297 @@ describe("useSessionEvents", () => {
     unmount(rendered);
   });
 
-  test("receiving permission.request calls store.addPermissionRequest", () => {
+  test("receiving permission.request via stream calls store.addPermissionRequest with mapped data", () => {
     const sessionId = "permission-session";
     const store = createWebSessionStore(sessionId, "demo");
     const addPermissionRequest = mock(() => {});
     store.setState({ addPermissionRequest });
     const rendered = renderHook("demo", sessionId);
-    const request: PermissionRequest = {
-      id: "permission-1",
-      sessionId,
+
+    // Server sends PermissionRequestEvent format through stream
+    const serverEvent = {
+      type: "permission.request",
+      permissionId: "permission-1",
       toolName: "bash",
-      toolCallId: "tool-1",
-      input: { command: "pwd" },
+      args: { command: "pwd" },
       description: "Run command",
     };
 
-    MockEventSource.instances[0]?.dispatch("permission.request", request, "permission-event");
+    MockEventSource.instances[0]?.dispatch("stream", serverEvent, "permission-event");
 
-    expect(addPermissionRequest).toHaveBeenCalledWith(request);
+    // Hook should map to frontend PermissionRequest format
+    expect(addPermissionRequest).toHaveBeenCalledWith({
+      id: "permission-1",
+      sessionId,
+      toolName: "bash",
+      toolCallId: "",
+      input: { command: "pwd" },
+      description: "Run command",
+    });
     expect(store.getState().lastEventId).toBe("permission-event");
 
     unmount(rendered);
   });
 
-  test("receiving question.request calls store.addQuestionRequest", () => {
+  test("receiving question.request via stream calls store.addQuestionRequest with parsed JSON", () => {
     const sessionId = "question-session";
     const store = createWebSessionStore(sessionId, "demo");
     const addQuestionRequest = mock(() => {});
     store.setState({ addQuestionRequest });
     const rendered = renderHook("demo", sessionId);
-    const request: QuestionRequest = {
+
+    const serverEvent = {
+      type: "question.request",
+      questionId: "question-1",
+      question: JSON.stringify({
+        toolName: "ask_user",
+        toolCallId: "call-1",
+        questions: [{ text: "Continue?" }],
+      }),
+    };
+
+    MockEventSource.instances[0]?.dispatch("stream", serverEvent, "question-event");
+
+    expect(addQuestionRequest).toHaveBeenCalledWith({
       id: "question-1",
       sessionId,
       toolName: "ask_user",
-      toolCallId: "tool-2",
+      toolCallId: "call-1",
       questions: [{ text: "Continue?" }],
-    };
-
-    MockEventSource.instances[0]?.dispatch("question.request", request, "question-event");
-
-    expect(addQuestionRequest).toHaveBeenCalledWith(request);
+    });
     expect(store.getState().lastEventId).toBe("question-event");
 
     unmount(rendered);
+  });
+
+  test("malformed JSON in question.request payload falls back gracefully", () => {
+    const sessionId = "malformed-question-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const addQuestionRequest = mock(() => {});
+    store.setState({ addQuestionRequest });
+    const rendered = renderHook("demo", sessionId);
+
+    const serverEvent = {
+      type: "question.request",
+      questionId: "question-1",
+      question: "not valid json {bad",
+    };
+
+    MockEventSource.instances[0]?.dispatch("stream", serverEvent, "question-event");
+
+    expect(addQuestionRequest).toHaveBeenCalledWith({
+      id: "question-1",
+      sessionId,
+      toolName: "ask_user",
+      toolCallId: "",
+      questions: [{ text: "not valid json {bad" }],
+    });
+
+    unmount(rendered);
+  });
+
+  test("malformed SSE stream data is skipped without crashing", () => {
+    const sessionId = "bad-json-sse-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const append = mock(() => {});
+    store.setState({ append });
+    const rendered = renderHook("demo", sessionId);
+
+    MockEventSource.instances[0]?.dispatchRaw("stream", "{invalid json}", "bad-1");
+
+    expect(append).not.toHaveBeenCalled();
+
+    unmount(rendered);
+  });
+
+  test("receiving permission.terminal via stream calls store.handlePermissionTerminal", () => {
+    const sessionId = "terminal-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const handlePermissionTerminal = mock(() => {});
+    store.setState({ handlePermissionTerminal });
+    const rendered = renderHook("demo", sessionId);
+
+    const terminalEvent: PermissionTerminalEvent = {
+      type: "permission.terminal",
+      permissionId: "permission-1",
+      status: "resolved",
+    };
+
+    MockEventSource.instances[0]?.dispatch("stream", terminalEvent, "terminal-1");
+
+    expect(handlePermissionTerminal).toHaveBeenCalledWith(terminalEvent);
+    expect(store.getState().lastEventId).toBe("terminal-1");
+
+    unmount(rendered);
+  });
+
+  test("permission terminal stream event removes a pending permission", () => {
+    const sessionId = "pending-terminal-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    store.getState().addPermissionRequest({
+      id: "permission-1",
+      sessionId,
+      toolName: "bash",
+      toolCallId: "",
+      input: { command: "pwd" },
+      description: "Run command",
+    });
+    store.getState().addPermissionRequest({
+      id: "permission-2",
+      sessionId,
+      toolName: "edit",
+      toolCallId: "",
+      input: { file: "x" },
+      description: "Edit file",
+    });
+    const rendered = renderHook("demo", sessionId);
+
+    MockEventSource.instances[0]?.dispatch(
+      "stream",
+      { type: "permission.terminal", permissionId: "permission-1", status: "resolved" } satisfies PermissionTerminalEvent,
+      "terminal-remove-1",
+    );
+
+    expect(store.getState().pendingPermissions.has("permission-1")).toBe(false);
+    expect(store.getState().pendingPermissions.has("permission-2")).toBe(true);
+    expect(store.getState().lastEventId).toBe("terminal-remove-1");
+
+    unmount(rendered);
+  });
+
+  test("receiving question.terminal via stream calls store.handleQuestionTerminal", () => {
+    const sessionId = "q-terminal-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const handleQuestionTerminal = mock(() => {});
+    store.setState({ handleQuestionTerminal });
+    const rendered = renderHook("demo", sessionId);
+
+    const terminalEvent: QuestionTerminalEvent = {
+      type: "question.terminal",
+      questionId: "question-1",
+      status: "resolved",
+      answer: "yes",
+    };
+
+    MockEventSource.instances[0]?.dispatch("stream", terminalEvent, "qt-1");
+
+    expect(handleQuestionTerminal).toHaveBeenCalledWith(terminalEvent);
+    expect(store.getState().lastEventId).toBe("qt-1");
+
+    unmount(rendered);
+  });
+
+  test("question terminal stream event removes a pending question", () => {
+    const sessionId = "pending-question-terminal-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    store.getState().addQuestionRequest({
+      id: "question-1",
+      sessionId,
+      toolName: "ask_user",
+      toolCallId: "",
+      questions: [{ text: "Continue?" }],
+    });
+    store.getState().addQuestionRequest({
+      id: "question-2",
+      sessionId,
+      toolName: "ask_user",
+      toolCallId: "",
+      questions: [{ text: "Stop?" }],
+    });
+    const rendered = renderHook("demo", sessionId);
+
+    MockEventSource.instances[0]?.dispatch(
+      "stream",
+      { type: "question.terminal", questionId: "question-1", status: "resolved", answer: "yes" } satisfies QuestionTerminalEvent,
+      "question-terminal-remove-1",
+    );
+
+    expect(store.getState().pendingQuestions.has("question-1")).toBe(false);
+    expect(store.getState().pendingQuestions.has("question-2")).toBe(true);
+    expect(store.getState().lastEventId).toBe("question-terminal-remove-1");
+
+    unmount(rendered);
+  });
+
+  test("receiving shutdown via stream payload closes connection", () => {
+    const sessionId = "shutdown-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const setConnectionState = mock(() => {});
+    store.setState({ setConnectionState });
+    const rendered = renderHook("demo", sessionId);
+    const source = MockEventSource.instances[0]!;
+
+    act(() => {
+      source.dispatch("stream", { type: "shutdown", reason: "server stopping" }, "sd-1");
+    });
+
+    expect(setConnectionState).toHaveBeenCalledWith("closed");
+    expect(source.close).toHaveBeenCalled();
+
+    unmount(rendered);
+  });
+
+  test("receiving reset event triggers onReset callback, calls resetTransientState, and closes EventSource", () => {
+    const sessionId = "reset-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const resetTransientState = mock(() => {});
+    const onReset = mock(() => {});
+    store.setState({ resetTransientState });
+    const rendered = renderHook("demo", sessionId, { onReset });
+    const source = MockEventSource.instances[0]!;
+
+    act(() => {
+      source.dispatch("reset", {}, "reset-1");
+    });
+
+    expect(resetTransientState).toHaveBeenCalled();
+    expect(source.close).toHaveBeenCalled();
+    expect(onReset).toHaveBeenCalled();
+
+    unmount(rendered);
+  });
+
+  test("reset clears transient state and parent refetch can reconnect with new cursor", () => {
+    const sessionId = "reset-refetch-session";
+    const store = createWebSessionStore(sessionId, "demo");
+    const onReset = mock(() => {});
+    store.getState().addPermissionRequest({
+      id: "permission-reset",
+      sessionId,
+      toolName: "bash",
+      toolCallId: "",
+      input: { command: "pwd" },
+      description: "Run command",
+    });
+    store.getState().addQuestionRequest({
+      id: "question-reset",
+      sessionId,
+      toolName: "ask_user",
+      toolCallId: "",
+      questions: [{ text: "Continue?" }],
+    });
+    store.setState({ lastEventId: "stale-99", connectionState: "open" });
+    const firstRender = renderHook("demo", sessionId, { eventCursor: 99, onReset });
+    const firstSource = MockEventSource.instances[0]!;
+
+    act(() => {
+      firstSource.dispatch("reset", {}, "reset-gap");
+    });
+
+    expect(store.getState().pendingPermissions.size).toBe(0);
+    expect(store.getState().pendingQuestions.size).toBe(0);
+    expect(store.getState().lastEventId).toBeNull();
+    expect(firstSource.close).toHaveBeenCalled();
+    expect(onReset).toHaveBeenCalled();
+    unmount(firstRender);
+
+    const secondRender = renderHook("demo", sessionId, { eventCursor: 123, onReset });
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1]?.url).toBe(
+      "/api/projects/demo/sessions/reset-refetch-session/events?lastEventId=123",
+    );
+
+    unmount(secondRender);
   });
 
   test("onerror triggers close and reconnect with lastEventId in URL", () => {

@@ -54,7 +54,7 @@ function onlyStep(steps: StepInfo[]): StepInfo {
 }
 
 describe("createSessionStore", () => {
-  test("creates initialized session state without events array", () => {
+  test("creates initialized session state with empty events log", () => {
     const sessionId = uniqueSessionId("creation");
     const store = createSessionStore(sessionId);
     const state = store.getState();
@@ -66,14 +66,15 @@ describe("createSessionStore", () => {
     expect(state.createdAt).toBeGreaterThan(0);
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.streamingTools).toEqual({});
     expect(state.reminders).toEqual([]);
     expect(state.childSessionIds).toBeInstanceOf(Set);
     expect(state.childSessionIds.size).toBe(0);
     expect(state.parentSessionId).toBeUndefined();
     expect(state.subAgentDescriptions).toBeInstanceOf(Map);
     expect(state.subAgentDescriptions.size).toBe(0);
-    expect("events" in state).toBe(false);
+    expect(state.events).toEqual([]);
+    expect(state.eventOffset).toBe(0);
+    expect(state.nextEventId).toBe(0);
   });
 
   test("returns the same store for the same session id", () => {
@@ -97,6 +98,57 @@ describe("createSessionStore", () => {
     expect(getSessionStore(sessionId)).toBeUndefined();
     const store = createSessionStore(sessionId);
     expect(getSessionStore(sessionId)).toBe(store);
+  });
+});
+
+describe("events log", () => {
+  test("append creates envelope with correct structure and updates structured state", () => {
+    const store = createFreshStore("events-envelope");
+    store.getState().append({ type: "user-message", content: "hello" });
+
+    const state = store.getState();
+    expect(state.events).toHaveLength(1);
+
+    const envelope = state.events[0]!;
+    expect(envelope.id).toBe(0);
+    expect(envelope.createdAt).toBeGreaterThan(0);
+    expect(envelope.kind).toBe("user-message");
+    expect(envelope.payload).toEqual({ type: "user-message", content: "hello" });
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]!.role).toBe("user");
+  });
+
+  test("envelope id monotonicity increments nextEventId", () => {
+    const store = createFreshStore("events-monotonic");
+    store.getState().append({ type: "user-message", content: "first" });
+    store.getState().append({ type: "user-message", content: "second" });
+    store.getState().append({ type: "user-message", content: "third" });
+
+    const state = store.getState();
+    expect(state.events).toHaveLength(3);
+    expect(state.events[0]!.id).toBe(0);
+    expect(state.events[1]!.id).toBe(1);
+    expect(state.events[2]!.id).toBe(2);
+    expect(state.nextEventId).toBe(3);
+    expect(state.eventOffset).toBe(0);
+  });
+
+  test("bounded window overflow drops oldest events and increments eventOffset", () => {
+    const store = createFreshStore("events-window");
+
+    // Append MAX_EVENTS (10000) + 1 events to trigger overflow
+    for (let i = 0; i < 10001; i++) {
+      store.getState().append({ type: "user-message", content: `event-${i}` });
+    }
+
+    const state = store.getState();
+    expect(state.events.length).toBe(10000);
+    expect(state.eventOffset).toBe(1);
+    expect(state.nextEventId).toBe(10001);
+    // First retained event has id 1 (id 0 was dropped)
+    expect(state.events[0]!.id).toBe(1);
+    // Last event has id 10000
+    expect(state.events[9999]!.id).toBe(10000);
   });
 });
 
@@ -296,9 +348,6 @@ describe("run lifecycle", () => {
     expect(state.currentRunId).toBeString();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(state.isStreamingModel).toBe(false);
-    expect(state.streamingText).toBeUndefined();
-    expect(state.streamingReasoning).toBeUndefined();
-    expect(state.streamingTools).toEqual({});
   });
 
   test("run-start uses a provided runId", () => {
@@ -336,9 +385,6 @@ describe("run lifecycle", () => {
     expect(state.isStreamingModel).toBe(false);
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
-    expect(state.streamingText).toBeUndefined();
-    expect(state.streamingReasoning).toBeUndefined();
-    expect(state.streamingTools).toEqual({});
     expect(onlyMessage(state.messages).completedAt).toBeGreaterThan(0);
   });
 
@@ -354,7 +400,6 @@ describe("run lifecycle", () => {
     expect(state.isStreamingModel).toBe(false);
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
-    expect(state.streamingTools).toEqual({});
     expect(state.messages).toEqual(messages);
   });
 });
@@ -384,7 +429,7 @@ describe("user messages", () => {
 });
 
 describe("text streaming", () => {
-  test("text-start creates an assistant message, text part, and streamingText", () => {
+  test("text-start creates an assistant message and empty text part", () => {
     const store = createFreshStore("text-start");
     store.getState().append({ type: "text-start" });
 
@@ -395,21 +440,19 @@ describe("text streaming", () => {
     expect(state.currentAssistantMessageId).toBe(message.id);
     expect(part.text).toBe("");
     expect(part.completedAt).toBeUndefined();
-    expect(state.streamingText).toEqual({ messageId: message.id, partId: part.id, text: "" });
   });
 
-  test("text-delta appends to streamingText only", () => {
+  test("text-delta appends directly to the text part", () => {
     const store = createFreshStore("text-delta");
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "hel" });
     store.getState().append({ type: "text-delta", text: "lo" });
 
     const state = store.getState();
-    expect(state.streamingText?.text).toBe("hello");
-    expect(textPart(onlyMessage(state.messages)).text).toBe("");
+    expect(textPart(onlyMessage(state.messages)).text).toBe("hello");
   });
 
-  test("text-end persists buffered text, completes the part, and clears streamingText", () => {
+  test("text-end completes the text part without altering its text", () => {
     const store = createFreshStore("text-end");
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "done" });
@@ -419,7 +462,6 @@ describe("text streaming", () => {
     const part = textPart(onlyMessage(state.messages));
     expect(part.text).toBe("done");
     expect(part.completedAt).toBeGreaterThan(0);
-    expect(state.streamingText).toBeUndefined();
   });
 
   test("text-delta without text-start implicitly starts text streaming", () => {
@@ -429,8 +471,8 @@ describe("text streaming", () => {
     const state = store.getState();
     const message = onlyMessage(state.messages);
     const part = textPart(message);
-    expect(part.text).toBe("");
-    expect(state.streamingText).toEqual({ messageId: message.id, partId: part.id, text: "implicit" });
+    expect(part.text).toBe("implicit");
+    expect(part.completedAt).toBeUndefined();
   });
 
   test("text-end without streaming text does not crash", () => {
@@ -449,12 +491,13 @@ describe("text streaming", () => {
     const message = onlyMessage(store.getState().messages);
     expect(message.parts).toHaveLength(2);
     expect(textPart(message, 0).text).toBe("one");
+    expect(textPart(message, 0).completedAt).toBeGreaterThan(0);
     expect(textPart(message, 1).text).toBe("");
   });
 });
 
 describe("reasoning streaming", () => {
-  test("reasoning-start creates an assistant message, reasoning part, and streamingReasoning", () => {
+  test("reasoning-start creates an assistant message and empty reasoning part", () => {
     const store = createFreshStore("reasoning-start");
     store.getState().append({ type: "reasoning-start" });
 
@@ -463,20 +506,18 @@ describe("reasoning streaming", () => {
     const part = reasoningPart(message);
     expect(message.role).toBe("assistant");
     expect(part.text).toBe("");
-    expect(state.streamingReasoning).toEqual({ messageId: message.id, partId: part.id, text: "" });
   });
 
-  test("reasoning-delta appends to streaming buffer only", () => {
+  test("reasoning-delta appends directly to the reasoning part", () => {
     const store = createFreshStore("reasoning-delta");
     store.getState().append({ type: "reasoning-start" });
     store.getState().append({ type: "reasoning-delta", text: "think" });
 
     const state = store.getState();
-    expect(state.streamingReasoning?.text).toBe("think");
-    expect(reasoningPart(onlyMessage(state.messages)).text).toBe("");
+    expect(reasoningPart(onlyMessage(state.messages)).text).toBe("think");
   });
 
-  test("reasoning-end persists text, completes part, and clears streamingReasoning", () => {
+  test("reasoning-end completes the reasoning part without altering its text", () => {
     const store = createFreshStore("reasoning-end");
     store.getState().append({ type: "reasoning-delta", text: "because" });
     store.getState().append({ type: "reasoning-end" });
@@ -485,7 +526,6 @@ describe("reasoning streaming", () => {
     const part = reasoningPart(onlyMessage(state.messages));
     expect(part.text).toBe("because");
     expect(part.completedAt).toBeGreaterThan(0);
-    expect(state.streamingReasoning).toBeUndefined();
   });
 
   test("reasoning before text creates the assistant message correctly", () => {
@@ -501,7 +541,7 @@ describe("reasoning streaming", () => {
 });
 
 describe("tool streaming", () => {
-  test("tool-input-start creates assistant message, pending tool part, and streaming entry", () => {
+  test("tool-input-start creates assistant message and pending tool part", () => {
     const store = createFreshStore("tool-input-start");
     store.getState().append({ type: "tool-input-start", toolCallId: "call-1", toolName: "read" });
 
@@ -512,7 +552,6 @@ describe("tool streaming", () => {
     expect(part.toolCallId).toBe("call-1");
     expect(part.toolName).toBe("read");
     expect(part.createdAt).toBeGreaterThan(0);
-    expect(state.streamingTools["call-1"]).toEqual({ messageId: message.id, partId: part.id, toolCallId: "call-1", toolName: "read" });
   });
 
   test("tool-call after tool-input-start transitions pending to running and stores input", () => {
@@ -527,7 +566,6 @@ describe("tool streaming", () => {
     if (part.state !== "running") throw new Error("Expected running tool");
     expect(part.input).toBe(input);
     expect(part.startedAt).toBeGreaterThan(0);
-    expect(state.streamingTools["call-1"]?.input).toBe(input);
   });
 
   test("tool-call without tool-input-start creates a running tool part directly", () => {
@@ -540,7 +578,6 @@ describe("tool streaming", () => {
     if (part.state !== "running") throw new Error("Expected running tool");
     expect(part.input).toBe("pwd");
     expect(part.startedAt).toBeGreaterThan(0);
-    expect(state.streamingTools["call-1"]?.partId).toBe(part.id);
   });
 
   test("successful tool-result completes the part, stores output, and removes streaming entry", () => {
@@ -554,7 +591,6 @@ describe("tool streaming", () => {
     if (part.state !== "completed") throw new Error("Expected completed tool");
     expect(part.output).toBe("content");
     expect(part.endedAt).toBeGreaterThan(0);
-    expect(state.streamingTools["call-1"]).toBeUndefined();
   });
 
   test("error tool-result records errorMessage and endedAt", () => {
@@ -569,10 +605,9 @@ describe("tool streaming", () => {
     expect(part.endedAt).toBeGreaterThan(0);
   });
 
-  test("tool-result falls back to finding a part by toolCallId when streaming entry is missing", () => {
+  test("tool-result updates the stored tool part when it already exists", () => {
     const store = createFreshStore("tool-result-fallback");
     store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "read", input: "input" });
-    store.setState({ streamingTools: {} });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false });
 
     const part = toolPart(onlyMessage(store.getState().messages));
@@ -593,8 +628,28 @@ describe("tool streaming", () => {
     expect(first.state).toBe("pending");
     expect(second.toolCallId).toBe("b");
     expect(second.state).toBe("completed");
-    expect(store.getState().streamingTools.a).toBeDefined();
-    expect(store.getState().streamingTools.b).toBeUndefined();
+  });
+});
+
+describe("settleIncompleteState behavior", () => {
+  test("run-end marks incomplete text and reasoning parts completed", () => {
+    const store = createFreshStore("settle-incomplete");
+    store.getState().append({ type: "run-start", runId: "run" });
+    store.getState().append({ type: "text-start" });
+    store.getState().append({ type: "text-delta", text: "hello" });
+    store.getState().append({ type: "reasoning-start" });
+    store.getState().append({ type: "reasoning-delta", text: "why" });
+
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    const message = onlyMessage(store.getState().messages);
+    const text = textPart(message, 0);
+    const reasoning = reasoningPart(message, 1);
+    expect(text.text).toBe("hello");
+    expect(text.completedAt).toBeGreaterThan(0);
+    expect(reasoning.text).toBe("why");
+    expect(reasoning.completedAt).toBeGreaterThan(0);
+    expect(message.completedAt).toBeGreaterThan(0);
   });
 });
 

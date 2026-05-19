@@ -160,6 +160,7 @@ function toSessionFile(state: SessionStoreState): SessionFile {
     childSessionIds: Array.from(state.childSessionIds),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     subAgentDescriptions: Array.from(state.subAgentDescriptions),
+    eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
   };
 }
 

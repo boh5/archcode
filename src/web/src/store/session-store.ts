@@ -2,7 +2,13 @@ import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
 import { reduceStreamEvent } from "../../../store/reduce";
-import type { SessionStoreState, StreamEvent } from "../../../store/types";
+import type {
+  PermissionTerminalEvent,
+  QuestionTerminalEvent,
+  SessionEventPayload,
+  SessionStoreState,
+  StreamEvent,
+} from "../../../store/types";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
@@ -16,6 +22,9 @@ export interface WebSessionStoreState extends SessionStoreState {
   removePermissionRequest: (id: string) => void;
   addQuestionRequest: (request: QuestionRequest) => void;
   removeQuestionRequest: (id: string) => void;
+  handlePermissionTerminal: (event: PermissionTerminalEvent) => void;
+  handleQuestionTerminal: (event: QuestionTerminalEvent) => void;
+  resetTransientState: () => void;
   setConnectionState: (state: ConnectionState) => void;
   setLastEventId: (id: string | null) => void;
 }
@@ -47,7 +56,6 @@ export function createWebSessionStore(
     subAgentDescriptions: new Map(),
     isRunning: false,
     isStreamingModel: false,
-    streamingTools: {},
     readSnapshots: new Map(),
     runCount: 0,
     lastTodoWriteStepIndex: null,
@@ -56,12 +64,36 @@ export function createWebSessionStore(
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
+    events: [],
+    eventOffset: 0,
+    nextEventId: 0,
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
     lastEventId: null,
     connectionState: "connecting",
-    append: (event: StreamEvent) => {
-      set((state) => reduceStreamEvent(state, event));
+    append: (event: SessionEventPayload) => {
+      set((state) => {
+        const envelope = {
+          id: state.nextEventId,
+          createdAt: Date.now(),
+          kind: event.type,
+          payload: event,
+        };
+
+        const events = [...state.events, envelope];
+        const nextEventId = state.nextEventId + 1;
+        let eventOffset = state.eventOffset;
+
+        if (events.length > 10000) {
+          const dropCount = events.length - 10000;
+          events.splice(0, dropCount);
+          eventOffset += dropCount;
+        }
+
+        const partial = reduceStreamEvent(state, event as StreamEvent);
+
+        return { ...partial, events, eventOffset, nextEventId };
+      });
     },
     toModelMessages: () => [],
     addPermissionRequest: (request: PermissionRequest) => {
@@ -86,6 +118,28 @@ export function createWebSessionStore(
         const pendingQuestions = new Map(state.pendingQuestions);
         pendingQuestions.delete(id);
         return { pendingQuestions };
+      });
+    },
+    handlePermissionTerminal: (event: PermissionTerminalEvent) => {
+      set((state) => {
+        const pendingPermissions = new Map(state.pendingPermissions);
+        pendingPermissions.delete(event.permissionId);
+        return { pendingPermissions };
+      });
+    },
+    handleQuestionTerminal: (event: QuestionTerminalEvent) => {
+      set((state) => {
+        const pendingQuestions = new Map(state.pendingQuestions);
+        pendingQuestions.delete(event.questionId);
+        return { pendingQuestions };
+      });
+    },
+    resetTransientState: () => {
+      set({
+        pendingPermissions: new Map(),
+        pendingQuestions: new Map(),
+        connectionState: "connecting",
+        lastEventId: null,
       });
     },
     setConnectionState: (connectionState: ConnectionState) => {

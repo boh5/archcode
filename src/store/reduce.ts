@@ -48,25 +48,17 @@ export function reduceStreamEvent(
         currentRunId: event.runId ?? crypto.randomUUID(),
         currentAssistantMessageId: undefined,
         isStreamingModel: false,
-        streamingText: undefined,
-        streamingReasoning: undefined,
-        streamingTools: {},
         runCount: state.runCount + 1,
       };
     }
 
     case "run-end": {
-      const messages = settleIncompleteState(state, timestamp);
-
       return {
-        messages,
+        messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp),
         isRunning: false,
         isStreamingModel: false,
         currentRunId: undefined,
         currentAssistantMessageId: undefined,
-        streamingText: undefined,
-        streamingReasoning: undefined,
-        streamingTools: {},
       };
     }
 
@@ -111,143 +103,139 @@ export function reduceStreamEvent(
     }
 
     case "text-start": {
-      if (state.streamingText) {
-        const flushedMessages = updateMessagePart(
-          state.messages,
-          state.streamingText.messageId,
-          state.streamingText.partId,
-          (part) =>
-            part.type === "text"
-              ? { ...part, text: state.streamingText!.text, completedAt: timestamp }
-              : part,
-        );
-
-        const flushedState = {
-          ...state,
-          messages: flushedMessages,
-          streamingText: undefined,
-        };
-        const assistant = ensureCurrentAssistantMessage(flushedState, timestamp);
-        return startTextStreaming(assistant, timestamp);
-      }
-
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
-      return startTextStreaming(assistant, timestamp);
+      const messages = finalizeLastIncompletePartOfType(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        "text",
+        timestamp,
+      );
+
+      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "");
     }
 
     case "text-delta": {
-      if (state.streamingText) {
+      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const location = findLatestIncompletePartLocation(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        "text",
+      );
+
+      if (location) {
         return {
-          streamingText: {
-            ...state.streamingText,
-            text: `${state.streamingText.text}${event.text}`,
-          },
+          messages: updateMessagePart(
+            assistant.messages,
+            location.messageId,
+            location.partId,
+            (part) =>
+              part.type === "text"
+                ? { ...part, text: `${part.text}${event.text}` }
+                : part,
+          ),
+          currentAssistantMessageId: assistant.currentAssistantMessageId,
         };
       }
 
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
-      const started = startTextStreaming(assistant, timestamp);
-      return {
-        ...started,
-        streamingText: {
-          ...started.streamingText,
-          text: event.text,
-        },
-      };
+      return appendTextPart(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        timestamp,
+        event.text,
+      );
     }
 
     case "text-end": {
-      if (!state.streamingText) return {};
+      const location = findLatestIncompletePartLocation(
+        state.messages,
+        state.currentAssistantMessageId,
+        "text",
+      );
+
+      if (!location) return {};
 
       return {
         messages: updateMessagePart(
           state.messages,
-          state.streamingText.messageId,
-          state.streamingText.partId,
-          (part) =>
-            part.type === "text"
-              ? { ...part, text: state.streamingText!.text, completedAt: timestamp }
-              : part,
+          location.messageId,
+          location.partId,
+          (part) => (part.type === "text" ? { ...part, completedAt: timestamp } : part),
         ),
-        streamingText: undefined,
       };
     }
 
     case "reasoning-start": {
-      if (state.streamingReasoning) {
-        const flushedMessages = updateMessagePart(
-          state.messages,
-          state.streamingReasoning.messageId,
-          state.streamingReasoning.partId,
-          (part) =>
-            part.type === "reasoning"
-              ? {
-                  ...part,
-                  text: state.streamingReasoning!.text,
-                  completedAt: timestamp,
-                }
-              : part,
-        );
-
-        const flushedState = {
-          ...state,
-          messages: flushedMessages,
-          streamingReasoning: undefined,
-        };
-        const assistant = ensureCurrentAssistantMessage(flushedState, timestamp);
-        return startReasoningStreaming(assistant, timestamp);
-      }
-
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
-      return startReasoningStreaming(assistant, timestamp);
+      const messages = finalizeLastIncompletePartOfType(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        "reasoning",
+        timestamp,
+      );
+
+      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "");
     }
 
     case "reasoning-delta": {
-      if (state.streamingReasoning) {
+      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const location = findLatestIncompletePartLocation(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        "reasoning",
+      );
+
+      if (location) {
         return {
-          streamingReasoning: {
-            ...state.streamingReasoning,
-            text: `${state.streamingReasoning.text}${event.text}`,
-          },
+          messages: updateMessagePart(
+            assistant.messages,
+            location.messageId,
+            location.partId,
+            (part) =>
+              part.type === "reasoning"
+                ? { ...part, text: `${part.text}${event.text}` }
+                : part,
+          ),
+          currentAssistantMessageId: assistant.currentAssistantMessageId,
         };
       }
 
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
-      const started = startReasoningStreaming(assistant, timestamp);
-      return {
-        ...started,
-        streamingReasoning: {
-          ...started.streamingReasoning,
-          text: event.text,
-        },
-      };
+      return appendReasoningPart(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        timestamp,
+        event.text,
+      );
     }
 
     case "reasoning-end": {
-      if (!state.streamingReasoning) return {};
+      const location = findLatestIncompletePartLocation(
+        state.messages,
+        state.currentAssistantMessageId,
+        "reasoning",
+      );
+
+      if (!location) return {};
 
       return {
         messages: updateMessagePart(
           state.messages,
-          state.streamingReasoning.messageId,
-          state.streamingReasoning.partId,
-          (part) =>
-            part.type === "reasoning"
-              ? {
-                  ...part,
-                  text: state.streamingReasoning!.text,
-                  completedAt: timestamp,
-                }
-              : part,
+          location.messageId,
+          location.partId,
+          (part) => (part.type === "reasoning" ? { ...part, completedAt: timestamp } : part),
         ),
-        streamingReasoning: undefined,
       };
     }
 
     case "tool-input-start": {
-      if (state.streamingTools[event.toolCallId]) return {};
-
       const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const existing = findToolPartByCallId(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        event.toolCallId,
+      );
+
+      if (existing) return {};
+
       const part: ToolPart = {
         type: "tool",
         id: crypto.randomUUID(),
@@ -264,39 +252,29 @@ export function reduceStreamEvent(
           part,
         ),
         currentAssistantMessageId: assistant.currentAssistantMessageId,
-        streamingTools: {
-          ...state.streamingTools,
-          [event.toolCallId]: {
-            messageId: assistant.currentAssistantMessageId,
-            partId: part.id,
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-          },
-        },
       };
     }
 
     case "tool-call": {
-      const streamingTool = state.streamingTools[event.toolCallId];
+      const location = findToolPartByCallId(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.toolCallId,
+      );
 
-      if (streamingTool) {
+      if (location) {
+        const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
+        if (!existing || (existing.state !== "pending" && existing.state !== "running")) {
+          return {};
+        }
+
         return {
           messages: updateMessagePart(
             state.messages,
-            streamingTool.messageId,
-            streamingTool.partId,
-            (part) =>
-              part.type === "tool"
-                ? toRunningToolPart(part, event.input, timestamp)
-                : part,
+            location.messageId,
+            location.partId,
+            (part) => (part.type === "tool" ? toRunningToolPart(part, event.input, timestamp) : part),
           ),
-          streamingTools: {
-            ...state.streamingTools,
-            [event.toolCallId]: {
-              ...streamingTool,
-              input: event.input,
-            },
-          },
         };
       }
 
@@ -319,32 +297,17 @@ export function reduceStreamEvent(
           part,
         ),
         currentAssistantMessageId: assistant.currentAssistantMessageId,
-        streamingTools: {
-          ...state.streamingTools,
-          [event.toolCallId]: {
-            messageId: assistant.currentAssistantMessageId,
-            partId: part.id,
-            toolCallId: event.toolCallId,
-            toolName: event.toolName,
-            input: event.input,
-          },
-        },
       };
     }
 
     case "tool-result": {
-      const location =
-        state.streamingTools[event.toolCallId] ??
-        findToolPartByCallId(
-          state.messages,
-          state.currentAssistantMessageId,
-          event.toolCallId,
-        );
+      const location = findToolPartByCallId(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.toolCallId,
+      );
 
       if (!location) return {};
-
-      const { [event.toolCallId]: _removedTool, ...streamingTools } =
-        state.streamingTools;
 
       return {
         messages: updateMessagePart(
@@ -356,7 +319,6 @@ export function reduceStreamEvent(
               ? toSettledToolPart(part, event.output, event.isError, timestamp, event.meta)
               : part,
         ),
-        streamingTools,
       };
     }
 
@@ -406,8 +368,7 @@ export function reduceStreamEvent(
     }
 
     case "step-start": {
-      const resetAssistantMessage =
-        event.step > 0 ? undefined : state.currentAssistantMessageId;
+      const resetAssistantMessage = event.step > 0 ? undefined : state.currentAssistantMessageId;
 
       return {
         isStreamingModel: true,
@@ -428,9 +389,7 @@ export function reduceStreamEvent(
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
-          step.step === event.step &&
-          step.runId === state.currentRunId &&
-          !step.completedAt
+          step.step === event.step && step.runId === state.currentRunId && !step.completedAt
             ? {
                 ...step,
                 completedAt: timestamp,
@@ -559,83 +518,61 @@ function isSubAgentReminder(reminder: { source: { type: string } }): boolean {
 }
 
 function settleIncompleteState(
-  state: SessionStoreState,
+  messages: StoredMessage[],
+  currentAssistantMessageId: string | undefined,
   timestamp: number,
 ): StoredMessage[] {
-  let messages = state.messages;
-
-  if (state.currentAssistantMessageId) {
-    messages = messages.map((message) =>
-      message.id === state.currentAssistantMessageId
-        ? { ...message, completedAt: timestamp }
-        : message,
-    );
-  }
-
-  if (state.streamingText) {
-    messages = updateMessagePart(
-      messages,
-      state.streamingText.messageId,
-      state.streamingText.partId,
-      (part) =>
-        part.type === "text"
-          ? { ...part, text: state.streamingText!.text, completedAt: timestamp }
-          : part,
-    );
-  }
-
-  if (state.streamingReasoning) {
-    messages = updateMessagePart(
-      messages,
-      state.streamingReasoning.messageId,
-      state.streamingReasoning.partId,
-      (part) =>
-        part.type === "reasoning"
-          ? { ...part, text: state.streamingReasoning!.text, completedAt: timestamp }
-          : part,
-    );
-  }
-
-  for (const toolCallId of Object.keys(state.streamingTools)) {
-    const streamingTool = state.streamingTools[toolCallId];
-    messages = updateMessagePart(
-      messages,
-      streamingTool.messageId,
-      streamingTool.partId,
-      (part) =>
-        part.type === "tool" && (part.state === "pending" || part.state === "running")
-          ? {
-              ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),
-              state: "error",
-              errorMessage: "Run ended before tool result",
-              endedAt: timestamp,
-            }
-          : part,
-    );
-  }
-
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {
-        messages = updateMessagePart(
-          messages,
-          message.id,
-          part.id,
-          (p) =>
-            p.type === "tool"
-              ? {
-                  ...toRunningToolPart(p, "input" in p ? p.input : undefined, timestamp),
-                  state: "error",
-                  errorMessage: "Run ended before tool result",
-                  endedAt: timestamp,
-                }
-              : p,
-        );
+  return messages.map((message) => {
+    const parts: StoredPart[] = message.parts.map((part): StoredPart => {
+      if (part.type === "text" && part.completedAt === undefined) {
+        return { ...part, completedAt: timestamp };
       }
+
+      if (part.type === "reasoning" && part.completedAt === undefined) {
+        return { ...part, completedAt: timestamp };
+      }
+
+      if (part.type === "system-notice" && part.completedAt === undefined) {
+        return { ...part, completedAt: timestamp };
+      }
+
+      if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {
+        const errorPart: ErrorToolPart = {
+          ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),
+          state: "error",
+          errorMessage: "Run ended before tool result",
+          endedAt: timestamp,
+        };
+
+        return errorPart;
+      }
+
+      return part;
+    });
+
+    const hasIncompletePart = parts.some((part) => isIncompletePart(part));
+    const shouldCompleteMessage =
+      message.completedAt === undefined &&
+      (hasIncompletePart || message.id === currentAssistantMessageId);
+
+    if (parts === message.parts && !shouldCompleteMessage) {
+      return message;
     }
+
+    return {
+      ...message,
+      parts,
+      ...(shouldCompleteMessage ? { completedAt: timestamp } : {}),
+    };
+  });
+}
+
+function isIncompletePart(part: StoredPart): boolean {
+  if (part.type === "text" || part.type === "reasoning" || part.type === "system-notice") {
+    return part.completedAt === undefined;
   }
 
-  return messages;
+  return part.type === "tool" && (part.state === "pending" || part.state === "running");
 }
 
 function ensureCurrentAssistantMessage(
@@ -679,21 +616,6 @@ function updateMessagePart(
   });
 }
 
-function findToolPartByCallId(
-  messages: StoredMessage[],
-  messageId: string | undefined,
-  toolCallId: string,
-): ToolPartLocation | undefined {
-  if (!messageId) return undefined;
-
-  const message = messages.find((item) => item.id === messageId);
-  const part = message?.parts.find(
-    (item) => item.type === "tool" && item.toolCallId === toolCallId,
-  );
-
-  return part ? { messageId, partId: part.id } : undefined;
-}
-
 function appendPartToMessage(
   messages: StoredMessage[],
   messageId: string,
@@ -704,59 +626,98 @@ function appendPartToMessage(
   );
 }
 
-function startTextStreaming(
-  assistant: AssistantMessageResult,
+function finalizeLastIncompletePartOfType(
+  messages: StoredMessage[],
+  messageId: string,
+  partType: "text" | "reasoning",
   timestamp: number,
-): Partial<SessionStoreState> & {
-  streamingText: NonNullable<SessionStoreState["streamingText"]>;
-} {
+): StoredMessage[] {
+  const location = findLatestIncompletePartLocation(messages, messageId, partType);
+  if (!location) return messages;
+
+  return updateMessagePart(messages, location.messageId, location.partId, (part) => {
+    if (part.type !== partType) return part;
+    return { ...part, completedAt: timestamp };
+  });
+}
+
+function findLatestIncompletePartLocation(
+  messages: StoredMessage[],
+  messageId: string | undefined,
+  partType: "text" | "reasoning",
+): ToolPartLocation | undefined {
+  if (!messageId) return undefined;
+
+  const message = messages.find((item) => item.id === messageId);
+  if (!message) return undefined;
+
+  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
+    const part = message.parts[index];
+    if (!part || part.type !== partType || part.completedAt !== undefined) continue;
+    return { messageId, partId: part.id };
+  }
+
+  return undefined;
+}
+
+function findToolPartByCallId(
+  messages: StoredMessage[],
+  messageId: string | undefined,
+  toolCallId: string,
+): ToolPartLocation | undefined {
+  if (!messageId) return undefined;
+
+  const message = messages.find((item) => item.id === messageId);
+  const part = message?.parts.find((item) => item.type === "tool" && item.toolCallId === toolCallId);
+
+  return part ? { messageId, partId: part.id } : undefined;
+}
+
+function getToolPartAtLocation(
+  messages: StoredMessage[],
+  messageId: string,
+  partId: string,
+): ToolPart | undefined {
+  const message = messages.find((item) => item.id === messageId);
+  const part = message?.parts.find((item) => item.id === partId);
+  return part?.type === "tool" ? part : undefined;
+}
+
+function appendTextPart(
+  messages: StoredMessage[],
+  messageId: string,
+  timestamp: number,
+  text: string,
+): Partial<SessionStoreState> {
   const part: TextPart = {
     type: "text",
     id: crypto.randomUUID(),
-    text: "",
+    text,
     createdAt: timestamp,
   };
 
   return {
-    messages: appendPartToMessage(
-      assistant.messages,
-      assistant.currentAssistantMessageId,
-      part,
-    ),
-    currentAssistantMessageId: assistant.currentAssistantMessageId,
-    streamingText: {
-      messageId: assistant.currentAssistantMessageId,
-      partId: part.id,
-      text: "",
-    },
+    messages: appendPartToMessage(messages, messageId, part),
+    currentAssistantMessageId: messageId,
   };
 }
 
-function startReasoningStreaming(
-  assistant: AssistantMessageResult,
+function appendReasoningPart(
+  messages: StoredMessage[],
+  messageId: string,
   timestamp: number,
-): Partial<SessionStoreState> & {
-  streamingReasoning: NonNullable<SessionStoreState["streamingReasoning"]>;
-} {
+  text: string,
+): Partial<SessionStoreState> {
   const part: ReasoningPart = {
     type: "reasoning",
     id: crypto.randomUUID(),
-    text: "",
+    text,
     createdAt: timestamp,
   };
 
   return {
-    messages: appendPartToMessage(
-      assistant.messages,
-      assistant.currentAssistantMessageId,
-      part,
-    ),
-    currentAssistantMessageId: assistant.currentAssistantMessageId,
-    streamingReasoning: {
-      messageId: assistant.currentAssistantMessageId,
-      partId: part.id,
-      text: "",
-    },
+    messages: appendPartToMessage(messages, messageId, part),
+    currentAssistantMessageId: messageId,
   };
 }
 
@@ -784,11 +745,7 @@ function toSettledToolPart(
   timestamp: number,
   meta?: Record<string, unknown>,
 ): CompletedToolPart | ErrorToolPart {
-  const runningPart = toRunningToolPart(
-    part,
-    "input" in part ? part.input : undefined,
-    timestamp,
-  );
+  const runningPart = toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp);
 
   if (isError) {
     return {

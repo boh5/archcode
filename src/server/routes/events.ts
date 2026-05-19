@@ -5,39 +5,18 @@ import type { SpecraRuntime } from "../../main";
 import type { ProjectInfo } from "../../projects/types";
 import { loadSessionTranscript } from "../../store/helpers";
 import { createSessionStore, getSessionStore, scopedKey } from "../../store/store";
-import type { SessionStoreState } from "../../store/types";
-import { EventRing, type RingEntry } from "../event-ring";
+import type { SessionEventEnvelope, SessionStoreState } from "../../store/types";
 import { AgentRunner } from "../agent-runner";
 import { BadRequestError, ProjectNotFoundError } from "../errors";
 
 const HEARTBEAT_INTERVAL_MS = 15000;
 
 export interface SessionStreamState {
-  ring: EventRing;
   store?: StoreApi<SessionStoreState>;
-  pushedEventCount: number;
+  lastSentEventId: number;
 }
 
 export const sessionStreams = new Map<string, SessionStreamState>();
-
-export function getSessionRing(workspaceRoot: string, sessionId: string): EventRing | undefined {
-  return sessionStreams.get(scopedKey(workspaceRoot, sessionId))?.ring;
-}
-
-export function ensureSessionRing(workspaceRoot: string, sessionId: string): EventRing {
-  const key = scopedKey(workspaceRoot, sessionId);
-  const existing = sessionStreams.get(key);
-  if (existing) {
-    return existing.ring;
-  }
-
-  const state: SessionStreamState = {
-    ring: new EventRing(),
-    pushedEventCount: 0,
-  };
-  sessionStreams.set(key, state);
-  return state.ring;
-}
 
 export function removeSessionStream(workspaceRoot: string, sessionId: string): void {
   sessionStreams.delete(scopedKey(workspaceRoot, sessionId));
@@ -51,20 +30,34 @@ export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRun
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
     const project = await resolveProject(runtime, slug);
     const state = await getSessionStreamState(runtime, agentRunner, sessionId, project.workspaceRoot);
-    const lastId = readLastEventId(c.req.query("lastEventId"), c.req.header("Last-Event-ID"));
+    const lastEventId = readLastEventId(c.req.query("lastEventId"), c.req.header("Last-Event-ID"));
 
     return streamSSE(c, async (stream) => {
       let closed = false;
       let unsubscribe: (() => void) | undefined;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let writeQueue = Promise.resolve();
+      let nextEventIdToSend = state.store?.getState().nextEventId ?? 0;
+      let resolveDone: (() => void) | undefined;
+      const done = new Promise<void>((resolve) => {
+        resolveDone = resolve;
+      });
 
-      const writeEntry = async (entry: RingEntry): Promise<void> => {
+      const writeEnvelope = async (envelope: SessionEventEnvelope): Promise<void> => {
         if (closed) return;
         await stream.writeSSE({
-          event: entry.event,
-          id: String(entry.id),
-          data: entry.data,
+          event: "stream",
+          id: String(envelope.id),
+          data: JSON.stringify(envelope.payload),
         });
+        if (envelope.payload.type === "shutdown") {
+          cleanup();
+        }
+      };
+
+      const writeReset = async (): Promise<void> => {
+        if (closed) return;
+        await stream.writeSSE({ event: "reset", data: "{}" });
       };
 
       const cleanup = (): void => {
@@ -72,36 +65,65 @@ export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRun
         closed = true;
         unsubscribe?.();
         if (heartbeat) clearInterval(heartbeat);
+        resolveDone?.();
       };
 
       stream.onAbort(cleanup);
 
-      try {
-        if (lastId !== undefined && lastId < state.ring.currentId) {
-          for (const entry of state.ring.since(lastId)) {
-            await writeEntry(entry);
-          }
+      const enqueue = (write: () => Promise<void>): void => {
+        writeQueue = writeQueue.then(write).catch(() => cleanup());
+      };
+
+      const enqueueNewEvents = (current: SessionStoreState): void => {
+        if (closed || current.nextEventId <= nextEventIdToSend) return;
+        if (nextEventIdToSend < current.eventOffset) {
+          enqueue(async () => {
+            await writeReset();
+            cleanup();
+          });
+          return;
         }
 
-        unsubscribe = state.store?.subscribe((current, previous) => {
-          if (closed) return;
-          pushNewEvents(state, current, previous).forEach((entry) => {
-            void writeEntry(entry).catch(() => cleanup());
-          });
+        const start = nextEventIdToSend - current.eventOffset;
+        const envelopes = current.events.slice(start);
+        nextEventIdToSend = current.nextEventId;
+        state.lastSentEventId = nextEventIdToSend - 1;
+        enqueue(async () => {
+          for (const envelope of envelopes) {
+            await writeEnvelope(envelope);
+          }
         });
+      };
+
+      try {
+        const store = state.store;
+        if (!store) {
+          await writeReset();
+          return;
+        }
+
+        const initial = store.getState();
+        const resetRequired = lastEventId !== undefined && isStaleCursor(lastEventId, initial);
+        if (resetRequired) {
+          await writeReset();
+          return;
+        }
+
+        nextEventIdToSend = lastEventId === undefined ? initial.eventOffset : lastEventId + 1;
+        unsubscribe = store.subscribe((current) => enqueueNewEvents(current));
+        enqueueNewEvents(initial);
+        enqueueNewEvents(store.getState());
 
         heartbeat = setInterval(() => {
           if (closed) return;
-          void stream.writeSSE({ event: "heartbeat", data: "{}" }).catch(() => cleanup());
+          enqueue(async () => {
+            await stream.writeSSE({ event: "heartbeat", data: "{}" });
+          });
         }, HEARTBEAT_INTERVAL_MS);
 
-        await new Promise<void>((resolveDone) => {
-          stream.onAbort(() => {
-            cleanup();
-            resolveDone();
-          });
-        });
+        await done;
       } finally {
+        await writeQueue.catch(() => undefined);
         cleanup();
       }
     });
@@ -120,15 +142,14 @@ async function getSessionStreamState(
   const existing = sessionStreams.get(key);
   if (existing) {
     existing.store = await resolveStore(runtime, agentRunner, sessionId, workspaceRoot, existing.store);
-    existing.pushedEventCount = countStoreEvents(existing.store.getState());
+    existing.lastSentEventId = existing.store.getState().nextEventId - 1;
     return existing;
   }
 
   const store = await resolveStore(runtime, agentRunner, sessionId, workspaceRoot);
   const state: SessionStreamState = {
-    ring: new EventRing(),
     store,
-    pushedEventCount: countStoreEvents(store.getState()),
+    lastSentEventId: store.getState().nextEventId - 1,
   };
   sessionStreams.set(key, state);
   return state;
@@ -157,84 +178,16 @@ async function resolveStore(
   }
 }
 
-function pushNewEvents(
-  state: SessionStreamState,
-  current: SessionStoreState,
-  previous: SessionStoreState,
-): RingEntry[] {
-  const previousEvents = flattenStoreEvents(previous);
-  const currentEvents = flattenStoreEvents(current);
-  const start = Math.max(state.pushedEventCount, previousEvents.length);
-  state.pushedEventCount = currentEvents.length;
-
-  return currentEvents
-    .slice(start)
-    .map((event) => state.ring.push("stream", JSON.stringify(event)));
-}
-
-function flattenStoreEvents(state: SessionStoreState): unknown[] {
-  const events: unknown[] = [];
-
-  for (const message of state.messages) {
-    for (const part of message.parts) {
-      if (message.role === "user" && part.type === "text") {
-        events.push({ type: "user-message", content: part.text });
-      }
-      if (message.role === "user" && part.type === "system-notice") {
-        events.push({ type: "system-notice", message: part.notice });
-      }
-      if (message.role === "assistant" && part.type === "text") {
-        events.push({ type: "text-delta", text: part.text });
-      }
-      if (message.role === "assistant" && part.type === "reasoning") {
-        events.push({ type: "reasoning-delta", text: part.text });
-      }
-      if (part.type === "tool" && part.state === "running") {
-        events.push({ type: "tool-call", toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
-      }
-      if (part.type === "tool" && part.state === "completed") {
-        events.push({ type: "tool-result", toolCallId: part.toolCallId, toolName: part.toolName, output: part.output, isError: false, ...(part.meta ? { meta: part.meta } : {}) });
-      }
-      if (part.type === "tool" && part.state === "error") {
-        events.push({ type: "tool-result", toolCallId: part.toolCallId, toolName: part.toolName, output: part.errorMessage, isError: true, ...(part.meta ? { meta: part.meta } : {}) });
-      }
-      if (part.type === "compaction") {
-        events.push({ type: "compact", summary: part.summary, tailStartId: part.tailStartId });
-      }
-    }
-  }
-
-  for (const step of state.steps) {
-    events.push({ type: "step-start", step: step.step });
-    if (step.completedAt !== undefined) {
-      events.push({ type: "step-end", step: step.step, finishReason: step.finishReason ?? "unknown", ...(step.usage === undefined ? {} : { usage: step.usage }) });
-    }
-    if (step.error !== undefined) {
-      events.push({ type: "loop-error", step: step.step, error: step.error });
-    }
-  }
-
-  for (const reminder of state.reminders) {
-    events.push({ type: "reminder", reminder });
-  }
-
-  if (state.todos.length > 0) {
-    events.push({ type: "todo-write", todos: state.todos });
-  }
-
-  return events;
-}
-
-function countStoreEvents(state: SessionStoreState): number {
-  return flattenStoreEvents(state).length;
-}
-
 function readLastEventId(queryValue: string | undefined, headerValue: string | undefined): number | undefined {
   const raw = queryValue ?? headerValue;
   if (raw === undefined || raw.trim() === "") return undefined;
 
   const parsed = Number.parseInt(raw, 10);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function isStaleCursor(lastEventId: number, state: SessionStoreState): boolean {
+  return lastEventId < state.eventOffset - 1 || lastEventId >= state.nextEventId;
 }
 
 function requiredParam(value: string | undefined, name: string): string {

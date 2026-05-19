@@ -13,13 +13,11 @@ import type { SessionStoreState } from "../store/types";
 import type { ToolConfirmationCallback } from "../tools";
 import { AgentRunner } from "./agent-runner";
 import { PermissionService } from "./permission-service";
-import { getSessionRing } from "./routes/events";
+import { sessionStreams } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
 
 const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
-const getScopedSessionRing = getSessionRing as unknown as (workspaceRoot: string, sessionId: string) => ReturnType<typeof getSessionRing>;
-
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -155,11 +153,13 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 
 describe("AgentRunner", () => {
   beforeEach(async () => {
+    sessionStreams.clear();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
 
   afterAll(async () => {
+    sessionStreams.clear();
     await rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -199,9 +199,14 @@ describe("AgentRunner", () => {
       input: {},
       description: "Confirm",
     });
-    const ring = getScopedSessionRing(tempRoot, "session-permission");
-    const permissionId = (JSON.parse(ring!.since(0)[0].data) as { id: string }).id;
+    const permissionEvent = agent.store.getState().events.find((event) => event.kind === "permission.request");
+    const permissionId = permissionEvent?.payload.type === "permission.request"
+      ? permissionEvent.payload.permissionId
+      : undefined;
 
+    if (permissionId === undefined) {
+      throw new Error("Expected permission request event");
+    }
     expect(permissionService.respond(permissionId, "deny")).toBe(true);
     await expect(promise).resolves.toBe("deny");
   });

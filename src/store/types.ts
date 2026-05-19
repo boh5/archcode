@@ -169,6 +169,55 @@ export type StreamEvent =
   | LoopErrorEvent
   | CompactEvent;
 
+export const MAX_EVENTS = 10000;
+
+export interface SessionEventEnvelope<P extends SessionEventPayload = SessionEventPayload> {
+  id: number;
+  createdAt: number;
+  kind: P["type"];
+  payload: P;
+}
+
+export interface PermissionRequestEvent {
+  type: "permission.request";
+  permissionId: string;
+  toolName: string;
+  args: unknown;
+  description?: string;
+}
+
+export interface PermissionTerminalEvent {
+  type: "permission.terminal";
+  permissionId: string;
+  status: "resolved" | "denied" | "timeout" | "cancelled";
+}
+
+export interface QuestionRequestEvent {
+  type: "question.request";
+  questionId: string;
+  question: string;
+}
+
+export interface QuestionTerminalEvent {
+  type: "question.terminal";
+  questionId: string;
+  status: "resolved" | "denied" | "timeout" | "cancelled";
+  answer?: string;
+}
+
+export interface ShutdownEvent {
+  type: "shutdown";
+  reason?: string;
+}
+
+export type SessionEventPayload =
+  | StreamEvent
+  | PermissionRequestEvent
+  | PermissionTerminalEvent
+  | QuestionRequestEvent
+  | QuestionTerminalEvent
+  | ShutdownEvent;
+
 export type StoredTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface StoredTodo {
@@ -288,26 +337,6 @@ export interface StepInfo {
   error?: string;
 }
 
-export interface StreamingTextState {
-  messageId: string;
-  partId: string;
-  text: string;
-}
-
-export interface StreamingReasoningState {
-  messageId: string;
-  partId: string;
-  text: string;
-}
-
-export interface StreamingToolState {
-  messageId: string;
-  partId: string;
-  toolCallId: string;
-  toolName: string;
-  input?: unknown;
-}
-
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
@@ -339,15 +368,15 @@ export interface SessionStoreState {
   todoContinuationStagnationCount: number;
   lastTodoContinuationPendingCount: number | null;
 
-  // Temporary streaming layer
-  streamingText?: StreamingTextState;
-  streamingReasoning?: StreamingReasoningState;
-  streamingTools: Record<string, StreamingToolState>;
-
   readSnapshots: Map<string, number>;
 
+  // Unified event log (transient)
+  events: SessionEventEnvelope[];
+  eventOffset: number;
+  nextEventId: number;
+
   // Methods
-  append: (event: StreamEvent) => void;
+  append: (event: SessionEventPayload) => void;
   toModelMessages: () => ModelMessage[];
 }
 

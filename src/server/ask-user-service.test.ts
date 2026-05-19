@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AskUserRequest } from "../tools/types";
+import { createSessionStore } from "../store/store";
 import { AskUserService } from "./ask-user-service";
-import { EventRing } from "./event-ring";
+
+const tmpRoots: string[] = [];
 
 const request: AskUserRequest = {
   toolName: "ask_user",
@@ -22,25 +27,35 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
+async function createWorkspaceRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "specra-ask-user-service-"));
+  tmpRoots.push(root);
+  return root;
+}
+
 async function createPending() {
   const service = new AskUserService();
-  const ring = new EventRing();
-  const promise = service.request("session-1", request, ring);
-  const event = ring.since(0)[0];
-  const payload = JSON.parse(event.data) as { id: string; sessionId: string; abortSignal?: unknown };
+  const sessionId = `session-${crypto.randomUUID()}`;
+  const workspaceRoot = await createWorkspaceRoot();
+  const store = createSessionStore(sessionId, workspaceRoot);
+  const promise = service.request(sessionId, workspaceRoot, request, store);
+  const event = store.getState().events.find((entry) => entry.kind === "question.request");
+  if (!event) {
+    throw new Error("question request event missing");
+  }
 
-  return { service, ring, promise, id: payload.id, payload };
+  const payload = event.payload as { questionId: string; question: string };
+
+  return { service, store, workspaceRoot, promise, id: payload.questionId, payload };
 }
 
 describe("AskUserService", () => {
   test("request creates Deferred, respond resolves it with answers", async () => {
-    const { service, promise, id, payload } = await createPending();
+    const { service, promise, id, payload, store } = await createPending();
 
     expect(service.has(id)).toBe(true);
-    expect(payload.sessionId).toBe("session-1");
-    expect(payload.id).toBe(id);
-    expect(payload.abortSignal).toBeUndefined();
-    expect(payload).toMatchObject({
+    expect(payload.questionId).toBe(id);
+    expect(JSON.parse(payload.question)).toMatchObject({
       toolName: request.toolName,
       toolCallId: request.toolCallId,
       questions: request.questions,
@@ -49,6 +64,15 @@ describe("AskUserService", () => {
     expect(service.respond(id, { answers: [["Yes"]] })).toBe(true);
     await expect(promise).resolves.toEqual({ answers: [["Yes"]] });
     expect(service.has(id)).toBe(false);
+    expect(store.getState().events.map((event) => event.kind)).toEqual([
+      "question.request",
+      "question.terminal",
+    ]);
+    expect(store.getState().events[1]?.payload).toMatchObject({
+      questionId: id,
+      status: "resolved",
+      answer: JSON.stringify([["Yes"]]),
+    });
   });
 
   test("respond resolves it with error", async () => {
@@ -62,46 +86,86 @@ describe("AskUserService", () => {
 
   test("abort signal triggers cleanup and resolves with Cancelled", async () => {
     const service = new AskUserService();
-    const ring = new EventRing();
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceRoot = await createWorkspaceRoot();
+    const store = createSessionStore(sessionId, workspaceRoot);
     const abortController = new AbortController();
-    const promise = service.request("session-1", request, ring, abortController.signal);
-    const payload = JSON.parse(ring.since(0)[0].data) as { id: string };
+    const promise = service.request(sessionId, workspaceRoot, request, store, abortController.signal);
+    const event = store.getState().events.find((entry) => entry.kind === "question.request");
+    if (!event) {
+      throw new Error("question request event missing");
+    }
+
+    const payload = event.payload as { questionId: string };
 
     abortController.abort();
     await flushMicrotasks();
 
     await expect(promise).resolves.toEqual({ isError: true, reason: "Cancelled" });
-    expect(service.has(payload.id)).toBe(false);
-    expect(service.respond(payload.id, { answers: [["Yes"]] })).toBe(false);
+    expect(service.has(payload.questionId)).toBe(false);
+    expect(service.respond(payload.questionId, { answers: [["Yes"]] })).toBe(false);
+    expect(store.getState().events[1]?.payload).toMatchObject({
+      questionId: payload.questionId,
+      status: "cancelled",
+    });
   });
 
   test("cleanup resolves pending questions for a session", async () => {
     const service = new AskUserService();
-    const ringOne = new EventRing();
-    const ringTwo = new EventRing();
-    const first = service.request("session-1", request, ringOne);
-    const second = service.request("session-2", request, ringTwo);
-    const firstId = (JSON.parse(ringOne.since(0)[0].data) as { id: string }).id;
-    const secondId = (JSON.parse(ringTwo.since(0)[0].data) as { id: string }).id;
+    const sessionOne = `session-${crypto.randomUUID()}`;
+    const sessionTwo = `session-${crypto.randomUUID()}`;
+    const workspaceOne = await createWorkspaceRoot();
+    const workspaceTwo = await createWorkspaceRoot();
+    const storeOne = createSessionStore(sessionOne, workspaceOne);
+    const storeTwo = createSessionStore(sessionTwo, workspaceTwo);
+    const first = service.request(sessionOne, workspaceOne, request, storeOne);
+    const second = service.request(sessionTwo, workspaceTwo, request, storeTwo);
+    const firstEvent = storeOne.getState().events.find((entry) => entry.kind === "question.request");
+    const secondEvent = storeTwo.getState().events.find((entry) => entry.kind === "question.request");
+    if (!firstEvent || !secondEvent) {
+      throw new Error("question request event missing");
+    }
 
-    service.cleanup("session-1");
+    const firstId = (firstEvent.payload as { questionId: string }).questionId;
+    const secondId = (secondEvent.payload as { questionId: string }).questionId;
+
+    service.cleanup(sessionOne);
 
     expect(service.has(firstId)).toBe(false);
     expect(service.has(secondId)).toBe(true);
     await expect(first).resolves.toEqual({ isError: true, reason: "Cancelled" });
+    expect(storeOne.getState().events[1]?.payload).toMatchObject({
+      questionId: firstId,
+      status: "cancelled",
+    });
 
     expect(service.respond(secondId, { answers: [["Later"]] })).toBe(true);
     await expect(second).resolves.toEqual({ answers: [["Later"]] });
+    expect(storeTwo.getState().events[1]?.payload).toMatchObject({
+      questionId: secondId,
+      status: "resolved",
+      answer: JSON.stringify([["Later"]]),
+    });
   });
 
   test("cleanup without sessionId resolves all pending questions", async () => {
     const service = new AskUserService();
-    const ringOne = new EventRing();
-    const ringTwo = new EventRing();
-    const first = service.request("session-1", request, ringOne);
-    const second = service.request("session-2", request, ringTwo);
-    const firstId = (JSON.parse(ringOne.since(0)[0].data) as { id: string }).id;
-    const secondId = (JSON.parse(ringTwo.since(0)[0].data) as { id: string }).id;
+    const sessionOne = `session-${crypto.randomUUID()}`;
+    const sessionTwo = `session-${crypto.randomUUID()}`;
+    const workspaceOne = await createWorkspaceRoot();
+    const workspaceTwo = await createWorkspaceRoot();
+    const storeOne = createSessionStore(sessionOne, workspaceOne);
+    const storeTwo = createSessionStore(sessionTwo, workspaceTwo);
+    const first = service.request(sessionOne, workspaceOne, request, storeOne);
+    const second = service.request(sessionTwo, workspaceTwo, request, storeTwo);
+    const firstEvent = storeOne.getState().events.find((entry) => entry.kind === "question.request");
+    const secondEvent = storeTwo.getState().events.find((entry) => entry.kind === "question.request");
+    if (!firstEvent || !secondEvent) {
+      throw new Error("question request event missing");
+    }
+
+    const firstId = (firstEvent.payload as { questionId: string }).questionId;
+    const secondId = (secondEvent.payload as { questionId: string }).questionId;
 
     service.cleanup();
 
@@ -109,6 +173,14 @@ describe("AskUserService", () => {
     expect(service.has(secondId)).toBe(false);
     await expect(first).resolves.toEqual({ isError: true, reason: "Cancelled" });
     await expect(second).resolves.toEqual({ isError: true, reason: "Cancelled" });
+    expect(storeOne.getState().events[1]?.payload).toMatchObject({
+      questionId: firstId,
+      status: "cancelled",
+    });
+    expect(storeTwo.getState().events[1]?.payload).toMatchObject({
+      questionId: secondId,
+      status: "cancelled",
+    });
   });
 
   test("respond to non-existent id returns false", () => {
@@ -129,22 +201,42 @@ describe("AskUserService", () => {
 
   test("cleanup with workspaceRoot only clears matching entries", async () => {
     const service = new AskUserService();
-    const workspaceA = "/tmp/specra-workspace-a";
-    const workspaceB = "/tmp/specra-workspace-b";
-    const ringA = new EventRing();
-    const ringB = new EventRing();
-    const first = service.request("same-session", workspaceA, request, ringA);
-    const second = service.request("same-session", workspaceB, request, ringB);
-    const firstId = (JSON.parse(ringA.since(0)[0].data) as { id: string }).id;
-    const secondId = (JSON.parse(ringB.since(0)[0].data) as { id: string }).id;
+    const sessionId = `session-${crypto.randomUUID()}`;
+    const workspaceA = await createWorkspaceRoot();
+    const workspaceB = await createWorkspaceRoot();
+    const storeA = createSessionStore(sessionId, workspaceA);
+    const storeB = createSessionStore(sessionId, workspaceB);
+    const first = service.request(sessionId, workspaceA, request, storeA);
+    const second = service.request(sessionId, workspaceB, request, storeB);
+    const firstEvent = storeA.getState().events.find((entry) => entry.kind === "question.request");
+    const secondEvent = storeB.getState().events.find((entry) => entry.kind === "question.request");
+    if (!firstEvent || !secondEvent) {
+      throw new Error("question request event missing");
+    }
 
-    service.cleanup("same-session", workspaceA);
+    const firstId = (firstEvent.payload as { questionId: string }).questionId;
+    const secondId = (secondEvent.payload as { questionId: string }).questionId;
+
+    service.cleanup(sessionId, workspaceA);
 
     expect(service.has(firstId)).toBe(false);
     expect(service.has(secondId)).toBe(true);
     await expect(first).resolves.toEqual({ isError: true, reason: "Cancelled" });
+    expect(storeA.getState().events[1]?.payload).toMatchObject({
+      questionId: firstId,
+      status: "cancelled",
+    });
 
     expect(service.respond(secondId, { answers: [["Later"]] })).toBe(true);
     await expect(second).resolves.toEqual({ answers: [["Later"]] });
+    expect(storeB.getState().events[1]?.payload).toMatchObject({
+      questionId: secondId,
+      status: "resolved",
+      answer: JSON.stringify([["Later"]]),
+    });
   });
+});
+
+afterAll(async () => {
+  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
 });

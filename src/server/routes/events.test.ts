@@ -11,7 +11,7 @@ import type { SessionStoreState } from "../../store/types";
 import type { ToolConfirmationCallback } from "../../tools";
 import { AgentRunner } from "../agent-runner";
 import { errorHandler } from "../error-handler";
-import { createEventsRoutes } from "./events";
+import { createEventsRoutes, sessionStreams } from "./events";
 
 const tempRoot = resolve(import.meta.dir, "..", "__test_tmp__", "events-routes");
 
@@ -66,6 +66,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): Spec
 }
 
 async function createTestApp(testName: string, sessionId: string) {
+  sessionStreams.clear();
   const homeDir = join(tempRoot, "homes", testName);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
   await mkdir(homeDir, { recursive: true });
@@ -80,6 +81,10 @@ async function createTestApp(testName: string, sessionId: string) {
   app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, new AgentRunner(runtime)));
 
   return { agent, app, project };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDone) => setTimeout(resolveDone, ms));
 }
 
 async function readUntil(response: Response, predicate: (text: string) => boolean): Promise<string> {
@@ -114,17 +119,25 @@ function eventPath(slug: string, sessionId: string, suffix: string = ""): string
   return `/api/projects/${slug}/sessions/${sessionId}/events${suffix}`;
 }
 
+function streamPayloadIndex(text: string, value: string): number {
+  const index = text.indexOf(`data: {"type":"system-notice","message":"${value}"}`);
+  if (index === -1) throw new Error(`Missing stream payload: ${value}. Received: ${text}`);
+  return index;
+}
+
 describe("events routes", () => {
   beforeEach(async () => {
+    sessionStreams.clear();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
 
   afterAll(async () => {
+    sessionStreams.clear();
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("SSE connection receives events from store", async () => {
+  test("SSE connection receives appended session envelopes from the store", async () => {
     const { agent, app, project } = await createTestApp("live-events", "live-session");
     const response = await app.request(eventPath(project.slug, "live-session"));
 
@@ -132,64 +145,119 @@ describe("events routes", () => {
 
     const text = await readUntil(response, (chunk) => chunk.includes("system-notice"));
     expect(text).toContain("event: stream");
-    expect(text).toContain("id: 1");
+    expect(text).toContain("id: 0");
     expect(text).toContain('data: {"type":"system-notice","message":"hello"}');
   });
 
-  test("Last-Event-ID header triggers replay of missed events", async () => {
+  test("Last-Event-ID header triggers cursor replay of only events after the cursor", async () => {
     const { agent, app, project } = await createTestApp("header-replay", "header-session");
-    const first = await app.request(eventPath(project.slug, "header-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
-    await readUntil(first, (chunk) => chunk.includes("two"));
+    agent.store.getState().append({ type: "system-notice", message: "three" });
 
     const replay = await app.request(eventPath(project.slug, "header-session"), {
-      headers: { "Last-Event-ID": "1" },
+      headers: { "Last-Event-ID": "0" },
     });
 
-    const text = await readUntil(replay, (chunk) => chunk.includes("two"));
+    const text = await readUntil(replay, (chunk) => chunk.includes("three"));
     expect(text).not.toContain("one");
-    expect(text).toContain("id: 2");
+    expect(text).toContain("id: 1");
     expect(text).toContain("two");
+    expect(text).toContain("id: 2");
+    expect(text).toContain("three");
+    expect(streamPayloadIndex(text, "two")).toBeLessThan(streamPayloadIndex(text, "three"));
   });
 
   test("lastEventId query parameter triggers replay", async () => {
     const { agent, app, project } = await createTestApp("query-replay", "query-session");
-    const first = await app.request(eventPath(project.slug, "query-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
-    await readUntil(first, (chunk) => chunk.includes("two"));
 
-    const replay = await app.request(eventPath(project.slug, "query-session", "?lastEventId=1"));
+    const replay = await app.request(eventPath(project.slug, "query-session", "?lastEventId=0"));
 
     const text = await readUntil(replay, (chunk) => chunk.includes("two"));
     expect(text).not.toContain("one");
-    expect(text).toContain("id: 2");
+    expect(text).toContain("id: 1");
     expect(text).toContain("two");
   });
 
   test("query lastEventId takes priority over Last-Event-ID header", async () => {
     const { agent, app, project } = await createTestApp("query-priority", "priority-session");
-    const first = await app.request(eventPath(project.slug, "priority-session"));
     agent.store.getState().append({ type: "system-notice", message: "one" });
     agent.store.getState().append({ type: "system-notice", message: "two" });
-    await readUntil(first, (chunk) => chunk.includes("two"));
 
-    const replay = await app.request(eventPath(project.slug, "priority-session", "?lastEventId=1"), {
+    const replay = await app.request(eventPath(project.slug, "priority-session", "?lastEventId=0"), {
       headers: { "Last-Event-ID": "999" },
     });
 
     const text = await readUntil(replay, (chunk) => chunk.includes("two"));
     expect(text).not.toContain("one");
-    expect(text).toContain("id: 2");
+    expect(text).toContain("id: 1");
+  });
+
+  test("connection without a cursor replays all buffered events in order", async () => {
+    const { agent, app, project } = await createTestApp("initial-replay", "initial-session");
+    agent.store.getState().append({ type: "system-notice", message: "before-one" });
+    agent.store.getState().append({ type: "system-notice", message: "before-two" });
+
+    const response = await app.request(eventPath(project.slug, "initial-session"));
+    const text = await readUntil(response, (chunk) => chunk.includes("before-two"));
+
+    expect(text).toContain("id: 0");
+    expect(text).toContain("before-one");
+    expect(text).toContain("id: 1");
+    expect(text).toContain("before-two");
+    expect(streamPayloadIndex(text, "before-one")).toBeLessThan(streamPayloadIndex(text, "before-two"));
+  });
+
+  test("new events after initial replay stream to the connected client after buffered events", async () => {
+    const { agent, app, project } = await createTestApp("replay-then-live", "replay-live-session");
+    agent.store.getState().append({ type: "system-notice", message: "buffered" });
+    const response = await app.request(eventPath(project.slug, "replay-live-session"));
+
+    await delay(10);
+    agent.store.getState().append({ type: "system-notice", message: "live" });
+
+    const text = await readUntil(response, (chunk) => chunk.includes("live"));
+    expect(text).toContain("buffered");
+    expect(text).toContain("live");
+    expect(text).toContain("id: 1");
+    expect(streamPayloadIndex(text, "buffered")).toBeLessThan(streamPayloadIndex(text, "live"));
+  });
+
+  test("stale cursor sends reset instead of partial replay", async () => {
+    const { agent, app, project } = await createTestApp("stale-reset", "stale-session");
+    const state = agent.store.getState();
+    state.append({ type: "system-notice", message: "first" });
+    agent.store.setState((current) => ({
+      events: current.events.slice(1),
+      eventOffset: 1,
+      nextEventId: 1,
+    }));
+
+    const replay = await app.request(eventPath(project.slug, "stale-session", "?lastEventId=-1"));
+
+    const text = await readUntil(replay, (chunk) => chunk.includes("event: reset"));
+    expect(text).toContain("data: {}");
+    expect(text).not.toContain("event: stream");
+  });
+
+  test("cursor from a wrong generation sends reset", async () => {
+    const { app, project } = await createTestApp("generation-reset", "generation-session");
+
+    const replay = await app.request(eventPath(project.slug, "generation-session", "?lastEventId=999"));
+
+    const text = await readUntil(replay, (chunk) => chunk.includes("event: reset"));
+    expect(text).toContain("data: {}");
   });
 
   test("heartbeat is sent within 20 seconds", async () => {
-    const { app, project } = await createTestApp("heartbeat", "heartbeat-session");
+    const { agent, app, project } = await createTestApp("heartbeat", "heartbeat-session");
     const response = await app.request(eventPath(project.slug, "heartbeat-session"));
 
     const text = await readUntil(response, (chunk) => chunk.includes("event: heartbeat"));
     expect(text).toContain("data: {}");
+    expect(agent.store.getState().events).toHaveLength(0);
   }, 22000);
 
   test("client disconnect cleans up subscription", async () => {
@@ -199,12 +267,12 @@ describe("events routes", () => {
     if (!reader) throw new Error("Expected response body");
 
     await reader.cancel();
-    await new Promise((resolveDone) => setTimeout(resolveDone, 10));
+    await delay(10);
 
     agent.store.getState().append({ type: "system-notice", message: "after-disconnect" });
-    const replay = await app.request(eventPath(project.slug, "disconnect-session", "?lastEventId=0"));
-    const text = await readUntil(replay, (chunk) => chunk.includes("event: heartbeat"));
+    const replay = await app.request(eventPath(project.slug, "disconnect-session"));
+    const text = await readUntil(replay, (chunk) => chunk.includes("after-disconnect"));
 
-    expect(text).not.toContain("after-disconnect");
+    expect(text).toContain("after-disconnect");
   }, 22000);
 });

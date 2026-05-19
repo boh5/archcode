@@ -1,9 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import { EventRing } from "../event-ring";
+import { createSessionStore } from "../../store/store";
 import { PermissionService } from "../permission-service";
 import { createPermissionRoutes } from "./permissions";
+
+const tmpRoots: string[] = [];
 
 function createTestApp(permissionService: PermissionService): Hono {
   const app = new Hono();
@@ -12,20 +17,34 @@ function createTestApp(permissionService: PermissionService): Hono {
   return app;
 }
 
+async function createWorkspaceRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "specra-permissions-routes-"));
+  tmpRoots.push(root);
+  return root;
+}
+
 async function createPermission(permissionService: PermissionService): Promise<string> {
-  const ring = new EventRing();
+  const sessionId = `session-${crypto.randomUUID()}`;
+  const workspaceRoot = await createWorkspaceRoot();
+  const store = createSessionStore(sessionId, workspaceRoot);
   void permissionService.request(
-    "session-1",
+    sessionId,
+    workspaceRoot,
     {
       toolName: "bash",
       toolCallId: "call-1",
       input: {},
       description: "Confirm tool",
     },
-    ring,
+    store,
   );
 
-  return (JSON.parse(ring.since(0)[0].data) as { id: string }).id;
+  const event = store.getState().events.find((entry) => entry.kind === "permission.request");
+  if (!event) {
+    throw new Error("permission request event missing");
+  }
+
+  return (event.payload as { permissionId: string }).permissionId;
 }
 
 describe("permission routes", () => {
@@ -88,4 +107,8 @@ describe("permission routes", () => {
       error: { code: "BAD_REQUEST", message: "Invalid JSON body" },
     });
   });
+});
+
+afterAll(async () => {
+  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
