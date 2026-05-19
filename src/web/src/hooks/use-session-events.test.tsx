@@ -1,11 +1,20 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { JSDOM } from "jsdom";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { useSessionEvents } from "./use-session-events";
-import { createWebSessionStore } from "../store/session-store";
+import type { Root } from "react-dom/client";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import type { StreamEvent } from "../../../store/types";
+
+type UseSessionEventsHook = typeof import("./use-session-events").useSessionEvents;
+type WebSessionStoreFactory = typeof import("../store/session-store").createWebSessionStore;
+type MockSessionState = {
+  append: (event: StreamEvent) => void;
+  addPermissionRequest: (request: PermissionRequest) => void;
+  addQuestionRequest: (request: QuestionRequest) => void;
+  connectionState: "connecting" | "open" | "reconnecting" | "closed";
+  lastEventId: string | null;
+  setConnectionState: (state: "connecting" | "open" | "reconnecting" | "closed") => void;
+  setLastEventId: (id: string | null) => void;
+};
 
 type EventListener = (event: MessageEvent<string>) => void;
 
@@ -50,6 +59,60 @@ class MockEventSource {
 const originalEventSource = globalThis.EventSource;
 const originalSetTimeout = globalThis.setTimeout;
 const originalClearTimeout = globalThis.clearTimeout;
+let act: (callback: () => void) => void;
+let createRoot: (container: Element | DocumentFragment) => Root;
+let useSessionEvents: UseSessionEventsHook;
+let createWebSessionStore: WebSessionStoreFactory;
+let activeRoot: { cleanup?: () => void } | null = null;
+const sessionRegistry = new Map<string, ReturnType<WebSessionStoreFactory>>();
+
+function createMockRoot(_container: Element | DocumentFragment): Root {
+  const rootState: { cleanup?: () => void } = {};
+
+  return {
+    render(children: unknown) {
+      const element = children as { type?: (props: unknown) => unknown; props?: unknown };
+      activeRoot = rootState;
+      element.type?.(element.props);
+      activeRoot = null;
+    },
+    unmount() {
+      rootState.cleanup?.();
+      rootState.cleanup = undefined;
+    },
+  } as Root;
+}
+
+function createMockSessionStore(sessionId: string): ReturnType<WebSessionStoreFactory> {
+  const existing = sessionRegistry.get(sessionId);
+  if (existing) return existing;
+
+  let state: MockSessionState = {
+    append: () => {},
+    addPermissionRequest: () => {},
+    addQuestionRequest: () => {},
+    connectionState: "connecting",
+    lastEventId: null,
+    setConnectionState: (connectionState) => {
+      state = { ...state, connectionState };
+    },
+    setLastEventId: (lastEventId) => {
+      state = { ...state, lastEventId };
+    },
+  };
+
+  const store = {
+    getInitialState: () => state,
+    getState: () => state,
+    setState: (partial: Partial<MockSessionState>) => {
+      state = { ...state, ...partial };
+    },
+    subscribe: () => () => {},
+  } as unknown as ReturnType<WebSessionStoreFactory>;
+
+  sessionRegistry.set(sessionId, store);
+  return store;
+}
 
 interface ScheduledTimer {
   id: number;
@@ -115,7 +178,7 @@ function renderHook(slug: string, sessionId: string): { root: Root; container: H
   const root = createRoot(container);
 
   act(() => {
-    root.render(<TestHarness slug={slug} sessionId={sessionId} />);
+    root.render({ type: TestHarness, props: { slug, sessionId } } as unknown as React.ReactNode);
   });
 
   return { root, container };
@@ -129,6 +192,32 @@ function unmount(rendered: { root: Root; container: HTMLDivElement }): void {
 }
 
 describe("useSessionEvents", () => {
+  beforeAll(async () => {
+    mock.module("react", () => ({
+      act: (callback: () => void) => callback(),
+      useEffect: (callback: () => void | (() => void)) => {
+        const cleanup = callback();
+        if (typeof cleanup === "function" && activeRoot) {
+          activeRoot.cleanup = cleanup;
+        }
+      },
+    }));
+    mock.module("react-dom/client", () => ({
+      createRoot: createMockRoot,
+    }));
+    mock.module("../store/session-store", () => ({
+      createWebSessionStore: createMockSessionStore,
+      useSessionStore: () => undefined,
+    }));
+
+    [{ act }, { createRoot }, { createWebSessionStore }, { useSessionEvents }] = await Promise.all([
+      import("react"),
+      import("react-dom/client"),
+      import("../store/session-store"),
+      import("./use-session-events"),
+    ]);
+  });
+
   beforeEach(() => {
     const dom = new JSDOM("<!doctype html><html><body></body></html>");
     globalThis.window = dom.window as unknown as Window & typeof globalThis;
@@ -136,6 +225,7 @@ describe("useSessionEvents", () => {
     globalThis.Event = dom.window.Event;
     installFakeTimers();
     MockEventSource.reset();
+    sessionRegistry.clear();
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
   });
 
