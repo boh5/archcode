@@ -9,7 +9,11 @@ import type { SessionEventEnvelope, SessionStoreState } from "../../store/types"
 import { AgentRunner } from "../agent-runner";
 import { BadRequestError, ProjectNotFoundError } from "../errors";
 
-const HEARTBEAT_INTERVAL_MS = 15000;
+export interface EventsRoutesOptions {
+  heartbeatIntervalMs?: number;
+}
+
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;
 
 export interface SessionStreamState {
   store?: StoreApi<SessionStoreState>;
@@ -22,7 +26,8 @@ export function removeSessionStream(workspaceRoot: string, sessionId: string): v
   sessionStreams.delete(scopedKey(workspaceRoot, sessionId));
 }
 
-export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
+export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner, options?: EventsRoutesOptions): Hono {
+  const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const app = new Hono();
 
   app.get("/", async (c) => {
@@ -119,7 +124,7 @@ export function createEventsRoutes(runtime: SpecraRuntime, agentRunner: AgentRun
           enqueue(async () => {
             await stream.writeSSE({ event: "heartbeat", data: "{}" });
           });
-        }, HEARTBEAT_INTERVAL_MS);
+        }, heartbeatIntervalMs);
 
         await done;
       } finally {

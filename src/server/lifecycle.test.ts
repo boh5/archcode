@@ -124,7 +124,7 @@ async function readUntilDone(response: Response): Promise<string> {
 
   const decoder = new TextDecoder();
   let text = "";
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 2000;
 
   while (Date.now() < deadline) {
     const remaining = Math.max(1, deadline - Date.now());
@@ -159,7 +159,7 @@ async function createLifecycleEventsApp(
   } as SpecraRuntime;
   const app = new Hono();
   app.onError(errorHandler);
-  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, runner));
+  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, runner, { heartbeatIntervalMs: 100 }));
 
   return { app, project };
 }
@@ -311,7 +311,7 @@ describe("server lifecycle", () => {
     } finally {
       server.stop(true);
     }
-  }, 22000);
+  });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
     const server = { stop: mock(() => undefined) };

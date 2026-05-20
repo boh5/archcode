@@ -78,7 +78,7 @@ async function createTestApp(testName: string, sessionId: string) {
   const runtime = createTestRuntime(projectRegistry, agent);
   const app = new Hono();
   app.onError(errorHandler);
-  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, new AgentRunner(runtime)));
+  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, new AgentRunner(runtime), { heartbeatIntervalMs: 100 }));
 
   return { agent, app, project };
 }
@@ -93,7 +93,7 @@ async function readUntil(response: Response, predicate: (text: string) => boolea
 
   const decoder = new TextDecoder();
   let text = "";
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 2000;
 
   try {
     while (Date.now() < deadline) {
@@ -258,7 +258,7 @@ describe("events routes", () => {
     const text = await readUntil(response, (chunk) => chunk.includes("event: heartbeat"));
     expect(text).toContain("data: {}");
     expect(agent.store.getState().events).toHaveLength(0);
-  }, 22000);
+  });
 
   test("client disconnect cleans up subscription", async () => {
     const { agent, app, project } = await createTestApp("disconnect", "disconnect-session");
@@ -274,5 +274,5 @@ describe("events routes", () => {
     const text = await readUntil(replay, (chunk) => chunk.includes("after-disconnect"));
 
     expect(text).toContain("after-disconnect");
-  }, 22000);
+  });
 });
