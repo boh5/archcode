@@ -8,6 +8,10 @@
   "bin": {
     "specra": "./src/main.ts"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
   "dependencies": {
     "@specra/agent-core": "workspace:*",
     "@specra/protocol": "workspace:*",
