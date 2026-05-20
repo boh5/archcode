@@ -14,6 +14,7 @@ export function errorHandler(err: Error, c: Context): Response {
     );
   }
 
+  console.error(err);
   return jsonError(c, { code: "INTERNAL_ERROR", message: "Internal server error" }, 500);
 }
 
