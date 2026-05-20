@@ -113,7 +113,7 @@ describe("workflow routes", () => {
       expect(body.workflow.sessionIds).toEqual({ orchestrator: sessionId });
     });
 
-    test("returns 404 when session has no matching workflow", async () => {
+    test("returns 200 with null workflow when session has no matching workflow", async () => {
       const { app, project, workspaceRoot } = await createTestApp("session-no-workflow");
       const sessionId = "orphan-session";
 
@@ -123,10 +123,8 @@ describe("workflow routes", () => {
         `/api/projects/${project.slug}/sessions/${sessionId}/workflow`,
       );
 
-      expect(res.status).toBe(404);
-      expect(await res.json()).toEqual({
-        error: { code: "WORKFLOW_NOT_FOUND", message: "Workflow not found for this session" },
-      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ workflow: null });
     });
 
     test("returns 404 when session does not exist", async () => {

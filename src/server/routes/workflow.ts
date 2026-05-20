@@ -52,7 +52,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
       }
     }
 
-    throw new WorkflowNotFoundError();
+    return c.json({ workflow: null });
   });
 
   app.get("/:slug/workflows/:workflowId/artifacts/:name", async (c) => {
