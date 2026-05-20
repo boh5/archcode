@@ -1,4 +1,4 @@
-import type { StoredTodo, StoredTodoStatus } from "../../../../store/types";
+import type { SessionTodo, SessionTodoStatus } from "@specra/protocol";
 import { useSessionStore } from "../../store/session-store";
 
 type Priority = "high" | "medium" | "low";
@@ -26,28 +26,28 @@ const PRIORITY_CLASSES: Record<Priority, string> = {
   low: "bg-bg-active text-text-muted",
 };
 
-const STATUS_CLASSES: Record<StoredTodoStatus, string> = {
+const STATUS_CLASSES: Record<SessionTodoStatus, string> = {
   completed: "bg-success text-white",
   in_progress: "border-2 border-accent text-accent",
   pending: "border-[1.5px] border-border-strong",
   cancelled: "border-[1.5px] border-border-strong opacity-40",
 };
 
-const STATUS_ICON: Record<StoredTodoStatus, string> = {
+const STATUS_ICON: Record<SessionTodoStatus, string> = {
   completed: "✓",
   in_progress: "",
   pending: "",
   cancelled: "✕",
 };
 
-const TEXT_CLASSES: Record<StoredTodoStatus, string> = {
+const TEXT_CLASSES: Record<SessionTodoStatus, string> = {
   completed: "line-through text-text-muted",
   in_progress: "text-text-primary font-medium",
   pending: "text-text-secondary",
   cancelled: "line-through text-text-muted opacity-50",
 };
 
-function TodoItem({ todo }: { todo: StoredTodo }) {
+function TodoItem({ todo }: { todo: SessionTodo }) {
   const priority = extractPriority(todo.content);
   const displayContent = priority
     ? todo.content.replace(PRIORITY_PATTERN, "").replace(/\s{2,}/g, " ").trim()

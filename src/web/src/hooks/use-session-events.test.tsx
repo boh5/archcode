@@ -7,7 +7,7 @@ import type {
   QuestionTerminalEvent,
   SessionEventPayload,
   StreamEvent,
-} from "../../../store/types";
+} from "@specra/protocol";
 
 type UseSessionEventsHook = typeof import("./use-session-events").useSessionEvents;
 type WebSessionStoreFactory = typeof import("../store/session-store").createWebSessionStore;

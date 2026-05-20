@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { SessionEventPayload } from "../../../store/types";
+import type { SessionEventPayload } from "@specra/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import { createWebSessionStore } from "../store/session-store";
 

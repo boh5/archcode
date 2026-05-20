@@ -1,23 +1,38 @@
 import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
-import { reduceStreamEvent } from "../../../store/reduce";
+import { reduceStreamEvent } from "@specra/protocol";
 import type {
   PermissionTerminalEvent,
   QuestionTerminalEvent,
   Reminder,
+  SessionEventEnvelope,
   SessionEventPayload,
-  SessionStoreState,
-  StepInfo,
-  StoredMessage,
-  StoredTodo,
+  SessionMessage,
+  SessionProjection,
+  SessionStep,
+  SessionTodo,
   StreamEvent,
-} from "../../../store/types";
+} from "@specra/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 
 export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 
-export interface WebSessionStoreState extends SessionStoreState {
+export interface WebSessionStoreState extends SessionProjection {
+  createdAt: number;
+  childSessionIds: Set<string>;
+  parentSessionId: string | undefined;
+  subAgentDescriptions: Map<string, string>;
+  lastTodoWriteStepIndex: number | null;
+  lastTodoReminderStepIndex: number | null;
+  todoStepReminderCount: number;
+  todoLoopContinuationCount: number;
+  todoContinuationStagnationCount: number;
+  lastTodoContinuationPendingCount: number | null;
+  events: SessionEventEnvelope[];
+  eventOffset: number;
+  nextEventId: number;
+  append: (event: SessionEventPayload) => void;
   pendingPermissions: Map<string, PermissionRequest>;
   pendingQuestions: Map<string, QuestionRequest>;
   lastEventId: string | null;
@@ -32,9 +47,9 @@ export interface WebSessionStoreState extends SessionStoreState {
   setConnectionState: (state: ConnectionState) => void;
   setLastEventId: (id: string | null) => void;
   initializeFromSnapshot: (data: {
-    messages?: StoredMessage[];
-    steps?: StepInfo[];
-    todos?: StoredTodo[];
+    messages?: SessionMessage[];
+    steps?: SessionStep[];
+    todos?: SessionTodo[];
     reminders?: Reminder[];
     title?: string | null;
     createdAt?: number;
@@ -167,13 +182,13 @@ export function createWebSessionStore(
       set((state) => {
         const updates: Partial<WebSessionStoreState> = {};
         if (data.messages && data.messages.length > 0) {
-          updates.messages = data.messages as StoredMessage[];
+          updates.messages = data.messages as SessionMessage[];
         }
         if (data.steps && data.steps.length > 0) {
-          updates.steps = data.steps as StepInfo[];
+          updates.steps = data.steps as SessionStep[];
         }
         if (data.todos && data.todos.length > 0) {
-          updates.todos = data.todos as StoredTodo[];
+          updates.todos = data.todos as SessionTodo[];
         }
         if (data.reminders && data.reminders.length > 0) {
           updates.reminders = data.reminders as Reminder[];

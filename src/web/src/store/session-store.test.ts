@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createStore } from "zustand/vanilla";
-import type { PermissionTerminalEvent, QuestionTerminalEvent } from "../../../store/types";
+import type { PermissionTerminalEvent, QuestionTerminalEvent } from "@specra/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 
 type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";

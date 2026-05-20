@@ -2,14 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSessionStore } from "../../store/session-store";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import type {
-  StoredMessage,
-  StoredPart,
+  SessionMessage,
+  SessionPart,
   ToolPart,
   CompactionPart,
   SystemNoticePart,
   ReasoningPart,
   TextPart,
-} from "../../../../store/types";
+} from "@specra/protocol";
 
 const AGENT_TYPES = [
   "orchestrator",
@@ -181,7 +181,7 @@ function ToolCard({ part }: { part: ToolPart }) {
   );
 }
 
-function MsgUser({ message }: { message: StoredMessage }) {
+function MsgUser({ message }: { message: SessionMessage }) {
   const textParts = message.parts.filter((p): p is TextPart => p.type === "text");
 
   return (
@@ -204,7 +204,7 @@ function MsgAgent({
   message,
   agentName,
 }: {
-  message: StoredMessage;
+  message: SessionMessage;
   agentName: string;
 }) {
   const agentType = isValidAgentType(agentName) ? (agentName as AgentType) : "orchestrator" as AgentType;
@@ -248,7 +248,7 @@ function CompactionBlock({ part }: { part: CompactionPart }) {
   );
 }
 
-function PartRenderer({ part }: { part: StoredPart }) {
+function PartRenderer({ part }: { part: SessionPart }) {
   switch (part.type) {
     case "text":
       return (
@@ -295,7 +295,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
     }
   }, [messages, isNearBottom]);
 
-  function getAgentName(_msg: StoredMessage): string {
+  function getAgentName(_msg: SessionMessage): string {
     return "orchestrator";
   }
 
