@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
@@ -18,6 +17,7 @@ import { createProjectsRoutes } from "./routes/projects";
 import { createQuestionsRoutes } from "./routes/questions";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createWorkflowRoutes } from "./routes/workflow";
+import { createEmbeddedAssetHandler } from "./serve-web";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
@@ -102,19 +102,7 @@ export function createServerApp(
   app.route("/api/directories", directories);
 
   if (!options.dev) {
-    app.use("/*", serveStatic({ root: "./src/web/dist" }));
-
-    app.get("/*", async (c) => {
-      const path = new URL(c.req.url).pathname;
-      if (path.startsWith("/api") || path.startsWith("/assets/")) {
-        return c.notFound();
-      }
-
-      const index = Bun.file("./src/web/dist/index.html");
-      return new Response(index, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    });
+    app.use("/*", createEmbeddedAssetHandler());
   }
 
   return { app, agentRunner };

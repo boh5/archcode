@@ -6,3 +6,4 @@ bun.lockb
 .sisyphus
 .specra
 .playwright-mcp
+apps/server/src/web-manifest.ts
