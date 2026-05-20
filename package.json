@@ -4,6 +4,7 @@
   "private": true,
   "description": "A long-running coding CLI agent that coordinates a virtual software company of AI roles — PM, backend, frontend, QA, PR review — all orchestrated from your terminal.",
   "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
   "bin": {
     "specra": "./src/main.ts"
   },
@@ -15,11 +16,9 @@
   ],
   "scripts": {
     "server": "bun --hot src/main.ts",
-    "server:prod": "bun src/main.ts",
     "web": "vite src/web",
     "web:build": "vite build src/web",
     "dev": "concurrently -n server,web -c blue,green \"bun run server\" \"bun run web\"",
-    "start": "bun src/main.ts",
     "build": "bun run typecheck && bun run web:build",
     "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit",
