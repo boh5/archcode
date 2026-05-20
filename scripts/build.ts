@@ -94,6 +94,38 @@ async function compileBinary(): Promise<void> {
   const cssTreePatchPlugin: BunPlugin = {
     name: "inline-css-tree-data-patch",
     setup(build) {
+      build.onLoad({ filter: /css-tree\/lib\/data\.js$/ }, async (args) => {
+        const source = await Bun.file(args.path).text();
+        const contents = source
+          .replace(
+            "import { createRequire } from 'module';\n",
+            [
+              "import mdnAtrules from 'mdn-data/css/at-rules.json' with { type: 'json' };",
+              "import mdnProperties from 'mdn-data/css/properties.json' with { type: 'json' };",
+              "import mdnSyntaxes from 'mdn-data/css/syntaxes.json' with { type: 'json' };",
+              "",
+            ].join("\n"),
+          )
+          .replace("const require = createRequire(import.meta.url);\n", "")
+          .replace("const mdnAtrules = require('mdn-data/css/at-rules.json');\n", "")
+          .replace("const mdnProperties = require('mdn-data/css/properties.json');\n", "")
+          .replace("const mdnSyntaxes = require('mdn-data/css/syntaxes.json');\n", "");
+
+        return { contents, loader: "js" };
+      });
+      build.onLoad({ filter: /css-tree\/lib\/syntax\/config\/lexer\.js$/ }, async (args) => {
+        const source = await Bun.file(args.path).text();
+        const dataImportPath = toPosixPath(relative(
+          dirname(args.path),
+          join(rootDir, "node_modules", "css-tree", "lib", "data.js"),
+        ));
+        const contents = source.replace(
+          "import definitions from '../../data.js';",
+          `import definitions from ${JSON.stringify(dataImportPath)};`,
+        );
+
+        return { contents, loader: "js" };
+      });
       build.onLoad({ filter: /css-tree\/lib\/data-patch\.js$/ }, () => ({
         contents: `export default ${cssTreePatchJson};\n`,
         loader: "js",
