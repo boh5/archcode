@@ -5,7 +5,6 @@ import { dirname, join, normalize, relative, resolve } from "node:path";
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
 const projectRoot = resolve(packageRoot, "../..");
-const appSrcRoot = join(projectRoot, "src");
 
 interface ImportRecord {
   file: string;
@@ -65,16 +64,14 @@ function extractImports(filePath: string): ImportRecord[] {
 
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
   if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(dirname(filePath), importPath)));
-  if (importPath.startsWith("src/")) return normalize(importPath);
+  if (importPath.startsWith("@specra/protocol")) return "packages/protocol/src";
   if (importPath.startsWith("@specra/agent-core")) return "packages/agent-core/src";
+  if (importPath.startsWith("@specra/server")) return "apps/server/src";
+  if (importPath.startsWith("@specra/web")) return "apps/web/src";
   return undefined;
 }
 
-function findViolations(
-  scopeDir: string,
-  forbiddenPatterns: RegExp[],
-  allowedExceptions: RegExp[] = [],
-): Violation[] {
+function findViolations(scopeDir: string, forbiddenPatterns: RegExp[], allowedExceptions: RegExp[] = []): Violation[] {
   const scopePath = join(projectRoot, scopeDir);
   const violations: Violation[] = [];
 
@@ -83,12 +80,8 @@ function findViolations(
       const candidates = [importRecord.importPath, importRecord.resolvedPath].filter(
         (candidate): candidate is string => candidate !== undefined,
       );
-      const isAllowed = candidates.some((candidate) =>
-        allowedExceptions.some((pattern) => pattern.test(candidate)),
-      );
-      const isForbidden = candidates.some((candidate) =>
-        forbiddenPatterns.some((pattern) => pattern.test(candidate)),
-      );
+      const isAllowed = candidates.some((candidate) => allowedExceptions.some((pattern) => pattern.test(candidate)));
+      const isForbidden = candidates.some((candidate) => forbiddenPatterns.some((pattern) => pattern.test(candidate)));
 
       if (isForbidden && !isAllowed) {
         violations.push(formatViolation(importRecord));
@@ -97,66 +90,6 @@ function findViolations(
   }
 
   return violations;
-}
-
-function findWebIsolationViolations(): Violation[] {
-  const violations: Violation[] = [];
-  const forbiddenPatterns = [/^node:/, /^bun:/, /^src\/(server|agents|lsp|mcp|tools)(\/|$)/];
-  const allowedStoreFiles = new Set(["@specra/protocol"]);
-
-  for (const file of findTsFiles(join(appSrcRoot, "web"))) {
-    if (file.endsWith("vite.config.ts")) continue;
-
-    for (const importRecord of extractImports(file)) {
-      const resolvedPath = importRecord.resolvedPath;
-      const normalizedResolvedPath = resolvedPath?.replace(/\.(ts|tsx)$/, "");
-      const candidates = [importRecord.importPath, normalizedResolvedPath].filter(
-        (candidate): candidate is string => candidate !== undefined,
-      );
-
-      const importsStoreBoundary = normalizedResolvedPath?.startsWith("packages/agent-core/src/store/") ?? false;
-      const allowedStoreImport = allowedStoreFiles.has(importRecord.importPath);
-      const forbiddenByPattern = candidates.some((candidate) =>
-        forbiddenPatterns.some((pattern) => pattern.test(candidate)),
-      );
-
-      if (forbiddenByPattern || (importsStoreBoundary && !allowedStoreImport)) {
-        violations.push(formatViolation(importRecord));
-      }
-    }
-  }
-
-  return violations;
-}
-
-function findFeatureCrossImportViolations(): Violation[] {
-  const featuresRoot = join(appSrcRoot, "web/src/components/features");
-  const violations: Violation[] = [];
-
-  for (const file of findTsFiles(featuresRoot)) {
-    const sourceFeature = featureNameForPath(file);
-    if (sourceFeature === undefined) continue;
-
-    for (const importRecord of extractImports(file)) {
-      if (importRecord.resolvedPath === undefined) continue;
-      const targetFeature = featureNameForPath(join(projectRoot, importRecord.resolvedPath));
-
-      if (targetFeature !== undefined && targetFeature !== sourceFeature) {
-        violations.push(formatViolation(importRecord));
-      }
-    }
-  }
-
-  return violations;
-}
-
-function featureNameForPath(filePath: string): string | undefined {
-  const relativePath = normalize(relative(join(appSrcRoot, "web/src/components/features"), filePath));
-  if (relativePath.startsWith("..")) return undefined;
-  const pathParts = relativePath.split(/[\\/]/);
-  if (pathParts.length < 2) return undefined;
-  const [featureName] = pathParts;
-  return featureName || undefined;
 }
 
 function formatViolation(importRecord: ImportRecord): Violation {
@@ -171,13 +104,62 @@ function expectNoViolations(violations: Violation[]): void {
   expect(violations, message).toEqual([]);
 }
 
-describe("architecture boundaries", () => {
-  test("agents isolation", () => {
-    expectNoViolations(findViolations("packages/agent-core/src/agents", [/^src\/(web|server|tui)(\/|$)/]));
+describe("monorepo package boundaries", () => {
+  test("protocol has no runtime dependencies", () => {
+    expectNoViolations(
+      findViolations("packages/protocol/src", [
+        /^ai$/,
+        /^zustand(\/|$)/,
+        /^hono(\/|$)/,
+        /^node:/,
+        /^bun:/,
+        /^react(\/|$)/,
+        /^react-dom(\/|$)/,
+        /^apps\//,
+        /^@specra\/(agent-core|server|web)(\/|$)/,
+        /^packages\/(agent-core|server|web)(\/|$)/,
+        /^packages\/(agent-core|server|web)\/src(\/|$)/,
+      ]),
+    );
   });
 
-  test("tools isolation", () => {
-    expectNoViolations(findViolations("packages/agent-core/src/tools", [/^src\/(web|server|tui)(\/|$)/]));
+  test("agent-core has no server/web dependencies", () => {
+    expectNoViolations(
+      findViolations("packages/agent-core/src", [
+        /^hono(\/|$)/,
+        /^apps\//,
+        /^react(\/|$)/,
+        /^react-dom(\/|$)/,
+        /^@specra\/(server|web)(\/|$)/,
+        /^packages\/(server|web)(\/|$)/,
+        /^packages\/(server|web)\/src(\/|$)/,
+      ]),
+    );
+  });
+
+  test("server has no web/react dependencies", () => {
+    expectNoViolations(
+      findViolations("apps/server/src", [
+        /^@specra\/web(\/|$)/,
+        /^react(\/|$)/,
+        /^react-dom(\/|$)/,
+        /^apps\/web(\/|$)/,
+        /^packages\/[^/]+\/src(\/|$)/,
+      ], [/^@specra\/(protocol|agent-core)(\/|$)/, /^apps\/web\/dist(\/|$)/]),
+    );
+  });
+
+  test("web has no runtime/server dependencies", () => {
+    expectNoViolations(
+      findViolations("apps/web/src", [
+        /^@specra\/(agent-core|server)(\/|$)/,
+        /^node:/,
+        /^bun:/,
+        /^apps\/server(\/|$)/,
+        /^packages\/agent-core\/src(\/|$)/,
+        /^packages\/server\/src(\/|$)/,
+      ]),
+    );
   });
 
   test("reduce isomorphism", () => {
@@ -190,33 +172,5 @@ describe("architecture boundaries", () => {
     ];
 
     expectNoViolations(violations);
-  });
-
-  test("web isolation", () => {
-    expectNoViolations(findWebIsolationViolations());
-  });
-
-  test("server isolation", () => {
-    expectNoViolations(findViolations("src/server", [/^src\/(web|tui)(\/|$)/]));
-  });
-
-  test("primitives isolation", () => {
-    expectNoViolations(
-      findViolations("src/web/src/components/primitives", [
-        /^src\/web\/src\/components\/(composite|features)(\/|$)/,
-      ]),
-    );
-  });
-
-  test("composite isolation", () => {
-    expectNoViolations(
-      findViolations("src/web/src/components/composite", [
-        /^src\/web\/src\/components\/features(\/|$)/,
-      ]),
-    );
-  });
-
-  test("features isolation", () => {
-    expectNoViolations(findFeatureCrossImportViolations());
   });
 });

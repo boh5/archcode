@@ -651,7 +651,7 @@ Executors must pause and present evidence/options/recommendation to the user bef
 
   **Commit**: YES | Message: `feat(build): embed web ui into bun binary` | Files: [scripts/**, apps/server/**, apps/web/** if build output config changes, package.json, turbo.json]
 
-- [ ] 12. Migrate and Repair Tests/Test Helpers Across Packages
+ - [x] 12. Migrate and Repair Tests/Test Helpers Across Packages
 
   **What to do**: Update colocated tests, test helpers, and internal test imports after package moves. Keep package-specific test helpers inside their owning packages unless they are genuinely protocol-safe. Update mocks from AGENTS.md patterns: `__setStreamTextForTest`, `__setGenerateTextForTest`, LSP mock setters, sessions-dir mock setter, `createSessionStore(randomUUID())`, and empty registry helpers to their new package paths. Ensure Web tests do not import agent-core helpers. Keep test files colocated where practical. If a root integration test spans packages, place it in a root architecture/integration test location and make imports explicit.
 
