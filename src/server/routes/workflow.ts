@@ -7,11 +7,10 @@ import { getSessionsDir } from "../../store/sessions-dir";
 import {
   ArtifactNotFoundError,
   BadRequestError,
-  ProjectNotFoundError,
   SessionNotFoundError,
   WorkflowNotFoundError,
 } from "../errors";
-import type { ProjectInfo } from "../../projects/types";
+import { resolveProject } from "../resolve";
 
 const SINGLE_FILE_ARTIFACT_PATHS: Partial<Record<string, string>> = {
   PRD: "PRD.md",
@@ -113,14 +112,6 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
   });
 
   return app;
-}
-
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
-  return project;
 }
 
 function isMissingFileError(error: unknown): boolean {

@@ -1,5 +1,6 @@
 export type ServerErrorCode =
   | "PROJECT_NOT_FOUND"
+  | "WORKSPACE_NOT_FOUND"
   | "SESSION_NOT_FOUND"
   | "QUESTION_NOT_FOUND"
   | "PERMISSION_TIMEOUT"
@@ -26,6 +27,13 @@ export class ProjectNotFoundError extends ServerError {
   constructor(slug: string) {
     super("PROJECT_NOT_FOUND", `Project not found: ${slug}`, 404);
     this.name = "ProjectNotFoundError";
+  }
+}
+
+export class WorkspaceNotFoundError extends ServerError {
+  constructor(detail: string) {
+    super("WORKSPACE_NOT_FOUND", detail, 410);
+    this.name = "WorkspaceNotFoundError";
   }
 }
 

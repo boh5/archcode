@@ -2,12 +2,12 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { StoreApi } from "zustand";
 import type { SpecraRuntime } from "../../main";
-import type { ProjectInfo } from "../../projects/types";
 import { loadSessionTranscript } from "../../store/helpers";
 import { createSessionStore, getSessionStore, scopedKey } from "../../store/store";
 import type { SessionEventEnvelope, SessionStoreState } from "../../store/types";
 import { AgentRunner } from "../agent-runner";
-import { BadRequestError, ProjectNotFoundError } from "../errors";
+import { BadRequestError } from "../errors";
+import { resolveProject } from "../resolve";
 
 export interface EventsRoutesOptions {
   heartbeatIntervalMs?: number;
@@ -203,11 +203,4 @@ function requiredParam(value: string | undefined, name: string): string {
   return value;
 }
 
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
 
-  return project;
-}

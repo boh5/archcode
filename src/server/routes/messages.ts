@@ -1,14 +1,13 @@
 import { Hono } from "hono";
 import { AgentRunningError, ConcurrentSessionLimitError } from "../../agents/errors";
 import type { SpecraRuntime } from "../../main";
-import type { ProjectInfo } from "../../projects/types";
 import { AgentRunner } from "../agent-runner";
 import {
   BadRequestError,
   ConcurrentSessionLimitHttpError,
-  ProjectNotFoundError,
   ServerError,
 } from "../errors";
+import { resolveProject } from "../resolve";
 
 interface MessageBody {
   text?: unknown;
@@ -90,11 +89,4 @@ function readMessageText(body: MessageBody): string {
   return body.text;
 }
 
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
 
-  return project;
-}

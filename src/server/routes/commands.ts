@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { SpecraRuntime } from "../../main";
-import type { ProjectInfo } from "../../projects/types";
 import type { AgentRunner } from "../agent-runner";
-import { BadRequestError, ProjectNotFoundError, SessionNotFoundError } from "../errors";
+import { BadRequestError, SessionNotFoundError } from "../errors";
+import { resolveProject } from "../resolve";
 
 const CommandRequestSchema = z.object({
   name: z.string().min(1),
@@ -54,11 +54,4 @@ async function readCommandBody(bodyPromise: Promise<unknown>): Promise<unknown> 
   }
 }
 
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
 
-  return project;
-}

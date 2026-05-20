@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { SpecraRuntime } from "../../main";
-import type { ProjectInfo } from "../../projects/types";
-import { BadRequestError, ProjectNotFoundError, ServerError } from "../errors";
+import { BadRequestError, ServerError } from "../errors";
+import { resolveProject } from "../resolve";
 
 export type DiffLineType = "context" | "add" | "delete";
 
@@ -140,15 +140,6 @@ function requiredParam(value: string | undefined, name: string): string {
   }
 
   return value;
-}
-
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
-
-  return project;
 }
 
 async function runGit(workspaceRoot: string, args: string[]): Promise<string> {

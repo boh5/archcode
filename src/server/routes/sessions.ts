@@ -2,7 +2,6 @@ import { readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Hono } from "hono";
 import type { SpecraRuntime } from "../../main";
-import type { ProjectInfo } from "../../projects/types";
 import {
   loadSessionTranscript,
   saveSessionTranscript,
@@ -12,7 +11,8 @@ import { getSessionsDir } from "../../store/sessions-dir";
 import { createSessionStore, getSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import type { AgentRunner } from "../agent-runner";
-import { BadRequestError, ProjectNotFoundError, SessionNotFoundError } from "../errors";
+import { BadRequestError, SessionNotFoundError } from "../errors";
+import { resolveProject } from "../resolve";
 import { removeSessionStream } from "./events";
 
 interface SessionSummary {
@@ -108,15 +108,6 @@ function requiredParam(value: string | undefined, name: string): string {
   }
 
   return value;
-}
-
-async function resolveProject(runtime: SpecraRuntime, slug: string): Promise<ProjectInfo> {
-  const project = await runtime.projectRegistry.get(slug);
-  if (!project) {
-    throw new ProjectNotFoundError(slug);
-  }
-
-  return project;
 }
 
 async function listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
