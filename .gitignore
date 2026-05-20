@@ -7,3 +7,4 @@ bun.lockb
 .specra
 .playwright-mcp
 apps/server/src/web-manifest.ts
+__test_tmp__/

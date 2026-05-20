@@ -8,12 +8,6 @@
   "bin": {
     "specra": "./apps/server/src/main.ts"
   },
-  "files": [
-    "apps/server/src/**/*.ts",
-    "apps/web/dist/**",
-    "package.json",
-    "README.md"
-  ],
   "scripts": {
     "server": "bun --hot apps/server/src/main.ts",
     "web": "bun run --cwd apps/web dev",
