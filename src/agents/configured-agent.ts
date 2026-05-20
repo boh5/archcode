@@ -19,7 +19,8 @@ import type { SessionStoreState } from "../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
-import type { AgentDefinition, AgentFactoryLike } from "./factory-types";
+import type { AgentFactoryLike } from "../delegation/types";
+import type { AgentDefinition } from "./factory-types";
 import {
   createAutoCompactHook,
   createAutoInjectReminderHook,

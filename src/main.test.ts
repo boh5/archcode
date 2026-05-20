@@ -9,7 +9,7 @@ import type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
 import { createSessionStore } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
-import { createSpecraRuntime } from "./main";
+import { createSpecraRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { bootServer } from "./server/boot";
 

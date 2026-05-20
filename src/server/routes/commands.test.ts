@@ -2,10 +2,9 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { StoreApi } from "zustand";
-import { ConfiguredAgent } from "../../agents/configured-agent";
 import type { Agent, AgentResult, AgentRunOptions } from "../../agents/types";
 import type { CommandResult } from "../../commands/types";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { ProjectRegistry } from "../../projects/registry";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
@@ -60,11 +59,8 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve: resolveValue, reject: rejectValue };
 }
 
-function createCommandAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent & ConfiguredAgent {
-  const agent = new MockAgent(sessionId, result, workspaceRoot) as MockAgent & ConfiguredAgent;
-  const agentRun = agent.run.bind(agent);
-  Object.setPrototypeOf(agent, ConfiguredAgent.prototype);
-  agent.run = agentRun;
+function createCommandAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent & { dispatchCommand: ReturnType<typeof mock<(name: string, args?: string) => Promise<CommandResult>>> } {
+  const agent = new MockAgent(sessionId, result, workspaceRoot) as MockAgent & { dispatchCommand: ReturnType<typeof mock<(name: string, args?: string) => Promise<CommandResult>>> };
   agent.dispatchCommand = mock(async (name: string, _args?: string): Promise<CommandResult> => {
     if (name === "compact") {
       return { success: true, message: "Context compacted" };
@@ -114,6 +110,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): Spec
     warnings: [],
     contextResolver: undefined,
     agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
+    dispatchCommand: async (_workspaceRoot: string, requestedSessionId: string, name: string, args?: string) => {
+      if (requestedSessionId !== sessionId) return null;
+      const dispatchable = agent as Agent & { dispatchCommand?: (name: string, args?: string) => Promise<CommandResult> };
+      return await dispatchable.dispatchCommand?.(name, args) ?? null;
+    },
   } as unknown as SpecraRuntime;
 }
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../../agents/workflow/state";
 import { ProjectRegistry } from "../../projects/registry";

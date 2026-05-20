@@ -2,11 +2,10 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { StoreApi } from "zustand";
-import { ConfiguredAgent } from "../agents/configured-agent";
 import { AgentRunningError } from "../agents/errors";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import type { CommandResult } from "../commands/types";
-import type { SpecraRuntime } from "../main";
+import type { SpecraRuntime } from "../runtime";
 import { loadSessionTranscript } from "../store/helpers";
 import { createSessionStore } from "../store/store";
 import type { SessionStoreState } from "../store/types";
@@ -109,7 +108,10 @@ function createRuntime(agent: Agent): SpecraRuntime {
       getByWorkspace: () => [],
       isTombstoned: () => false,
       acquireSlot: () => undefined,
-      releaseSlot: () => undefined,
+      releaseSlot: (_workspaceRoot: string, requestedSessionId: string) => {
+        runningSessions.delete(requestedSessionId);
+        runningAgent = undefined;
+      },
       abortAndDispose: async () => undefined,
     },
     mcpManager: undefined,
@@ -124,6 +126,13 @@ function createRuntime(agent: Agent): SpecraRuntime {
         runningAgent = agent;
       }
       return agent;
+    },
+    dispatchCommand: async (_workspaceRoot: string, requestedSessionId: string, name: string, args?: string) => {
+      const isRunning = runningSessions.has(requestedSessionId);
+      if (!isRunning || runningAgent === undefined) return null;
+
+      const dispatchable = runningAgent as Agent & { dispatchCommand?: (name: string, args?: string) => Promise<CommandResult> };
+      return await dispatchable.dispatchCommand?.(name, args) ?? null;
     },
   } as unknown as SpecraRuntime;
 }
@@ -306,10 +315,7 @@ describe("AgentRunner", () => {
     const run = deferred<AgentResult>();
     const commandResult: CommandResult = { success: true, message: "dispatched" };
     const dispatchCommand = mock(async (_name: string, _args?: string) => commandResult);
-    const agent = createMockAgent("session-command", run.promise) as MockAgent & ConfiguredAgent;
-    const agentRun = agent.run.bind(agent);
-    Object.setPrototypeOf(agent, ConfiguredAgent.prototype);
-    agent.run = agentRun;
+    const agent = createMockAgent("session-command", run.promise) as MockAgent & { dispatchCommand: typeof dispatchCommand };
     agent.dispatchCommand = dispatchCommand;
     const runner = new AgentRunner(createRuntime(agent));
 

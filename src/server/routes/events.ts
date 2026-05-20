@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { StoreApi } from "zustand";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { loadSessionTranscript } from "../../store/helpers";
 import { createSessionStore, getSessionStore, scopedKey } from "../../store/store";
 import type { SessionEventEnvelope, SessionStoreState } from "../../store/types";
@@ -202,5 +202,4 @@ function requiredParam(value: string | undefined, name: string): string {
 
   return value;
 }
-
 

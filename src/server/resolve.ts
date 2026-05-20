@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 
-import type { SpecraRuntime } from "../main";
+import type { SpecraRuntime } from "../runtime";
 import type { ProjectInfo } from "../projects/types";
 import { ProjectNotFoundError, WorkspaceNotFoundError } from "./errors";
 

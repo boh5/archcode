@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { cors } from "hono/cors";
-import type { SpecraRuntime } from "../main";
+import type { SpecraRuntime } from "../runtime";
 import { AgentRunner } from "./agent-runner";
 import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";

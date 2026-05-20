@@ -3,7 +3,7 @@ import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
-import type { AgentFactoryLike } from "../agents/factory-types";
+import type { AgentFactoryLike } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
 

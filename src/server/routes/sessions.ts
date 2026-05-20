@@ -1,7 +1,7 @@
 import { readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Hono } from "hono";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import {
   loadSessionTranscript,
   saveSessionTranscript,

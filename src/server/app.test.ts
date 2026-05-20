@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SpecraRuntime } from "../main";
+import type { SpecraRuntime } from "../runtime";
 import { createServerApp } from "./app";
 
 const mockRuntime = {} as SpecraRuntime;

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentResult, AgentRunOptions } from "../../agents/types";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { ProjectRegistry } from "../../projects/registry";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";

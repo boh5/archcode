@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { StoreApi } from "zustand";
 import { DelegateTargetNotAllowedError } from "../../agents/errors";
-import type { AgentFactoryLike, DelegateAgentOptions } from "../../agents/factory-types";
+import type { AgentFactoryLike, DelegateAgentOptions } from "../../delegation/types";
 import { createSessionStore } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";

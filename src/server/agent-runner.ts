@@ -1,8 +1,7 @@
 import { AgentRunningError } from "../agents/errors";
-import { ConfiguredAgent } from "../agents/configured-agent";
 import type { Agent } from "../agents/types";
 import type { CommandResult } from "../commands/types";
-import type { SpecraRuntime } from "../main";
+import type { SpecraRuntime } from "../runtime";
 import { saveSessionTranscript } from "../store/helpers";
 import { scopedKey } from "../store/store";
 import type { AskUserCallback, ToolConfirmationCallback } from "../tools/types";
@@ -114,12 +113,7 @@ export class AgentRunner {
   }
 
   async dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
-    const agent = this.#runtime.sessionAgentManager.get(workspaceRoot, sessionId);
-    if (!(agent instanceof ConfiguredAgent)) {
-      return null;
-    }
-
-    return await agent.dispatchCommand(name, args);
+    return await this.#runtime.dispatchCommand(workspaceRoot, sessionId, name, args);
   }
 
   async #runJob(

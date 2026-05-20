@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Hono } from "hono";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { WorkflowArtifactKindSchema, WorkflowStateManager } from "../../agents/workflow/state";
 import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
 import { getSessionsDir } from "../../store/sessions-dir";
@@ -117,4 +117,3 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
-

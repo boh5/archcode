@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { AgentRunningError, ConcurrentSessionLimitError } from "../../agents/errors";
-import type { SpecraRuntime } from "../../main";
+import type { SpecraRuntime } from "../../runtime";
 import { AgentRunner } from "../agent-runner";
 import {
   BadRequestError,
@@ -88,5 +88,4 @@ function readMessageText(body: MessageBody): string {
 
   return body.text;
 }
-
 
