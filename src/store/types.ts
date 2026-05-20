@@ -1,341 +1,73 @@
 import type { ModelMessage } from "ai";
+import type {
+  SessionMessage,
+  SessionStep,
+  SessionTodo,
+  Reminder,
+  SessionEventEnvelope,
+  SessionEventPayload,
+} from "@specra/protocol";
 
-export interface RunStartEvent {
-  type: "run-start";
-  runId?: string;
-}
+// ---------------------------------------------------------------------------
+// Re-export all protocol types
+// ---------------------------------------------------------------------------
+export type {
+  StreamEvent,
+  RunStartEvent,
+  RunEndEvent,
+  UserMessageEvent,
+  SystemNoticeEvent,
+  TextStartEvent,
+  TextDeltaEvent,
+  TextEndEvent,
+  ReasoningStartEvent,
+  ReasoningDeltaEvent,
+  ReasoningEndEvent,
+  ToolInputStartEvent,
+  ToolCallEvent,
+  ToolResultEvent,
+  CompactEvent,
+  TodoWriteEvent,
+  ReminderEvent,
+  ReminderConsumedEvent,
+  StepStartEvent,
+  StepEndEvent,
+  LoopErrorEvent,
+  TextPart,
+  ReasoningPart,
+  PendingToolPart,
+  RunningToolPart,
+  CompletedToolPart,
+  ErrorToolPart,
+  ToolPart,
+  CompactionPart,
+  SystemNoticePart,
+  SessionPart,
+  SessionMessage,
+  SessionStep,
+  SessionTodo,
+  SessionTodoStatus,
+  SessionProjection,
+  SessionEventEnvelope,
+  SessionEventPayload,
+  PermissionRequestEvent,
+  PermissionTerminalEvent,
+  QuestionRequestEvent,
+  QuestionTerminalEvent,
+  ShutdownEvent,
+  Reminder,
+  ReminderSource,
+  SessionPart as StoredPart,
+  SessionMessage as StoredMessage,
+  SessionStep as StepInfo,
+  SessionTodo as StoredTodo,
+  SessionTodoStatus as StoredTodoStatus,
+} from "@specra/protocol";
+export { MAX_EVENTS } from "@specra/protocol";
 
-export interface RunEndEvent {
-  type: "run-end";
-  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out";
-  error?: string;
-}
-
-export type ReminderSource =
-  | {
-      type: "todo_step_reminder";
-      pendingTodos: StoredTodo[];
-    }
-  | {
-      type: "todo_loop_continuation";
-      pendingTodos: StoredTodo[];
-    }
-  | {
-      type: "subagent_completed";
-      sessionId: string;
-    }
-  | {
-      type: "subagent_failed";
-      sessionId: string;
-    }
-  | {
-      type: "subagent_timed_out";
-      sessionId: string;
-    }
-  | {
-      type: "subagent_cancelled";
-      sessionId: string;
-    };
-
-export interface Reminder {
-  id: string;
-  source: ReminderSource;
-  delivery: "auto_inject" | "on_demand";
-  sessionId?: string;
-  terminalState?: string;
-  content: string;
-  payload?: unknown;
-  createdAt: number;
-  consumedAt: number | null;
-  targetSessionId?: string;
-}
-
-export interface UserMessageEvent {
-  type: "user-message";
-  content: string;
-}
-
-export interface SystemNoticeEvent {
-  type: "system-notice";
-  message: string;
-}
-
-export interface TextStartEvent {
-  type: "text-start";
-}
-
-export interface TextDeltaEvent {
-  type: "text-delta";
-  text: string;
-}
-
-export interface TextEndEvent {
-  type: "text-end";
-}
-
-export interface ReasoningStartEvent {
-  type: "reasoning-start";
-}
-
-export interface ReasoningDeltaEvent {
-  type: "reasoning-delta";
-  text: string;
-}
-
-export interface ReasoningEndEvent {
-  type: "reasoning-end";
-}
-
-export interface ToolInputStartEvent {
-  type: "tool-input-start";
-  toolCallId: string;
-  toolName: string;
-}
-
-export interface ToolCallEvent {
-  type: "tool-call";
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-}
-
-export interface ToolResultEvent {
-  type: "tool-result";
-  toolCallId: string;
-  toolName: string;
-  output: string;
-  isError: boolean;
-  meta?: Record<string, unknown>;
-}
-
-export interface CompactEvent {
-  type: "compact";
-  summary: string;
-  tailStartId: string;
-}
-
-export interface TodoWriteEvent {
-  type: "todo-write";
-  todos: StoredTodo[];
-}
-
-export interface ReminderEvent {
-  type: "reminder";
-  reminder: Reminder;
-}
-
-export interface ReminderConsumedEvent {
-  type: "reminder-consumed";
-  reminderIds: string[];
-}
-
-export interface StepStartEvent {
-  type: "step-start";
-  step: number;
-}
-
-export interface StepEndEvent {
-  type: "step-end";
-  step: number;
-  finishReason: string;
-  usage?: unknown;
-}
-
-export interface LoopErrorEvent {
-  type: "loop-error";
-  step?: number;
-  error: string;
-}
-
-export type StreamEvent =
-  | RunStartEvent
-  | RunEndEvent
-  | UserMessageEvent
-  | SystemNoticeEvent
-  | TextStartEvent
-  | TextDeltaEvent
-  | TextEndEvent
-  | ReasoningStartEvent
-  | ReasoningDeltaEvent
-  | ReasoningEndEvent
-  | ToolInputStartEvent
-  | ToolCallEvent
-  | ToolResultEvent
-  | TodoWriteEvent
-  | ReminderEvent
-  | ReminderConsumedEvent
-  | StepStartEvent
-  | StepEndEvent
-  | LoopErrorEvent
-  | CompactEvent;
-
-export const MAX_EVENTS = 10000;
-
-export interface SessionEventEnvelope<P extends SessionEventPayload = SessionEventPayload> {
-  id: number;
-  createdAt: number;
-  kind: P["type"];
-  payload: P;
-}
-
-export interface PermissionRequestEvent {
-  type: "permission.request";
-  permissionId: string;
-  toolName: string;
-  args: unknown;
-  description?: string;
-}
-
-export interface PermissionTerminalEvent {
-  type: "permission.terminal";
-  permissionId: string;
-  status: "resolved" | "denied" | "timeout" | "cancelled";
-}
-
-export interface QuestionRequestEvent {
-  type: "question.request";
-  questionId: string;
-  question: string;
-}
-
-export interface QuestionTerminalEvent {
-  type: "question.terminal";
-  questionId: string;
-  status: "resolved" | "denied" | "timeout" | "cancelled";
-  answer?: string;
-}
-
-export interface ShutdownEvent {
-  type: "shutdown";
-  reason?: string;
-}
-
-export type SessionEventPayload =
-  | StreamEvent
-  | PermissionRequestEvent
-  | PermissionTerminalEvent
-  | QuestionRequestEvent
-  | QuestionTerminalEvent
-  | ShutdownEvent;
-
-export type StoredTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
-
-export interface StoredTodo {
-  id: string;
-  content: string;
-  status: StoredTodoStatus;
-  createdAt?: number;
-  updatedAt?: number;
-}
-
-export interface TextPart {
-  type: "text";
-  id: string;
-  text: string;
-  createdAt: number;
-  completedAt?: number;
-}
-
-export interface ReasoningPart {
-  type: "reasoning";
-  id: string;
-  text: string;
-  createdAt: number;
-  completedAt?: number;
-}
-
-export interface PendingToolPart {
-  type: "tool";
-  id: string;
-  state: "pending";
-  toolCallId: string;
-  toolName: string;
-  createdAt: number;
-}
-
-export interface RunningToolPart {
-  type: "tool";
-  id: string;
-  state: "running";
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  createdAt: number;
-  startedAt: number;
-}
-
-export interface CompletedToolPart {
-  type: "tool";
-  id: string;
-  state: "completed";
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  output: string;
-  createdAt: number;
-  startedAt: number;
-  endedAt: number;
-  meta?: Record<string, unknown>;
-}
-
-export interface ErrorToolPart {
-  type: "tool";
-  id: string;
-  state: "error";
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  errorMessage: string;
-  createdAt: number;
-  startedAt: number;
-  endedAt: number;
-  meta?: Record<string, unknown>;
-}
-
-export type ToolPart =
-  | PendingToolPart
-  | RunningToolPart
-  | CompletedToolPart
-  | ErrorToolPart;
-
-export interface CompactionPart {
-  type: "compaction";
-  id: string;
-  summary: string;
-  tailStartId: string;
-  compactedAt: number;
-}
-
-export interface SystemNoticePart {
-  type: "system-notice";
-  id: string;
-  notice: string;
-  createdAt: number;
-  completedAt?: number;
-}
-
-export type StoredPart = TextPart | ReasoningPart | ToolPart | CompactionPart | SystemNoticePart;
-
-export interface StoredMessage {
-  id: string;
-  role: "user" | "assistant";
-  parts: StoredPart[];
-  createdAt: number;
-  completedAt?: number;
-  runId?: string;
-  compacted?: boolean;
-}
-
-export interface StepInfo {
-  id: string;
-  step: number;
-  runId?: string;
-  startedAt: number;
-  completedAt?: number;
-  finishReason?: string;
-  usage?: unknown;
-  error?: string;
-}
+// ---------------------------------------------------------------------------
+// Runtime store state (extends SessionProjection with runtime-only fields)
+// ---------------------------------------------------------------------------
 
 export interface SessionStoreState {
   sessionId: string;
@@ -343,11 +75,11 @@ export interface SessionStoreState {
 
   // Persistent layer
   title: string | null;
-  messages: StoredMessage[];
-  steps: StepInfo[];
+  messages: SessionMessage[];
+  steps: SessionStep[];
 
   // Session-only state
-  todos: StoredTodo[];
+  todos: SessionTodo[];
   reminders: Reminder[];
   childSessionIds: Set<string>;
   parentSessionId?: string;
@@ -379,6 +111,10 @@ export interface SessionStoreState {
   append: (event: SessionEventPayload) => void;
   toModelMessages: () => ModelMessage[];
 }
+
+// ---------------------------------------------------------------------------
+// Runtime error classes
+// ---------------------------------------------------------------------------
 
 export class BusyError extends Error {
   constructor(sessionId: string) {
