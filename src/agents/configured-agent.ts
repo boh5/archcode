@@ -151,6 +151,7 @@ export class ConfiguredAgent implements Agent {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
         agentId: this.definition.promptAgentId,
+        rolePrompt: this.definition.rolePrompt,
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),
         ...(this.definition.includeMemoryInPrompt ? { memoryRoots: this.memoryRoots } : {}),

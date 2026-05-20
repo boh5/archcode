@@ -14,6 +14,9 @@ export interface PromptContext {
   /** Identifier for the current agent (e.g. "default", "test") */
   readonly agentId: string;
 
+  /** Role-specific prompt content from the agent definition; absent when definition has no rolePrompt */
+  readonly rolePrompt?: string;
+
   /** Loaded AGENTS.md content; undefined when file not found or unreadable */
   readonly agentsMd?: string;
 

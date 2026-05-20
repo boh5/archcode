@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { buildRoleSection } from "./roles";
 import type { PromptContext } from "../types";
+import { orchestratorAgentDefinition } from "../../agents/definitions/orchestrator";
+import { foremanAgentDefinition } from "../../agents/definitions/foreman";
+import { criticAgentDefinition } from "../../agents/definitions/critic";
+import { builderAgentDefinition } from "../../agents/definitions/builder";
+import { reviewerAgentDefinition } from "../../agents/definitions/reviewer";
 
-function makeCtx(agentId: string): PromptContext {
+function makeCtx(rolePrompt?: string): PromptContext {
   return {
     allowedTools: [],
     workspaceRoot: "/workspace",
-    agentId,
+    agentId: "test",
+    rolePrompt,
     env: {
       platform: "darwin",
       timezone: "America/Los_Angeles",
@@ -18,23 +24,30 @@ function makeCtx(agentId: string): PromptContext {
 }
 
 describe("buildRoleSection", () => {
-  test.each(["product", "spec", "critic", "foreman", "builder", "reviewer", "librarian"])(
-    "resolves %s promptAgentId to non-empty role content",
-    (agentId) => {
-      const result = buildRoleSection(makeCtx(agentId));
+  test.each([
+    ["orchestrator", "## Workflow Role: Orchestrator"],
+    ["product", "## Workflow Role: Product"],
+    ["spec", "## Workflow Role: Spec"],
+    ["critic", "## Workflow Role: Critic"],
+    ["foreman", "## Workflow Role: Foreman"],
+    ["builder", "## Workflow Role: Builder"],
+    ["reviewer", "## Workflow Role: Reviewer"],
+    ["librarian", "## Workflow Role: Librarian"],
+    ["explorer", "## Workflow Role: Explorer"],
+  ])("resolves %s rolePrompt to non-empty role content", (_name, heading) => {
+    const result = buildRoleSection(makeCtx(heading));
 
-      expect(result).toBeString();
-      expect(result?.trim().length).toBeGreaterThan(0);
-      expect(result).toContain("## Workflow Role:");
-    },
-  );
-
-  test.each(["explorer", "unknown"])("returns null for non-workflow agent id %s", (agentId) => {
-    expect(buildRoleSection(makeCtx(agentId))).toBeNull();
+    expect(result).toBeString();
+    expect(result?.trim().length).toBeGreaterThan(0);
+    expect(result).toContain(heading);
   });
 
-  test("orchestrator default prompt contains explicit workflow stage flow", () => {
-    const result = buildRoleSection(makeCtx("default"));
+  test("returns null when rolePrompt is absent", () => {
+    expect(buildRoleSection(makeCtx(undefined))).toBeNull();
+  });
+
+  test("orchestrator role prompt contains explicit workflow stage flow", () => {
+    const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
 
     expect(result).toContain("## Workflow Role: Orchestrator");
     expect(result).toContain("workflow_create");
@@ -47,8 +60,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("move to complete");
   });
 
-  test("orchestrator default prompt requires ask_user before Foreman", () => {
-    const result = buildRoleSection(makeCtx("default"));
+  test("orchestrator role prompt requires ask_user before Foreman", () => {
+    const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
 
     expect(result).toContain("call ask_user for explicit execution approval before Foreman");
     expect(result).toContain("Critic approval is a quality gate only, NOT user approval");
@@ -58,8 +71,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("do not enter foreman_executing");
   });
 
-  test("foreman prompt contains required TASKS.md execution terms", () => {
-    const result = buildRoleSection(makeCtx("foreman"));
+  test("foreman role prompt contains required TASKS.md execution terms", () => {
+    const result = buildRoleSection(makeCtx(foremanAgentDefinition.rolePrompt));
 
     expect(result).toContain("TASKS.md");
     expect(result).toContain("artifact_read");
@@ -71,8 +84,8 @@ describe("buildRoleSection", () => {
     expect(result?.toLowerCase()).toContain("reread");
   });
 
-  test("critic prompt contains fixed TASKS.md field names and criteria", () => {
-    const result = buildRoleSection(makeCtx("critic"));
+  test("critic role prompt contains fixed TASKS.md field names and criteria", () => {
+    const result = buildRoleSection(makeCtx(criticAgentDefinition.rolePrompt));
 
     expect(result).toContain("Agent:");
     expect(result).toContain("Dependencies:");
@@ -83,8 +96,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("Rejection criteria");
   });
 
-  test("builder prompt contains TDD instruction and verification order", () => {
-    const result = buildRoleSection(makeCtx("builder"));
+  test("builder role prompt contains TDD instruction and verification order", () => {
+    const result = buildRoleSection(makeCtx(builderAgentDefinition.rolePrompt));
 
     expect(result).toContain("TDD");
     expect(result).toContain("write failing or updated tests first");
@@ -92,8 +105,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("bun run typecheck, then bun test");
   });
 
-  test("builder prompt forbids workflow progress and stage updates", () => {
-    const result = buildRoleSection(makeCtx("builder"));
+  test("builder role prompt forbids workflow progress and stage updates", () => {
+    const result = buildRoleSection(makeCtx(builderAgentDefinition.rolePrompt));
 
     expect(result).toContain("Receive exactly one top-level TASKS.md task context from Foreman");
     expect(result).toContain("must NOT call workflow_task_check");
@@ -103,8 +116,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("artifact_write for evidence and reports");
   });
 
-  test("reviewer prompt is codebase read-only with writable evidence reports", () => {
-    const result = buildRoleSection(makeCtx("reviewer"));
+  test("reviewer role prompt is codebase read-only with writable evidence reports", () => {
+    const result = buildRoleSection(makeCtx(reviewerAgentDefinition.rolePrompt));
 
     expect(result).toContain("codebase read-only");
     expect(result).toContain("no file_write, file_edit, or bash");
@@ -112,8 +125,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("must NOT call workflow_task_check");
   });
 
-  test("reviewer prompt requires approval before Foreman checks completed tasks", () => {
-    const result = buildRoleSection(makeCtx("reviewer"));
+  test("reviewer role prompt requires approval before Foreman checks completed tasks", () => {
+    const result = buildRoleSection(makeCtx(reviewerAgentDefinition.rolePrompt));
 
     expect(result).toContain("Verify the delegated task's acceptance criteria and QA outputs, not the whole plan");
     expect(result).toContain("Reviewer approval is required before Foreman checks completed Builder tasks");

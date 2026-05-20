@@ -30,6 +30,7 @@ export interface AgentFactoryLike {
 export interface AgentDefinition {
   readonly name: AgentName;
   readonly promptAgentId: string;
+  readonly rolePrompt?: string;
   readonly tools: AgentToolPolicy;
   readonly hooks: AgentHookPolicy;
   readonly childPolicy?: AgentChildPolicy;

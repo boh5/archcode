@@ -61,7 +61,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sections appear in correct order", async () => {
-    const result = await buildSystemPrompt(makeCtx({ agentId: "builder", agentsMd: "AGENTSCONTENT" }));
+    const result = await buildSystemPrompt(makeCtx({ agentId: "builder", rolePrompt: "## Workflow Role: Builder\nTest content.", agentsMd: "AGENTSCONTENT" }));
     const identityIdx = result.indexOf("Specra");
     const roleIdx = result.indexOf("## Workflow Role: Builder");
     const guidelinesIdx = result.indexOf("## Guidelines");
@@ -76,8 +76,8 @@ describe("buildSystemPrompt", () => {
     expect(envIdx).toBeLessThan(projectIdx);
   });
 
-  test("omits role section for unknown non-workflow agents", async () => {
-    const result = await buildSystemPrompt(makeCtx({ agentId: "unknown" }));
+  test("omits role section when rolePrompt is absent", async () => {
+    const result = await buildSystemPrompt(makeCtx({ rolePrompt: undefined }));
 
     expect(result).not.toContain("## Workflow Role:");
   });
