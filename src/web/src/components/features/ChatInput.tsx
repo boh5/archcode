@@ -121,7 +121,7 @@ useEffect(() => {
           );
           return;
         }
-        if (e.key === "Enter" || e.key === "Tab") {
+        if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
           e.preventDefault();
           selectSlashCommand(filteredCommands[slashActiveIndex]);
           return;
@@ -135,7 +135,7 @@ useEffect(() => {
         }
       }
 
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         sendMessage();
         return;
