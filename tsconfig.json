@@ -2,8 +2,8 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "types": ["bun"],
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"]
 }

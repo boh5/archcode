@@ -6,16 +6,18 @@
   "type": "module",
   "workspaces": ["apps/*", "packages/*"],
   "bin": {
-    "specra": "./src/main.ts"
+    "specra": "./apps/server/src/main.ts"
   },
   "files": [
+    "apps/server/src/**/*.ts",
     "src/**/*.ts",
     "src/web/dist/**",
     "package.json",
     "README.md"
   ],
   "scripts": {
-    "server": "bun --hot src/main.ts",
+    "server": "bun --hot apps/server/src/main.ts",
+    "start": "bun apps/server/src/main.ts",
     "web": "vite src/web",
     "web:build": "vite build src/web",
     "dev": "concurrently -n server,web -c blue,green \"bun run server\" \"bun run web\"",
@@ -26,6 +28,8 @@
   },
   "dependencies": {
     "@specra/agent-core": "workspace:*",
+    "@specra/protocol": "workspace:*",
+    "@specra/server": "workspace:*",
     "@ai-sdk/openai-compatible": "^2.0.45",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",

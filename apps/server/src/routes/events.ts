@@ -4,7 +4,8 @@ import type { StoreApi } from "zustand";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { loadSessionTranscript } from "@specra/agent-core";
 import { createSessionStore, getSessionStore, scopedKey } from "@specra/agent-core";
-import type { SessionEventEnvelope, SessionStoreState } from "@specra/agent-core";
+import type { SessionStoreState } from "@specra/agent-core";
+import type { SessionEventEnvelope } from "@specra/protocol";
 import { AgentRunner } from "../agent-runner";
 import { BadRequestError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -202,4 +203,3 @@ function requiredParam(value: string | undefined, name: string): string {
 
   return value;
 }
-

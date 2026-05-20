@@ -1,4 +1,4 @@
-import { bootServer } from "./server/boot";
+import { bootServer } from "./boot";
 import { closeMcpManagerBestEffort, createSpecraRuntime, type SpecraRuntime } from "@specra/agent-core";
 import type { McpWarning } from "@specra/agent-core";
 
