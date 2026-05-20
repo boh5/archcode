@@ -26,6 +26,8 @@ const RegistryFileSchema = z.strictObject({
   projects: z.array(ProjectInfoSchema),
 });
 
+const MAX_PROJECT_NAME_LENGTH = 80;
+
 type MutationResult<T> = {
   result: T;
   updated: ProjectInfo[];
@@ -143,6 +145,35 @@ export class ProjectRegistry {
       result: undefined,
       updated: current.filter((project) => project.slug !== slug),
     }));
+  }
+
+  async updateName(slug: string, name: string): Promise<ProjectInfo> {
+    const trimmedName = name.trim();
+    if (trimmedName.length === 0) {
+      throw new ProjectRegistryError("Project name must not be empty");
+    }
+    if (trimmedName.length > MAX_PROJECT_NAME_LENGTH) {
+      throw new ProjectRegistryError("Project name must be 80 characters or fewer");
+    }
+
+    return await this.#mutate((current) => {
+      const index = current.findIndex((project) => project.slug === slug);
+      if (index === -1) {
+        throw new ProjectRegistryError(`Project not found: ${slug}`);
+      }
+
+      const updatedProject: ProjectInfo = {
+        ...current[index],
+        name: trimmedName,
+      };
+      const updated = [...current];
+      updated[index] = updatedProject;
+
+      return {
+        result: cloneProject(updatedProject),
+        updated,
+      };
+    });
   }
 
   async touch(slug: string): Promise<ProjectInfo | undefined> {

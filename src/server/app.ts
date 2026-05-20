@@ -9,6 +9,7 @@ import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
 import { PermissionService } from "./permission-service";
 import { createCommandsRoutes } from "./routes/commands";
+import { createDirectoriesRoutes } from "./routes/directories";
 import { createEventsRoutes } from "./routes/events";
 import { createFilesRoutes } from "./routes/files";
 import { createMessagesRoutes } from "./routes/messages";
@@ -82,6 +83,7 @@ export function createServerApp(
   const agents = new Hono();
   const workflow = createWorkflowRoutes(runtime);
   const files = createFilesRoutes(runtime);
+  const directories = createDirectoriesRoutes();
 
   app.route("/api/projects", projects);
   app.route("/api/projects/:slug/sessions", sessions);
@@ -97,6 +99,7 @@ export function createServerApp(
   app.route("/api/agents", agents);
   app.route("/api/workflow", new Hono());
   app.route("/api/files", new Hono());
+  app.route("/api/directories", directories);
 
   if (!options.dev) {
     app.use("/*", serveStatic({ root: "./src/web/dist" }));

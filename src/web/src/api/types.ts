@@ -5,6 +5,22 @@ export interface Project {
   lastOpened?: string;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  kind: "directory";
+}
+
+export interface DirectoryListResponse {
+  entries: DirectoryEntry[];
+  truncated: boolean;
+}
+
+export interface DirectorySearchResponse {
+  entries: DirectoryEntry[];
+  truncated: boolean;
+}
+
 export interface SessionSummary {
   sessionId: string;
   title?: string | null;

@@ -8,6 +8,10 @@ interface CreateProjectBody {
   name?: unknown;
 }
 
+interface UpdateProjectBody {
+  name?: unknown;
+}
+
 export function createProjectsRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
 
@@ -43,6 +47,36 @@ export function createProjectsRoutes(runtime: SpecraRuntime): Hono {
     return c.json({ ok: true });
   });
 
+  app.patch("/:slug", async (c) => {
+    const slug = c.req.param("slug");
+    const body = await readUpdateProjectBody(c.req.json());
+
+    if (typeof body.name !== "string") {
+      throw new BadRequestError("name is required");
+    }
+
+    const name = body.name.trim();
+    if (name.length === 0) {
+      throw new BadRequestError("name must not be empty");
+    }
+    if (name.length > 80) {
+      throw new BadRequestError("name must be 80 characters or fewer");
+    }
+
+    try {
+      const project = await runtime.projectRegistry.updateName(slug, name);
+      return c.json(project);
+    } catch (error) {
+      if (error instanceof ProjectRegistryError && error.message === `Project not found: ${slug}`) {
+        throw new ProjectNotFoundError(slug);
+      }
+      if (error instanceof ProjectRegistryError) {
+        throw new BadRequestError(error.message);
+      }
+      throw error;
+    }
+  });
+
   app.post("/:slug/touch", async (c) => {
     const slug = c.req.param("slug");
     const project = await runtime.projectRegistry.touch(slug);
@@ -57,6 +91,20 @@ export function createProjectsRoutes(runtime: SpecraRuntime): Hono {
 }
 
 async function readCreateProjectBody(bodyPromise: Promise<unknown>): Promise<CreateProjectBody> {
+  try {
+    const body = await bodyPromise;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new BadRequestError("Request body must be an object");
+    }
+
+    return body;
+  } catch (error) {
+    if (error instanceof BadRequestError) throw error;
+    throw new BadRequestError("Request body must be valid JSON");
+  }
+}
+
+async function readUpdateProjectBody(bodyPromise: Promise<unknown>): Promise<UpdateProjectBody> {
   try {
     const body = await bodyPromise;
     if (!body || typeof body !== "object" || Array.isArray(body)) {

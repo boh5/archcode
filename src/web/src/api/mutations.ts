@@ -9,6 +9,21 @@ import type {
   Session,
 } from "./types";
 
+export function useUpdateProjectName() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, name }: { slug: string; name: string }) =>
+      apiFetch<Project>(`/api/projects/${encodeURIComponent(slug)}`, {
+        method: "PATCH",
+        body: { name },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    },
+  });
+}
+
 export function useAddProject() {
   const queryClient = useQueryClient();
 

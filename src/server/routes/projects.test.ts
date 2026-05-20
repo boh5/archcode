@@ -164,6 +164,110 @@ describe("projects routes", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  test("PATCH /api/projects/:slug updates the project display name", async () => {
+    const app = await createTestApp("patch-project");
+    const workspaceRoot = await makeWorkspace("patch-me");
+    const created = await app.request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ workspaceRoot, name: "Original" }),
+      headers: { "content-type": "application/json" },
+    });
+    const project = (await created.json()) as ProjectInfo;
+
+    const res = await app.request(`/api/projects/${project.slug}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = (await res.json()) as ProjectInfo;
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ ...project, name: "Renamed" });
+  });
+
+  test("PATCH /api/projects/:slug trims the project display name", async () => {
+    const app = await createTestApp("patch-trimmed-project");
+    const workspaceRoot = await makeWorkspace("patch-trimmed");
+    const created = await app.request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ workspaceRoot, name: "Original" }),
+      headers: { "content-type": "application/json" },
+    });
+    const project = (await created.json()) as ProjectInfo;
+
+    const res = await app.request(`/api/projects/${project.slug}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: "  Trimmed Name  " }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = (await res.json()) as ProjectInfo;
+
+    expect(res.status).toBe(200);
+    expect(body.name).toBe("Trimmed Name");
+    expect(body.slug).toBe(project.slug);
+    expect(body.workspaceRoot).toBe(workspaceRoot);
+  });
+
+  test("PATCH /api/projects/:slug with missing name returns 400", async () => {
+    const app = await createTestApp("patch-missing-name");
+
+    const res = await app.request("/api/projects/missing", {
+      method: "PATCH",
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "name is required" },
+    });
+  });
+
+  test("PATCH /api/projects/:slug with empty name returns 400", async () => {
+    const app = await createTestApp("patch-empty-name");
+
+    const res = await app.request("/api/projects/missing", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "   " }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "name must not be empty" },
+    });
+  });
+
+  test("PATCH /api/projects/:slug with too-long name returns 400", async () => {
+    const app = await createTestApp("patch-too-long-name");
+
+    const res = await app.request("/api/projects/missing", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "a".repeat(81) }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "name must be 80 characters or fewer" },
+    });
+  });
+
+  test("PATCH /api/projects/:slug for non-existent slug returns 404 ProjectNotFoundError", async () => {
+    const app = await createTestApp("patch-missing-project");
+
+    const res = await app.request("/api/projects/missing", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Renamed" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: "PROJECT_NOT_FOUND", message: "Project not found: missing" },
+    });
+  });
+
   test("POST /api/projects/:slug/touch updates lastOpenedAt", async () => {
     const app = await createTestApp("touch-project");
     const workspaceRoot = await makeWorkspace("touch-me");

@@ -49,8 +49,13 @@ mock.module("../store/session-store", () => ({
 }));
 
 mock.module("../api/mutations", () => ({
+  useAddProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
+  useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
+  useDeleteProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
+  useCreateSession: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   usePostPermissionResponse,
   usePostQuestionAnswer,
+  usePostCommand: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
 }));
 
 let useAttentionQueue: AttentionQueueHook;

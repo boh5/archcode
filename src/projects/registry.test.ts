@@ -140,6 +140,55 @@ describe("ProjectRegistry", () => {
     await expect(registry.touch("missing")).resolves.toBeUndefined();
   });
 
+  test("updateName trims and updates only the project display name", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
+    const touched = await registry.touch(project.slug);
+    expect(touched).toBeDefined();
+
+    const updated = await registry.updateName(project.slug, "  Renamed Project  ");
+
+    expect(updated).toEqual({
+      ...touched!,
+      name: "Renamed Project",
+    });
+    expect(await registry.get(project.slug)).toEqual(updated);
+  });
+
+  test("updateName allows duplicate display names without changing slugs", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const first = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "First" });
+    const second = await registry.add({ workspaceRoot: tmpWorkspaceB, name: "Second" });
+
+    const updated = await registry.updateName(second.slug, "First");
+
+    expect(updated.name).toBe("First");
+    expect(updated.slug).toBe(second.slug);
+    expect((await registry.get(first.slug))?.name).toBe("First");
+  });
+
+  test("updateName rejects empty names after trimming", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
+
+    await expect(registry.updateName(project.slug, "   ")).rejects.toThrow(ProjectRegistryError);
+    expect((await registry.get(project.slug))?.name).toBe("Original");
+  });
+
+  test("updateName rejects names longer than 80 characters", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
+
+    await expect(registry.updateName(project.slug, "a".repeat(81))).rejects.toThrow(ProjectRegistryError);
+    expect((await registry.get(project.slug))?.name).toBe("Original");
+  });
+
+  test("updateName throws ProjectRegistryError for unknown slug", async () => {
+    const registry = new ProjectRegistry({ homeDir: tmpHome });
+
+    await expect(registry.updateName("missing", "Renamed")).rejects.toThrow(ProjectRegistryError);
+  });
+
   test("persistence loads entries from a new registry instance with same homeDir", async () => {
     const firstRegistry = new ProjectRegistry({ homeDir: tmpHome });
     const project = await firstRegistry.add({ workspaceRoot: tmpWorkspaceA });

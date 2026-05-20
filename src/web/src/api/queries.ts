@@ -1,6 +1,14 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
-import type { DiffFile, Project, Session, SessionSummary, WorkflowState } from "./types";
+import type {
+  DiffFile,
+  DirectoryListResponse,
+  DirectorySearchResponse,
+  Project,
+  Session,
+  SessionSummary,
+  WorkflowState,
+} from "./types";
 
 export const queryKeys = {
   projects: ["projects"] as const,
@@ -8,6 +16,10 @@ export const queryKeys = {
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   workflow: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "workflow"] as const,
   diff: (slug: string) => ["projects", slug, "diff"] as const,
+  directories: {
+    list: (path: string, limit?: number) => ["directories", "list", path, limit] as const,
+    search: (query: string, limit?: number) => ["directories", "search", query, limit] as const,
+  },
 };
 
 export function projectsQueryOptions() {
@@ -92,6 +104,32 @@ export function useWorkflow(slug: string, sessionId: string) {
 
 export function useDiff(slug: string) {
   return useQuery(diffQueryOptions(slug));
+}
+
+export function useDirectoryList(path: string, limit?: number) {
+  return useQuery({
+    queryKey: queryKeys.directories.list(path, limit),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("path", path);
+      if (limit !== undefined) params.set("limit", String(limit));
+      return apiFetch<DirectoryListResponse>(`/api/directories/list?${params.toString()}`);
+    },
+    enabled: path.trim().length > 0,
+  });
+}
+
+export function useDirectorySearch(query: string, limit?: number) {
+  return useQuery({
+    queryKey: queryKeys.directories.search(query, limit),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("query", query);
+      if (limit !== undefined) params.set("limit", String(limit));
+      return apiFetch<DirectorySearchResponse>(`/api/directories/search?${params.toString()}`);
+    },
+    enabled: query.trim().length > 0,
+  });
 }
 
 interface SessionResponse extends Omit<Session, "id"> {

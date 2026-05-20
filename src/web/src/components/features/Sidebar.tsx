@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCreateSession } from "../../api/mutations";
-import { useSessions, useWorkflow } from "../../api/queries";
-import type { Session, WorkflowState } from "../../api/types";
+import { useProjects, useSessions, useWorkflow } from "../../api/queries";
+import type { Project, Session, WorkflowState } from "../../api/types";
+import { ProjectActionDropdown } from "./ProjectActionMenu";
+import { EditProjectDialog } from "./EditProjectDialog";
+import { CloseProjectDialog } from "./CloseProjectDialog";
 
 const AGENT_TYPES = [
   "orchestrator",
@@ -176,8 +179,12 @@ export function Sidebar() {
     sessionId: string;
   }>();
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [closingProject, setClosingProject] = useState<Project | null>(null);
   const createSession = useCreateSession();
 
+  const { data: projects } = useProjects();
+  const activeProject = projects?.find(p => p.slug === slug) ?? null;
   const { data: sessions } = useSessions(slug);
   const { data: workflow } = useWorkflow(slug, sessionId);
 
@@ -273,18 +280,43 @@ export function Sidebar() {
 
   return (
     <div className="row-span-full bg-bg-surface border-r border-border-subtle flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-3.5 h-12 border-b border-border-subtle shrink-0">
-        <div className="font-semibold text-[13px] text-text-primary flex items-center gap-1.5">
-          {slug}
-          <span className="text-text-secondary font-normal">/ sessions</span>
+      <div className="px-3.5 pt-2.5 pb-2 border-b border-border-subtle shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-[13px] text-text-primary truncate">
+              {activeProject?.name ?? slug}
+            </div>
+            {activeProject && (
+              <div className="font-mono text-[11px] text-text-muted truncate mt-px">
+                {activeProject.workspaceRoot}
+              </div>
+            )}
+          </div>
+          {activeProject && (
+            <ProjectActionDropdown
+              project={activeProject}
+              onEdit={setEditingProject}
+              onClose={setClosingProject}
+              trigger={
+                <button
+                  className="w-6 h-6 rounded-sm flex items-center justify-center text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors duration-150 text-sm shrink-0"
+                  title="Project actions"
+                >
+                  ⋯
+                </button>
+              }
+            />
+          )}
         </div>
+      </div>
+
+      <div className="px-3.5 py-1.5 shrink-0">
         <button
-          className="w-6 h-6 rounded-sm flex items-center justify-center text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors duration-150 text-sm"
-          title="New session"
+          className="w-full rounded-sm bg-bg-elevated border border-border-default px-2.5 py-1.5 text-[12.5px] font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
           onClick={handleNewSession}
           disabled={createSession.isPending}
         >
-          +
+          + New Session
         </button>
       </div>
 
@@ -366,7 +398,32 @@ export function Sidebar() {
             ))}
           </div>
         )}
-      </div>
-    </div>
+       </div>
+
+      {editingProject && (
+        <EditProjectDialog
+          open
+          onClose={() => setEditingProject(null)}
+          project={editingProject}
+        />
+      )}
+
+      {closingProject && (
+        <CloseProjectDialog
+          open
+          onClose={() => setClosingProject(null)}
+          project={closingProject}
+          onClosed={() => {
+            setClosingProject(null);
+            const remaining = projects?.filter(p => p.slug !== slug) ?? [];
+            if (remaining.length > 0) {
+              navigate(`/projects/${remaining[0].slug}`);
+            } else {
+              navigate("/");
+            }
+          }}
+        />
+      )}
+     </div>
   );
 }
