@@ -2,7 +2,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import type { ProjectInfo } from "../projects/types";
+import type { ProjectInfo } from "@specra/agent-core";
 import { ProjectNotFoundError, WorkspaceNotFoundError } from "./errors";
 import { resolveProject } from "./resolve";
 

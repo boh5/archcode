@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { SpecraRuntime } from "../../runtime";
+import type { SpecraRuntime } from "@specra/agent-core";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 

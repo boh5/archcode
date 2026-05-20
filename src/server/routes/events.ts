@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { StoreApi } from "zustand";
-import type { SpecraRuntime } from "../../runtime";
-import { loadSessionTranscript } from "../../store/helpers";
-import { createSessionStore, getSessionStore, scopedKey } from "../../store/store";
-import type { SessionEventEnvelope, SessionStoreState } from "../../store/types";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { loadSessionTranscript } from "@specra/agent-core";
+import { createSessionStore, getSessionStore, scopedKey } from "@specra/agent-core";
+import type { SessionEventEnvelope, SessionStoreState } from "@specra/agent-core";
 import { AgentRunner } from "../agent-runner";
 import { BadRequestError } from "../errors";
 import { resolveProject } from "../resolve";

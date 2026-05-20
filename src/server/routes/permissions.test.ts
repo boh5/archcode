@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import { createSessionStore } from "../../store/store";
+import { createSessionStore } from "@specra/agent-core";
 import { PermissionService } from "../permission-service";
 import { createPermissionRoutes } from "./permissions";
 

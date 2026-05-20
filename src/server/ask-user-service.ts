@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "../store/types";
-import type { AskUserAnswer, AskUserRequest } from "../tools/types";
+import type { SessionStoreState } from "@specra/agent-core";
+import type { AskUserAnswer, AskUserRequest } from "@specra/agent-core";
 
 export type AskUserResponse =
   | { answers: AskUserAnswer[] }

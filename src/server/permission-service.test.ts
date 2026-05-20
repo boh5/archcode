@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
-import { createSessionStore } from "../store/store";
+import type { ToolConfirmationRequest, ToolConfirmationResult } from "@specra/agent-core";
+import { createSessionStore } from "@specra/agent-core";
 import { PermissionService } from "./permission-service";
 
 const tmpRoots: string[] = [];

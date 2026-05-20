@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { AgentRunningError, ConcurrentSessionLimitError } from "../../agents/errors";
-import type { SpecraRuntime } from "../../runtime";
+import { AgentRunningError, ConcurrentSessionLimitError } from "@specra/agent-core";
+import type { SpecraRuntime } from "@specra/agent-core";
 import { AgentRunner } from "../agent-runner";
 import {
   BadRequestError,

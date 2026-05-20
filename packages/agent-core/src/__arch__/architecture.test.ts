@@ -3,7 +3,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 
 const srcRoot = resolve(import.meta.dir, "..");
-const projectRoot = resolve(srcRoot, "..");
+const packageRoot = resolve(srcRoot, "..");
+const projectRoot = resolve(packageRoot, "../..");
+const appSrcRoot = join(projectRoot, "src");
 
 interface ImportRecord {
   file: string;
@@ -64,6 +66,7 @@ function extractImports(filePath: string): ImportRecord[] {
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
   if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(dirname(filePath), importPath)));
   if (importPath.startsWith("src/")) return normalize(importPath);
+  if (importPath.startsWith("@specra/agent-core")) return "packages/agent-core/src";
   return undefined;
 }
 
@@ -99,9 +102,9 @@ function findViolations(
 function findWebIsolationViolations(): Violation[] {
   const violations: Violation[] = [];
   const forbiddenPatterns = [/^node:/, /^bun:/, /^src\/(server|agents|lsp|mcp|tools)(\/|$)/];
-  const allowedStoreFiles = new Set(["src/store/reduce", "src/store/types"]);
+  const allowedStoreFiles = new Set(["@specra/protocol"]);
 
-  for (const file of findTsFiles(join(srcRoot, "web"))) {
+  for (const file of findTsFiles(join(appSrcRoot, "web"))) {
     if (file.endsWith("vite.config.ts")) continue;
 
     for (const importRecord of extractImports(file)) {
@@ -111,8 +114,8 @@ function findWebIsolationViolations(): Violation[] {
         (candidate): candidate is string => candidate !== undefined,
       );
 
-      const importsStoreBoundary = normalizedResolvedPath?.startsWith("src/store/") ?? false;
-      const allowedStoreImport = normalizedResolvedPath !== undefined && allowedStoreFiles.has(normalizedResolvedPath);
+      const importsStoreBoundary = normalizedResolvedPath?.startsWith("packages/agent-core/src/store/") ?? false;
+      const allowedStoreImport = allowedStoreFiles.has(importRecord.importPath);
       const forbiddenByPattern = candidates.some((candidate) =>
         forbiddenPatterns.some((pattern) => pattern.test(candidate)),
       );
@@ -127,7 +130,7 @@ function findWebIsolationViolations(): Violation[] {
 }
 
 function findFeatureCrossImportViolations(): Violation[] {
-  const featuresRoot = join(srcRoot, "web/src/components/features");
+  const featuresRoot = join(appSrcRoot, "web/src/components/features");
   const violations: Violation[] = [];
 
   for (const file of findTsFiles(featuresRoot)) {
@@ -148,7 +151,7 @@ function findFeatureCrossImportViolations(): Violation[] {
 }
 
 function featureNameForPath(filePath: string): string | undefined {
-  const relativePath = normalize(relative(join(srcRoot, "web/src/components/features"), filePath));
+  const relativePath = normalize(relative(join(appSrcRoot, "web/src/components/features"), filePath));
   if (relativePath.startsWith("..")) return undefined;
   const pathParts = relativePath.split(/[\\/]/);
   if (pathParts.length < 2) return undefined;
@@ -170,11 +173,11 @@ function expectNoViolations(violations: Violation[]): void {
 
 describe("architecture boundaries", () => {
   test("agents isolation", () => {
-    expectNoViolations(findViolations("src/agents", [/^src\/(web|server|tui)(\/|$)/]));
+    expectNoViolations(findViolations("packages/agent-core/src/agents", [/^src\/(web|server|tui)(\/|$)/]));
   });
 
   test("tools isolation", () => {
-    expectNoViolations(findViolations("src/tools", [/^src\/(web|server|tui)(\/|$)/]));
+    expectNoViolations(findViolations("packages/agent-core/src/tools", [/^src\/(web|server|tui)(\/|$)/]));
   });
 
   test("reduce isomorphism", () => {
@@ -183,7 +186,7 @@ describe("architecture boundaries", () => {
     const bunApiMatches = readFileSync(reducePath, "utf8").match(/\bBun\./g) ?? [];
     const violations = [
       ...imports.map(formatViolation),
-      ...bunApiMatches.map(() => ({ file: "src/store/reduce.ts", importPath: "Bun.*" })),
+      ...bunApiMatches.map(() => ({ file: "packages/agent-core/src/store/reduce.ts", importPath: "Bun.*" })),
     ];
 
     expectNoViolations(violations);

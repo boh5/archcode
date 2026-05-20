@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "../../runtime";
-import { ProjectRegistry } from "../../projects/registry";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { ProjectRegistry } from "@specra/agent-core";
 import { createServerApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
 

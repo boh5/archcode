@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { SpecraRuntime } from "../../runtime";
+import type { SpecraRuntime } from "@specra/agent-core";
 import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";

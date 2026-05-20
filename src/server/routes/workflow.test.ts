@@ -1,12 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "../../runtime";
-import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../../agents/workflow/state";
-import { ProjectRegistry } from "../../projects/registry";
-import { saveSessionTranscript } from "../../store/helpers";
-import { createSessionStore } from "../../store/store";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { WorkflowArtifactManager } from "@specra/agent-core";
+import { WorkflowStateManager } from "@specra/agent-core";
+import { ProjectRegistry } from "@specra/agent-core";
+import { saveSessionTranscript } from "@specra/agent-core";
+import { createSessionStore } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");

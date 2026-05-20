@@ -21,7 +21,7 @@ test("no implicit cwd lookup in non-test src/ files", () => {
     "-rn",
     "--include=*.ts",
     "process\\.cwd",
-    "src/",
+    "packages/agent-core/src/",
   ]);
   const stdout = proc.stdout.toString().trim();
 

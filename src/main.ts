@@ -1,8 +1,8 @@
 import { bootServer } from "./server/boot";
-import { closeMcpManagerBestEffort, createSpecraRuntime, type SpecraRuntime } from "./runtime";
-import type { McpWarning } from "./mcp/index";
+import { closeMcpManagerBestEffort, createSpecraRuntime, type SpecraRuntime } from "@specra/agent-core";
+import type { McpWarning } from "@specra/agent-core";
 
-export { createSpecraRuntime, type SpecraRuntime, type SpecraRuntimeOptions } from "./runtime";
+export { createSpecraRuntime, type SpecraRuntime, type SpecraRuntimeOptions } from "@specra/agent-core";
 
 function logMcpWarning(warning: McpWarning): void {
   console.warn(`MCP warning: ${warning.message}`);

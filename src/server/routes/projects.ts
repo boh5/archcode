@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { SpecraRuntime } from "../../runtime";
-import { ProjectRegistryError } from "../../projects/registry";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { ProjectRegistryError } from "@specra/agent-core";
 import { BadRequestError, ProjectNotFoundError } from "../errors";
 
 interface CreateProjectBody {

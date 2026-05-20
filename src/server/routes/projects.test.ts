@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "../../runtime";
-import { ProjectRegistry } from "../../projects/registry";
-import type { ProjectInfo } from "../../projects/types";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { ProjectRegistry } from "@specra/agent-core";
+import type { ProjectInfo } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "projects-routes");

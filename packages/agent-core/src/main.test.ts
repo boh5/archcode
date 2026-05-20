@@ -11,11 +11,6 @@ import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools
 import type { AnyToolDescriptor } from "./tools/types";
 import { createSpecraRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
-import { bootServer } from "./server/boot";
-
-const mockBootServer = mock(() => Promise.resolve());
-mock.module("./server/boot", () => ({ bootServer: mockBootServer }));
-
 const tmpRoots: string[] = [];
 
 afterAll(() => {
@@ -108,7 +103,7 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
 }
 
 describe("createSpecraRuntime", () => {
-  test("boots server exactly once with constructed runtime", async () => {
+  test("constructs runtime without booting server concerns", async () => {
     const configPath = await writeConfig(makeConfig({ servers: {} }));
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
     const runtime = await createSpecraRuntime({
@@ -116,10 +111,8 @@ describe("createSpecraRuntime", () => {
       mcpManagerFactory: () => manager,
     });
 
-    await bootServer(runtime);
-
-    expect(mockBootServer).toHaveBeenCalledTimes(1);
-    expect(mockBootServer).toHaveBeenCalledWith(runtime);
+    expect(runtime.toolRegistry).toBeDefined();
+    expect(runtime.sessionAgentManager).toBeDefined();
   });
 
   test("registers MCP descriptors before the agent run snapshot without calling run", async () => {

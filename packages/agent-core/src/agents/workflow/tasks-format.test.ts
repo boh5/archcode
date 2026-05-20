@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-const examplesRoot = `${import.meta.dir}/../../../docs/examples`;
+const examplesRoot = `${import.meta.dir}/../../../../../docs/examples`;
 
 import {
   calculateReadyWave,

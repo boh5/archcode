@@ -1,9 +1,9 @@
 import type {
   ToolConfirmationRequest,
   ToolConfirmationResult,
-} from "../tools/types";
+} from "@specra/agent-core";
 import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "../store/types";
+import type { SessionStoreState } from "@specra/agent-core";
 
 interface PendingPermission {
   sessionId: string;

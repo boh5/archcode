@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 
-import type { SpecraRuntime } from "../runtime";
-import type { ProjectInfo } from "../projects/types";
+import type { SpecraRuntime } from "@specra/agent-core";
+import type { ProjectInfo } from "@specra/agent-core";
 import { ProjectNotFoundError, WorkspaceNotFoundError } from "./errors";
 
 export async function resolveProject(

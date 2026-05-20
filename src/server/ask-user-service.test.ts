@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { AskUserRequest } from "../tools/types";
-import { createSessionStore } from "../store/store";
+import type { AskUserRequest } from "@specra/agent-core";
+import { createSessionStore } from "@specra/agent-core";
 import { AskUserService } from "./ask-user-service";
 
 const tmpRoots: string[] = [];

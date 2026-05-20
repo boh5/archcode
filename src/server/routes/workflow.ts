@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { Hono } from "hono";
-import type { SpecraRuntime } from "../../runtime";
-import { WorkflowArtifactKindSchema, WorkflowStateManager } from "../../agents/workflow/state";
-import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
-import { getSessionsDir } from "../../store/sessions-dir";
+import type { SpecraRuntime } from "@specra/agent-core";
+import { WorkflowArtifactKindSchema, WorkflowStateManager } from "@specra/agent-core";
+import { WorkflowArtifactManager } from "@specra/agent-core";
+import { getSessionsDir } from "@specra/agent-core";
 import {
   ArtifactNotFoundError,
   BadRequestError,

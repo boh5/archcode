@@ -1,4 +1,4 @@
-import type { SpecraRuntime } from "../runtime";
+import type { SpecraRuntime } from "@specra/agent-core";
 import { createServerApp } from "./app";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
