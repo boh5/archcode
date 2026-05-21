@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { reduceStreamEvent } from "./reduce";
+import type { ReduceContext } from "./reduce";
 import type {
   Reminder,
   SessionMessage,
@@ -26,10 +27,21 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
 }
 
 function applyEvents(state: SessionProjection, events: StreamEvent[]): SessionProjection {
+  const ctx = createDeterministicContext();
+
   return events.reduce(
-    (current, event) => ({ ...current, ...reduceStreamEvent(current, event) }),
+    (current, event) => ({ ...current, ...reduceStreamEvent(current, event, ctx) }),
     state,
   );
+}
+
+function createDeterministicContext(): ReduceContext {
+  let nextId = 0;
+
+  return {
+    timestamp: 123456789,
+    generateId: () => `id-${nextId++}`,
+  };
 }
 
 function onlyMessage(messages: SessionMessage[]): SessionMessage {
@@ -79,6 +91,32 @@ describe("reduceStreamEvent", () => {
     expect(text.text).toBe("hello");
     expect(text.completedAt).toBeGreaterThan(0);
     expect(state.currentAssistantMessageId).toBe(state.messages[0]!.id);
+  });
+
+  test("produces identical projections with the same events and deterministic context", () => {
+    const events: StreamEvent[] = [
+      { type: "run-start" },
+      { type: "user-message", content: "hello" },
+      { type: "step-start", step: 0 },
+      { type: "text-start" },
+      { type: "text-delta", text: "hi" },
+      { type: "text-end" },
+      { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a.ts" } },
+      {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "read",
+        output: "content",
+        isError: false,
+      },
+      { type: "step-end", step: 0, finishReason: "stop" },
+      { type: "run-end", status: "completed" },
+    ];
+
+    const first = applyEvents(createProjection(), events);
+    const second = applyEvents(createProjection(), events);
+
+    expect(first).toEqual(second);
   });
 
   test("accumulates reasoning deltas between start and end", () => {
@@ -154,22 +192,30 @@ describe("reduceStreamEvent", () => {
     const state = createProjection({ todos: previousTodos });
 
     expect(() =>
-      reduceStreamEvent(state, {
+      reduceStreamEvent(
+        state,
+        {
+          type: "todo-write",
+          todos: [
+            { id: "one", content: "one", status: "in_progress" },
+            { id: "two", content: "two", status: "in_progress" },
+          ],
+        },
+        createDeterministicContext(),
+      ),
+    ).not.toThrow();
+
+    const patch = reduceStreamEvent(
+      state,
+      {
         type: "todo-write",
         todos: [
           { id: "one", content: "one", status: "in_progress" },
           { id: "two", content: "two", status: "in_progress" },
         ],
-      }),
-    ).not.toThrow();
-
-    const patch = reduceStreamEvent(state, {
-      type: "todo-write",
-      todos: [
-        { id: "one", content: "one", status: "in_progress" },
-        { id: "two", content: "two", status: "in_progress" },
-      ],
-    });
+      },
+      createDeterministicContext(),
+    );
     expect(patch).toEqual({});
   });
 

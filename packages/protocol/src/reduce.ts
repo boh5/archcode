@@ -31,17 +31,23 @@ interface PartLocation {
   partId: string;
 }
 
+export interface ReduceContext {
+  timestamp: number;
+  generateId: () => string;
+}
+
 export function reduceStreamEvent(
   state: SessionProjection,
   event: StreamEvent,
+  ctx: ReduceContext,
 ): Partial<SessionProjection> {
-  const timestamp = Date.now();
+  const timestamp = ctx.timestamp;
 
   switch (event.type) {
     case "run-start": {
       return {
         isRunning: true,
-        currentRunId: event.runId ?? crypto.randomUUID(),
+        currentRunId: event.runId ?? ctx.generateId(),
         currentAssistantMessageId: undefined,
         isStreamingModel: false,
         runCount: state.runCount + 1,
@@ -61,13 +67,13 @@ export function reduceStreamEvent(
     case "user-message": {
       const part: TextPart = {
         type: "text",
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         text: event.content,
         createdAt: timestamp,
         completedAt: timestamp,
       };
       const message: SessionMessage = {
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         role: "user",
         parts: [part],
         createdAt: timestamp,
@@ -81,13 +87,13 @@ export function reduceStreamEvent(
     case "system-notice": {
       const part: SystemNoticePart = {
         type: "system-notice",
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         notice: event.message,
         createdAt: timestamp,
         completedAt: timestamp,
       };
       const message: SessionMessage = {
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         role: "user",
         parts: [part],
         createdAt: timestamp,
@@ -99,7 +105,7 @@ export function reduceStreamEvent(
     }
 
     case "text-start": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const messages = finalizeLastIncompletePartOfType(
         assistant.messages,
         assistant.currentAssistantMessageId,
@@ -107,11 +113,11 @@ export function reduceStreamEvent(
         timestamp,
       );
 
-      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "");
+      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx);
     }
 
     case "text-delta": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const location = findLatestIncompletePartLocation(
         assistant.messages,
         assistant.currentAssistantMessageId,
@@ -138,6 +144,7 @@ export function reduceStreamEvent(
         assistant.currentAssistantMessageId,
         timestamp,
         event.text,
+        ctx,
       );
     }
 
@@ -161,7 +168,7 @@ export function reduceStreamEvent(
     }
 
     case "reasoning-start": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const messages = finalizeLastIncompletePartOfType(
         assistant.messages,
         assistant.currentAssistantMessageId,
@@ -169,11 +176,11 @@ export function reduceStreamEvent(
         timestamp,
       );
 
-      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "");
+      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx);
     }
 
     case "reasoning-delta": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const location = findLatestIncompletePartLocation(
         assistant.messages,
         assistant.currentAssistantMessageId,
@@ -200,6 +207,7 @@ export function reduceStreamEvent(
         assistant.currentAssistantMessageId,
         timestamp,
         event.text,
+        ctx,
       );
     }
 
@@ -223,7 +231,7 @@ export function reduceStreamEvent(
     }
 
     case "tool-input-start": {
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const existing = findToolPartByCallId(
         assistant.messages,
         assistant.currentAssistantMessageId,
@@ -234,7 +242,7 @@ export function reduceStreamEvent(
 
       const part: ToolPart = {
         type: "tool",
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         state: "pending",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
@@ -274,10 +282,10 @@ export function reduceStreamEvent(
         };
       }
 
-      const assistant = ensureCurrentAssistantMessage(state, timestamp);
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
       const part: RunningToolPart = {
         type: "tool",
-        id: crypto.randomUUID(),
+        id: ctx.generateId(),
         state: "running",
         toolCallId: event.toolCallId,
         toolName: event.toolName,
@@ -368,7 +376,7 @@ export function reduceStreamEvent(
         steps: [
           ...state.steps,
           {
-            id: crypto.randomUUID(),
+            id: ctx.generateId(),
             step: event.step,
             runId: state.currentRunId,
             startedAt: timestamp,
@@ -413,7 +421,7 @@ export function reduceStreamEvent(
         steps: [
           ...state.steps,
           {
-            id: crypto.randomUUID(),
+            id: ctx.generateId(),
             step: event.step ?? state.steps.length,
             runId: state.currentRunId,
             startedAt: timestamp,
@@ -463,14 +471,14 @@ export function reduceStreamEvent(
       } else {
         const compactionPart: CompactionPart = {
           type: "compaction",
-          id: crypto.randomUUID(),
+          id: ctx.generateId(),
           summary,
           tailStartId,
           compactedAt: timestamp,
         };
 
         const syntheticMessage: SessionMessage = {
-          id: crypto.randomUUID(),
+          id: ctx.generateId(),
           role: "user",
           parts: [compactionPart],
           createdAt: timestamp,
@@ -564,6 +572,7 @@ function isIncompletePart(part: SessionPart): boolean {
 function ensureCurrentAssistantMessage(
   state: SessionProjection,
   timestamp: number,
+  ctx: ReduceContext,
 ): AssistantMessageResult {
   if (state.currentAssistantMessageId) {
     return {
@@ -573,7 +582,7 @@ function ensureCurrentAssistantMessage(
   }
 
   const message: SessionMessage = {
-    id: crypto.randomUUID(),
+    id: ctx.generateId(),
     role: "assistant",
     parts: [],
     createdAt: timestamp,
@@ -674,10 +683,11 @@ function appendTextPart(
   messageId: string,
   timestamp: number,
   text: string,
+  ctx: ReduceContext,
 ): Partial<SessionProjection> {
   const part: TextPart = {
     type: "text",
-    id: crypto.randomUUID(),
+    id: ctx.generateId(),
     text,
     createdAt: timestamp,
   };
@@ -693,10 +703,11 @@ function appendReasoningPart(
   messageId: string,
   timestamp: number,
   text: string,
+  ctx: ReduceContext,
 ): Partial<SessionProjection> {
   const part: ReasoningPart = {
     type: "reasoning",
-    id: crypto.randomUUID(),
+    id: ctx.generateId(),
     text,
     createdAt: timestamp,
   };
