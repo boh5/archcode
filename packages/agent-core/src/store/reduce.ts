@@ -37,7 +37,10 @@ export function reduceStreamEvent(
 
   // Delegate to protocol reducer (SessionStoreState structurally satisfies
   // SessionProjection on all shared fields)
-  const partial = protocolReduceStreamEvent(state, event) as Partial<SessionStoreState>;
+  const partial = protocolReduceStreamEvent(state, event, {
+    timestamp: Date.now(),
+    generateId: () => crypto.randomUUID(),
+  }) as Partial<SessionStoreState>;
 
   // Augment with runtime-only fields
   if (event.type === "todo-write") {

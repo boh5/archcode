@@ -120,7 +120,10 @@ export function createWebSessionStore(
           eventOffset += dropCount;
         }
 
-        const partial = reduceStreamEvent(state, event as StreamEvent);
+        const partial = reduceStreamEvent(state, event as StreamEvent, {
+          timestamp: Date.now(),
+          generateId: () => crypto.randomUUID(),
+        });
 
         return { ...partial, events, eventOffset, nextEventId };
       });
@@ -179,7 +182,7 @@ export function createWebSessionStore(
       set({ lastEventId });
     },
     initializeFromSnapshot: (data) => {
-      set((state) => {
+      set(() => {
         const updates: Partial<WebSessionStoreState> = {};
         if (data.messages && data.messages.length > 0) {
           updates.messages = data.messages as SessionMessage[];
