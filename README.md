@@ -12,11 +12,10 @@ bun test             # Run tests
 
 | Scenario | Command | Description |
 |---|---|---|
-| Debug (recommended): separate logs | Terminal 1 `bun run server` + Terminal 2 `bun run web` | Hono and Vite as separate processes, logs don't interfere |
-| One-click dev (merged logs) | `bun run dev` | concurrently starts both, output with `[server]` / `[web]` prefix |
+| Development | `bun run dev` | Starts both server and web via Turborepo |
 | Production | `bun run build` | Build production binary at dist/specra |
 
-`bun run server` starts the Hono API/SSE server from `apps/server/src/main.ts`; `bun run web` starts the Vite React frontend from `apps/web`. They can run separately for cleaner logs while developing. `bun run dev` runs both at once through `concurrently`.
+`bun run dev` starts the Hono API/SSE server (from `apps/server/src/main.ts`) and the Vite React frontend (from `apps/web`) in parallel via Turborepo.
 
 ### Server Environment
 
@@ -241,12 +240,10 @@ packages/agent-core/src/tools/                     # 21 builtin tools with guard
 ## Development
 
 ```sh
-bun run server       # Start Hono API/SSE server with hot reload
-bun run web          # Start Vite Web UI dev server
-bun run dev          # Start server + web together with prefixed merged logs
+bun run dev          # Start server + web together via Turborepo
 bun run build        # Type check + build Web UI assets + compile binary
-bun run typecheck    # Type check (run first)
-bun test             # Run tests
+bun run typecheck    # Type check all packages (via Turborepo)
+bun test             # Run tests (via Turborepo)
 ```
 
 ### Testing Patterns
