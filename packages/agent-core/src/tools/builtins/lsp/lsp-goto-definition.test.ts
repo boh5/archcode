@@ -167,14 +167,6 @@ describe("lspGotoDefinitionTool", () => {
     }
   });
 
-  test("execute returns workspace error for path outside workspace", async () => {
-    const result = await lspGotoDefinitionTool.execute({ filePath: "../outside.ts", line: 1, character: 0 }, makeCtx()) as ToolExecutionResult;
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("outside the workspace");
-  });
-
   test("workspace permission asks for traversal through registry when confirmation is unavailable", async () => {
     const registry = new ToolRegistry();
     registry.register(lspGotoDefinitionTool);

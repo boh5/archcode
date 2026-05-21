@@ -57,18 +57,13 @@ export const fileReadTool = defineTool({
   permissions: [createWorkspacePermission(), createSensitiveFilePermission()],
   hooks: { after: [createReadSnapshotAfterHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
-    const { resolved, isWithinWorkspace } = resolveAndValidatePath(
+    // Workspace access is enforced by createWorkspacePermission() guard.
+    // If the permission pipeline allows execution, out-of-workspace paths
+    // may have been explicitly approved and should not be re-checked here.
+    const { resolved } = resolveAndValidatePath(
       input.path,
       ctx.workspaceRoot,
     );
-
-    if (!isWithinWorkspace) {
-      return createToolErrorResult({
-        kind: "workspace",
-        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
-        message: `Path "${input.path}" is outside the workspace`,
-      });
-    }
 
     try {
       const file = Bun.file(resolved);

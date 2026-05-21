@@ -46,18 +46,12 @@ async function handleDocumentSymbols(
   filePath: string,
   ctx: { workspaceRoot: string },
 ): Promise<string | ToolExecutionResult> {
-  const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(
+  // Workspace access is enforced by createWorkspacePermission() guard.
+  // Out-of-workspace paths may have been explicitly approved.
+  const { resolved: resolvedPath } = resolveAndValidatePath(
     filePath,
     ctx.workspaceRoot,
   );
-
-  if (!isWithinWorkspace) {
-    return createToolErrorResult({
-      kind: "workspace",
-      code: "TOOL_FILE_OUTSIDE_WORKSPACE",
-      message: `Path "${filePath}" is outside the workspace`,
-    });
-  }
 
   const languageId = getLanguageIdFromFilename(resolvedPath);
   if (!languageId) {

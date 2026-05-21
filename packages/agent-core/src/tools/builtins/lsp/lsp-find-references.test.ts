@@ -155,17 +155,6 @@ describe("lspFindReferencesTool", () => {
     expect(inferToolErrorKindFromResult(result)).toBe("permission-confirmation-unavailable");
   });
 
-  test("execute returns workspace error for path outside workspace", async () => {
-    const result = await lspFindReferencesTool.execute(
-      { filePath: "../outside.ts", line: 1, character: 0 },
-      makeCtx(),
-    ) as ToolExecutionResult;
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("outside the workspace");
-  });
-
   test("returns lsp-server-not-found for unsupported extension", async () => {
     await writeWorkspaceFile("notes.unknownext", "hello\n");
 

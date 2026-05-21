@@ -129,14 +129,6 @@ describe("lspDiagnosticsTool", () => {
     expect((result.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError).code).toBe("TOOL_LSP_TIMEOUT");
   }, 7_000);
 
-  test("execute returns workspace error for path outside workspace", async () => {
-    const result = await lspDiagnosticsTool.execute({ filePath: "../outside.ts" }, makeCtx()) as ToolExecutionResult;
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("outside the workspace");
-  });
-
   test("returns lsp-server-not-found for unsupported extension", async () => {
     await writeWorkspaceFile("notes.unknownext", "hello\n");
 
@@ -234,17 +226,6 @@ describe("lspDiagnosticsTool", () => {
     } finally {
       await server.stop();
     }
-  });
-
-  test("directory returns workspace error for path outside workspace", async () => {
-    const result = await lspDiagnosticsTool.execute(
-      { filePath: "../outside-dir" },
-      makeCtx(),
-    ) as ToolExecutionResult;
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("outside the workspace");
   });
 
   test("empty directory returns no diagnostics found", async () => {

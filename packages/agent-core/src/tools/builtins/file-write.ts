@@ -28,14 +28,10 @@ export const fileWriteTool = defineTool({
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedSpecraPermission()],
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
-    const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
-    if (!isWithinWorkspace) {
-      return createToolErrorResult({
-        kind: "workspace",
-        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
-        message: `"${resolvedPath}" is outside workspace "${ctx.workspaceRoot}"`,
-      });
-    }
+    // Workspace access is enforced by createWorkspacePermission() guard.
+    // If the permission pipeline allows execution, out-of-workspace paths
+    // may have been explicitly approved and should not be re-checked here.
+    const { resolved: resolvedPath } = resolveAndValidatePath(input.path, ctx.workspaceRoot);
 
     try {
       return await sharedMutationQueue.enqueue(resolvedPath, async () => {

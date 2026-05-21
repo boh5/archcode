@@ -42,18 +42,12 @@ export const lspGotoDefinitionTool = defineTool({
   },
   permissions: [createWorkspacePermission({ pathKey: "filePath" })],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
-    const { resolved: resolvedPath, isWithinWorkspace } = resolveAndValidatePath(
+    // Workspace access is enforced by createWorkspacePermission() guard.
+    // Out-of-workspace paths may have been explicitly approved.
+    const { resolved: resolvedPath } = resolveAndValidatePath(
       input.filePath,
       ctx.workspaceRoot,
     );
-
-    if (!isWithinWorkspace) {
-      return createToolErrorResult({
-        kind: "workspace",
-        code: "TOOL_FILE_OUTSIDE_WORKSPACE",
-        message: `Path "${input.filePath}" is outside the workspace`,
-      });
-    }
 
     const languageId = getLanguageIdFromFilename(resolvedPath);
     if (!languageId) {

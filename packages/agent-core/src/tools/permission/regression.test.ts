@@ -389,3 +389,77 @@ describe("bash permission bypass regressions", () => {
     }
   });
 });
+
+describe("workspace permission approval regression", () => {
+  test("approved out-of-workspace path is not re-blocked by execute (dual-check bug)", async () => {
+    // Regression: tools like file_read, file_edit, file_write had a dual workspace
+    // check — once in createWorkspacePermission() and again inside execute().
+    // When the user approved the out-of-workspace path through the permission
+    // pipeline, execute() would still reject it with TOOL_FILE_OUTSIDE_WORKSPACE.
+    // The fix: remove the duplicate check from execute(), letting the permission
+    // guard be the sole authority on workspace access.
+
+    const outsideFile = join(OUTSIDE, "approved-file.txt");
+    writeFileSync(outsideFile, "approved content");
+
+    const scope: PermissionApprovalScope = {
+      kind: "file-path",
+      operation: "read",
+      path: outsideFile,
+      pathMode: "exact",
+    };
+
+    const manager = new ProjectApprovalManager({ warn: mock() });
+    await manager.load(WORKSPACE);
+    await manager.addApproval(scope, {
+      display: `Read ${outsideFile}`,
+      reason: "User approved out-of-workspace read",
+    });
+
+    // Simulate: workspace guard returns "ask" with scope, but approval already exists.
+    // The registry's findFirstUnsatisfiedAsk() should skip it, and execute() should
+    // proceed without re-checking the workspace boundary.
+    const workspaceAsk: PermissionDecision = {
+      outcome: "ask",
+      reason: `"${outsideFile}" is outside workspace "${WORKSPACE}" [TOOL_FILE_OUTSIDE_WORKSPACE]`,
+      source: "tool-guard",
+      ruleId: "tool-file-outside-workspace",
+      approval: {
+        eligible: true,
+        scope,
+        display: `Access ${outsideFile}`,
+        reason: "Path is outside workspace",
+      },
+    };
+
+    let executeRan = false;
+    const tool = defineTool({
+      name: "regression_tool",
+      description: "Tests that approved out-of-workspace paths reach execute",
+      inputSchema: z.object({ path: z.string() }).strict(),
+      traits: { readOnly: true, destructive: false, concurrencySafe: true },
+      permissions: [async () => workspaceAsk],
+      execute: async () => {
+        executeRan = true;
+        return "executed successfully";
+      },
+    });
+
+    const registry = createRegistry([tool]);
+    const confimPermission = mock(async () => "deny" as ToolConfirmationResult);
+    const result = await registry.execute(
+      makeCall({ path: outsideFile }),
+      makeContext({
+        projectContext: { ...createTestProjectContext(WORKSPACE), approvals: manager },
+        confirmPermission: confimPermission,
+      }),
+    );
+
+    // The pre-existing approval should satisfy the "ask" without prompting.
+    expect(confimPermission).not.toHaveBeenCalled();
+    // Execute should run (not blocked by a duplicate workspace check).
+    expect(executeRan).toBe(true);
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe("executed successfully");
+  });
+});
