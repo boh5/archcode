@@ -11,7 +11,7 @@
   },
   "scripts": {
     "web:build": "bun run --cwd apps/web build",
-    "dev": "turbo run dev --parallel",
+    "dev": "turbo run dev",
     "build": "bun run typecheck && bun run scripts/build.ts",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test"
