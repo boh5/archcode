@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
@@ -7,6 +8,7 @@ import { createServerApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "files-routes");
+const isolatedTemp = resolve(tmpdir(), "specra-test-files-routes");
 
 interface DiffResponseBody {
   files: DiffFile[];
@@ -216,6 +218,24 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
       additions: 0,
       deletions: 1,
     });
+  });
+
+  test("GET /api/projects/:slug/diff returns empty files for non-git workspace", async () => {
+    const workspaceRoot = join(isolatedTemp, "no-git-workspace");
+    await mkdir(workspaceRoot, { recursive: true });
+    const homeDir = join(isolatedTemp, "homes", "no-git-workspace");
+    await mkdir(homeDir, { recursive: true });
+    const projectRegistry = new ProjectRegistry({ homeDir });
+    const runtime = createTestRuntime(projectRegistry);
+    // Create workspace directory WITHOUT git init
+    const project = await projectRegistry.add({ workspaceRoot, name: "no-git-workspace" });
+    const app = createServerApp(runtime, { dev: true }).app;
+
+    const res = await app.request(`/api/projects/${project.slug}/diff`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ files: [] });
+    await rm(isolatedTemp, { recursive: true, force: true });
   });
 
   test("GET /api/projects/:slug/diff for non-existent project slug returns 404", async () => {

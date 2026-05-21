@@ -34,6 +34,11 @@ export function createFilesRoutes(runtime: SpecraRuntime): Hono {
 
   app.get("/:slug/diff", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+
+    if (!(await isGitRepository(project.workspaceRoot))) {
+      return c.json({ files: [] });
+    }
+
     const [rawDiff, untrackedPaths] = await Promise.all([
       runGit(project.workspaceRoot, [
         "diff",
@@ -140,6 +145,21 @@ function requiredParam(value: string | undefined, name: string): string {
   }
 
   return value;
+}
+
+async function isGitRepository(workspaceRoot: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: workspaceRoot,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
 }
 
 async function runGit(workspaceRoot: string, args: string[]): Promise<string> {
