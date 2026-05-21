@@ -186,6 +186,47 @@ export interface SessionEventEnvelope<P extends SessionEventPayload = SessionEve
   payload: P;
 }
 
+// Global SSE wire protocol events.
+export interface GlobalSessionEventEnvelope<P extends SessionEventPayload = SessionEventPayload> {
+  type: "event";
+  slug: string;
+  sessionId: string;
+  eventId: number;
+  createdAt: number;
+  kind: P["type"];
+  payload: P;
+}
+
+export interface GlobalSSEHeartbeatEvent {
+  type: "heartbeat";
+  createdAt: number;
+}
+
+export interface GlobalSSEResetEvent {
+  type: "reset";
+  slug: string;
+  sessionId: string;
+  reason: "stale_cursor" | "store_unavailable" | "lagged";
+}
+
+export interface GlobalSSELaggedEvent {
+  type: "lagged";
+  dropped: number;
+  reason: "client_backpressure";
+}
+
+export interface GlobalSSEShutdownEvent {
+  type: "shutdown";
+  reason?: string;
+}
+
+export type GlobalSSEEvent =
+  | GlobalSessionEventEnvelope
+  | GlobalSSEHeartbeatEvent
+  | GlobalSSEResetEvent
+  | GlobalSSELaggedEvent
+  | GlobalSSEShutdownEvent;
+
 export interface PermissionRequestEvent {
   type: "permission.request";
   permissionId: string;
