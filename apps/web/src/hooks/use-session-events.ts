@@ -6,8 +6,6 @@ import { createWebSessionStore } from "../store/session-store";
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-type SessionEventType = "stream" | "heartbeat" | "reset";
-
 export function useSessionEvents(
   slug: string,
   sessionId: string,
@@ -22,6 +20,12 @@ export function useSessionEvents(
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
     let disposed = false;
+    let lastEventId: string | null = null;
+    let connectionState: "connecting" | "open" | "reconnecting" | "closed" = "connecting";
+
+    const setConnectionState = (state: typeof connectionState) => {
+      connectionState = state;
+    };
 
     const clearReconnectTimeout = () => {
       if (reconnectTimeout === null) return;
@@ -37,13 +41,12 @@ export function useSessionEvents(
 
     const updateLastEventId = (event: MessageEvent<string>) => {
       if (event.lastEventId) {
-        store.getState().setLastEventId(event.lastEventId);
+        lastEventId = event.lastEventId;
       }
     };
 
     const buildUrl = () => {
       const baseUrl = `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/events`;
-      const lastEventId = store.getState().lastEventId;
       if (lastEventId) {
         return `${baseUrl}?lastEventId=${encodeURIComponent(lastEventId)}`;
       }
@@ -94,7 +97,7 @@ export function useSessionEvents(
           state.handleQuestionTerminal(payload);
           break;
         case "shutdown":
-          state.setConnectionState("closed");
+          setConnectionState("closed");
           closeEventSource();
           break;
         default:
@@ -108,7 +111,7 @@ export function useSessionEvents(
 
       clearReconnectTimeout();
       closeEventSource();
-      store.getState().setConnectionState(
+      setConnectionState(
         reconnectDelayMs === INITIAL_RECONNECT_DELAY_MS ? "connecting" : "reconnecting",
       );
 
@@ -118,7 +121,7 @@ export function useSessionEvents(
       source.onopen = () => {
         if (disposed || eventSource !== source) return;
         reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS;
-        store.getState().setConnectionState("open");
+        setConnectionState("open");
       };
 
       source.onerror = () => {
@@ -126,7 +129,7 @@ export function useSessionEvents(
 
         source.close();
         eventSource = null;
-        store.getState().setConnectionState("reconnecting");
+        setConnectionState("reconnecting");
 
         const delay = reconnectDelayMs;
         reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);

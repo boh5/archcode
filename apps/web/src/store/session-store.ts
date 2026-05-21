@@ -1,8 +1,9 @@
 import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
-import { reduceStreamEvent } from "@specra/protocol";
+import { MAX_EVENTS, reduceStreamEvent } from "@specra/protocol";
 import type {
+  GlobalSessionEventEnvelope,
   PermissionTerminalEvent,
   QuestionTerminalEvent,
   Reminder,
@@ -16,9 +17,11 @@ import type {
 } from "@specra/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 
-export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
+const MAX_IDLE_SESSION_STORES = 20;
+const MAX_PENDING_REMOTE_EVENTS = 1000;
 
 export interface WebSessionStoreState extends SessionProjection {
+  [key: string]: unknown;
   createdAt: number;
   childSessionIds: Set<string>;
   parentSessionId: string | undefined;
@@ -33,10 +36,9 @@ export interface WebSessionStoreState extends SessionProjection {
   eventOffset: number;
   nextEventId: number;
   append: (event: SessionEventPayload) => void;
+  applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => void;
   pendingPermissions: Map<string, PermissionRequest>;
   pendingQuestions: Map<string, QuestionRequest>;
-  lastEventId: string | null;
-  connectionState: ConnectionState;
   addPermissionRequest: (request: PermissionRequest) => void;
   removePermissionRequest: (id: string) => void;
   addQuestionRequest: (request: QuestionRequest) => void;
@@ -44,8 +46,6 @@ export interface WebSessionStoreState extends SessionProjection {
   handlePermissionTerminal: (event: PermissionTerminalEvent) => void;
   handleQuestionTerminal: (event: QuestionTerminalEvent) => void;
   resetTransientState: () => void;
-  setConnectionState: (state: ConnectionState) => void;
-  setLastEventId: (id: string | null) => void;
   initializeFromSnapshot: (data: {
     messages?: SessionMessage[];
     steps?: SessionStep[];
@@ -56,24 +56,147 @@ export interface WebSessionStoreState extends SessionProjection {
     childSessionIds?: string[];
     parentSessionId?: string;
     subAgentDescriptions?: [string, string][];
+    eventCursor?: number;
+    events?: SessionEventEnvelope[];
   }) => void;
 }
 
-const sessionRegistry = new Map<string, StoreApi<WebSessionStoreState>>();
+interface RegistryEntry {
+  store: StoreApi<WebSessionStoreState>;
+  slug: string | undefined;
+  sessionId: string;
+  lastAccessedAt: number;
+  foreground: boolean;
+}
+
+const sessionRegistry = new Map<string, RegistryEntry>();
+const pendingRemoteEvents = new WeakMap<StoreApi<WebSessionStoreState>, Map<number, GlobalSessionEventEnvelope>>();
 
 function scopedWebKey(slug: string, sessionId: string): string {
   return `${slug}\0${sessionId}`;
+}
+
+function webKey(sessionId: string, slug?: string): string {
+  return slug === undefined ? sessionId : scopedWebKey(slug, sessionId);
+}
+
+function touchRegistryEntry(key: string): void {
+  const entry = sessionRegistry.get(key);
+  if (entry) entry.lastAccessedAt = Date.now();
+}
+
+function appendEnvelopeToState(
+  state: WebSessionStoreState,
+  envelope: SessionEventEnvelope,
+): Partial<WebSessionStoreState> {
+  const events = [...state.events, envelope];
+  const nextEventId = envelope.id + 1;
+  let eventOffset = state.eventOffset;
+
+  if (events.length > MAX_EVENTS) {
+    const dropCount = events.length - MAX_EVENTS;
+    events.splice(0, dropCount);
+    eventOffset += dropCount;
+  }
+
+  if (!isReducibleStreamEvent(envelope.payload)) {
+    return { events, eventOffset, nextEventId };
+  }
+
+  const partial = reduceStreamEvent(state, envelope.payload, {
+    timestamp: envelope.createdAt,
+    generateId: () => crypto.randomUUID(),
+  });
+
+  return { ...partial, events, eventOffset, nextEventId };
+}
+
+function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEvent {
+  switch (event.type) {
+    case "permission.request":
+    case "permission.terminal":
+    case "question.request":
+    case "question.terminal":
+    case "shutdown":
+      return false;
+    default:
+      return true;
+  }
+}
+
+function toLocalEnvelope(envelope: GlobalSessionEventEnvelope): SessionEventEnvelope {
+  return {
+    id: envelope.eventId,
+    createdAt: envelope.createdAt,
+    kind: envelope.kind,
+    payload: envelope.payload,
+  };
+}
+
+function bufferRemoteEnvelope(
+  store: StoreApi<WebSessionStoreState>,
+  envelope: GlobalSessionEventEnvelope,
+): void {
+  let buffer = pendingRemoteEvents.get(store);
+  if (!buffer) {
+    buffer = new Map();
+    pendingRemoteEvents.set(store, buffer);
+  }
+  buffer.set(envelope.eventId, envelope);
+  if (buffer.size <= MAX_PENDING_REMOTE_EVENTS) return;
+
+  const oldest = Math.min(...buffer.keys());
+  buffer.delete(oldest);
+}
+
+function pruneBufferedRemoteEvents(
+  store: StoreApi<WebSessionStoreState>,
+  minimumEventId: number,
+): void {
+  const buffer = pendingRemoteEvents.get(store);
+  if (!buffer) return;
+  for (const eventId of buffer.keys()) {
+    if (eventId < minimumEventId) buffer.delete(eventId);
+  }
+}
+
+function drainBufferedRemoteEvents(store: StoreApi<WebSessionStoreState>): void {
+  const buffer = pendingRemoteEvents.get(store);
+  if (!buffer) return;
+
+  while (true) {
+    const state = store.getState();
+    const envelope = buffer.get(state.nextEventId);
+    if (!envelope) break;
+    buffer.delete(state.nextEventId);
+    store.setState((current) => appendEnvelopeToState(current, toLocalEnvelope(envelope)));
+  }
+}
+
+function isPinned(entry: RegistryEntry): boolean {
+  const state = entry.store.getState();
+  return (
+    entry.foreground ||
+    state.isRunning ||
+    state.isStreamingModel ||
+    state.pendingPermissions.size > 0 ||
+    state.pendingQuestions.size > 0
+  );
 }
 
 export function createWebSessionStore(
   sessionId: string,
   slug?: string,
 ): StoreApi<WebSessionStoreState> {
-  const key = slug === undefined ? sessionId : scopedWebKey(slug, sessionId);
+  const key = webKey(sessionId, slug);
   const existing = sessionRegistry.get(key);
-  if (existing) return existing;
+  if (existing) {
+    existing.lastAccessedAt = Date.now();
+    return existing.store;
+  }
 
-  const store = createStore<WebSessionStoreState>((set) => ({
+  let store: StoreApi<WebSessionStoreState>;
+  store = createStore<WebSessionStoreState>((set) => ({
     sessionId,
     createdAt: Date.now(),
     title: null,
@@ -99,8 +222,6 @@ export function createWebSessionStore(
     nextEventId: 0,
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
-    lastEventId: null,
-    connectionState: "connecting",
     append: (event: SessionEventPayload) => {
       set((state) => {
         const envelope = {
@@ -109,24 +230,24 @@ export function createWebSessionStore(
           kind: event.type,
           payload: event,
         };
-
-        const events = [...state.events, envelope];
-        const nextEventId = state.nextEventId + 1;
-        let eventOffset = state.eventOffset;
-
-        if (events.length > 10000) {
-          const dropCount = events.length - 10000;
-          events.splice(0, dropCount);
-          eventOffset += dropCount;
-        }
-
-        const partial = reduceStreamEvent(state, event as StreamEvent, {
-          timestamp: Date.now(),
-          generateId: () => crypto.randomUUID(),
-        });
-
-        return { ...partial, events, eventOffset, nextEventId };
+        return appendEnvelopeToState(state, envelope);
       });
+      touchRegistryEntry(key);
+    },
+    applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => {
+      if (envelope.slug !== slug || envelope.sessionId !== sessionId) return;
+      set((state) => {
+        if (envelope.eventId < state.eventOffset) return {};
+        if (envelope.eventId < state.nextEventId) return {};
+        if (envelope.eventId > state.nextEventId) {
+          bufferRemoteEnvelope(store, envelope);
+          return {};
+        }
+        return appendEnvelopeToState(state, toLocalEnvelope(envelope));
+      });
+      pruneBufferedRemoteEvents(store, store.getState().nextEventId);
+      drainBufferedRemoteEvents(store);
+      touchRegistryEntry(key);
     },
     toModelMessages: () => [],
     addPermissionRequest: (request: PermissionRequest) => {
@@ -171,53 +292,97 @@ export function createWebSessionStore(
       set({
         pendingPermissions: new Map(),
         pendingQuestions: new Map(),
-        connectionState: "connecting",
-        lastEventId: null,
       });
     },
-    setConnectionState: (connectionState: ConnectionState) => {
-      set({ connectionState });
-    },
-    setLastEventId: (lastEventId: string | null) => {
-      set({ lastEventId });
-    },
     initializeFromSnapshot: (data) => {
-      set(() => {
+      set((state) => {
         const updates: Partial<WebSessionStoreState> = {};
-        if (data.messages && data.messages.length > 0) {
+        if (data.messages !== undefined) {
           updates.messages = data.messages as SessionMessage[];
         }
-        if (data.steps && data.steps.length > 0) {
+        if (data.steps !== undefined) {
           updates.steps = data.steps as SessionStep[];
         }
-        if (data.todos && data.todos.length > 0) {
+        if (data.todos !== undefined) {
           updates.todos = data.todos as SessionTodo[];
         }
-        if (data.reminders && data.reminders.length > 0) {
+        if (data.reminders !== undefined) {
           updates.reminders = data.reminders as Reminder[];
         }
-        if (data.title !== undefined && data.title !== null) {
+        if (data.title !== undefined) {
           updates.title = data.title;
         }
         if (data.createdAt !== undefined && data.createdAt > 0) {
           updates.createdAt = data.createdAt;
         }
-        if (data.childSessionIds && data.childSessionIds.length > 0) {
+        if (data.childSessionIds !== undefined) {
           updates.childSessionIds = new Set(data.childSessionIds);
         }
         if (data.parentSessionId !== undefined) {
           updates.parentSessionId = data.parentSessionId;
         }
-        if (data.subAgentDescriptions && data.subAgentDescriptions.length > 0) {
+        if (data.subAgentDescriptions !== undefined) {
           updates.subAgentDescriptions = new Map(data.subAgentDescriptions);
+        }
+        if (data.events !== undefined) {
+          updates.events = data.events;
+          updates.nextEventId = data.events.length > 0 ? data.events[data.events.length - 1]!.id + 1 : 0;
+          updates.eventOffset = data.events.length > 0 ? data.events[0]!.id : 0;
+        } else if (data.eventCursor !== undefined) {
+          const nextEventId = data.eventCursor + 1;
+          updates.events = [];
+          updates.nextEventId = nextEventId;
+          updates.eventOffset = Math.max(0, nextEventId - state.events.length);
         }
         return updates;
       });
+      pruneBufferedRemoteEvents(store, store.getState().nextEventId);
+      drainBufferedRemoteEvents(store);
+      touchRegistryEntry(key);
     },
   }));
 
-  sessionRegistry.set(key, store);
+  sessionRegistry.set(key, {
+    store,
+    slug,
+    sessionId,
+    lastAccessedAt: Date.now(),
+    foreground: false,
+  });
+  evictIdleSessionStores();
   return store;
+}
+
+export function findWebSessionStore(
+  sessionId: string,
+  slug?: string,
+): StoreApi<WebSessionStoreState> | undefined {
+  const entry = sessionRegistry.get(webKey(sessionId, slug));
+  if (!entry) return undefined;
+  entry.lastAccessedAt = Date.now();
+  return entry.store;
+}
+
+export function markSessionForeground(slug: string, sessionId: string, foreground: boolean): void {
+  const entry = sessionRegistry.get(scopedWebKey(slug, sessionId));
+  if (!entry) return;
+  entry.foreground = foreground;
+  entry.lastAccessedAt = Date.now();
+  if (!foreground) evictIdleSessionStores();
+}
+
+export function evictIdleSessionStores(): void {
+  if (sessionRegistry.size <= MAX_IDLE_SESSION_STORES) return;
+
+  const evictable = Array.from(sessionRegistry.entries())
+    .filter(([, entry]) => !isPinned(entry))
+    .sort((left, right) => left[1].lastAccessedAt - right[1].lastAccessedAt);
+
+  for (const [key, entry] of evictable) {
+    if (sessionRegistry.size <= MAX_IDLE_SESSION_STORES) break;
+    pendingRemoteEvents.delete(entry.store);
+    sessionRegistry.delete(key);
+  }
 }
 
 export function getWebSessionStore(

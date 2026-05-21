@@ -11,6 +11,7 @@ import { createCommandsRoutes } from "./routes/commands";
 import { createDirectoriesRoutes } from "./routes/directories";
 import { createEventsRoutes } from "./routes/events";
 import { createFilesRoutes } from "./routes/files";
+import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createMessagesRoutes } from "./routes/messages";
 import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
@@ -18,6 +19,7 @@ import { createQuestionsRoutes } from "./routes/questions";
 import { createSessionsRoutes } from "./routes/sessions";
 import { createWorkflowRoutes } from "./routes/workflow";
 import { createEmbeddedAssetHandler } from "./serve-web";
+import { globalEventBus } from "./events/global-event-bus";
 
 export interface CreateServerAppOptions {
   dev?: boolean;
@@ -77,6 +79,7 @@ export function createServerApp(
   const sessions = createSessionsRoutes(runtime, agentRunner);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const events = createEventsRoutes(runtime, agentRunner);
+  const globalEvents = createGlobalEventsRoutes(globalEventBus);
   const permissions = createPermissionRoutes(permissionService);
   const questions = createQuestionsRoutes(askUserService);
   const commands = createCommandsRoutes(runtime, agentRunner);
@@ -89,6 +92,7 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/projects/:slug/sessions/:sessionId/events", events);
+  app.route("/api/events", globalEvents);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", workflow);
   app.route("/api/projects", files);
