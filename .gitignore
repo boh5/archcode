@@ -8,3 +8,4 @@ bun.lockb
 .playwright-mcp
 apps/server/src/web-manifest.ts
 __test_tmp__/
+.turbo/
