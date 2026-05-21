@@ -43,7 +43,7 @@ describe("SessionRoute store-level behavior", () => {
     const slug = "demo";
     const sessionId = "route-snapshot";
     const sessionData = {
-      messages: [{ role: "user" as const, parts: [{ type: "text" as const, text: "hello" }] }],
+      messages: [{ id: "m1", role: "user" as const, parts: [{ type: "text" as const, id: "p1", text: "hello", createdAt: Date.now() }], createdAt: Date.now() }],
       steps: [],
       todos: [],
       reminders: [],
@@ -54,7 +54,7 @@ describe("SessionRoute store-level behavior", () => {
     };
 
     const store = createWebSessionStore(sessionId, slug);
-    store.getState().initializeFromSnapshot(sessionData as never);
+    store.getState().initializeFromSnapshot(sessionData);
 
     const state = store.getState();
     expect(state.messages).toHaveLength(1);
