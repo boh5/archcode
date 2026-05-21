@@ -25,13 +25,8 @@ export interface ApiFetchOptions extends Omit<RequestInit, "body"> {
 }
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  const headers = new Headers(options.headers);
+  const headers = createApiHeaders(options.headers);
   const body = normalizeBody(options.body, headers);
-  const password = readServerPasswordCookie();
-
-  if (password && !headers.has("Authorization")) {
-    headers.set("Authorization", `Basic ${btoa(`:${password}`)}`);
-  }
 
   const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...options,
@@ -46,7 +41,18 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   throw await createApiError(response);
 }
 
-function apiBaseUrl(): string {
+export function createApiHeaders(input?: HeadersInit): Headers {
+  const headers = new Headers(input);
+  const password = readServerPasswordCookie();
+
+  if (password && !headers.has("Authorization")) {
+    headers.set("Authorization", `Basic ${btoa(`:${password}`)}`);
+  }
+
+  return headers;
+}
+
+export function apiBaseUrl(): string {
   return "";
 }
 
