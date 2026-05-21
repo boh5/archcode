@@ -1,5 +1,6 @@
 import { AgentRunner } from "./agent-runner";
-import { sessionStreams } from "./routes/events";
+import { globalEventBus } from "./events/global-event-bus";
+import { appendShutdownToActiveSessionStores } from "./events/session-event-bridge";
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
 
@@ -91,9 +92,8 @@ async function runShutdown(
 }
 
 function pushShutdownEvents(): void {
-  for (const state of sessionStreams.values()) {
-    state.store?.getState().append({ type: "shutdown", reason: "server_shutdown" });
-  }
+  globalEventBus.emit({ type: "shutdown", reason: "server_shutdown" });
+  appendShutdownToActiveSessionStores("server_shutdown");
 }
 
 function removeSignalHandler(processRef: SignalProcess, signal: ShutdownSignal, handler: () => void): void {

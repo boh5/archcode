@@ -95,6 +95,19 @@ export function registerSessionEventBridge(input: RegisterSessionEventBridgeInpu
   };
 }
 
+export function unregisterSessionEventBridge(workspaceRoot: string, sessionId: string): void {
+  const key = scopedKey(workspaceRoot, sessionId);
+  const current = registrations.get(key);
+  current?.unsubscribeStore();
+  registrations.delete(key);
+}
+
+export function appendShutdownToActiveSessionStores(reason: string): void {
+  for (const registration of registrations.values()) {
+    registration.store.getState().append({ type: "shutdown", reason });
+  }
+}
+
 export function __setGlobalEventBusForTest(bus: GlobalEventBus): void {
   eventBus = bus;
 }
@@ -105,4 +118,8 @@ export function __resetSessionEventBridgesForTest(): void {
   }
   registrations.clear();
   eventBus = globalEventBus;
+}
+
+export function __getSessionEventBridgeCountForTest(): number {
+  return registrations.size;
 }

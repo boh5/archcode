@@ -11,8 +11,9 @@ import { createSessionStore } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
+import { GlobalEventBus } from "./events/global-event-bus";
+import { __resetSessionEventBridgesForTest, __setGlobalEventBusForTest } from "./events/session-event-bridge";
 import { PermissionService } from "./permission-service";
-import { sessionStreams } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
 
@@ -162,13 +163,13 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 
 describe("AgentRunner", () => {
   beforeEach(async () => {
-    sessionStreams.clear();
+    __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
 
   afterAll(async () => {
-    sessionStreams.clear();
+    __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -177,7 +178,7 @@ describe("AgentRunner", () => {
     const agent = createMockAgent("session-start", run.promise);
     const runner = new AgentRunner(createRuntime(agent));
 
-    const job = runner.submit("session-start", tempRoot, "Hello");
+    const job = runner.submit({ slug: "project-start", sessionId: "session-start", workspaceRoot: tempRoot, userMessage: "Hello" });
 
     expect(job.sessionId).toBe("session-start");
     expect(job.workspaceRoot).toBe(tempRoot);
@@ -192,7 +193,7 @@ describe("AgentRunner", () => {
     const permissionService = new PermissionService();
     const runner = new AgentRunner(createRuntime(agent), permissionService);
 
-    const job = runner.submit("session-permission", tempRoot, "Needs permission");
+    const job = runner.submit({ slug: "project-permission", sessionId: "session-permission", workspaceRoot: tempRoot, userMessage: "Needs permission" });
     await job.promise;
     await flushMicrotasks();
 
@@ -225,9 +226,9 @@ describe("AgentRunner", () => {
     const agent = createMockAgent("session-duplicate", run.promise);
     const runner = new AgentRunner(createRuntime(agent));
 
-    runner.submit("session-duplicate", tempRoot, "First");
+    runner.submit({ slug: "project-duplicate", sessionId: "session-duplicate", workspaceRoot: tempRoot, userMessage: "First" });
 
-    expect(() => runner.submit("session-duplicate", tempRoot, "Second")).toThrow(AgentRunningError);
+    expect(() => runner.submit({ slug: "project-duplicate", sessionId: "session-duplicate", workspaceRoot: tempRoot, userMessage: "Second" })).toThrow(AgentRunningError);
   });
 
   test("isRunning returns true while running and false after completion", async () => {
@@ -235,7 +236,7 @@ describe("AgentRunner", () => {
     const agent = createMockAgent("session-running", run.promise);
     const runner = new AgentRunner(createRuntime(agent));
 
-    const job = runner.submit("session-running", tempRoot, "Hello");
+    const job = runner.submit({ slug: "project-running", sessionId: "session-running", workspaceRoot: tempRoot, userMessage: "Hello" });
     expect(isJobRunning(runner, tempRoot, "session-running")).toBe(true);
 
     run.resolve({ text: "Done", steps: 1 });
@@ -248,7 +249,7 @@ describe("AgentRunner", () => {
     const agent = createMockAgent("session-abort", new Promise(() => undefined));
     const runner = new AgentRunner(createRuntime(agent));
 
-    const job = runner.submit("session-abort", tempRoot, "Stop me");
+    const job = runner.submit({ slug: "project-abort", sessionId: "session-abort", workspaceRoot: tempRoot, userMessage: "Stop me" });
     const aborted = abortJob(runner, tempRoot, "session-abort");
     await job.promise;
 
@@ -264,7 +265,7 @@ describe("AgentRunner", () => {
     agent.store.getState().append({ type: "user-message", content: "persist me" });
     const runner = new AgentRunner(createRuntime(agent));
 
-    const job = runner.submit("session-save", workspaceRoot, "persist me");
+    const job = runner.submit({ slug: "project-save", sessionId: "session-save", workspaceRoot, userMessage: "persist me" });
     await job.promise;
     await flushMicrotasks();
 
@@ -283,7 +284,7 @@ describe("AgentRunner", () => {
     runtime.sessionAgentManager.isTombstoned = () => tombstoned;
     const runner = new AgentRunner(runtime);
 
-    const job = runner.submit("session-tombstone", workspaceRoot, "delete me");
+    const job = runner.submit({ slug: "project-tombstone", sessionId: "session-tombstone", workspaceRoot, userMessage: "delete me" });
     await flushMicrotasks();
     tombstoned = true;
     run.resolve({ text: "Done", steps: 1 });
@@ -302,7 +303,7 @@ describe("AgentRunner", () => {
     runtime.sessionAgentManager.releaseSlot = (_workspaceRoot: string, sessionId: string) => released.push(sessionId);
     const runner = new AgentRunner(runtime);
 
-    const job = runner.submit("session-slot", tempRoot, "Hello");
+    const job = runner.submit({ slug: "project-slot", sessionId: "session-slot", workspaceRoot: tempRoot, userMessage: "Hello" });
     expect(acquired).toEqual(["session-slot"]);
 
     run.resolve({ text: "Done", steps: 1 });
@@ -322,7 +323,7 @@ describe("AgentRunner", () => {
     const missingResult = await dispatchRunnerCommand(runner, tempRoot, "missing", "compact");
     expect(missingResult).toBeNull();
 
-    const job = runner.submit("session-command", tempRoot, "Hello");
+    const job = runner.submit({ slug: "project-command", sessionId: "session-command", workspaceRoot: tempRoot, userMessage: "Hello" });
     await flushMicrotasks();
 
     const runningResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact", "now");
@@ -333,5 +334,26 @@ describe("AgentRunner", () => {
     await job.promise;
     const completedResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact");
     expect(completedResult).toBeNull();
+  });
+
+  test("submit registers active agent store with the global session event bridge", async () => {
+    const bus = new GlobalEventBus();
+    const received: unknown[] = [];
+    __setGlobalEventBusForTest(bus);
+    bus.subscribe((event) => received.push(event));
+    const run = deferred<AgentResult>();
+    const agent = createMockAgent("session-bridge", run.promise);
+    const runner = new AgentRunner(createRuntime(agent));
+
+    const job = runner.submit({ slug: "project-bridge", sessionId: "session-bridge", workspaceRoot: tempRoot, userMessage: "Hello" });
+    await flushMicrotasks();
+    agent.store.getState().append({ type: "system-notice", message: "bridged" });
+
+    expect(received).toMatchObject([
+      { type: "event", slug: "project-bridge", sessionId: "session-bridge", eventId: 0, kind: "system-notice" },
+    ]);
+
+    run.resolve({ text: "Done", steps: 1 });
+    await job.promise;
   });
 });

@@ -31,7 +31,7 @@ export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const project = await resolveProject(runtime, slug);
 
     try {
-      const job = agentRunner.submit(sessionId, project.workspaceRoot, text);
+      const job = agentRunner.submit({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
       return c.json({ jobId: job.jobId }, 202);
     } catch (error) {
       if (error instanceof AgentRunningError) {
@@ -88,4 +88,3 @@ function readMessageText(body: MessageBody): string {
 
   return body.text;
 }
-

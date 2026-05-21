@@ -12,8 +12,8 @@ import { createSessionStore, getSessionStore } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, SessionNotFoundError } from "../errors";
+import { unregisterSessionEventBridge } from "../events/session-event-bridge";
 import { resolveProject } from "../resolve";
-import { removeSessionStream } from "./events";
 
 interface SessionSummary {
   sessionId: string;
@@ -87,7 +87,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
 
     await agentRunner.abortAndWait(project.workspaceRoot, sessionId);
     runtime.sessionAgentManager.dispose(project.workspaceRoot, sessionId);
-    removeSessionStream(project.workspaceRoot, sessionId);
+    unregisterSessionEventBridge(project.workspaceRoot, sessionId);
     agentRunner.cleanupSession(project.workspaceRoot, sessionId);
 
     const path = join(getSessionsDir(project.workspaceRoot), `${sessionId}.json`);

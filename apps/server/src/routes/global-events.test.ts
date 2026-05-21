@@ -173,4 +173,12 @@ describe("global events route", () => {
     const text = await readUntil(response, (chunk) => chunk.includes("from-singleton"));
     expect(text).toContain("id: shared:singleton:1");
   });
+
+  test("server app no longer registers the old per-session SSE endpoint", async () => {
+    const { app } = createServerApp({} as SpecraRuntime, { dev: true });
+
+    const response = await app.request("/api/projects/project/sessions/session/events");
+
+    expect(response.status).toBe(404);
+  });
 });

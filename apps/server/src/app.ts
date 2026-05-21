@@ -9,7 +9,6 @@ import { requestLogger } from "./logger";
 import { PermissionService } from "./permission-service";
 import { createCommandsRoutes } from "./routes/commands";
 import { createDirectoriesRoutes } from "./routes/directories";
-import { createEventsRoutes } from "./routes/events";
 import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createMessagesRoutes } from "./routes/messages";
@@ -78,7 +77,6 @@ export function createServerApp(
   const agentRunner = new AgentRunner(runtime, permissionService, askUserService);
   const sessions = createSessionsRoutes(runtime, agentRunner);
   const messages = createMessagesRoutes(runtime, agentRunner);
-  const events = createEventsRoutes(runtime, agentRunner);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
   const permissions = createPermissionRoutes(permissionService);
   const questions = createQuestionsRoutes(askUserService);
@@ -91,7 +89,6 @@ export function createServerApp(
   app.route("/api/projects", projects);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
-  app.route("/api/projects/:slug/sessions/:sessionId/events", events);
   app.route("/api/events", globalEvents);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", workflow);

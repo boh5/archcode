@@ -6,8 +6,8 @@ import { saveSessionTranscript } from "@specra/agent-core";
 import { scopedKey } from "@specra/agent-core";
 import type { AskUserCallback, ToolConfirmationCallback } from "@specra/agent-core";
 import type { AskUserService } from "./ask-user-service";
+import { registerSessionEventBridge, unregisterSessionEventBridge } from "./events/session-event-bridge";
 import type { PermissionService } from "./permission-service";
-import { sessionStreams } from "./routes/events";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
@@ -17,6 +17,13 @@ export interface RunningJob {
   workspaceRoot: string;
   abortController: AbortController;
   promise: Promise<void>;
+}
+
+export interface SubmitAgentJobInput {
+  slug: string;
+  sessionId: string;
+  workspaceRoot: string;
+  userMessage: string;
 }
 
 export class AgentRunner {
@@ -34,7 +41,8 @@ export class AgentRunner {
     AgentRunner.#instances.add(this);
   }
 
-  submit(sessionId: string, workspaceRoot: string, userMessage: string): RunningJob {
+  submit(input: SubmitAgentJobInput): RunningJob {
+    const { slug, sessionId, workspaceRoot, userMessage } = input;
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#jobs.has(key)) {
       throw new AgentRunningError();
@@ -45,7 +53,7 @@ export class AgentRunner {
     const jobId = crypto.randomUUID();
     let job: RunningJob;
 
-    const promise = this.#runJob(sessionId, workspaceRoot, userMessage, abortController)
+    const promise = this.#runJob(slug, sessionId, workspaceRoot, userMessage, abortController)
       .finally(() => {
         this.#jobs.delete(key);
         this.#runtime.sessionAgentManager.releaseSlot(workspaceRoot, sessionId);
@@ -87,6 +95,7 @@ export class AgentRunner {
   }
 
   cleanupSession(workspaceRoot: string, sessionId: string): void {
+    unregisterSessionEventBridge(workspaceRoot, sessionId);
     this.#permissionService?.cleanup(sessionId, workspaceRoot);
     this.#askUserService?.cleanup(sessionId, workspaceRoot);
   }
@@ -117,6 +126,7 @@ export class AgentRunner {
   }
 
   async #runJob(
+    slug: string,
     sessionId: string,
     workspaceRoot: string,
     userMessage: string,
@@ -131,10 +141,7 @@ export class AgentRunner {
       }
 
       const activeAgent = agent;
-      sessionStreams.set(scopedKey(workspaceRoot, sessionId), {
-        store: activeAgent.store,
-        lastSentEventId: activeAgent.store.getState().nextEventId - 1,
-      });
+      registerSessionEventBridge({ slug, workspaceRoot, sessionId, store: activeAgent.store });
 
       const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
         ? (request, abortSignal) => this.#permissionService!.request(sessionId, workspaceRoot, request, activeAgent.store, abortSignal)

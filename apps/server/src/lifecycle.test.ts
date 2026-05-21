@@ -1,18 +1,16 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { Hono } from "hono";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry } from "@specra/agent-core";
 import { createSessionStore } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
-import { errorHandler } from "./error-handler";
+import { globalEventBus } from "./events/global-event-bus";
+import { __resetSessionEventBridgesForTest, registerSessionEventBridge } from "./events/session-event-bridge";
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
-import { createEventsRoutes, sessionStreams } from "./routes/events";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "lifecycle");
 
@@ -118,52 +116,6 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-async function readUntilDone(response: Response): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Expected response body");
-
-  const decoder = new TextDecoder();
-  let text = "";
-  const deadline = Date.now() + 2000;
-
-  while (Date.now() < deadline) {
-    const remaining = Math.max(1, deadline - Date.now());
-    const result = await Promise.race([
-      reader.read(),
-      new Promise<ReadableStreamReadResult<Uint8Array>>((_resolve, reject) => {
-        setTimeout(() => reject(new Error("Timed out waiting for SSE close")), remaining);
-      }),
-    ]);
-    if (result.done) return text;
-    text += decoder.decode(result.value, { stream: true });
-  }
-
-  await reader.cancel().catch(() => undefined);
-  throw new Error(`SSE stream did not close. Received: ${text}`);
-}
-
-async function createLifecycleEventsApp(
-  testName: string,
-  agent: Agent,
-  runner: AgentRunner,
-  workspaceRoot: string,
-) {
-  const homeDir = resolve(tempRoot, "homes", testName);
-  await mkdir(homeDir, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir });
-  await mkdir(workspaceRoot, { recursive: true });
-  const project = await projectRegistry.add({ workspaceRoot, name: testName });
-  const runtime = {
-    ...createRuntime(agent),
-    projectRegistry,
-  } as SpecraRuntime;
-  const app = new Hono();
-  app.onError(errorHandler);
-  app.route("/api/projects/:slug/sessions/:sessionId/events", createEventsRoutes(runtime, runner, { heartbeatIntervalMs: 100 }));
-
-  return { app, project };
-}
-
 async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return await promise;
 
@@ -178,13 +130,13 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 
 describe("server lifecycle", () => {
   beforeEach(async () => {
-    sessionStreams.clear();
+    __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
 
   afterAll(async () => {
-    sessionStreams.clear();
+    __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -194,8 +146,8 @@ describe("server lifecycle", () => {
     const runnerOne = new AgentRunner(createRuntime(agentOne));
     const runnerTwo = new AgentRunner(createRuntime(agentTwo));
 
-    const jobOne = runnerOne.submit("abort-all-one", tempRoot, "one");
-    const jobTwo = runnerTwo.submit("abort-all-two", tempRoot, "two");
+    const jobOne = runnerOne.submit({ slug: "project-one", sessionId: "abort-all-one", workspaceRoot: tempRoot, userMessage: "one" });
+    const jobTwo = runnerTwo.submit({ slug: "project-two", sessionId: "abort-all-two", workspaceRoot: tempRoot, userMessage: "two" });
 
     await runnerOne.abortAll();
 
@@ -227,7 +179,9 @@ describe("server lifecycle", () => {
     const run = deferred<AgentResult>();
     const agent = new MockAgent("sequence-session", run.promise);
     const runner = new AgentRunner(createRuntime(agent));
-    const job = runner.submit("sequence-session", tempRoot, "work");
+    const globalEvents: unknown[] = [];
+    const unsubscribeGlobalEvents = globalEventBus.subscribe((event) => globalEvents.push(event));
+    const job = runner.submit({ slug: "sequence-project", sessionId: "sequence-session", workspaceRoot: tempRoot, userMessage: "work" });
     await flushMicrotasks();
 
     const server = { stop: mock(() => order.push("stop")) };
@@ -254,22 +208,26 @@ describe("server lifecycle", () => {
     run.resolve({ text: "done", steps: 1 });
     await shutdownPromise;
     await job.promise;
+    unsubscribeGlobalEvents();
 
     expect(agent.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
+    expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
     expect(order).toEqual(["abort", "wait", "stop", "exit:0"]);
   });
 
-  test("shutdown appends terminal events for every active session before aborting", async () => {
+  test("shutdown appends terminal events for every bridged active session before aborting", async () => {
     const order: string[] = [];
     const agentOne = new MockAgent("terminal-one", new Promise(() => undefined), resolve(tempRoot, "workspace-one"));
     const agentTwo = new MockAgent("terminal-two", new Promise(() => undefined), resolve(tempRoot, "workspace-two"));
-    sessionStreams.set("one", { store: agentOne.store, lastSentEventId: -1 });
-    sessionStreams.set("two", { store: agentTwo.store, lastSentEventId: -1 });
+    const coldAgent = new MockAgent("terminal-cold", new Promise(() => undefined), resolve(tempRoot, "workspace-cold"));
+    registerSessionEventBridge({ slug: "one", workspaceRoot: resolve(tempRoot, "workspace-one"), sessionId: "terminal-one", store: agentOne.store });
+    registerSessionEventBridge({ slug: "two", workspaceRoot: resolve(tempRoot, "workspace-two"), sessionId: "terminal-two", store: agentTwo.store });
     const runner = new AgentRunner(createRuntime(agentOne));
     runner.abortAll = mock(async () => {
       order.push("abort");
       expect(agentOne.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
       expect(agentTwo.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
+      expect(coldAgent.store.getState().events).toHaveLength(0);
     });
     const server = { stop: mock(() => order.push("stop")) };
     const { processRef } = createProcess();
@@ -284,33 +242,7 @@ describe("server lifecycle", () => {
     expect(order).toEqual(["abort", "stop", "exit:0"]);
     expect(agentOne.store.getState().events.filter((event) => event.payload.type === "shutdown")).toHaveLength(1);
     expect(agentTwo.store.getState().events.filter((event) => event.payload.type === "shutdown")).toHaveLength(1);
-  });
-
-  test("shutdown stream sends terminal event before SSE connection closes", async () => {
-    const workspaceRoot = resolve(tempRoot, "shutdown-sse-workspace");
-    const agent = new MockAgent("shutdown-sse-session", Promise.resolve({ text: "ok", steps: 1 }), workspaceRoot);
-    const runtime = createRuntime(agent);
-    const runner = new AgentRunner(runtime);
-    const { app, project } = await createLifecycleEventsApp("shutdown-sse", agent, runner, workspaceRoot);
-    const server = Bun.serve({ port: 0, idleTimeout: 30, fetch: app.fetch });
-    const { processRef } = createProcess();
-    processRef.exit = mock((code?: number): never => {
-      throw new ExitError(code);
-    });
-
-    try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/api/projects/${project.slug}/sessions/shutdown-sse-session/events`);
-      const textPromise = readUntilDone(response);
-      const handle = setupGracefulShutdown(server, runner, { process: processRef, log: () => undefined });
-
-      await expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({ name: "ExitError", code: 0 });
-      const text = await textPromise;
-
-      expect(text).toContain("event: stream");
-      expect(text).toContain('data: {"type":"shutdown","reason":"server_shutdown"}');
-    } finally {
-      server.stop(true);
-    }
+    expect(coldAgent.store.getState().events).toHaveLength(0);
   });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {

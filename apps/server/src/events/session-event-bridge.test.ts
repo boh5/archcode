@@ -4,7 +4,14 @@ import type { SessionStoreState } from "@specra/agent-core";
 import type { GlobalSSEEvent } from "@specra/protocol";
 import type { StoreApi } from "zustand";
 import { GlobalEventBus } from "./global-event-bus";
-import { registerSessionEventBridge, __setGlobalEventBusForTest, __resetSessionEventBridgesForTest } from "./session-event-bridge";
+import {
+  __getSessionEventBridgeCountForTest,
+  __resetSessionEventBridgesForTest,
+  __setGlobalEventBusForTest,
+  appendShutdownToActiveSessionStores,
+  registerSessionEventBridge,
+  unregisterSessionEventBridge,
+} from "./session-event-bridge";
 
 const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => StoreApi<SessionStoreState>);
 
@@ -64,6 +71,32 @@ describe("registerSessionEventBridge", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ type: "event", slug: "gone", sessionId: "unsubscribe", eventId: 0 });
+  });
+
+  test("unregisterSessionEventBridge removes the active bridge without loading cold stores", () => {
+    const store = createStore("unregister", "/tmp/specra-bridge-unregister");
+    registerSessionEventBridge({ slug: "gone", workspaceRoot: "/tmp/specra-bridge-unregister", sessionId: "unregister", store });
+
+    unregisterSessionEventBridge("/tmp/specra-bridge-unregister", "unregister");
+    unregisterSessionEventBridge("/tmp/specra-bridge-cold", "cold-session");
+    appendNotice(store, "after");
+
+    expect(__getSessionEventBridgeCountForTest()).toBe(0);
+    expect(received).toHaveLength(0);
+  });
+
+  test("appendShutdownToActiveSessionStores only appends to bridged active stores", () => {
+    const activeStore = createStore("active-shutdown", "/tmp/specra-bridge-active-shutdown");
+    const coldStore = createStore("cold-shutdown", "/tmp/specra-bridge-cold-shutdown");
+    registerSessionEventBridge({ slug: "active", workspaceRoot: "/tmp/specra-bridge-active-shutdown", sessionId: "active-shutdown", store: activeStore });
+
+    appendShutdownToActiveSessionStores("server_shutdown");
+
+    expect(activeStore.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
+    expect(coldStore.getState().events).toHaveLength(0);
+    expect(received).toMatchObject([
+      { type: "event", slug: "active", sessionId: "active-shutdown", eventId: 0, kind: "shutdown" },
+    ]);
   });
 
   test("duplicate registration by workspace and session updates slug and store", () => {
