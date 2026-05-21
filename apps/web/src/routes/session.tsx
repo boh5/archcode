@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { ChatMessages } from "../components/composite/ChatMessages";
+import { AttentionQueue } from "../components/features/AttentionQueue";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
 import { PipelineStepper } from "../components/features/PipelineStepper";
@@ -59,6 +60,7 @@ export function SessionRoute() {
       />
       <PipelineStepper slug={slug} sessionId={sessionId} />
       <ChatMessages slug={slug} sessionId={sessionId} />
+      <AttentionQueue slug={slug} sessionId={sessionId} />
       <ChatInput slug={slug} sessionId={sessionId} />
     </div>
   );

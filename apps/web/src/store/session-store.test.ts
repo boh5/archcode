@@ -186,7 +186,7 @@ describe("applyRemoteEnvelope", () => {
       ...event(0, {
         type: "question.request",
         questionId: "question-remote-1",
-        question: "Continue?",
+        question: JSON.stringify({ toolName: "ask_user", toolCallId: "tc-1", questions: [{ question: "Continue?", header: "Q1", options: [], custom: true }] }),
       }),
       sessionId: "question-remote",
     });
@@ -195,7 +195,8 @@ describe("applyRemoteEnvelope", () => {
       id: "question-remote-1",
       sessionId: "question-remote",
       toolName: "ask_user",
-      questions: ["Continue?"],
+      toolCallId: "tc-1",
+      questions: [{ question: "Continue?", header: "Q1", options: [], custom: true }],
     });
 
     store.getState().applyRemoteEnvelope({

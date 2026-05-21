@@ -121,6 +121,10 @@ function appendEnvelopeToState(
     return { events, eventOffset, nextEventId, pendingPermissions };
   }
   if (payload.type === "question.request") {
+    // Server serializes the full request as JSON string in payload.question
+    const parsed = typeof payload.question === "string"
+      ? JSON.parse(payload.question) as { toolName?: string; toolCallId?: string; questions?: unknown[] }
+      : payload.question;
     return {
       events,
       eventOffset,
@@ -128,9 +132,9 @@ function appendEnvelopeToState(
       pendingQuestions: new Map(state.pendingQuestions).set(payload.questionId, {
         id: payload.questionId,
         sessionId: state.sessionId,
-        toolName: "ask_user",
-        toolCallId: "",
-        questions: [payload.question],
+        toolName: parsed.toolName ?? "ask_user",
+        toolCallId: parsed.toolCallId ?? "",
+        questions: Array.isArray(parsed.questions) ? parsed.questions : [parsed as unknown],
       }),
     };
   }
