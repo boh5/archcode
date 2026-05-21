@@ -14,7 +14,6 @@
     "web:build": "bun run --cwd apps/web build",
     "dev": "concurrently -n server,web -c blue,green \"bun run server\" \"bun run web\"",
     "build": "bun run typecheck && bun run scripts/build.ts",
-    "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },

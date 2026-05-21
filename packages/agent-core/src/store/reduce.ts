@@ -6,7 +6,6 @@ import {
   type StreamEvent,
 } from "./types";
 import { reduceStreamEvent as protocolReduceStreamEvent } from "@specra/protocol";
-import type { SessionProjection } from "@specra/protocol";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",

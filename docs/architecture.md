@@ -91,7 +91,7 @@ The protocol package serves as the **shared type boundary** between the frontend
 1. **Browser safety** — Contains only types and a pure reducer (`reduceStreamEvent()`). No `node:*`, `bun:*`, AI SDK, LSP, MCP, or any runtime-only import.
 2. **Zero runtime dependencies** — Its `package.json` has `"dependencies": {}`. It depends on nothing.
 3. **Single source of truth** — Session types (`StreamEvent`, `SessionStoreState`, etc.) live here and are consumed by both web and agent-core, preventing type drift.
-4. **The `reduce.ts` file** in `agent-core/src/store/reduce.ts` is explicitly tested (`reduce isomorphism` test) to contain zero `node:*` imports and zero `Bun.*` usage — ensuring it could be moved to protocol if needed.
+4. **Runtime wrapper** — `packages/agent-core/src/store/reduce.ts` wraps the protocol reducer with runtime-specific guards (`BusyError`, `InvalidTodoStateError`, `lastTodoWriteStepIndex` tracking). The protocol reducer is the canonical pure projection logic; agent-core adds only runtime enforcement on top.
 
 ---
 

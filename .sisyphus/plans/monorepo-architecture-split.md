@@ -693,7 +693,7 @@ Executors must pause and present evidence/options/recommendation to the user bef
 
   **Commit**: YES | Message: `test(repo): update tests for workspace packages` | Files: [packages/**/__tests__/**, apps/**/__tests__/**, moved test files]
 
-- [ ] 13. Rewrite Architecture Boundary Tests for Monorepo Packages
+- [x] 13. Rewrite Architecture Boundary Tests for Monorepo Packages
 
   **What to do**: Rewrite current path-based architecture tests into monorepo package-boundary tests. Place them at a root-level architecture test location, or keep under a clear package-independent test directory, so they can inspect all `apps/*` and `packages/*`. Enforce exact rules: protocol may import TypeScript, browser-safe pure modules, and Zod if used, but must not import `ai`, `zustand`, `hono`, `node:*`, `bun:*`, React, apps, or agent-core; agent-core may import `@specra/protocol`, `ai`, `zustand`, `zod`, `node:*`, and `bun:*`, but must not import `hono`, apps, React, or React DOM; apps/server may import `@specra/protocol`, `@specra/agent-core`, `hono`, Node, and Bun, but must not import Web or React; apps/web may import `@specra/protocol`, React, React DOM, and local Zustand store, but must not import agent-core, server, Node, or Bun except allowed config/test files such as Vite config and `bun:test` imports.
 
@@ -736,7 +736,7 @@ Executors must pause and present evidence/options/recommendation to the user bef
 
   **Commit**: YES | Message: `test(arch): enforce monorepo package boundaries` | Files: [architecture test files, removed/replaced old src/__arch__ files]
 
-- [ ] 14. Binary Runtime and Server QA Hardening
+- [x] 14. Binary Runtime and Server QA Hardening
 
   **What to do**: Perform end-to-end runtime QA for development and compiled production modes. Verify `bun run server` serves APIs in development; verify `bun run web` starts Vite; verify `bun run dev` starts both. Verify compiled `dist/specra` starts without Vite and without source Web dist. Test `/api/health`, `/`, at least one deep SPA route, at least one hashed JS/CSS asset, SSE event connection endpoint shape, permission/question route availability, and session persistence under `~/.specra` or a configured test temp directory. Verify LSP auto-installer does not trigger during startup; if it triggers unexpectedly or binary mode changes LSP install behavior, escalate before adding flags or config.
 
@@ -782,7 +782,7 @@ Executors must pause and present evidence/options/recommendation to the user bef
 
   **Commit**: YES | Message: `test(runtime): verify monorepo binary runtime` | Files: [test/QA scripts if added, server build/runtime fixes]
 
-- [ ] 15. Cleanup Package Metadata, Bin, Exports, and Stale Paths
+- [x] 15. Cleanup Package Metadata, Bin, Exports, and Stale Paths
 
   **What to do**: Clean up stale root metadata and old paths after successful migration. Update root `bin` so CLI/product entry points target the compiled binary workflow or correct workspace source during dev as appropriate. Update `files` fields if publishing remains relevant, or remove stale `src/**/*.ts` / `src/web/dist/**` entries that no longer match layout. Remove obsolete old `src/` directories after moves if empty. Ensure package `exports` and `types` fields point to correct source/JIT or build outputs according to chosen workspace pattern. Remove stale path aliases that allowed boundary escapes. Update `.gitignore`/ignored build artifacts if needed for `dist/`, `apps/web/dist`, generated manifest, and evidence artifacts.
 
@@ -824,7 +824,7 @@ Executors must pause and present evidence/options/recommendation to the user bef
 
   **Commit**: YES | Message: `chore(repo): remove stale monolith metadata` | Files: [package.json, package package.json files, tsconfig files, .gitignore if needed]
 
-- [ ] 16. Update Architecture Decision Notes and Migration Handoff
+- [x] 16. Update Architecture Decision Notes and Migration Handoff
 
   **What to do**: Add a concise architecture decision note in an appropriate tracked location, such as a root docs architecture note if one exists, or a new migration note only if the repository convention allows docs changes during implementation. Capture final package boundaries, dependency direction, why `@specra/protocol` exists, why Web cannot import `@specra/agent-core`, why tools/workflow/MCP/LSP/utils stayed in agent-core, why root `start` was removed, and how production binary embedding works. Include escalation rules for future maintainers.
 
@@ -870,10 +870,10 @@ Executors must pause and present evidence/options/recommendation to the user bef
 > 4 review agents run in PARALLEL. ALL must APPROVE. Present consolidated results to user and get explicit "okay" before completing.
 > **Do NOT auto-proceed after verification. Wait for user's explicit approval before marking work complete.**
 > **Never mark F1-F4 as checked before getting user's okay.** Rejection or user feedback -> fix -> re-run -> present again -> wait for okay.
-- [ ] F1. Plan Compliance Audit — oracle
-- [ ] F2. Code Quality Review — unspecified-high
-- [ ] F3. Real Manual QA — unspecified-high (+ playwright if UI)
-- [ ] F4. Scope Fidelity Check — deep
+- [x] F1. Plan Compliance Audit — oracle
+- [x] F2. Code Quality Review — unspecified-high
+- [x] F3. Real Manual QA — unspecified-high (+ playwright if UI)
+- [x] F4. Scope Fidelity Check — deep
 
 ## Commit Strategy
 - Commit after each task or tightly coupled task pair if the working tree is green.
