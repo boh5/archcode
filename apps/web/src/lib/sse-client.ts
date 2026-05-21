@@ -144,11 +144,19 @@ function waitForReconnect(
       return;
     }
 
-    const timeout = setTimeout(() => {
+    let resolved = false;
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
       setReconnectTimeout(undefined);
+      signal.removeEventListener("abort", onAbort);
       resolve();
-    }, delay);
+    };
+    const onAbort = () => done();
 
+    const timeout = setTimeout(done, delay);
+    signal.addEventListener("abort", onAbort, { once: true });
     setReconnectTimeout(timeout);
   });
 }

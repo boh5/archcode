@@ -25,7 +25,28 @@ export function SessionRoute() {
   useEffect(() => {
     if (session) {
       const store = getWebSessionStore(sessionId, slug);
-      store.getState().initializeFromSnapshot(session as never);
+      const {
+        messages,
+        steps,
+        todos,
+        title,
+        createdAt,
+        childSessionIds,
+        parentSessionId,
+        subAgentDescriptions,
+        eventCursor,
+      } = session;
+      store.getState().initializeFromSnapshot({
+        messages,
+        steps,
+        todos,
+        title,
+        createdAt,
+        childSessionIds,
+        parentSessionId,
+        subAgentDescriptions,
+        eventCursor,
+      });
     }
   }, [session, sessionId, slug]);
 

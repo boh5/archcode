@@ -12,7 +12,7 @@ import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
 import { GlobalEventBus } from "./events/global-event-bus";
-import { __resetSessionEventBridgesForTest, __setGlobalEventBusForTest } from "./events/session-event-bridge";
+import { __getSessionEventBridgeCountForTest, __resetSessionEventBridgesForTest, __setGlobalEventBusForTest } from "./events/session-event-bridge";
 import { PermissionService } from "./permission-service";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
@@ -355,5 +355,29 @@ describe("AgentRunner", () => {
 
     run.resolve({ text: "Done", steps: 1 });
     await job.promise;
+  });
+
+  test("unregisters the session event bridge after a job settles", async () => {
+    const bus = new GlobalEventBus();
+    const received: unknown[] = [];
+    __setGlobalEventBusForTest(bus);
+    bus.subscribe((event) => received.push(event));
+    const agent = createMockAgent("session-bridge-cleanup", Promise.resolve({ text: "Done", steps: 1 }));
+    const runner = new AgentRunner(createRuntime(agent));
+
+    const job = runner.submit({
+      slug: "project-bridge-cleanup",
+      sessionId: "session-bridge-cleanup",
+      workspaceRoot: tempRoot,
+      userMessage: "Hello",
+    });
+    await flushMicrotasks();
+    expect(__getSessionEventBridgeCountForTest()).toBe(1);
+
+    await job.promise;
+    expect(__getSessionEventBridgeCountForTest()).toBe(0);
+
+    agent.store.getState().append({ type: "system-notice", message: "after cleanup" });
+    expect(received).toEqual([]);
   });
 });

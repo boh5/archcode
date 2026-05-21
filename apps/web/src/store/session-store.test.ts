@@ -144,6 +144,72 @@ describe("applyRemoteEnvelope", () => {
     ]);
     expect(store.getState().nextEventId).toBe(2);
   });
+
+  test("adds and removes pending permission requests from remote envelopes", () => {
+    const store = createWebSessionStore("permission-remote", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "permission.request",
+        permissionId: "perm-remote-1",
+        toolName: "bash",
+        args: { command: "pwd" },
+        description: "Run pwd",
+      }),
+      sessionId: "permission-remote",
+    });
+
+    expect(store.getState().pendingPermissions.get("perm-remote-1")).toMatchObject({
+      id: "perm-remote-1",
+      sessionId: "permission-remote",
+      toolName: "bash",
+      input: { command: "pwd" },
+      description: "Run pwd",
+    });
+
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "permission.terminal",
+        permissionId: "perm-remote-1",
+        status: "resolved",
+      }),
+      sessionId: "permission-remote",
+    });
+
+    expect(store.getState().pendingPermissions.size).toBe(0);
+  });
+
+  test("adds and removes pending question requests from remote envelopes", () => {
+    const store = createWebSessionStore("question-remote", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "question.request",
+        questionId: "question-remote-1",
+        question: "Continue?",
+      }),
+      sessionId: "question-remote",
+    });
+
+    expect(store.getState().pendingQuestions.get("question-remote-1")).toMatchObject({
+      id: "question-remote-1",
+      sessionId: "question-remote",
+      toolName: "ask_user",
+      questions: ["Continue?"],
+    });
+
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "question.terminal",
+        questionId: "question-remote-1",
+        status: "resolved",
+        answer: "Yes",
+      }),
+      sessionId: "question-remote",
+    });
+
+    expect(store.getState().pendingQuestions.size).toBe(0);
+  });
 });
 
 describe("initializeFromSnapshot", () => {

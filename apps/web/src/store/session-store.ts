@@ -99,11 +99,55 @@ function appendEnvelopeToState(
     eventOffset += dropCount;
   }
 
-  if (!isReducibleStreamEvent(envelope.payload)) {
+  const payload = envelope.payload;
+  if (payload.type === "permission.request") {
+    return {
+      events,
+      eventOffset,
+      nextEventId,
+      pendingPermissions: new Map(state.pendingPermissions).set(payload.permissionId, {
+        id: payload.permissionId,
+        sessionId: state.sessionId,
+        toolName: payload.toolName,
+        toolCallId: "",
+        input: payload.args,
+        description: payload.description ?? "",
+      }),
+    };
+  }
+  if (payload.type === "permission.terminal") {
+    const pendingPermissions = new Map(state.pendingPermissions);
+    pendingPermissions.delete(payload.permissionId);
+    return { events, eventOffset, nextEventId, pendingPermissions };
+  }
+  if (payload.type === "question.request") {
+    return {
+      events,
+      eventOffset,
+      nextEventId,
+      pendingQuestions: new Map(state.pendingQuestions).set(payload.questionId, {
+        id: payload.questionId,
+        sessionId: state.sessionId,
+        toolName: "ask_user",
+        toolCallId: "",
+        questions: [payload.question],
+      }),
+    };
+  }
+  if (payload.type === "question.terminal") {
+    const pendingQuestions = new Map(state.pendingQuestions);
+    pendingQuestions.delete(payload.questionId);
+    return { events, eventOffset, nextEventId, pendingQuestions };
+  }
+  if (payload.type === "shutdown") {
     return { events, eventOffset, nextEventId };
   }
 
-  const partial = reduceStreamEvent(state, envelope.payload, {
+  if (!isReducibleStreamEvent(payload)) {
+    return { events, eventOffset, nextEventId };
+  }
+
+  const partial = reduceStreamEvent(state, payload, {
     timestamp: envelope.createdAt,
     generateId: () => crypto.randomUUID(),
   });

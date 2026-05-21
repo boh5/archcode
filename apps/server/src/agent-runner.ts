@@ -165,6 +165,7 @@ export class AgentRunner {
         );
       }
     } finally {
+      unregisterSessionEventBridge(workspaceRoot, sessionId);
       if (agent && !this.#runtime.sessionAgentManager.isTombstoned(workspaceRoot, sessionId)) {
         try {
           await saveSessionTranscript(agent.store.getState(), workspaceRoot);

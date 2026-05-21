@@ -148,6 +148,25 @@ describe("connectSSE", () => {
     expect(scheduledTimers).toHaveLength(0);
   });
 
+  test("resolves closed promptly when aborted during reconnect delay", async () => {
+    const fetchMock: FetchMock = mock(async () => new Response("unauthorized", { status: 401 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = connectSSE("/api/events", { onEvent: () => {}, onError: () => {} });
+    let closed = false;
+    client.closed.then(() => {
+      closed = true;
+    });
+    await flushMicrotasks();
+    expect(scheduledTimers).toHaveLength(1);
+
+    client.abort();
+    await flushMicrotasks();
+
+    expect(closed).toBe(true);
+    expect(scheduledTimers).toHaveLength(0);
+  });
+
   test("retries HTTP 401 and 500 responses with status metadata and exponential backoff", async () => {
     const errors: HTTPStatusError[] = [];
     const fetchMock: FetchMock = mock(async () => {
