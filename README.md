@@ -14,9 +14,9 @@ bun test             # Run tests
 |---|---|---|
 | Debug (recommended): separate logs | Terminal 1 `bun run server` + Terminal 2 `bun run web` | Hono and Vite as separate processes, logs don't interfere |
 | One-click dev (merged logs) | `bun run dev` | concurrently starts both, output with `[server]` / `[web]` prefix |
-| Production | `bun run build && bun run start` | Vite outputs static → Hono single-port serves API + UI |
+| Production | `bun run build` | Build production binary at dist/specra |
 
-`bun run server` starts the Hono API/SSE server from `src/main.ts`; `bun run web` starts the Vite React frontend from `src/web`. They can run separately for cleaner logs while developing. `bun run dev` runs both at once through `concurrently`.
+`bun run server` starts the Hono API/SSE server from `apps/server/src/main.ts`; `bun run web` starts the Vite React frontend from `apps/web`. They can run separately for cleaner logs while developing. `bun run dev` runs both at once through `concurrently`.
 
 ### Server Environment
 
@@ -216,20 +216,20 @@ All errors fail fast at agent creation time — not mid-stream.
 ## Architecture
 
 ```
-src/main.ts                         # Headless server entry: createSpecraRuntime() → config → providers → tools → MCP → boot Hono
-src/config/                         # Config loading (JSON), Zod validation (.strict() on all schemas)
-src/provider/                        # Provider registry & ModelInfo (wraps AI SDK instances)
-src/agents/definitions/              # AgentDefinition records for orchestrator, explore, and workflow roles
-src/agents/factory.ts                # Agent creation and delegation through ConfiguredAgent
-src/agents/model-resolver.ts         # Agent → model + resolved options (fail-fast)
-src/agents/query/loop.ts             # streamText + tool execution cycle (max 50 steps)
-src/projects/                        # Multi-project registry and per-workspace context resolver
-src/server/                          # Hono REST + SSE server with auth, CORS, errors, lifecycle
-src/web/                             # Vite + React + Tailwind frontend
-src/compact/                         # 3-phase context compaction pipeline
-src/memory/                          # Persistent memory (atomic writes, frontmatter, index)
-src/lsp/                             # LSP client pool (18 language servers, 50+ ext mappings)
-src/tools/                           # 21 builtin tools with guard/hook pipeline
+apps/server/src/main.ts                           # Headless server entry: createSpecraRuntime() → config → providers → tools → MCP → boot Hono
+packages/agent-core/src/config/                   # Config loading (JSON), Zod validation (.strict() on all schemas)
+packages/agent-core/src/provider/                  # Provider registry & ModelInfo (wraps AI SDK instances)
+packages/agent-core/src/agents/definitions/        # AgentDefinition records for orchestrator, explore, and workflow roles
+packages/agent-core/src/agents/factory.ts          # Agent creation and delegation through ConfiguredAgent
+packages/agent-core/src/agents/model-resolver.ts   # Agent → model + resolved options (fail-fast)
+packages/agent-core/src/agents/query/loop.ts       # streamText + tool execution cycle (max 50 steps)
+packages/agent-core/src/projects/                  # Multi-project registry and per-workspace context resolver
+apps/server/src/                                   # Hono REST + SSE server with auth, CORS, errors, lifecycle
+apps/web/                                          # Vite + React + Tailwind frontend
+packages/agent-core/src/compact/                   # 3-phase context compaction pipeline
+packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
+packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
+packages/agent-core/src/tools/                     # 21 builtin tools with guard/hook pipeline
 ```
 
 **Data flow:**
@@ -244,8 +244,7 @@ src/tools/                           # 21 builtin tools with guard/hook pipeline
 bun run server       # Start Hono API/SSE server with hot reload
 bun run web          # Start Vite Web UI dev server
 bun run dev          # Start server + web together with prefixed merged logs
-bun run build        # Type check + build Web UI assets
-bun run start        # Start production server
+bun run build        # Type check + build Web UI assets + compile binary
 bun run typecheck    # Type check (run first)
 bun test             # Run tests
 ```
