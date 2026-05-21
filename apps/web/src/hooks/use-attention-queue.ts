@@ -6,6 +6,7 @@ import type {
   QuestionAnswerBody,
   QuestionRequest,
 } from "../api/types";
+import type { WebSessionStoreState } from "../store/session-store";
 import { createWebSessionStore, useSessionStore } from "../store/session-store";
 
 export interface AttentionQueue {
@@ -15,8 +16,47 @@ export interface AttentionQueue {
   respondQuestion: (id: string, body: QuestionAnswerBody) => void;
 }
 
+export interface AttentionQueueDeps {
+  postPermissionResponse: (
+    variables: { id: string; decision: PermissionDecision },
+    options?: { onSuccess?: () => void },
+  ) => void;
+  postQuestionAnswer: (
+    variables: { id: string; body: QuestionAnswerBody },
+    options?: { onSuccess?: () => void },
+  ) => void;
+  getState: () => Pick<WebSessionStoreState, "removePermissionRequest" | "removeQuestionRequest">;
+}
+
 function mapValuesSortedById<T extends { id: string }>(items: Map<string, T>): T[] {
   return [...items.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function createAttentionQueueActions(
+  deps: AttentionQueueDeps,
+): Pick<AttentionQueue, "respondPermission" | "respondQuestion"> {
+  return {
+    respondPermission: (id, response) => {
+      deps.postPermissionResponse(
+        { id, decision: response },
+        {
+          onSuccess: () => {
+            deps.getState().removePermissionRequest(id);
+          },
+        },
+      );
+    },
+    respondQuestion: (id, body) => {
+      deps.postQuestionAnswer(
+        { id, body },
+        {
+          onSuccess: () => {
+            deps.getState().removeQuestionRequest(id);
+          },
+        },
+      );
+    },
+  };
 }
 
 export function useAttentionQueue(sessionId: string, slug: string): AttentionQueue {
@@ -42,33 +82,18 @@ export function useAttentionQueue(sessionId: string, slug: string): AttentionQue
     [pendingQuestions],
   );
 
-  const respondPermission = useCallback(
-    (id: string, response: PermissionDecision) => {
-      postPermissionResponse(
-        { id, decision: response },
-        {
-          onSuccess: () => {
-            createWebSessionStore(sessionId, slug).getState().removePermissionRequest(id);
-          },
-        },
-      );
-    },
-    [postPermissionResponse, sessionId, slug],
+  const actions = useMemo(
+    () => createAttentionQueueActions({
+      postPermissionResponse,
+      postQuestionAnswer,
+      getState: () => createWebSessionStore(sessionId, slug).getState(),
+    }),
+    [postPermissionResponse, postQuestionAnswer, sessionId, slug],
   );
 
-  const respondQuestion = useCallback(
-    (id: string, body: QuestionAnswerBody) => {
-      postQuestionAnswer(
-        { id, body },
-        {
-          onSuccess: () => {
-            createWebSessionStore(sessionId, slug).getState().removeQuestionRequest(id);
-          },
-        },
-      );
-    },
-    [postQuestionAnswer, sessionId, slug],
-  );
+  const respondPermission = useCallback(actions.respondPermission, [actions.respondPermission]);
+
+  const respondQuestion = useCallback(actions.respondQuestion, [actions.respondQuestion]);
 
   return {
     permissions,

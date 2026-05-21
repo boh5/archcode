@@ -385,6 +385,10 @@ export function evictIdleSessionStores(): void {
   }
 }
 
+export function __resetWebSessionStoresForTest(): void {
+  sessionRegistry.clear();
+}
+
 export function getWebSessionStore(
   sessionId: string,
   slug?: string,

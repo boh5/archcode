@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { GlobalSessionEventEnvelope, SessionEventPayload } from "@specra/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import {
@@ -6,6 +6,7 @@ import {
   evictIdleSessionStores,
   findWebSessionStore,
   markSessionForeground,
+  __resetWebSessionStoresForTest,
 } from "./session-store";
 
 function event(eventId: number, payload: SessionEventPayload): GlobalSessionEventEnvelope {
@@ -46,6 +47,10 @@ function makeQuestion(id: string, sessionId = "test-session"): QuestionRequest {
 }
 
 describe("web session store registry", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
   test("findWebSessionStore returns existing stores without creating missing stores", () => {
     expect(findWebSessionStore("registry-session", "registry-slug")).toBeUndefined();
 
@@ -98,6 +103,10 @@ describe("web session store registry", () => {
 });
 
 describe("applyRemoteEnvelope", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
   test("drops envelopes for other sessions without changing the store", () => {
     const store = createWebSessionStore("known", "demo");
 
@@ -138,6 +147,10 @@ describe("applyRemoteEnvelope", () => {
 });
 
 describe("initializeFromSnapshot", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
   test("authoritatively overwrites fields with empty arrays, null title, and event cursor", () => {
     const store = createWebSessionStore("snapshot", "demo");
 
@@ -189,6 +202,10 @@ describe("initializeFromSnapshot", () => {
 });
 
 describe("resetTransientState", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
   test("clears scoped pending confirmations without transport cursor or connection state", () => {
     const store = createWebSessionStore("reset", "demo");
     const state = store.getState();

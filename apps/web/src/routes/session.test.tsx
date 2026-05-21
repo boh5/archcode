@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import {
+  __resetWebSessionStoresForTest,
   createWebSessionStore,
   evictIdleSessionStores,
   findWebSessionStore,
@@ -7,6 +8,10 @@ import {
 } from "../store/session-store";
 
 describe("SessionRoute store-level behavior", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
   test("markSessionForeground(true) pins the store against eviction", () => {
     const store = createWebSessionStore("fg-pin", "demo");
     markSessionForeground("demo", "fg-pin", true);
@@ -21,7 +26,7 @@ describe("SessionRoute store-level behavior", () => {
   });
 
   test("markSessionForeground(false) releases the pin, allowing eviction", () => {
-    const store = createWebSessionStore("fg-unpin", "demo");
+    createWebSessionStore("fg-unpin", "demo");
     markSessionForeground("demo", "fg-unpin", true);
     markSessionForeground("demo", "fg-unpin", false);
 
