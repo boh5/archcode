@@ -2,60 +2,133 @@
 
 Specra — long-running coding agent with Hono server + React Web UI. Two-tier agent architecture (Orchestrator + Explorer sub-agents) with structured tool execution, LSP integration, persistent memory, and context compaction.
 
+## Monorepo Structure
+
+Turborepo workspace with Bun. Four packages:
+
+```
+specra/                          # Root workspace (bun@1.3.13)
+├── apps/server/                 # @specra/server  — Hono API/SSE server
+├── apps/web/                    # @specra/web     — Vite + React frontend
+├── packages/agent-core/        # @specra/agent-core — core agent logic
+├── packages/protocol/           # @specra/protocol — shared types (zero runtime deps)
+└── scripts/build.ts            # 3-phase production build pipeline
+```
+
+**Dependency graph:**
+```
+@specra/server → @specra/agent-core → @specra/protocol
+@specra/web → @specra/protocol
+```
+
+Web does NOT depend on agent-core or server. Architecture tests in `__arch__/` enforce these boundaries.
+
 ## Runtime & Toolchain
 
 - **Runtime**: Bun (not Node). All scripts use `bun run` / `bun test`.
 - **Package manager**: Bun (bun.lock present, not package-lock).
 - **TypeScript**: strict mode, ES2022 target, bundler module resolution. Do NOT use `.js` extensions in imports.
-- **Entry point**: `src/main.ts` with `import.meta.main` guard; headless server boot, no terminal UI.
+- **Entry point**: `apps/server/src/main.ts` with `import.meta.main` guard; headless server boot, no terminal UI.
 
 ## Commands
 
 ```sh
-bun run server       # Start Hono API/SSE server with hot reload (src/main.ts)
-bun run web          # Start Vite React frontend (src/web)
-bun run dev          # concurrently starts server + web with [server]/[web] prefixes
-bun run build        # typecheck + Vite production build
-bun run start        # Start production Hono server (single-port API + UI)
-bun run typecheck    # tsc --noEmit
-bun test             # Run tests (bun:test runner)
+bun run dev          # Turborepo: starts server + web in parallel
+bun run build        # typecheck + Vite build + manifest gen + Bun compile binary
+bun run typecheck    # tsc --noEmit via Turborepo across all workspaces
+bun run test         # bun:test via Turborepo across all workspaces (depends on ^typecheck)
+bun run web:build    # Standalone: Vite build only (no full pipeline)
 ```
 
-Validation order: `typecheck` → `test`.
+Per-package direct commands:
+```sh
+bun run --cwd apps/server dev      # Server with hot reload (bun --hot apps/server/src/main.ts)
+bun run --cwd apps/web dev         # Vite dev server on :5173, proxies /api → :4096
+bun run --cwd apps/web build       # Vite production build → apps/web/dist/
+```
+
+Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
 ## Architecture
 
 ```
-src/main.ts                         # Headless server entry: createSpecraRuntime() → config → providers → tools → MCP → bootServer()
-src/config/                         # Config loading (JSON), Zod validation (.strict() on all schemas)
-src/provider/                       # Provider registry & ModelInfo (wraps AI SDK instances)
-src/agents/definitions/             # AgentDefinition records for orchestrator, explore, and workflow roles
-src/agents/factory.ts               # Agent creation and delegation through ConfiguredAgent
-src/agents/constants.ts             # EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS lists
-src/agents/errors.ts                # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError
-src/agents/query/loop.ts            # streamText + tool execution cycle (max 50 steps), doom detection
-src/agents/query/loop-hooks.ts      # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
-src/agents/query/hooks/             # auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation
-src/tools/define-tool.ts            # defineTool() → ToolDescriptor (name, inputSchema, traits, hooks, guards, execute)
-src/tools/registry.ts               # register/registerAll/execute, globalGuards, globalHooks
-src/tools/hooks/                    # Guards: workspace, read-snapshot, sensitive-file, memory-index, bash-classifier; After: edit-error-recovery, redact, truncate, audit, logger
-src/tools/concurrency/partition.ts  # partitionToolCalls(): groups concurrencySafe calls into parallel batches
-src/tools/builtins/                 # 21 builtin tools (see Tool System section)
-src/core/register-tools.ts          # Wires builtins + memory tools + global after-hooks (redact → truncate → audit → logger)
-src/store/                          # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
-src/background/                     # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
-src/commands/                       # CommandRegistry + /compact command
-src/compact/                        # 3-phase pipeline: selectPrefix → pruneOutputs → summarize (streamText). Circuit breaker + token estimation
-src/lsp/                            # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
-src/llm/                            # llmObject<T>(): generateText + forced tool call + Zod validation → typed result
-src/memory/                         # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
-src/projects/                       # ProjectRegistry + ProjectContextResolver for multi-project workspace isolation
-src/prompt/                         # buildSystemPrompt(): Identity → Guidelines → Tools → Environment → Memory → Project(AGENTS.md)
-src/security/                       # 3 secret-detection regex patterns + containsSecretPattern()
-src/server/                         # Hono REST + SSE server with auth, CORS, error handling, lifecycle, services, routes
-src/mcp/                            # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
-src/web/                            # Vite + React + Tailwind frontend, separate build artifact served by production server
-src/utils/                          # getSystemErrorCode
+apps/server/src/
+├── main.ts                     # Boot entry: createSpecraRuntime() → bootServer(runtime)
+├── index.ts                     # Barrel: re-exports app, boot, error-handler, errors, listen, logger
+├── app.ts                       # Hono app builder (routes, CORS, error handling)
+├── boot.ts                      # Server bootstrap + graceful shutdown on SIGINT/SIGTERM
+├── agent-runner.ts              # AgentRunner: job lifecycle (submit/abort/cancel), SSE bridge
+├── ask-user-service.ts         # Deferred question request/response pattern
+├── permission-service.ts       # Deferred permission request/response pattern
+├── error-handler.ts            # Hono error handler
+├── error.ts                    # Server-specific error classes
+├── lifecycle.ts                # Server lifecycle events
+├── listen.ts                   # Port binding (falls back to ephemeral if busy)
+├── logger.ts                   # Request logger
+├── resolve.ts                  # Request path resolution
+├── serve-web.ts                # Embedded web asset serving
+├── web-manifest.ts             # AUTO-GENERATED by scripts/build.ts (gitignored)
+├── routes/                     # 10 route modules (commands, directories, files, global-events,
+│                               #   messages, permissions, projects, questions, sessions, workflow)
+└── events/                     # global-event-bus.ts, session-event-bridge.ts
+
+packages/agent-core/src/
+├── runtime.ts                  # createSpecraRuntime(): config → providers → tools → MCP → session manager
+├── index.ts                    # Public API exports
+├── config/                     # .specra.json loading, Zod schema (.strict()), env expansion, MCP config
+├── provider/                   # Provider registry wrapping AI SDK instances, ModelInfo with token limits
+├── agents/definitions/         # AgentDefinition records for orchestrator, explore, and workflow roles
+├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
+├── agents/configured-agent.ts  # Filtered tool set + own store per delegated agent
+├── agents/session-agent-manager.ts  # Per-workspace agent lifecycle management
+├── agents/constants.ts         # EXPLORER_READ_ONLY_TOOLS, DELEGATION_TOOLS lists
+├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
+├── agents/model-resolver.ts    # Resolves provider:modelId + variant → AI SDK model instance
+├── agents/tool-filter.ts       # Depth-aware tool filtering for explorer sub-agents
+├── agents/query/               # streamText + tool execution cycle (max 50 steps), doom detection
+├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
+├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation
+├── agents/workflow/            # Workflow state machine, artifacts, permissions, critic protocol, foreman wave, guards, tasks format
+├── tools/define-tool.ts        # defineTool() → ToolDescriptor (name, inputSchema, traits, hooks, guards, execute)
+├── tools/registry.ts           # register/registerAll/execute, globalGuards, globalHooks
+├── tools/builtins/             # 27 builtin tools (19 base + 4 LSP + 2 memory + 6 workflow; see Tool System section)
+├── tools/hooks/                # Guards: workspace, read-snapshot, sensitive-file, memory-index, bash-classifier; After: edit-error-recovery, redact, truncate, audit, logger
+├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches
+├── tools/permission/           # Permission handling (15 files for tool access control)
+├── tools/security/             # Secret detection patterns + bash classifier
+├── tools/riipgrep/             # Ripgrep wrapper for search tools
+├── core/                       # register-tools.ts: wires builtins + memory + workflow tools + global after-hooks
+├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
+├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
+├── commands/                   # CommandRegistry + /compact command
+├── compact/                    # 3-phase pipeline: selectPrefix → pruneOutputs → summarize (streamText). Circuit breaker + token estimation
+├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
+├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
+├── llm/                        # llmObject<T>(): generateText + forced tool call + Zod validation → typed result
+├── projects/                   # ProjectRegistry + ProjectContextResolver for multi-project workspace isolation
+├── prompt/                     # buildSystemPrompt(): Identity → Guidelines → Tools → Environment → Memory → Project(AGENTS.md)
+├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
+├── delegation/                 # Delegation types (shared between agent delegation flow)
+├── security/                   # 3 secret-detection regex patterns + containsSecretPattern()
+└── utils/                      # Error utilities, frontmatter parse/format, safe-file operations
+
+apps/web/src/
+├── main.tsx                    # React entry point
+├── App.tsx                     # Root component
+├── router.tsx                  # React Router routes
+├── api/                        # API client layer
+├── components/                 # UI components
+├── context/                    # React context providers
+├── hooks/                      # Custom hooks
+├── lib/                        # Utility library (includes SSE client)
+├── routes/                     # Page route components
+├── store/                      # Client-side Zustand stores
+└── styles/                     # CSS/styles
+
+packages/protocol/src/
+├── index.ts                    # Barrel export
+├── types.ts                    # 508 lines: SSE event types, session/todo/reminder types
+└── reduce.ts                   # Stream event reduction logic
 ```
 
 **Data flow:**
@@ -66,19 +139,24 @@ Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered t
 ```
 
 **Server + Web UI:**
-- `src/main.ts` creates `SpecraRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
-- `src/server/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `SPECRA_SERVER_PASSWORD`, `/api/health`, project/session/message/event/permission/question/command/workflow/file routes, and centralized errors.
-- `src/server/boot.ts` starts the server on `SPECRA_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `SPECRA_SERVER_PASSWORD` is unset.
-- `src/web/` is the React frontend. In development it runs through Vite with `bun run web`; production uses `bun run build` then `bun run start` so Hono can serve API + UI from one port.
+- `apps/server/src/main.ts` creates `SpecraRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
+- `apps/server/src/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `SPECRA_SERVER_PASSWORD`, `/api/health`, project/session/message/event/permission/question/command/workflow/file routes, and centralized errors.
+- `apps/server/src/boot.ts` starts the server on `SPECRA_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `SPECRA_SERVER_PASSWORD` is unset.
+- `apps/web/` is the React frontend. In development it runs through Vite (`bun run --cwd apps/web dev`); production uses `bun run build` then `bun run start` so Hono can serve API + UI from one port.
+
+**Build pipeline** (`scripts/build.ts`):
+1. `runWebBuild()` → Vite builds `apps/web/` to `apps/web/dist/`
+2. `generateManifest()` → generates `apps/server/src/web-manifest.ts` (import map of web dist assets, gitignored)
+3. `compileBinary()` → `Bun.build()` compiles `apps/server/src/main.ts` → `dist/specra` binary (minified, includes css-tree patch plugin)
 
 **Multi-project model:**
-- `src/projects/registry.ts` persists registered workspaces under `~/.specra/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
-- `src/projects/context-resolver.ts` creates per-workspace runtime context: workflow state, project memory, approvals, and artifacts.
+- `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.specra/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
+- `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: workflow state, project memory, approvals, and artifacts.
 - `SpecraRuntime.agentFor(workspaceRoot)` lazily creates one root Orchestrator agent per workspace and caches it.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, workflow, and events.
 
 **SSE + Deferred pattern:**
-- Session streaming lives in `src/server/routes/events.ts`; clients connect to `/api/projects/:slug/sessions/:sessionId/events`.
+- Session streaming lives in `apps/server/src/routes/events.ts`; clients connect to `/api/projects/:slug/sessions/:sessionId/events`.
 - Event names are `stream`, `permission.request`, `question.request`, `heartbeat`, and shutdown-related lifecycle notifications. `stream` carries flattened store events such as text deltas, reasoning deltas, tool calls/results, compaction, steps, reminders, and todos.
 - `EventRing` stores recent events and supports replay via `Last-Event-ID` or `lastEventId`; heartbeat emits every 15 seconds to keep connections alive.
 - Cross-network confirmations use a deferred request/response pattern: `PermissionService.request()` pushes `permission.request` into the session ring and returns a Promise that resolves when `/api/permissions` responds; `AskUserService.request()` does the same with `question.request` and `/api/questions`.
@@ -178,7 +256,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Tool System
 
-**21 builtin tools** (1–15 via `createBuiltinToolDescriptors()`, 16–19 LSP, 20–21 memory via factory with `MemoryFileManager`):
+**27 builtin tools** (19 base via `createBuiltinToolDescriptors()`, 4 LSP, 2 memory, 6 workflow — all registered in `core/register-tools.ts`):
 
 | Category | Tools | Notes |
 |----------|-------|-------|
@@ -191,6 +269,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation | delegate❌, background_output✅, wait_for_reminder✅, view_tool_output✅ | — |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
+| Workflow | workflow_create❌, workflow_read✅, workflow_update_stage❌, workflow_task_check✅, artifact_read✅, artifact_write❌ | Factory-created with WorkflowState |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -220,7 +299,21 @@ HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.specr
 
 ## Key Dependencies
 
-`ai` v6 + `@ai-sdk/openai-compatible` (streamText), `hono` v4 (server), `react` 19 + `react-dom` + `react-router-dom` (Web UI), `vite` v6 + `@vitejs/plugin-react` + Tailwind (frontend build), `zustand` v5 (store), `zod` v4 (.strict()), `@modelcontextprotocol/sdk` (MCP), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch).
+- `@specra/agent-core`: `ai` v6 + `@ai-sdk/openai-compatible` (streamText), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
+- `@specra/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
+- `@specra/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
+- `@specra/protocol`: zero runtime deps
+- Build: `vite` v6 + `@vitejs/plugin-react` + Tailwind v4 (`@tailwindcss/vite`), `typescript` v6, `turbo` v2
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SPECRA_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
+| `SPECRA_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*`. Unset = dev mode |
+| `SPECRA_HOST` | unset | Externally advertised host |
+| `SPECRA_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
+| `SPECRA_PROJECTS_DIR` | unset | Base directory for project selection flows |
 
 ## Conventions
 
@@ -231,13 +324,16 @@ HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.specr
 - Custom error classes: extend `Error`, typed constructor params, explicit `this.name = "ClassName"`, meaningful public fields.
 - Barrel exports via `index.ts`. All Zod schemas use `.strict()`.
 - Test runner: `bun:test`. Import from `"bun:test"`. Use `mock()` not `jest.fn()`. Files: `<name>.test.ts` colocated. Temp dirs: `__test_tmp__/` cleaned in `afterAll`.
-- Entry point: `src/main.ts` boots the headless Hono server. `package.json` bin → `./src/main.ts`.
+- Entry point: `apps/server/src/main.ts` boots the headless Hono server. `package.json` bin → `./apps/server/src/main.ts`.
 
 ## Testing Patterns
 
-- Mock `streamText`: `__setStreamTextForTest(fn)` from `agents/query/loop.ts`
-- Mock `generateText`: `__setGenerateTextForTest(fn)` from `llm/llm-object.ts`
-- Mock LSP: `__setLspClientForTest`, `__setLspClientPoolForTest`, `__setLspTransportForTest` from respective modules
-- Mock sessions dir: `__setSessionsDirForTest(dir)` from `store/sessions-dir.ts`
+- Mock `streamText`: `__setStreamTextForTest(fn)` from `packages/agent-core/src/agents/query/loop.ts`
+- Mock `generateText`: `__setGenerateTextForTest(fn)` from `packages/agent-core/src/llm/llm-object.ts`
+- Mock LSP: `__setLspClientForTest`, `__setLspClientPoolForTest`, `__setLspTransportForTest` from `packages/agent-core/src/lsp/` respective modules
+- Mock sessions dir: `__setSessionsDirForTest(dir)` from `packages/agent-core/src/store/sessions-dir.ts`
 - Test stores: `createSessionStore(randomUUID())`. Empty registry: `createRegistry([])`
+- Test project context: `createTestProjectContext(workspaceRoot)` from `packages/agent-core/src/tools/test-project-context.ts`
+- Server HTTP tests: Hono's `app.request("/api/health")` pattern
 - Test error names, not just messages (all custom errors have `this.name`)
+- Architecture tests in `packages/agent-core/src/__arch__/`: enforce monorepo boundary rules and no `process.cwd()` in production code
