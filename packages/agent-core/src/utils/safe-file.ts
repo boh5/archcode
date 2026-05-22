@@ -72,7 +72,8 @@ export async function resolveContainedPath(
 
   try {
     const realPath = await realpath(normalized);
-    if (!isContained(realPath, root)) {
+    const realRoot = await realpath(root);
+    if (!isContained(realPath, realRoot)) {
       throw new SafePathError(
         normalized,
         "Symlink resolves outside the allowed root directory",

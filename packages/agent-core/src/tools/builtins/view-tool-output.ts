@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import { defineTool } from "../define-tool";
@@ -30,7 +31,7 @@ type ViewToolOutputInput = z.infer<typeof ViewToolOutputInputSchema>;
 
 /** Canonical TOOL_OUTPUT_DIR with trailing separator for prefix matching. */
 const CANONICAL_OUTPUT_DIR: string = (() => {
-  const dir = resolve(TOOL_OUTPUT_DIR);
+  const dir = realpathSync.native(resolve(TOOL_OUTPUT_DIR));
   return dir.endsWith("/") ? dir : dir + "/";
 })();
 
