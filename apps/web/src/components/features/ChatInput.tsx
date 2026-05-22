@@ -182,7 +182,7 @@ useEffect(() => {
 
   return (
     <div className="border-t border-border-subtle bg-bg-surface px-5 py-3 flex flex-col gap-2 shrink-0 relative">
-      {showSlashMenu && filteredCommands.length > 0 && (
+      {showSlashMenu && filteredCommands.length > 0 && !isRunning && (
         <div
           ref={slashMenuRef}
           className="absolute bottom-full left-5 right-5 bg-bg-elevated border border-border-default rounded-md shadow-lg max-h-[200px] overflow-y-auto z-10"
@@ -209,7 +209,8 @@ useEffect(() => {
         <div className="relative">
           <button
             type="button"
-            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong shrink-0"
+            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+            disabled={isRunning}
             onClick={() => setAttachTooltip((v) => !v)}
             onBlur={() => setAttachTooltip(false)}
             title="Attach file"
@@ -234,46 +235,75 @@ useEffect(() => {
           )}
         </div>
 
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Send a message…"
-          rows={1}
-          className="flex-1 resize-none border border-border-default rounded-lg px-3.5 py-2.5 bg-bg-base text-text-primary text-[13.5px] leading-[1.55] min-h-[42px] max-h-[200px] overflow-y-auto font-sans outline-none transition-colors duration-150 focus:border-accent placeholder:text-text-tertiary"
-        />
+        <div className="relative flex-1">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            disabled={isRunning}
+            placeholder={isRunning ? "Thinking…" : "Send a message…"}
+            rows={1}
+            style={
+              isRunning
+                ? {
+                    border: "1.5px solid transparent",
+                    background: `linear-gradient(var(--bg-base), var(--bg-base)) padding-box, conic-gradient(from var(--border-angle, 0deg), transparent 0%, var(--accent) 25%, transparent 50%) border-box`,
+                    animation: "thinking-border 1.5s linear infinite",
+                  }
+                : undefined
+            }
+            className={`w-full resize-none rounded-lg px-3.5 py-2.5 text-text-primary text-[13.5px] leading-[1.55] min-h-[42px] max-h-[200px] overflow-y-auto font-sans outline-none transition-all duration-200 placeholder:text-text-tertiary disabled:text-text-tertiary disabled:cursor-not-allowed ${
+              isRunning
+                ? "bg-transparent"
+                : "border border-border-default bg-bg-base focus:border-accent"
+            }`}
+          />
+        </div>
 
-        <button
-          type="button"
-          className="w-9 h-9 rounded-sm bg-accent text-bg-base flex items-center justify-center cursor-pointer shrink-0 transition-opacity duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-          disabled={!canSend}
-          onClick={sendMessage}
-          title="Send message"
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="currentColor"
+        {isRunning ? (
+          <button
+            type="button"
+            className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center cursor-pointer shrink-0 transition-all duration-150 hover:bg-error-muted hover:border-error hover:text-error"
+            onClick={() =>
+              postCommand.mutate({ slug, sessionId, name: "abort" })
+            }
+            title="Stop"
           >
-            <path d="M2.5 2L14 8L2.5 14L5 8L2.5 2Z" />
-          </svg>
-        </button>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+              <rect width="10" height="10" rx="1.5" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="w-9 h-9 rounded-sm bg-accent text-bg-base flex items-center justify-center cursor-pointer shrink-0 transition-opacity duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!canSend}
+            onClick={sendMessage}
+            title="Send message"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+            >
+              <path d="M2.5 2L14 8L2.5 14L5 8L2.5 2Z" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
         <span>{modelName}</span>
-        <span>
-          <kbd className="text-text-muted">Enter</kbd> send ·{" "}
-          <kbd className="text-text-muted">Shift+Enter</kbd> newline
-          {isRunning && (
-            <>
-              {" · "}
-              <kbd className="text-text-muted">Esc</kbd> abort
-            </>
-          )}
-        </span>
+        {isRunning ? (
+          <span className="text-text-secondary select-none">Thinking…</span>
+        ) : (
+          <span>
+            <kbd className="text-text-muted">Enter</kbd> send ·{" "}
+            <kbd className="text-text-muted">Shift+Enter</kbd> newline
+          </span>
+        )}
       </div>
     </div>
   );
