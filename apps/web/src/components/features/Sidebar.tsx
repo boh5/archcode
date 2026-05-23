@@ -279,7 +279,7 @@ export function Sidebar() {
   };
 
   return (
-    <div className="row-span-full bg-bg-surface border-r border-border-subtle flex flex-col overflow-hidden">
+    <div className="h-full bg-bg-surface border-r border-border-subtle flex flex-col overflow-hidden">
       <div className="px-3.5 pt-2.5 pb-2 border-b border-border-subtle shrink-0">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">

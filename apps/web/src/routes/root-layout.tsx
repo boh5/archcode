@@ -19,19 +19,19 @@ export function RootLayout() {
         <span className="text-sm font-medium text-text-secondary">Specra</span>
       </div>
 
-      <div className="col-start-1 col-end-2 row-start-1 row-end-3 max-[800px]:hidden border-r border-border-default bg-bg-surface">
+      <div className="col-start-1 col-end-2 row-start-1 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
         <ProjectBar onAddProject={openAddProjectModal} />
       </div>
 
-      <div className="col-start-2 col-end-3 row-start-2 row-end-3 max-[800px]:hidden border-r border-border-default bg-bg-surface">
+      <div className="col-start-2 col-end-3 row-start-2 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
         <Sidebar />
       </div>
 
-      <div className="col-start-3 col-end-4 row-start-2 row-end-3 overflow-hidden">
+      <div className="col-start-3 col-end-4 row-start-2 row-end-3 min-h-0 overflow-hidden">
         <Outlet />
       </div>
 
-      <div className="col-start-4 col-end-5 row-start-2 row-end-3 max-[1100px]:hidden overflow-hidden">
+      <div className="col-start-4 col-end-5 row-start-2 row-end-3 min-h-0 max-[1100px]:hidden overflow-hidden">
         <DetailPanel />
       </div>
     </div>
