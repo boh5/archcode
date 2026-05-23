@@ -13,14 +13,13 @@ describe("BackgroundTaskManager", () => {
   });
 
   describe("dispatch", () => {
-    test("fire-and-forget: returns immediately without awaiting task completion", () => {
+    test("fire-and-forget: returns true and task starts", () => {
       let started = false;
-      manager.dispatch("sync-start", () => {
+      const result = manager.dispatch("sync-start", () => {
         started = true;
         return Promise.resolve();
       });
-      // Task code runs synchronously up to its first await, so started is
-      // already true after dispatch returns.
+      expect(result).toBe(true);
       expect(started).toBe(true);
     });
 
@@ -30,39 +29,53 @@ describe("BackgroundTaskManager", () => {
         await tick(5);
         completed = true;
       });
-      // Immediately after dispatch the task hasn't finished its async work.
       expect(completed).toBe(false);
       await tick(15);
       expect(completed).toBe(true);
     });
 
-    test("same-name dispatch is deduplicated while first is running", async () => {
+    test("same-name dispatch returns false when deduplicated", async () => {
       let runCount = 0;
       const fn = async () => {
         runCount++;
         await tick(20);
       };
 
-      manager.dispatch("dedup", fn);
-      manager.dispatch("dedup", fn); // should be skipped
+      const first = manager.dispatch("dedup", fn);
+      const second = manager.dispatch("dedup", fn);
+
+      expect(first).toBe(true);
+      expect(second).toBe(false);
 
       await tick(40);
       expect(runCount).toBe(1);
     });
 
-    test("allows re-dispatch after previous task completes", async () => {
+    test("allows re-dispatch after previous task completes and returns true", async () => {
       let runCount = 0;
       const fn = async () => {
         runCount++;
       };
 
-      manager.dispatch("reuse", fn);
+      const first = manager.dispatch("reuse", fn);
+      expect(first).toBe(true);
       await tick(10);
       expect(runCount).toBe(1);
 
-      manager.dispatch("reuse", fn);
+      const second = manager.dispatch("reuse", fn);
+      expect(second).toBe(true);
       await tick(10);
       expect(runCount).toBe(2);
+    });
+
+    test("records last completed timestamp after task settles", async () => {
+      const before = Date.now();
+      manager.dispatch("completed-at", async () => {});
+      await tick(10);
+
+      const completedAt = manager.getLastCompletedAt("completed-at");
+      expect(completedAt).toBeNumber();
+      expect(completedAt!).toBeGreaterThanOrEqual(before);
     });
   });
 

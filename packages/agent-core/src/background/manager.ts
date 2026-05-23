@@ -6,17 +6,17 @@
  */
 export class BackgroundTaskManager {
   private readonly tasks = new Map<string, TaskEntry>();
+  private readonly lastCompletedAt = new Map<string, number>();
 
   /**
-   * Dispatch a background task. Returns immediately — the task runs
-   * asynchronously. If a task with the same name is already in-flight,
-   * this second dispatch is silently skipped (dedup).
+   * Dispatch a background task. Returns `true` if the task was accepted,
+   * `false` if a same-name task is already in-flight (dedup).
    *
-   * Task errors are caught and logged via `console.warn`; they never
-   * propagate to the caller or crash the main loop.
+   * The task runs asynchronously. Task errors are caught and logged via
+   * `console.warn`; they never propagate to the caller or crash the main loop.
    */
-  dispatch(name: string, task: () => Promise<void>): void {
-    if (this.tasks.has(name)) return;
+  dispatch(name: string, task: () => Promise<void>): boolean {
+    if (this.tasks.has(name)) return false;
 
     let resolve: () => void;
     let reject: (err: Error) => void;
@@ -39,8 +39,11 @@ export class BackgroundTaskManager {
         entry.resolve(); // Error caught — resolve wrapper so drain doesn't hang
       })
       .finally(() => {
+        this.lastCompletedAt.set(name, Date.now());
         this.tasks.delete(name);
       });
+
+    return true;
   }
 
   /**
@@ -83,6 +86,10 @@ export class BackgroundTaskManager {
    */
   isRunning(name: string): boolean {
     return this.tasks.has(name);
+  }
+
+  getLastCompletedAt(name: string): number | undefined {
+    return this.lastCompletedAt.get(name);
   }
 }
 

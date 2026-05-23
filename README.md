@@ -182,6 +182,30 @@ Variants are named option profiles under a model. An agent references a variant 
 
 The `variant` field is consumed during resolution — it is **never** passed to the AI SDK call.
 
+### Memory Configuration
+
+Memory extraction runs automatically after each query loop on the root orchestrator agent. Sub-agents (explore, etc.) do not trigger memory extraction. You can control its behavior via the `memory` section in `.specra.json`:
+
+```json
+{
+  "memory": {
+    "enabled": true,
+    "minMessages": 5,
+    "minContentLength": 1000,
+    "cooldownMs": 300000
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Set to `false` to disable memory extraction entirely |
+| `minMessages` | `5` | Minimum number of user messages required before extraction triggers |
+| `minContentLength` | `1000` | Minimum total text content length (in characters) required before extraction triggers |
+| `cooldownMs` | `300000` | Minimum time (ms) between successive extractions (5 minutes) |
+
+Memory extraction also applies smart message filtering: only user messages and read-only tool outputs are sent to the extraction LLM. Assistant reasoning, write operations, and delegation results are excluded to reduce noise and token cost.
+
 ### Agent Configuration
 
 | Field | Required | Description |

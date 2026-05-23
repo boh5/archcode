@@ -100,6 +100,10 @@ export interface SessionStoreState {
   todoContinuationStagnationCount: number;
   lastTodoContinuationPendingCount: number | null;
 
+  // Memory extraction cursor tracking
+  lastExtractionIndex: number;
+  lastExtractionTime: number;
+
   readSnapshots: Map<string, number>;
 
   // Unified event log (transient)

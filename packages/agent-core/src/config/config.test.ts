@@ -254,6 +254,58 @@ describe("parseConfig", () => {
     expect(parsed.agents!["explore"].options!.temperature).toBe(0.5);
   });
 
+  test("memory config is optional", () => {
+    const parsed = parseConfig(VALID_CONFIG);
+
+    expect(parsed.memory).toBeUndefined();
+  });
+
+  test("memory config applies extraction defaults", () => {
+    const parsed = parseConfig({
+      ...VALID_CONFIG,
+      memory: {},
+    });
+
+    expect(parsed.memory).toEqual({
+      enabled: true,
+      minMessages: 5,
+      minContentLength: 1000,
+      cooldownMs: 300000,
+    });
+  });
+
+  test("memory config accepts custom extraction values", () => {
+    const parsed = parseConfig({
+      ...VALID_CONFIG,
+      memory: {
+        enabled: false,
+        minMessages: 2,
+        minContentLength: 250,
+        cooldownMs: 0,
+      },
+    });
+
+    expect(parsed.memory).toEqual({
+      enabled: false,
+      minMessages: 2,
+      minContentLength: 250,
+      cooldownMs: 0,
+    });
+  });
+
+  test("memory config rejects invalid values", () => {
+    expect(() => parseConfig({ ...VALID_CONFIG, memory: { minMessages: 0 } })).toThrow(ConfigValidationError);
+    expect(() => parseConfig({ ...VALID_CONFIG, memory: { minContentLength: 99 } })).toThrow(ConfigValidationError);
+    expect(() => parseConfig({ ...VALID_CONFIG, memory: { cooldownMs: -1 } })).toThrow(ConfigValidationError);
+  });
+
+  test("memory config rejects unknown fields", () => {
+    expect(() => parseConfig({
+      ...VALID_CONFIG,
+      memory: { enabled: true, unknown: true },
+    })).toThrow(ConfigValidationError);
+  });
+
   test("parses config with unknown agent key (record is open)", () => {
     const config = {
       ...VALID_CONFIG,

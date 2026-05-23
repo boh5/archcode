@@ -63,6 +63,8 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
+    lastExtractionIndex: 0,
+    lastExtractionTime: 0,
     isRunning: false,
     isStreamingModel: false,
     readSnapshots: new Map(),

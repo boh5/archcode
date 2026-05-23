@@ -319,6 +319,7 @@ function createConfiguredAgent(
     store,
     depth: options.depth,
     backgroundTaskManager: config.backgroundTaskManager,
+    memoryConfig: resolvedConfig.memory,
     projectContextResolver: config.projectContextResolver,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     agentFactory: factory,

@@ -10,14 +10,23 @@ export const agentConfigSchema = z
   })
   .strict();
 
+export const memoryExtractionConfigSchema = z.strictObject({
+  enabled: z.boolean().default(true),
+  minMessages: z.number().int().min(1).default(5),
+  minContentLength: z.number().int().min(100).default(1000),
+  cooldownMs: z.number().int().min(0).default(300_000),
+}).optional();
+
 export const specraConfigSchema = z
   .object({
     $schema: z.string().optional(),
     provider: providersConfigSchema,
     mcp: mcpConfigSchema.optional(),
     agents: z.record(z.string(), agentConfigSchema).optional(),
+    memory: memoryExtractionConfigSchema,
   })
   .strict();
 
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
+export type MemoryExtractionConfig = NonNullable<z.infer<typeof memoryExtractionConfigSchema>>;
 export type SpecraConfig = z.infer<typeof specraConfigSchema>;

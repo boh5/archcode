@@ -7,7 +7,7 @@ import type { MemoryRoots } from "../../memory/types";
 import { MemoryFileManager } from "../../memory/file-manager";
 import { __setGenerateTextForTest } from "../../llm";
 import { generateText } from "ai";
-import { createMemoryExtractionTask } from "./memory-extraction";
+import { createMemoryExtractionTask, filterMessagesForExtraction } from "./memory-extraction";
 import { buildMemoryManifest } from "../../memory/manifest";
 import type { ModelInfo } from "../../provider/model";
 
@@ -59,6 +59,10 @@ function makeUserMessage(text: string, now: number): StoredMessage {
   };
 }
 
+function makeUserMessages(count: number, text = "A".repeat(300), now = Date.now()): StoredMessage[] {
+  return Array.from({ length: count }, (_, index) => makeUserMessage(`${text}${index}`, now + index));
+}
+
 function makeAssistantMessage(text: string, now: number): StoredMessage {
   return {
     id: crypto.randomUUID(),
@@ -70,6 +74,29 @@ function makeAssistantMessage(text: string, now: number): StoredMessage {
         text,
         createdAt: now,
         completedAt: now,
+      },
+    ],
+    createdAt: now,
+    completedAt: now,
+  };
+}
+
+function makeToolMessage(toolName: string, output: string, now: number): StoredMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      {
+        type: "tool",
+        id: crypto.randomUUID(),
+        state: "completed",
+        toolCallId: crypto.randomUUID(),
+        toolName,
+        input: { path: "/tmp/test.ts" },
+        output,
+        createdAt: now,
+        startedAt: now,
+        endedAt: now,
       },
     ],
     createdAt: now,
@@ -176,11 +203,7 @@ describe("createMemoryExtractionTask", () => {
     const longText = "A".repeat(300);
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
-      messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up question", now),
-      ],
+      messages: makeUserMessages(5, longText, now),
     });
 
     mockGenerateText.mockImplementation(async () =>
@@ -261,9 +284,7 @@ describe("createMemoryExtractionTask", () => {
       const store = createSessionStore(crypto.randomUUID());
       store.setState({
         messages: [
-          makeUserMessage(longText, now),
-          makeAssistantMessage("Response", now),
-          makeUserMessage("Another question", now),
+          ...makeUserMessages(5, longText, now),
         ],
       });
 
@@ -304,9 +325,7 @@ describe("createMemoryExtractionTask", () => {
       const store = createSessionStore(crypto.randomUUID());
       store.setState({
         messages: [
-          makeUserMessage(longText, now),
-          makeAssistantMessage("Response", now),
-          makeUserMessage("Follow up", now),
+          ...makeUserMessages(5, longText, now),
         ],
       });
 
@@ -374,9 +393,7 @@ describe("createMemoryExtractionTask", () => {
       const store = createSessionStore(crypto.randomUUID());
       store.setState({
         messages: [
-          makeUserMessage(longText, now),
-          makeAssistantMessage("Response", now),
-          makeUserMessage("Follow up", now),
+          ...makeUserMessages(5, longText, now),
         ],
       });
 
@@ -436,9 +453,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -482,9 +497,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -537,9 +550,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -569,9 +580,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -623,9 +632,7 @@ describe("createMemoryExtractionTask", () => {
       const store = createSessionStore(crypto.randomUUID());
       store.setState({
         messages: [
-          makeUserMessage(longText, now),
-          makeAssistantMessage("Response", now),
-          makeUserMessage("Follow up", now),
+          ...makeUserMessages(5, longText, now),
         ],
       });
 
@@ -679,8 +686,181 @@ describe("createMemoryExtractionTask", () => {
     const call = mockGenerateText.mock.calls[0];
     const callArgs = call[0] as Record<string, unknown>;
     expect(typeof callArgs.prompt).toBe("string");
-    // With DEFAULT_EXTRACTION_MAX_MESSAGES = 50, all 10 messages should be included
+    // With DEFAULT_EXTRACTION_MAX_MESSAGES = 50, all 10 user messages should be included
     expect((callArgs.prompt as string)).toContain("message 9");
+  });
+
+  test("only processes messages from fromIndex onwards", async () => {
+    const roots = makeMemoryRoots("from-index");
+    await setupDirs(roots);
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("OLD_SHOULD_NOT_APPEAR".repeat(100), now),
+        makeUserMessage("A".repeat(300), now),
+        makeUserMessage("B".repeat(300), now),
+        makeUserMessage("C".repeat(300), now),
+        makeUserMessage("D".repeat(300), now),
+        makeUserMessage("E".repeat(300), now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots, 1);
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    const prompt = (mockGenerateText.mock.calls[0][0] as Record<string, unknown>).prompt as string;
+    expect(prompt).not.toContain("OLD_SHOULD_NOT_APPEAR");
+  });
+
+  test("respects custom minMessages and minContentLength from config", async () => {
+    const roots = makeMemoryRoots("custom-config");
+    await setupDirs(roots);
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("Short message", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots, 0, {
+      minMessages: 1,
+      minContentLength: 10,
+    });
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  test("skips extraction when custom minMessages not met", async () => {
+    const roots = makeMemoryRoots("custom-config-min-messages");
+    await setupDirs(roots);
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("A".repeat(300), now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots, 0, {
+      minMessages: 3,
+      minContentLength: 100,
+    });
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  test("skips extraction when custom minContentLength not met", async () => {
+    const roots = makeMemoryRoots("custom-config-min-content");
+    await setupDirs(roots);
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("Hi", now),
+        makeUserMessage("Hello", now),
+        makeUserMessage("Hey", now),
+        makeUserMessage("Yo", now),
+        makeUserMessage("Sup", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots, 0, {
+      minMessages: 2,
+      minContentLength: 5000,
+    });
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  test("updates lastExtractionIndex after successful llm extraction even with empty memories", async () => {
+    const roots = makeMemoryRoots("task-cursor-update");
+    await setupDirs(roots);
+    mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ memories: [] }));
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("A".repeat(300), now),
+        makeUserMessage("B".repeat(300), now),
+        makeUserMessage("C".repeat(300), now),
+        makeUserMessage("D".repeat(300), now),
+        makeUserMessage("E".repeat(300), now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    expect(store.getState().lastExtractionIndex).toBe(5);
+  });
+
+  test("filters assistant text, write tool results, and keeps read tool output", async () => {
+    const roots = makeMemoryRoots("filter-prompt");
+    await setupDirs(roots);
+    const now = Date.now();
+    const store = createSessionStore(crypto.randomUUID());
+    store.setState({
+      messages: [
+        makeUserMessage("User preference ".repeat(80), now),
+        makeUserMessage("Project convention ".repeat(80), now),
+        makeUserMessage("Third message ".repeat(80), now),
+        makeUserMessage("Fourth message ".repeat(80), now),
+        makeUserMessage("Fifth message ".repeat(80), now),
+        makeAssistantMessage("ASSISTANT_TEXT_SHOULD_NOT_APPEAR", now),
+        makeToolMessage("file_read", "READ_RESULT_SHOULD_APPEAR", now),
+        makeToolMessage("file_write", "WRITE_RESULT_SHOULD_NOT_APPEAR", now),
+      ],
+    });
+
+    const task = createMemoryExtractionTask(store, roots);
+    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+
+    const prompt = (mockGenerateText.mock.calls[0][0] as Record<string, unknown>).prompt as string;
+    expect(prompt).not.toContain("ASSISTANT_TEXT_SHOULD_NOT_APPEAR");
+    expect(prompt).toContain("READ_RESULT_SHOULD_APPEAR");
+    expect(prompt).not.toContain("WRITE_RESULT_SHOULD_NOT_APPEAR");
+  });
+
+  test("filterMessagesForExtraction keeps and truncates only extraction-worthy content", () => {
+    const now = Date.now();
+    const longUserText = "U".repeat(4500);
+    const longReadOutput = "R".repeat(1200);
+    const messages = [
+      makeUserMessage(longUserText, now),
+      makeAssistantMessage("assistant text", now),
+      makeToolMessage("grep", longReadOutput, now),
+      makeToolMessage("bash", "write output", now),
+      makeToolMessage("unknown_tool", "unknown output", now),
+    ];
+
+    const filtered = filterMessagesForExtraction(messages);
+
+    expect(filtered).toHaveLength(2);
+    expect(filtered[0].parts[0].type).toBe("text");
+    expect((filtered[0].parts[0] as { text: string }).text).toHaveLength(4000);
+    expect(filtered[1].parts[0].type).toBe("tool");
+    expect((filtered[1].parts[0] as { output: string }).output).toHaveLength(1000);
+    expect(JSON.stringify(filtered)).not.toContain("assistant text");
+    expect(JSON.stringify(filtered)).not.toContain("write output");
+    expect(JSON.stringify(filtered)).not.toContain("unknown output");
+  });
+
+  test("filterMessagesForExtraction keeps user text but skips assistant text", () => {
+    const now = Date.now();
+    const filtered = filterMessagesForExtraction([
+      makeUserMessage("user text", now),
+      makeAssistantMessage("assistant text", now),
+    ]);
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].role).toBe("user");
+    expect((filtered[0].parts[0] as { text: string }).text).toBe("user text");
   });
 
   test("uses name directly from LLM result (no prefix stripping needed)", async () => {
@@ -691,9 +871,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up about debugging", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -768,9 +946,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -847,9 +1023,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -908,9 +1082,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 
@@ -956,9 +1128,7 @@ describe("createMemoryExtractionTask", () => {
     const store = createSessionStore(crypto.randomUUID());
     store.setState({
       messages: [
-        makeUserMessage(longText, now),
-        makeAssistantMessage("Response", now),
-        makeUserMessage("Follow up", now),
+        ...makeUserMessages(5, longText, now),
       ],
     });
 

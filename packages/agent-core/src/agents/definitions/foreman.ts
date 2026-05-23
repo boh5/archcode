@@ -51,8 +51,8 @@ Refusal rules:
     autoInjectReminder: true,
     todoContinuation: true,
     transcriptSave: true,
-    memoryExtraction: true,
-    memoryConsolidation: true,
+    memoryExtraction: false,
+    memoryConsolidation: false,
     titleGeneration: "unless-supplied",
   },
   childPolicy: {

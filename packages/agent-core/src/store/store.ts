@@ -50,6 +50,8 @@ export function createSessionStore(
     todoLoopContinuationCount: 0,
     todoContinuationStagnationCount: 0,
     lastTodoContinuationPendingCount: null,
+    lastExtractionIndex: 0,
+    lastExtractionTime: 0,
     events: [],
     eventOffset: 0,
     nextEventId: 0,

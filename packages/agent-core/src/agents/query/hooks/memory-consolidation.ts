@@ -3,11 +3,13 @@ import type { AfterLoopEndContext } from "../loop-hooks";
 import { MemoryFileManager } from "../../../memory/file-manager";
 import { createMemoryConsolidationTask } from "../../../background/tasks/memory-consolidation";
 import { CONSOLIDATION_THRESHOLD } from "../../../memory/constants";
+import type { MemoryExtractionConfig } from "../../../config";
 
 export function createMemoryConsolidationHook(
   btm: BackgroundTaskManager,
   memoryRoots: { project: string; user: string },
   isCancelled?: () => boolean,
+  _config?: MemoryExtractionConfig,
 ): (ctx: AfterLoopEndContext) => Promise<void> {
   return async (ctx: AfterLoopEndContext) => {
     if (isCancelled?.()) return;

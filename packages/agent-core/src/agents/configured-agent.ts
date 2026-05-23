@@ -5,7 +5,7 @@ import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand } from "../commands/index";
 import type { CommandResult } from "../commands/types";
-import type { ModelCallOptions } from "../config/index";
+import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
@@ -50,6 +50,7 @@ export interface ConfiguredAgentOptions {
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly agentFactory?: AgentFactoryLike;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
+  readonly memoryConfig?: MemoryExtractionConfig;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -81,6 +82,7 @@ export class ConfiguredAgent implements Agent {
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   private readonly agentFactory: AgentFactoryLike | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
+  private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private agentsMd: string | undefined;
   private agentsMdLoaded = false;
   private running = false;
@@ -104,6 +106,7 @@ export class ConfiguredAgent implements Agent {
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.agentFactory = options.agentFactory;
+    this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
       await enforceQuota(directory);
     });
@@ -318,11 +321,15 @@ export class ConfiguredAgent implements Agent {
     if (policy.transcriptSave) {
       afterLoopEnd.push(createTranscriptSaveHook(btm, this.workspaceRoot, isCancelled));
     }
-    if (policy.memoryExtraction) {
-      afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots, isCancelled));
+    // Memory hooks only run on the root orchestrator (depth 0).
+    // Sub-agents at depth > 0 must not write to project/user memory independently.
+    const isRootAgent = this.depth === 0;
+    const memoryEnabled = this.memoryConfig?.enabled ?? true;
+    if (memoryEnabled && policy.memoryExtraction && isRootAgent) {
+      afterLoopEnd.push(createMemoryExtractionHook(btm, this.memoryRoots, isCancelled, this.memoryConfig));
     }
-    if (policy.memoryConsolidation) {
-      afterLoopEnd.push(createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled));
+    if (memoryEnabled && policy.memoryConsolidation && isRootAgent) {
+      afterLoopEnd.push(createMemoryConsolidationHook(btm, this.memoryRoots, isCancelled, this.memoryConfig));
     }
     if (afterLoopEnd.length > 0) {
       hooks.afterLoopEnd = afterLoopEnd;

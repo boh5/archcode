@@ -14,6 +14,7 @@ import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitio
 import type { AgentDefinition } from "./factory-types";
 import { __setStreamTextForTest } from "./query/loop";
 import { MissingProjectContextError } from "./errors";
+import type { MemoryExtractionConfig } from "../config";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 
@@ -21,8 +22,9 @@ class RecordingBackgroundTaskManager {
   readonly dispatched: string[] = [];
   drainCalls = 0;
   cancelAllCalls = 0;
+  private readonly completions = new Map<string, number>();
 
-  dispatch(name: string): void {
+  dispatch(name: string, _task?: () => Promise<void>): void {
     this.dispatched.push(name);
   }
 
@@ -32,6 +34,10 @@ class RecordingBackgroundTaskManager {
 
   cancelAll(): void {
     this.cancelAllCalls += 1;
+  }
+
+  getLastCompletedAt(name: string): number | undefined {
+    return this.completions.get(name);
   }
 }
 
@@ -160,6 +166,7 @@ function createAgent(options: {
   toolRegistry?: ReturnType<typeof makeToolRegistry>;
   providerRegistry?: ProviderRegistry;
   modelInfo?: ModelInfo;
+  memoryConfig?: MemoryExtractionConfig;
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
@@ -173,6 +180,7 @@ function createAgent(options: {
     workspaceRoot: options.workspaceRoot ?? tmpRoot,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
+    memoryConfig: options.memoryConfig,
     quotaEnforcer: options.quotaEnforcer,
       resolveAllowedTools: (definition, depth) => {
         const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
@@ -312,10 +320,10 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
   });
 
-  test("explorer definition dispatches transcript and memory background hooks", async () => {
-    setupMockStreamText("explore memory ok");
+  test("orchestrator definition dispatches transcript and memory background hooks", async () => {
+    setupMockStreamText("orchestrator memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-explore-background-${crypto.randomUUID()}`);
+    const store = createSessionStore(`configured-orchestrator-background-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -332,16 +340,109 @@ describe("ConfiguredAgent", () => {
           completedAt: Date.now(),
           parts: [{ type: "text", id: "text-memory-2", text: "y".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
         },
+        ...[3, 4, 5].map((index) => ({
+          id: `user-memory-${index}`,
+          role: "user" as const,
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+          parts: [{ type: "text" as const, id: `text-memory-${index}`, text: `message-${index}`, createdAt: Date.now(), completedAt: Date.now() }],
+        })),
       ],
     });
     await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
-    const agent = createAgent({ definition: exploreAgentDefinition, store, btm });
-    await agent.run("explore run");
+    const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
+    await agent.run("root run");
 
     expect(btm.dispatched).toContain("transcript-save");
     expect(btm.dispatched).toContain("memory-extraction");
     expect(btm.dispatched).toContain("memory-consolidation");
+  });
+
+  test("memory config disabled skips memory background hooks", async () => {
+    setupMockStreamText("memory disabled ok");
+    const btm = new RecordingBackgroundTaskManager();
+    const store = createSessionStore(`configured-memory-disabled-${crypto.randomUUID()}`);
+    store.setState({
+      messages: [
+        {
+          id: "user-memory-disabled-1",
+          role: "user",
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+          parts: [{ type: "text", id: "text-memory-disabled-1", text: "x".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
+        },
+        {
+          id: "user-memory-disabled-2",
+          role: "user",
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+          parts: [{ type: "text", id: "text-memory-disabled-2", text: "y".repeat(2_100), createdAt: Date.now(), completedAt: Date.now() }],
+        },
+      ],
+    });
+    await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
+
+    const agent = createAgent({
+      definition: orchestratorAgentDefinition,
+      store,
+      btm,
+      memoryConfig: { enabled: false, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
+    });
+    await agent.run("root run");
+
+    expect(btm.dispatched).toContain("transcript-save");
+    expect(btm.dispatched).not.toContain("memory-extraction");
+    expect(btm.dispatched).not.toContain("memory-consolidation");
+  });
+
+  test("memory config custom thresholds are used by extraction hook", async () => {
+    setupMockStreamText("memory custom ok");
+    const btm = new RecordingBackgroundTaskManager();
+    const store = createSessionStore(`configured-memory-custom-${crypto.randomUUID()}`);
+    store.setState({
+      messages: [
+        {
+          id: "user-memory-custom-1",
+          role: "user",
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+          parts: [{ type: "text", id: "text-memory-custom-1", text: "z".repeat(150), createdAt: Date.now(), completedAt: Date.now() }],
+        },
+      ],
+    });
+
+    const agent = createAgent({
+      definition: orchestratorAgentDefinition,
+      store,
+      btm,
+      memoryConfig: { enabled: true, minMessages: 1, minContentLength: 100, cooldownMs: 0 },
+    });
+    await agent.run("root run");
+
+    expect(btm.dispatched).toContain("memory-extraction");
+  });
+
+  test("memory config absent uses default extraction thresholds", async () => {
+    setupMockStreamText("memory defaults ok");
+    const btm = new RecordingBackgroundTaskManager();
+    const store = createSessionStore(`configured-memory-defaults-${crypto.randomUUID()}`);
+    store.setState({
+      messages: [
+        {
+          id: "user-memory-defaults-1",
+          role: "user",
+          createdAt: Date.now(),
+          completedAt: Date.now(),
+          parts: [{ type: "text", id: "text-memory-defaults-1", text: "z".repeat(150), createdAt: Date.now(), completedAt: Date.now() }],
+        },
+      ],
+    });
+
+    const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
+    await agent.run("root run");
+
+    expect(btm.dispatched).not.toContain("memory-extraction");
   });
 
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {

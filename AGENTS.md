@@ -320,6 +320,7 @@ HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.specr
 - Talk in chinese, code in english (include comments).
 - If you have any questions or choices, feel free to ask user.
 - Use TDD development.
+- **When modifying `.specra.json` config schema or defaults, must also update README.md config docs.**
 - **Prefer Bun-native APIs** over `node:*` imports. Use `crypto.randomUUID()`, `Bun.file()`, `Bun.write()`, `Bun.SystemError`, `import.meta.dir`. Only use `node:*` when Bun has no native alternative (e.g. `node:path` join/resolve, `node:os` tmpdir/homedir, `node:fs/promises` mkdir/rename/readdir/rm, `node:fs` sync methods).
 - Custom error classes: extend `Error`, typed constructor params, explicit `this.name = "ClassName"`, meaningful public fields.
 - Barrel exports via `index.ts`. All Zod schemas use `.strict()`.

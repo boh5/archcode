@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
-import type { SessionStoreState, TextPart } from "../../store/types";
+import type { CompletedToolPart, SessionStoreState, StoredMessage, TextPart } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import type { MemoryExtractionResult } from "../../memory/schemas";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
@@ -15,6 +15,59 @@ import {
 import { containsSecretPattern } from "../../security/patterns";
 import { buildMemoryManifest } from "../../memory/manifest";
 
+const READ_TOOLS = new Set([
+  "file_read",
+  "grep",
+  "glob",
+  "git_status",
+  "git_diff",
+  "lsp_diagnostics",
+  "lsp_goto_definition",
+  "lsp_find_references",
+  "lsp_symbols",
+  "web_fetch",
+  "background_output",
+  "view_tool_output",
+  "memory_read",
+  "workflow_read",
+  "artifact_read",
+]);
+
+export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMessage[] {
+  const filtered: StoredMessage[] = [];
+
+  for (const message of messages) {
+    const parts: StoredMessage["parts"] = [];
+
+    for (const part of message.parts) {
+      if (part.type === "text") {
+        if (message.role !== "user") continue;
+        parts.push({
+          ...part,
+          text: part.text.slice(0, 4000),
+        } as TextPart);
+        continue;
+      }
+
+      if (part.type !== "tool") continue;
+      if (part.state !== "completed") continue;
+      if (!READ_TOOLS.has(part.toolName)) continue;
+
+      const toolPart = part as CompletedToolPart;
+      parts.push({
+        ...toolPart,
+        output: toolPart.output.slice(0, 1000),
+      });
+    }
+
+    if (parts.length > 0) {
+      filtered.push({ ...message, parts } as StoredMessage);
+    }
+  }
+
+  return filtered;
+}
+
 /**
  * Create a background task that extracts durable memories from the
  * conversation history and writes them as topic files via MemoryFileManager.
@@ -23,21 +76,32 @@ import { buildMemoryManifest } from "../../memory/manifest";
  * < MIN_CONTENT_LENGTH_FOR_EXTRACTION chars) are skipped entirely.
  * LLM failures are caught and logged — no partial writes occur.
  */
+export interface MemoryExtractionTaskConfig {
+  minMessages?: number;
+  minContentLength?: number;
+}
+
 export function createMemoryExtractionTask(
   store: StoreApi<SessionStoreState>,
   memoryRoots: MemoryRoots,
+  fromIndex = 0,
+  config?: MemoryExtractionTaskConfig,
 ): BackgroundTask {
+  const effectiveMinMessages = config?.minMessages ?? MIN_MESSAGES_FOR_EXTRACTION;
+  const effectiveMinContentLength = config?.minContentLength ?? MIN_CONTENT_LENGTH_FOR_EXTRACTION;
+
   return {
     name: "memory-extraction",
 
     run: async (ctx: BackgroundTaskContext) => {
       const state = store.getState();
+      const messages = state.messages.slice(fromIndex);
 
-      // --- Short-session skip ------------------------------------------------
-      const userMessages = state.messages.filter((m) => m.role === "user");
-      if (userMessages.length < MIN_MESSAGES_FOR_EXTRACTION) return;
+      const filteredMessages = filterMessagesForExtraction(messages);
+      const userMessages = messages.filter((m) => m.role === "user");
+      if (userMessages.length < effectiveMinMessages) return;
 
-      const totalContentLength = state.messages.reduce((sum, m) => {
+      const totalContentLength = filteredMessages.reduce((sum, m) => {
         return (
           sum +
           m.parts
@@ -45,7 +109,7 @@ export function createMemoryExtractionTask(
             .reduce((s, p) => s + p.text.length, 0)
         );
       }, 0);
-      if (totalContentLength < MIN_CONTENT_LENGTH_FOR_EXTRACTION) return;
+      if (totalContentLength < effectiveMinContentLength) return;
 
       // --- Build memory manifest (existing memories) -------------------------
       const fileManager = new MemoryFileManager(memoryRoots);
@@ -64,7 +128,7 @@ export function createMemoryExtractionTask(
 
       // --- Build truncated conversation for LLM --------------------------------
       const maxMessages = DEFAULT_EXTRACTION_MAX_MESSAGES;
-      const modelMessages = toModelMessagesFromStoredMessages(state.messages, { mode: "full-history" });
+      const modelMessages = toModelMessagesFromStoredMessages(filteredMessages, { mode: "full-history" });
       const truncated = modelMessages.slice(-maxMessages);
 
       const MAX_CONTENT_CHARS = 4000;
@@ -79,6 +143,12 @@ export function createMemoryExtractionTask(
               .map((part) => {
                 if (typeof part === "string") return part;
                 if (part && typeof part === "object" && "text" in part) return part.text;
+                if (part && typeof part === "object" && "output" in part) {
+                  const output = part.output;
+                  if (output && typeof output === "object" && "value" in output) {
+                    return String(output.value);
+                  }
+                }
                 return "";
               })
               .join(" ");
@@ -132,6 +202,8 @@ ${conversationText}`,
         );
         return;
       }
+
+      store.setState({ lastExtractionIndex: state.messages.length });
 
       if (result.memories.length === 0) return;
 

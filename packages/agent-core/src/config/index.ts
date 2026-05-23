@@ -1,7 +1,9 @@
 export {
   agentConfigSchema,
+  memoryExtractionConfigSchema,
   specraConfigSchema,
   type AgentConfig,
+  type MemoryExtractionConfig,
   type SpecraConfig,
 } from "./schema";
 export {
