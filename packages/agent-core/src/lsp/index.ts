@@ -88,4 +88,4 @@ export {
 
 // ─── Installer ───
 export type { ExecCommandResult, ExecCommand, ExecCommandOptions } from "./installer";
-export { LspInstallerError, setExecCommandForTest, resolveServerBinary } from "./installer";
+export { LspInstallerError, setInstallerProcessRunnerForTest, resolveServerBinary } from "./installer";

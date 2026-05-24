@@ -134,6 +134,8 @@ export class StdioLspTransport implements LspTransport {
     if (this.disposed) throw new Error("LSP transport has been disposed");
     if (this.connection) return this.sendRequest("initialize", params);
 
+    // Keep direct Bun.spawn here: LSP transport owns a long-lived JSON-RPC stdio process,
+    // while ProcessRunner is for short-lived commands with captured output.
     this.proc = Bun.spawn([this.options.command, ...(this.options.args ?? [])], {
       cwd: this.options.cwd,
       env: this.options.env,

@@ -4,7 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import {
   LspInstallerError,
   resolveServerBinary,
-  setExecCommandForTest,
+  setInstallerProcessRunnerForTest,
   type ExecCommand,
 } from "./installer";
 
@@ -18,11 +18,11 @@ beforeEach(async () => {
   await rm(tmpDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
   Bun.env.XDG_CACHE_HOME = tmpDir;
-  setExecCommandForTest(undefined);
+  setInstallerProcessRunnerForTest(undefined);
 });
 
 afterAll(async () => {
-  setExecCommandForTest(undefined);
+  setInstallerProcessRunnerForTest(undefined);
   delete Bun.env.XDG_CACHE_HOME;
   await rm(tmpDir, { recursive: true, force: true });
 });
@@ -30,13 +30,13 @@ afterAll(async () => {
 describe("resolveServerBinary", () => {
   it("returns server binary from PATH without installing", async () => {
     const calls: CallRecord[] = [];
-    setExecCommandForTest(async (command) => {
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       calls.push({ command });
       if (command[0] === "which") {
         return { stdout: "/usr/local/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
       }
       throw new Error(`unexpected command: ${command.join(" ")}`);
-    });
+    }));
 
     const result = await resolveServerBinary("typescript");
 
@@ -46,7 +46,7 @@ describe("resolveServerBinary", () => {
 
   it("installs npm-backed server when binary is not on PATH", async () => {
     const calls: CallRecord[] = [];
-    setExecCommandForTest(createInstallingExec(calls));
+    setInstallerProcessRunnerForTest(createSpawnFromExec(createInstallingExec(calls)));
 
     const result = await resolveServerBinary("typescript");
 
@@ -59,7 +59,7 @@ describe("resolveServerBinary", () => {
 
   it("caches resolved binary path for future calls", async () => {
     const calls: CallRecord[] = [];
-    setExecCommandForTest(createInstallingExec(calls));
+    setInstallerProcessRunnerForTest(createSpawnFromExec(createInstallingExec(calls)));
 
     const first = await resolveServerBinary("typescript");
     const second = await resolveServerBinary("typescript");
@@ -70,19 +70,24 @@ describe("resolveServerBinary", () => {
   });
 
   it("returns actionable manual install error when server has no npmPackage", async () => {
-    setExecCommandForTest(async () => ({ stdout: "", stderr: "missing", exitCode: 1 }));
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async () => ({ stdout: "", stderr: "missing", exitCode: 1 })));
 
-    await expect(resolveServerBinary("go")).rejects.toMatchObject({
-      name: "LspInstallerError",
-      serverId: "go",
-      command: "go install golang.org/x/tools/gopls@latest",
-    });
+    try {
+      await resolveServerBinary("go");
+      throw new Error("Expected resolveServerBinary to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: "LspInstallerError",
+        serverId: "go",
+        command: "go install golang.org/x/tools/gopls@latest",
+      });
+    }
   });
 
   it("deduplicates concurrent installs for the same server", async () => {
     const calls: CallRecord[] = [];
     let installCount = 0;
-    setExecCommandForTest(async (command) => {
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       calls.push({ command });
       if (command[0] === "which") return { stdout: "", stderr: "", exitCode: 1 };
       if (command[0] === "npm") {
@@ -93,7 +98,7 @@ describe("resolveServerBinary", () => {
         return { stdout: "installed", stderr: "", exitCode: 0 };
       }
       return { stdout: "", stderr: "unexpected", exitCode: 1 };
-    });
+    }));
 
     const [first, second] = await Promise.all([
       resolveServerBinary("typescript"),
@@ -106,36 +111,41 @@ describe("resolveServerBinary", () => {
   });
 
   it("cleans up and returns actionable error when install fails", async () => {
-    setExecCommandForTest(async (command) => {
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       if (command[0] === "which") return { stdout: "", stderr: "", exitCode: 1 };
       if (command[0] === "npm") return { stdout: "", stderr: "network unavailable", exitCode: 1 };
       return { stdout: "", stderr: "unexpected", exitCode: 1 };
-    });
+    }));
 
-    await expect(resolveServerBinary("typescript")).rejects.toMatchObject({
-      name: "LspInstallerError",
-      serverId: "typescript",
-      command: "npm install -g typescript-language-server",
-      details: "network unavailable",
-    });
+    try {
+      await resolveServerBinary("typescript");
+      throw new Error("Expected resolveServerBinary to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: "LspInstallerError",
+        serverId: "typescript",
+        command: "npm install -g typescript-language-server",
+        details: "network unavailable",
+      });
+    }
 
     const serverRoot = join(tmpDir, "specra", "lsp-servers", "typescript");
     expect(await Bun.file(serverRoot).exists()).toBe(false);
   });
 
-  it("setExecCommandForTest resets mock injection and cached results", async () => {
+  it("setInstallerProcessRunnerForTest resets mock injection and cached results", async () => {
     const firstCalls: CallRecord[] = [];
-    setExecCommandForTest(async (command) => {
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       firstCalls.push({ command });
       return { stdout: "/first/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
-    });
+    }));
     expect(await resolveServerBinary("typescript")).toBe("/first/bin/typescript-language-server");
 
     const secondCalls: CallRecord[] = [];
-    setExecCommandForTest(async (command) => {
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
       secondCalls.push({ command });
       return { stdout: "/second/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
-    });
+    }));
 
     expect(await resolveServerBinary("typescript")).toBe("/second/bin/typescript-language-server");
     expect(firstCalls).toHaveLength(1);
@@ -143,7 +153,12 @@ describe("resolveServerBinary", () => {
   });
 
   it("throws named error for unknown server id", async () => {
-    await expect(resolveServerBinary("unknown-server")).rejects.toBeInstanceOf(LspInstallerError);
+    try {
+      await resolveServerBinary("unknown-server");
+      throw new Error("Expected resolveServerBinary to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LspInstallerError);
+    }
   });
 });
 
@@ -164,6 +179,41 @@ async function writeInstalledBinary(prefix: string, binary: string): Promise<voi
   const binDir = join(prefix, "bin");
   await mkdir(binDir, { recursive: true });
   await Bun.write(join(binDir, binary), "#!/usr/bin/env sh\n");
+}
+
+function createSpawnFromExec(exec: ExecCommand): Parameters<typeof setInstallerProcessRunnerForTest>[0] {
+  return (argv) => {
+    const stdout = new TransformStream<Uint8Array>();
+    const stderr = new TransformStream<Uint8Array>();
+    let exitCode: number | null = null;
+    const exited = exec([...argv]).then(async (result) => {
+      exitCode = result.exitCode;
+      await writeText(stdout.writable, result.stdout);
+      await writeText(stderr.writable, result.stderr);
+      return result.exitCode;
+    });
+
+    return {
+      stdout: stdout.readable,
+      stderr: stderr.readable,
+      exited,
+      get exitCode() {
+        return exitCode;
+      },
+      signalCode: null,
+      kill: () => {},
+    };
+  };
+}
+
+async function writeText(stream: WritableStream<Uint8Array>, text: string): Promise<void> {
+  const writer = stream.getWriter();
+  try {
+    if (text) await writer.write(new TextEncoder().encode(text));
+  } finally {
+    await writer.close();
+    writer.releaseLock();
+  }
 }
 
 async function sleep(ms: number): Promise<void> {

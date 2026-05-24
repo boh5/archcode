@@ -1,5 +1,7 @@
 import { join } from "node:path";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
+import { createProcessRunner, setProcessRunnerForTest } from "../process/runner";
+import type { ProcessRunnerResult } from "../process/types";
 import { getServerDefinitionById, type LspServerDefinition } from "./server-definitions";
 
 export interface ExecCommandResult {
@@ -32,10 +34,8 @@ export class LspInstallerError extends Error {
 const installLocks = new Map<string, Promise<string>>();
 const resolvedBinaryCache = new Map<string, string>();
 
-let execCommand: ExecCommand = runExecCommand;
-
-export function setExecCommandForTest(fn: ExecCommand | undefined): void {
-  execCommand = fn ?? runExecCommand;
+export function setInstallerProcessRunnerForTest(fn: Parameters<typeof setProcessRunnerForTest>[0]): void {
+  setProcessRunnerForTest(fn);
   installLocks.clear();
   resolvedBinaryCache.clear();
 }
@@ -82,7 +82,7 @@ async function resolveServerBinaryUncached(serverId: string): Promise<string> {
 
 async function findOnPath(binary: string): Promise<string | undefined> {
   const command = process.platform === "win32" ? ["where", binary] : ["which", binary];
-  const result = await execCommand(command);
+  const result = await runInstallerCommand(command);
   if (result.exitCode !== 0) return undefined;
 
   const firstLine = result.stdout.trim().split(/\r?\n/).find(Boolean);
@@ -98,7 +98,7 @@ async function installNpmServer(definition: LspServerDefinition): Promise<string
   await mkdir(tempRoot, { recursive: true });
 
   const installCommand = ["npm", "install", "-g", "--prefix", tempRoot, definition.npmPackage!];
-  const installResult = await execCommand(installCommand);
+  const installResult = await runInstallerCommand(installCommand);
 
   if (installResult.exitCode !== 0) {
     await rm(tempRoot, { recursive: true, force: true });
@@ -161,20 +161,51 @@ function getInstallBaseDir(): string {
   return join(base, "specra", "lsp-servers");
 }
 
-async function runExecCommand(command: string[], options: ExecCommandOptions = {}): Promise<ExecCommandResult> {
-  const proc = Bun.spawn(command, {
+async function runInstallerCommand(command: string[], options: ExecCommandOptions = {}): Promise<ExecCommandResult> {
+  const result = await createProcessRunner().run({
+    argv: toArgv(command),
     cwd: options.cwd,
-    env: { ...Bun.env, ...options.env },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    env: options.env ? { ...Bun.env, ...options.env } : undefined,
+    stdin: null,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  return processRunnerResultToExecResult(result);
+}
 
-  return { stdout, stderr, exitCode };
+function toArgv(command: string[]): [string, ...string[]] {
+  const [executable, ...args] = command;
+  if (!executable) throw new Error("Installer command cannot be empty");
+  return [executable, ...args];
+}
+
+function processRunnerResultToExecResult(result: ProcessRunnerResult): ExecCommandResult {
+  if (result.kind === "spawn-failure") {
+    return { stdout: "", stderr: result.error.message, exitCode: 1 };
+  }
+
+  if (result.kind === "success" || result.kind === "nonzero") {
+    return { stdout: result.output.stdout, stderr: result.output.stderr, exitCode: result.exitCode };
+  }
+
+  if (result.kind === "timeout") {
+    return {
+      stdout: result.output.stdout,
+      stderr: result.output.stderr || `Process timed out after ${result.timeoutMs}ms`,
+      exitCode: result.exitCode ?? 1,
+    };
+  }
+
+  if (result.kind === "aborted") {
+    return {
+      stdout: result.output.stdout,
+      stderr: result.output.stderr || `Process aborted${result.reason ? `: ${result.reason}` : ""}`,
+      exitCode: result.exitCode ?? 1,
+    };
+  }
+
+  return {
+    stdout: result.output.stdout,
+    stderr: result.output.stderr || `Process exited due to signal ${result.signal}`,
+    exitCode: result.exitCode ?? 1,
+  };
 }
