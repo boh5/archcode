@@ -33,7 +33,7 @@ describe("process runner contract", () => {
     expect(DIRECT_BUN_SPAWN_MIGRATION_ALLOWLIST).toEqual([
       "packages/agent-core/src/process/**",
       "packages/agent-core/src/lsp/transport.ts",
-      "scripts/build.ts",
+      "scripts/**",
       "**/*.test.ts",
       "**/*.test.tsx",
       "**/__tests__/**",
