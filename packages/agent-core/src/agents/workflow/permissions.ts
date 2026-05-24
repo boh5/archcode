@@ -14,7 +14,7 @@ const DELEGATION_EXECUTION_TOOLS = [
 ] as const;
 const MEMORY_READ_TOOLS = ["memory_read"] as const;
 const MEMORY_WRITE_TOOLS = ["memory_read", "memory_write"] as const;
-const SOURCE_WRITE_TOOLS = ["file_write", "file_edit", "bash"] as const;
+const SOURCE_WRITE_TOOLS = ["file_write", "file_edit", "bash", "ast_grep_replace"] as const;
 
 function uniqueTools<const T extends readonly string[]>(tools: T): readonly T[number][] {
   return [...new Set(tools)] as readonly T[number][];

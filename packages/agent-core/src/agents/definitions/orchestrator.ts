@@ -42,6 +42,8 @@ Delegation boundaries:
       "file_edit",
       "grep",
       "glob",
+      "ast_grep_search",
+      "ast_grep_replace",
       "git_status",
       "git_diff",
       "bash",

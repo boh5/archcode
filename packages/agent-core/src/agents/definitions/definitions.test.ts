@@ -32,6 +32,8 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("artifact_read");
     expect(tools).toContain("artifact_write");
     expect(tools).toContain("workflow_task_check");
+    expect(tools).toContain("ast_grep_search");
+    expect(tools).toContain("ast_grep_replace");
   });
 
   test("foreman includes Markdown-wave execution tools", () => {

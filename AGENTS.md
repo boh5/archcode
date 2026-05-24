@@ -237,8 +237,9 @@ Minimal example:
 
 | Role | Hooks | Notes |
 |------|-------|-------|
-| **Orchestrator** (never in registry) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Owns store + SubAgentManager. Todo-continuation retry loop after each `runQueryLoop()` |
+| **Orchestrator** (never in registry) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Owns store + SubAgentManager. Todo-continuation retry loop after each `runQueryLoop()`. Has `ast_grep_search` + `ast_grep_replace` for AST-aware searching and rewriting. |
 | **Explorer** (`"explore"` in registry) | auto-compact, auto-inject-reminder, todo-continuation | Depth-aware tool filtering. Own session store. Simpler hooks |
+| **Builder** (workflow role, `"builder"`) | — | Source code write tools + delegation. Has `ast_grep_replace` for AST-aware code rewriting during implementation tasks. |
 
 Both implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, ...) → AgentResult { text, steps }`.
 
