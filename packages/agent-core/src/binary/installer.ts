@@ -45,7 +45,7 @@ export async function installBinaryArchive(params: BinaryInstallParams, runner: 
     await extractArchive({ params, archivePath, extractRoot, runner });
 
     const extractedBinaryPath = join(extractRoot, params.platform.binaryPathInArchive);
-    if (process.platform !== "win32") await chmod(extractedBinaryPath, 0o755);
+    await chmod(extractedBinaryPath, 0o755);
     await removeMacosQuarantine(extractedBinaryPath, runner);
 
     await rm(installRoot, { recursive: true, force: true });

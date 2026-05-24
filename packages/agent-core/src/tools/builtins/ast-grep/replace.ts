@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { z } from "zod";
 
 import { createBinaryManager } from "../../../binary/manager";
@@ -91,17 +92,26 @@ export const astGrepReplaceTool = defineTool({
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
-      const result = await createProcessRunner().run({
-        argv: [astGrepPath, ...buildAstGrepReplaceArgs(input)],
-        cwd: ctx.workspaceRoot,
-        env: { ...process.env },
-        signal: ctx.abort,
-      });
+      const runner = createProcessRunner();
+      let matches: AstGrepReplacementMatch[];
 
-      const output = getAstGrepReplaceStdout(result);
-      if (output.ok === false) return output.error;
+      if (input.dryRun === false) {
+        const previewResult = await runAstGrepReplace(astGrepPath, { ...input, dryRun: true }, ctx, runner);
+        if ("isError" in previewResult) return previewResult;
+        matches = previewResult;
 
-      const matches = parseAstGrepReplacementMatches(output.stdout);
+        const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
+        if (snapshotCheck) return snapshotCheck;
+
+        const applyResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
+        if ("isError" in applyResult) return applyResult;
+        matches = applyResult;
+      } else {
+        const previewResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
+        if ("isError" in previewResult) return previewResult;
+        matches = previewResult;
+      }
+
       return JSON.stringify(normalizeAstGrepReplaceResult(matches, input.dryRun), null, 2);
     } catch (error) {
       const maybeBinaryError = toBinaryToolError(error);
@@ -114,6 +124,66 @@ export const astGrepReplaceTool = defineTool({
     }
   },
 });
+
+async function runAstGrepReplace(
+  astGrepPath: string,
+  input: AstGrepReplaceInput,
+  ctx: ToolExecutionContext,
+  runner: ReturnType<typeof createProcessRunner>,
+): Promise<AstGrepReplacementMatch[] | ToolExecutionResult> {
+  const result = await runner.run({
+    argv: [astGrepPath, ...buildAstGrepReplaceArgs(input)],
+    cwd: ctx.workspaceRoot,
+    env: { ...process.env },
+    signal: ctx.abort,
+  });
+
+  const output = getAstGrepReplaceStdout(result);
+  if (output.ok === false) return output.error;
+
+  return parseAstGrepReplacementMatches(output.stdout);
+}
+
+function checkApplyReadSnapshots(
+  matches: AstGrepReplacementMatch[],
+  ctx: ToolExecutionContext,
+): ToolExecutionResult | undefined {
+  const snapshots = ctx.store.getState().readSnapshots;
+  const files = new Set(matches.map((match) => match.file));
+
+  for (const file of files) {
+    const { resolved } = resolveAndValidatePath(file, ctx.workspaceRoot);
+    if (!snapshots.has(resolved)) {
+      return createToolErrorResult({
+        kind: "read-before-write",
+        code: "TOOL_FILE_NOT_READ_FIRST",
+        message: `File "${resolved}" has not been read first. Use file_read before applying ast-grep replacements. [TOOL_FILE_NOT_READ_FIRST]`,
+      });
+    }
+
+    let currentMtime: number;
+    try {
+      currentMtime = statSync(resolved).mtimeMs;
+    } catch {
+      return createToolErrorResult({
+        kind: "file-not-found",
+        code: "TOOL_FILE_NOT_FOUND",
+        message: `File "${resolved}" no longer exists. [TOOL_FILE_NOT_FOUND]`,
+      });
+    }
+
+    const recordedMtime = snapshots.get(resolved)!;
+    if (currentMtime !== recordedMtime) {
+      return createToolErrorResult({
+        kind: "write-conflict",
+        code: "TOOL_FILE_WRITE_CONFLICT",
+        message: `File "${resolved}" has been modified since it was read. Use file_read to refresh before applying ast-grep replacements. [TOOL_FILE_WRITE_CONFLICT]`,
+      });
+    }
+  }
+
+  return undefined;
+}
 
 export function buildAstGrepReplaceArgs(input: AstGrepReplaceInput): string[] {
   const args = ["run", "--pattern", input.pattern, "--rewrite", input.rewrite];
