@@ -10,6 +10,7 @@ export const EXPLORER_READ_ONLY_TOOLS = [
   "glob",
   "git_status",
   "git_diff",
+  "ast_grep_search",
   "lsp_diagnostics",
   "lsp_goto_definition",
   "lsp_find_references",

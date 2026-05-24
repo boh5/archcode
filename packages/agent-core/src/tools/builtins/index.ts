@@ -18,6 +18,7 @@ export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOut
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { viewToolOutputTool } from "./view-tool-output";
 export * from "./workflow";
+export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -35,6 +36,7 @@ import { waitForReminderTool } from "./wait-for-reminder";
 import { delegateTool } from "./delegate";
 import { backgroundOutputTool } from "./background-output";
 import { viewToolOutputTool } from "./view-tool-output";
+import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -43,6 +45,8 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     fileEditTool,
     grepTool,
     globTool,
+    astGrepSearchTool,
+    astGrepReplaceTool,
     gitStatusTool,
     gitDiffTool,
     bashTool,
