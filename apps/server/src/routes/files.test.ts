@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "@specra/agent-core";
+import { createProcessRunner, type SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
 import { createServerApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
@@ -64,18 +64,22 @@ async function initGitRepo(workspaceRoot: string): Promise<void> {
 }
 
 async function run(cwd: string, command: string[]): Promise<void> {
-  const proc = Bun.spawn(command, {
+  const result = await createProcessRunner().run({
+    argv: command as [string, ...string[]],
     cwd,
-    stdout: "pipe",
-    stderr: "pipe",
     env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
   });
-  const [stderr, exitCode] = await Promise.all([
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (exitCode !== 0) {
-    throw new Error(`${command.join(" ")} failed: ${stderr}`);
+  if (result.kind !== "success") {
+    const message = result.kind === "nonzero"
+      ? result.output.stderr.trim() || `exit code ${result.exitCode}`
+      : result.kind === "spawn-failure"
+        ? result.error.message
+        : result.kind === "timeout"
+          ? `timed out after ${result.timeoutMs}ms`
+          : result.kind === "aborted"
+            ? "aborted"
+            : `terminated by signal ${result.signal}`;
+    throw new Error(`${command.join(" ")} failed: ${message}`);
   }
 }
 

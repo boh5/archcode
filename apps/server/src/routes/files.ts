@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { SpecraRuntime } from "@specra/agent-core";
+import { createProcessRunner, type SpecraRuntime } from "@specra/agent-core";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
@@ -28,6 +28,7 @@ export interface DiffFile {
 }
 
 const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+const processRunner = createProcessRunner();
 
 export function createFilesRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
@@ -148,39 +149,35 @@ function requiredParam(value: string | undefined, name: string): string {
 }
 
 async function isGitRepository(workspaceRoot: string): Promise<boolean> {
-  try {
-    const proc = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: workspaceRoot,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-    });
-    const exitCode = await proc.exited;
-    return exitCode === 0;
-  } catch {
-    return false;
-  }
+  const result = await processRunner.run(runGitInput(workspaceRoot, ["rev-parse", "--is-inside-work-tree"]));
+  return result.kind === "success" && result.exitCode === 0;
 }
 
 async function runGit(workspaceRoot: string, args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
+  const result = await processRunner.run(runGitInput(workspaceRoot, args));
+
+  switch (result.kind) {
+    case "success":
+      return result.output.stdout;
+    case "nonzero":
+      throw new ServerError("INTERNAL_ERROR", `Git command failed: ${result.output.stderr.trim()}`, 500);
+    case "timeout":
+      throw new ServerError("INTERNAL_ERROR", `Git command timed out after ${result.timeoutMs}ms`, 500);
+    case "aborted":
+      throw new ServerError("INTERNAL_ERROR", "Git command was aborted", 500);
+    case "signal":
+      throw new ServerError("INTERNAL_ERROR", `Git command was terminated by signal ${result.signal}`, 500);
+    case "spawn-failure":
+      throw new ServerError("INTERNAL_ERROR", `Git command failed: ${result.error.message}`, 500);
+  }
+}
+
+function runGitInput(workspaceRoot: string, args: string[]): Parameters<typeof processRunner.run>[0] {
+  return {
+    argv: ["git", ...args],
     cwd: workspaceRoot,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (exitCode !== 0) {
-    throw new ServerError("INTERNAL_ERROR", `Git command failed: ${stderr.trim()}`, 500);
-  }
-
-  return stdout;
+  };
 }
 
 function createDiffFile(path: string): DiffFile {

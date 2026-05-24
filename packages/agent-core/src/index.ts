@@ -1,6 +1,9 @@
 export { closeMcpManagerBestEffort, createSpecraRuntime } from "./runtime";
 export type { SpecraRuntime, SpecraRuntimeOptions } from "./runtime";
 
+export { createProcessRunner } from "./process/runner";
+export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
+
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
 export { SessionAgentManager } from "./agents/session-agent-manager";
