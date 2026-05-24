@@ -3,6 +3,7 @@ import { gitDiffTool, buildArgs } from "./git-diff";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { setProcessRunnerForTest } from "../../process/runner";
 
 // ─── Helpers ───
 
@@ -22,9 +23,7 @@ function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
     stdout: stringToStream(stdout),
     stderr: stringToStream(stderr),
     exited: Promise.resolve(exitCode),
-    get success() {
-      return exitCode === 0;
-    },
+    kill() {},
   };
 }
 
@@ -71,10 +70,8 @@ describe("buildArgs", () => {
 // ─── gitDiffTool ───
 
 describe("gitDiffTool", () => {
-  const originalSpawn = Bun.spawn;
-
   afterEach(() => {
-    Bun.spawn = originalSpawn;
+    setProcessRunnerForTest(undefined);
   });
 
   test("returns diff output for unstaged changes (default)", async () => {
@@ -90,10 +87,9 @@ describe("gitDiffTool", () => {
       " line3",
     ].join("\n");
 
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], _opts?: Record<string, unknown>) =>
+    setProcessRunnerForTest(mock((_cmd, _opts) =>
       mockSpawnResult(diffOutput),
-    );
+    ));
 
     const result = await gitDiffTool.execute({ staged: false }, mockCtx());
     expect(result).toBe(diffOutput);
@@ -110,20 +106,18 @@ describe("gitDiffTool", () => {
       "+new content",
     ].join("\n");
 
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], _opts?: Record<string, unknown>) =>
+    setProcessRunnerForTest(mock((_cmd, _opts) =>
       mockSpawnResult(diffOutput),
-    );
+    ));
 
     const result = await gitDiffTool.execute({ staged: true }, mockCtx());
     expect(result).toBe(diffOutput);
   });
 
   test("returns structured error on git command failure", async () => {
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], _opts?: Record<string, unknown>) =>
+    setProcessRunnerForTest(mock((_cmd, _opts) =>
       mockSpawnResult("", "fatal: not a git repository", 128),
-    );
+    ));
 
     const result = (await gitDiffTool.execute(
       { staged: false },
@@ -136,41 +130,38 @@ describe("gitDiffTool", () => {
   });
 
   test("returns helpful message for empty diff (no changes)", async () => {
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], _opts?: Record<string, unknown>) =>
+    setProcessRunnerForTest(mock((_cmd, _opts) =>
       mockSpawnResult(""),
-    );
+    ));
 
     const result = await gitDiffTool.execute({ staged: false }, mockCtx());
     expect(result).toBe("No changes detected");
   });
 
-  test("passes abort signal to spawn", async () => {
+  test("uses ProcessRunner abort behavior", async () => {
     const abortController = new AbortController();
+    abortController.abort();
     const ctx = mockCtx();
     ctx.abort = abortController.signal;
 
-    let capturedOpts: Record<string, unknown> | null = null;
-
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], opts?: Record<string, unknown>) => {
-      capturedOpts = opts ?? null;
+    setProcessRunnerForTest(mock((_cmd, opts) => {
+      expect(opts.cwd).toBe("/tmp/workspace");
       return mockSpawnResult("");
-    });
+    }));
 
-    await gitDiffTool.execute({ staged: false }, ctx);
-    expect(capturedOpts).not.toBeNull();
-    expect(capturedOpts!.signal).toBe(abortController.signal);
+    const result = (await gitDiffTool.execute({ staged: false }, ctx)) as ToolExecutionResult;
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("execution");
+    expect(result.output).toContain("Git diff was aborted");
   });
 
   test("uses workspaceRoot as cwd", async () => {
-    let capturedOpts: Record<string, unknown> | null = null;
+    let capturedOpts: { cwd?: string } | null = null;
 
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], opts?: Record<string, unknown>) => {
+    setProcessRunnerForTest(mock((_cmd, opts) => {
       capturedOpts = opts ?? null;
       return mockSpawnResult("");
-    });
+    }));
 
     await gitDiffTool.execute({ staged: false }, mockCtx());
     expect(capturedOpts).not.toBeNull();
@@ -178,16 +169,15 @@ describe("gitDiffTool", () => {
   });
 
   test("sets GIT_OPTIONAL_LOCKS=0 in environment", async () => {
-    let capturedOpts: Record<string, unknown> | null = null;
+    let capturedOpts: { env?: Record<string, string> } | null = null;
 
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock((_cmd: string[], opts?: Record<string, unknown>) => {
+    setProcessRunnerForTest(mock((_cmd, opts) => {
       capturedOpts = opts ?? null;
       return mockSpawnResult("");
-    });
+    }));
 
     await gitDiffTool.execute({ staged: false }, mockCtx());
     expect(capturedOpts).not.toBeNull();
-    expect((capturedOpts!.env as Record<string, string>).GIT_OPTIONAL_LOCKS).toBe("0");
+    expect(capturedOpts!.env?.GIT_OPTIONAL_LOCKS).toBe("0");
   });
 });

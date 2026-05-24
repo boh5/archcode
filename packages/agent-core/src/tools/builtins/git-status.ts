@@ -2,6 +2,8 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionResult } from "../types";
+import { createProcessRunner } from "../../process/runner";
+import type { ProcessRunnerResult } from "../../process/types";
 
 const GitStatusInputSchema = z.object({}).strict();
 
@@ -17,42 +19,59 @@ interface GitStatusResult {
   exitCode: number;
 }
 
+const GIT_STATUS_ARGV = [
+  "git",
+  "status",
+  "--porcelain=v1",
+  "-z",
+  "--untracked-files=all",
+  "--no-renames",
+] as const;
+
 export async function runGitStatus(
   workspaceRoot: string,
   signal: AbortSignal,
 ): Promise<GitStatusResult> {
-  const proc = Bun.spawn(
-    [
-      "git",
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=all",
-      "--no-renames",
-    ],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: workspaceRoot,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-      signal,
-    },
-  );
+  const result = await createProcessRunner().run({
+    argv: GIT_STATUS_ARGV,
+    cwd: workspaceRoot,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    signal,
+  });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout!).text(),
-    new Response(proc.stderr!).text(),
-    proc.exited,
-  ]);
+  return formatGitStatusResult(result);
+}
 
-  if (exitCode !== 0) {
-    return {
-      output: stderr.trim() || `git status exited with code ${exitCode}`,
-      exitCode,
-    };
+function formatGitStatusResult(result: ProcessRunnerResult): GitStatusResult {
+  switch (result.kind) {
+    case "success":
+      return { output: parseGitStatusOutput(result.output.stdout), exitCode: result.exitCode };
+    case "nonzero":
+      return {
+        output: result.output.stderr.trim() || `git status exited with code ${result.exitCode}`,
+        exitCode: result.exitCode,
+      };
+    case "timeout":
+      return {
+        output: `git status timed out after ${result.timeoutMs}ms`,
+        exitCode: 1,
+      };
+    case "aborted":
+      return {
+        output: "git status was aborted",
+        exitCode: 1,
+      };
+    case "signal":
+      return {
+        output: `git status was terminated by signal ${result.signal}`,
+        exitCode: 1,
+      };
+    case "spawn-failure":
+      return {
+        output: result.error.message,
+        exitCode: 1,
+      };
   }
-
-  return { output: parseGitStatusOutput(stdout), exitCode };
 }
 
 export const gitStatusTool = defineTool({

@@ -2,6 +2,8 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionResult } from "../types";
+import { createProcessRunner } from "../../process/runner";
+import type { ProcessRunnerResult } from "../../process/types";
 
 // ─── Input Schema ───
 
@@ -22,6 +24,43 @@ export function buildArgs(staged: boolean): string[] {
   return args;
 }
 
+function formatGitDiffResult(result: ProcessRunnerResult): string | ToolExecutionResult {
+  switch (result.kind) {
+    case "success":
+      if (!result.output.stdout.trim()) {
+        return "No changes detected";
+      }
+      return result.output.stdout;
+    case "nonzero":
+      return createToolErrorResult({
+        kind: "execution",
+        message: `Git diff failed:\n${result.output.stderr}`,
+      });
+    case "timeout":
+      return createToolErrorResult({
+        kind: "execution",
+        message: `Git diff timed out after ${result.timeoutMs}ms`,
+      });
+    case "aborted":
+      return createToolErrorResult({
+        kind: "execution",
+        message: "Git diff was aborted",
+      });
+    case "signal":
+      return createToolErrorResult({
+        kind: "execution",
+        message: `Git diff was terminated by signal ${result.signal}`,
+      });
+    case "spawn-failure":
+      return createToolErrorResult({
+        kind: "execution",
+        message: result.error.message,
+        name: result.error.name,
+        details: result.error,
+      });
+  }
+}
+
 // ─── Tool Definition ───
 
 export const gitDiffTool = defineTool({
@@ -34,32 +73,13 @@ export const gitDiffTool = defineTool({
     const args = buildArgs(input.staged);
 
     try {
-      const proc = Bun.spawn(["git", ...args], {
-        stdout: "pipe",
-        stderr: "pipe",
+      const result = await createProcessRunner().run({
+        argv: ["git", ...args],
         cwd: ctx.workspaceRoot,
         env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
         signal: ctx.abort,
       });
-
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-
-      if (exitCode !== 0) {
-        return createToolErrorResult({
-          kind: "execution",
-          message: `Git diff failed:\n${stderr}`,
-        });
-      }
-
-      if (!stdout.trim()) {
-        return "No changes detected";
-      }
-
-      return stdout;
+      return formatGitDiffResult(result);
     } catch (error) {
       return createToolErrorResult({
         kind: "execution",

@@ -6,6 +6,7 @@ import { parseGitStatusOutput, gitStatusTool } from "./git-status";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { setProcessRunnerForTest } from "../../process/runner";
 
 function exec(cmd: string, args: string[], cwd: string): void {
   const result = Bun.spawnSync([cmd, ...args], { cwd });
@@ -84,6 +85,7 @@ describe("gitStatusTool", () => {
   });
 
   afterEach(() => {
+    setProcessRunnerForTest(undefined);
     exec("git", ["checkout", "."], tmpDir);
     exec("git", ["clean", "-fd"], tmpDir);
   });
@@ -123,13 +125,23 @@ describe("gitStatusTool", () => {
     }
   });
 
-  test("passes abort signal to spawn", async () => {
+  test("uses ProcessRunner abort behavior", async () => {
     const ac = new AbortController();
     ac.abort();
+    setProcessRunnerForTest((_argv, opts) => {
+      expect(opts.cwd).toBe(tmpDir);
+      expect(opts.env?.GIT_OPTIONAL_LOCKS).toBe("0");
+      return {
+        stdout: new ReadableStream({ start(controller) { controller.close(); } }),
+        stderr: new ReadableStream({ start(controller) { controller.close(); } }),
+        exited: Promise.resolve(0),
+        kill() {},
+      };
+    });
     const ctx = mockCtx(tmpDir, { abort: ac.signal });
     const result = (await gitStatusTool.execute({}, ctx)) as ToolExecutionResult;
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("execution");
-    expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.output).toContain("git status was aborted");
   });
 });
