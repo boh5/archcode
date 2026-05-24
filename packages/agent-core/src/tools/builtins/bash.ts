@@ -4,6 +4,8 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
 import { createBashPermission } from "../permission";
 import { PathValidator } from "../security";
+import { createProcessRunner } from "../../process/runner";
+import type { ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
@@ -44,89 +46,67 @@ function resolveCwd(workspaceRoot: string, cwd?: string): string {
   return result.resolvedPath;
 }
 
-function safeKill(proc: { kill: () => void }): void {
-  try {
-    proc.kill();
-  } catch {
-    // Process may already have exited.
-  }
-}
-
 export async function runBashCommand(
   input: BashInput,
   ctx: ToolExecutionContext,
 ): Promise<ToolExecutionResult> {
   const cwd = resolveCwd(ctx.workspaceRoot, input.cwd);
   const env = buildBashEnv();
-  let timedOut = false;
-  let aborted = ctx.abort.aborted;
-
-  const proc = Bun.spawn(["bash", "-c", input.command], {
+  const result = await createProcessRunner().run({
+    argv: ["bash", "-c", input.command],
     cwd,
     env,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdin: null,
+    timeoutMs: input.timeoutMs,
+    signal: ctx.abort,
   });
 
-  const killForAbort = () => {
-    aborted = true;
-    safeKill(proc);
-  };
+  return formatProcessRunnerResult(result, input.timeoutMs);
+}
 
-  let timeout: Timer | undefined;
-  if (input.timeoutMs !== undefined) {
-    timeout = setTimeout(() => {
-      timedOut = true;
-      safeKill(proc);
-    }, input.timeoutMs);
-  }
-
-  if (ctx.abort.aborted) {
-    killForAbort();
-  } else {
-    ctx.abort.addEventListener("abort", killForAbort, { once: true });
-  }
-
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    if (timedOut) {
+function formatProcessRunnerResult(
+  result: ProcessRunnerResult,
+  timeoutMs: number | undefined,
+): ToolExecutionResult {
+  switch (result.kind) {
+    case "success":
+      return {
+        output: formatBashOutput(result.output.stdout, result.output.stderr, result.exitCode),
+        isError: false,
+        meta: { exitCode: result.exitCode },
+      };
+    case "nonzero":
+      return createToolErrorResult({
+        kind: "bash-nonzero",
+        message: formatBashOutput(result.output.stdout, result.output.stderr, result.exitCode),
+        meta: { exitCode: result.exitCode },
+      });
+    case "timeout":
       return createToolErrorResult({
         kind: "bash-timeout",
-        message: `Command timed out after ${input.timeoutMs}ms`,
-        meta: { timedOut: true, timeoutMs: input.timeoutMs },
+        message: `Command timed out after ${result.timeoutMs}ms`,
+        meta: { timedOut: true, timeoutMs: result.timeoutMs },
       });
-    }
-
-    if (aborted) {
+    case "aborted":
       return createToolErrorResult({
         kind: "bash-aborted",
         message: "Command was aborted",
         meta: { aborted: true },
       });
-    }
-
-    if (exitCode !== 0) {
+    case "signal":
       return createToolErrorResult({
-        kind: "bash-nonzero",
-        message: formatBashOutput(stdout, stderr, exitCode),
-        meta: { exitCode },
+        kind: "bash-aborted",
+        message: "Command was aborted",
+        meta: { aborted: true, signal: result.signal, exitCode: result.exitCode },
       });
-    }
-
-    return {
-      output: formatBashOutput(stdout, stderr, exitCode),
-      isError: false,
-      meta: { exitCode },
-    };
-  } finally {
-    if (timeout) clearTimeout(timeout);
-    ctx.abort.removeEventListener("abort", killForAbort);
+    case "spawn-failure":
+      return createToolErrorResult({
+        kind: "execution",
+        message: result.error.message,
+        name: result.error.name,
+        details: result.error,
+        meta: { argv: result.argv, cwd: result.cwd, timeoutMs },
+      });
   }
 }
 

@@ -6,6 +6,7 @@ import { bashTool, buildBashEnv, formatBashOutput, runBashCommand } from "./bash
 import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { setProcessRunnerForTest } from "../../process/runner";
 
 function stringToStream(text: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -53,11 +54,10 @@ function mockCtx(
 }
 
 describe("bashTool", () => {
-  const originalSpawn = Bun.spawn;
   const testWorkspaceRoot = realpathSync.native(import.meta.dir);
 
   afterEach(() => {
-    Bun.spawn = originalSpawn;
+    setProcessRunnerForTest(undefined);
   });
 
   test("schema rejects empty command, extra fields, and negative timeout", async () => {
@@ -91,8 +91,7 @@ describe("bashTool", () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "bash-cwd-test-"));
     try {
       const spawnMock = mock(() => mockSpawnResult(""));
-      // @ts-expect-error — Bun.spawn is mutable in test environment
-      Bun.spawn = spawnMock;
+      setProcessRunnerForTest(spawnMock as any);
 
       const result = await registry.execute(
         { toolName: "bash", toolCallId: "cwd", input: { command: "pwd", cwd: ".." } },
@@ -137,19 +136,18 @@ describe("bashTool", () => {
   test("safe pwd command with explicit cwd executes successfully", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "bash-pwd-test-"));
     try {
-      const captured: { cmd?: string[]; opts?: Record<string, unknown> } = {};
-      // @ts-expect-error — Bun.spawn is mutable in test environment
-      Bun.spawn = mock((cmd: string[], opts?: Record<string, unknown>) => {
-        captured.cmd = cmd;
+      const captured: { argv?: readonly string[]; opts?: Record<string, unknown> } = {};
+      setProcessRunnerForTest(((argv: readonly [string, ...string[]], opts: Record<string, unknown>) => {
+        captured.argv = argv;
         captured.opts = opts;
         return mockSpawnResult(realpathSync.native(workspaceRoot) + "\n", "", 0);
-      });
+      }) as any);
 
       const result = await runBashCommand({ command: "pwd", cwd: "." }, mockCtx(workspaceRoot));
 
       expect(result.isError).toBe(false);
       expect(result.output).toContain("EXIT_CODE: 0");
-      expect(captured.cmd).toEqual(["bash", "-c", "pwd"]);
+      expect(captured.argv).toEqual(["bash", "-c", "pwd"]);
       expect(captured.opts?.cwd).toBe(realpathSync.native(workspaceRoot));
       expect(captured.opts?.stdin).toBe("ignore");
       expect(captured.opts?.stdout).toBe("pipe");
@@ -160,8 +158,7 @@ describe("bashTool", () => {
   });
 
   test("nonzero exit returns isError true with exit code", async () => {
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock(() => mockSpawnResult("", "boom\n", 7));
+    setProcessRunnerForTest(() => mockSpawnResult("", "boom\n", 7) as any);
 
     const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
 
@@ -176,13 +173,12 @@ describe("bashTool", () => {
   test("timeout kills process and returns timeout error", async () => {
     const exit = deferred<number>();
     const kill = mock(() => exit.resolve(143));
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock(() => ({
+    setProcessRunnerForTest(() => ({
       stdout: stringToStream(""),
       stderr: stringToStream(""),
       exited: exit.promise,
       kill,
-    }));
+    }) as any);
 
     const result = await runBashCommand({ command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
 
@@ -199,13 +195,12 @@ describe("bashTool", () => {
     const exit = deferred<number>();
     const abortController = new AbortController();
     const kill = mock(() => exit.resolve(143));
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = mock(() => ({
+    setProcessRunnerForTest(() => ({
       stdout: stringToStream(""),
       stderr: stringToStream(""),
       exited: exit.promise,
       kill,
-    }));
+    }) as any);
 
     const promise = runBashCommand(
       { command: "pwd" },
@@ -222,11 +217,58 @@ describe("bashTool", () => {
     expect(result.meta?.aborted).toBe(true);
   });
 
-  test("denied commands do not call Bun.spawn", async () => {
+  test("signal exits map to bash aborted errors", async () => {
+    setProcessRunnerForTest(() => ({
+      stdout: stringToStream(""),
+      stderr: stringToStream(""),
+      exited: Promise.resolve(143),
+      signalCode: "SIGTERM",
+      kill: mock(() => {}),
+    }) as any);
+
+    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+
+    expect(result.isError).toBe(true);
+    const abortParsed = JSON.parse(result.output);
+    expect(abortParsed.message).toBe("Command was aborted");
+    expect(abortParsed.code).toBe("TOOL_BASH_ABORTED");
+    expect(result.meta?.aborted).toBe(true);
+    expect(result.meta?.signal).toBe("SIGTERM");
+    expect(result.meta?.exitCode).toBe(143);
+  });
+
+  test("spawn failures return execution errors", async () => {
+    setProcessRunnerForTest(() => {
+      throw new Error("spawn failed");
+    });
+
+    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.output);
+    expect(parsed.message).toBe("spawn failed");
+    expect(parsed.code).toBe("TOOL_EXECUTION_FAILED");
+  });
+
+  test("EAGAIN spawn failures retry in bash execution", async () => {
+    const error = Object.assign(new Error("temporarily unavailable"), { code: "EAGAIN" });
+    const spawn = mock(() => {
+      if (spawn.mock.calls.length < 3) throw error;
+      return mockSpawnResult("done\n", "", 0) as any;
+    });
+    setProcessRunnerForTest(spawn as any);
+
+    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("STDOUT:\ndone\n");
+    expect(spawn).toHaveBeenCalledTimes(3);
+  });
+
+  test("denied commands do not call ProcessRunner", async () => {
     const registry = createRegistry([bashTool]);
     const spawnMock = mock(() => mockSpawnResult(""));
-    // @ts-expect-error — Bun.spawn is mutable in test environment
-    Bun.spawn = spawnMock;
+    setProcessRunnerForTest(spawnMock as any);
 
     const result = await registry.execute(
       { toolName: "bash", toolCallId: "denied", input: { command: "sudo echo hi" } },
