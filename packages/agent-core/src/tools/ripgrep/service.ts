@@ -1,5 +1,4 @@
-import { existsSync, accessSync, constants } from "node:fs";
-import { homedir } from "node:os";
+import { createBinaryManager, createDefaultBinaryManagerSeam, BinaryNotFoundError, type BinaryManagerSeam } from "../../binary/manager";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,59 +24,55 @@ export class RipgrepNotFoundError extends Error {
  * Tests can provide a custom seam to avoid real filesystem / PATH lookups.
  */
 export interface DiscoverySeam {
-  which(command: string): string | null;
-  exists(path: string): boolean;
-  isExecutable(path: string): boolean;
-  homeDir(): string;
-  platform: string;
-  arch: string;
+  which?: BinaryManagerSeam["which"];
+  exists?: BinaryManagerSeam["exists"];
+  isExecutable?: BinaryManagerSeam["isExecutable"];
+  platform?: string;
+  arch?: string;
+  processRunner?: BinaryManagerSeam["processRunner"];
+  download?: BinaryManagerSeam["download"];
+  verifySha256?: BinaryManagerSeam["verifySha256"];
+  install?: BinaryManagerSeam["install"];
 }
 
-// ---------------------------------------------------------------------------
-// Default seam (production)
-// ---------------------------------------------------------------------------
+function createRipgrepBinaryManagerSeam(seam?: DiscoverySeam): BinaryManagerSeam {
+  if (seam !== undefined) {
+    return {
+      ...createDefaultBinaryManagerSeam(),
+      download: async (params) => {
+        if (seam.download) return seam.download(params);
+        throw new BinaryNotFoundError({ binaryId: "rg", binaryName: "rg" });
+      },
+      verifySha256: (params) => seam.verifySha256?.(params) ?? false,
+      install: async (params) => {
+        if (seam.install) return seam.install(params);
+        throw new BinaryNotFoundError({ binaryId: "rg", binaryName: "rg" });
+      },
+      ...seam,
+    };
+  }
 
-function createDefaultSeam(): DiscoverySeam {
   return {
-    which(command: string): string | null {
-      return Bun.which(command);
-    },
-
-    exists(path: string): boolean {
-      return existsSync(path);
-    },
-
-    isExecutable(path: string): boolean {
-      try {
-        accessSync(path, constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-
-    homeDir(): string {
-      return process.env.HOME ?? homedir();
-    },
-
-    platform: process.platform,
-    arch: process.arch,
+    ...createDefaultBinaryManagerSeam(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
 
 /**
  * Create a RipgrepService instance.
  *
  * @param seam - Optional injectable seam for testing. When omitted the
- *               production seam (real Bun.which, fs, os) is used.
+ *               production seam (BinaryManager default seam) is used.
  */
 export function createRipgrepService(seam?: DiscoverySeam): RipgrepService {
-  const s = seam ?? createDefaultSeam();
+  let manager: ReturnType<typeof createBinaryManager> | undefined;
   let memoizedPath: string | null = null;
+
+  function getManager(): ReturnType<typeof createBinaryManager> {
+    if (manager === undefined) {
+      manager = createBinaryManager(createRipgrepBinaryManagerSeam(seam));
+    }
+    return manager;
+  }
 
   return {
     async ensure(): Promise<string> {
@@ -85,34 +80,26 @@ export function createRipgrepService(seam?: DiscoverySeam): RipgrepService {
         return memoizedPath;
       }
 
-      // 1. Search PATH via which(1).
-      const pathInPath = s.which("rg");
-      if (pathInPath !== null) {
-        memoizedPath = pathInPath;
-        return pathInPath;
+      try {
+        memoizedPath = await getManager().resolve("rg");
+        return memoizedPath;
+      } catch (error) {
+        if (error instanceof Error && error.name.startsWith("Binary")) {
+          throw new RipgrepNotFoundError(
+            [
+              "ripgrep (rg) binary not found. Please install it:",
+              "  brew install ripgrep        (macOS)",
+              "  apt install ripgrep         (Debian / Ubuntu)",
+              "  pacman -S ripgrep           (Arch Linux)",
+              "  winget install BurntSushi.ripgrep.MSVC  (Windows)",
+              "",
+              "Or download from: https://github.com/BurntSushi/ripgrep/releases",
+            ].join("\n"),
+          );
+        }
+
+        throw error;
       }
-
-      // 2. Check ~/.specra/bin/<platform>-<arch>/rg (cached download).
-      const cachedDir = `${s.homeDir()}/.specra/bin/${s.platform}-${s.arch}`;
-      const cachedPath = `${cachedDir}/rg`;
-
-      if (s.exists(cachedPath) && s.isExecutable(cachedPath)) {
-        memoizedPath = cachedPath;
-        return cachedPath;
-      }
-
-      // 3. Give up.
-      throw new RipgrepNotFoundError(
-        [
-          "ripgrep (rg) binary not found. Please install it:",
-          "  brew install ripgrep        (macOS)",
-          "  apt install ripgrep         (Debian / Ubuntu)",
-          "  pacman -S ripgrep           (Arch Linux)",
-          "  winget install BurntSushi.ripgrep.MSVC  (Windows)",
-          "",
-          "Or download from: https://github.com/BurntSushi/ripgrep/releases",
-        ].join("\n"),
-      );
     },
   };
 }

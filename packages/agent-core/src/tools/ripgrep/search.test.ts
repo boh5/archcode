@@ -256,31 +256,31 @@ describe("formatSearchResult", () => {
 
 describe("buildSearchArgs", () => {
   test("constructs basic rg search arguments", () => {
-    const args = buildSearchArgs({ pattern: "foo" }, "/usr/bin/rg");
+    const args = buildSearchArgs({ pattern: "foo" });
     expect(args).toContain("--json");
     expect(args).toContain("-e");
     expect(args).toContain("foo");
   });
 
   test("includes path when provided", () => {
-    const args = buildSearchArgs({ pattern: "foo", path: "src/" }, "/usr/bin/rg");
+    const args = buildSearchArgs({ pattern: "foo", path: "src/" });
     expect(args).toContain("src/");
   });
 
   test("includes glob filter when provided", () => {
-    const args = buildSearchArgs({ pattern: "bar", include: "*.ts" }, "/usr/bin/rg");
+    const args = buildSearchArgs({ pattern: "bar", include: "*.ts" });
     expect(args).toContain("--glob");
     expect(args).toContain("*.ts");
   });
 
   test("includes context when provided", () => {
-    const args = buildSearchArgs({ pattern: "test", context: 3 }, "/usr/bin/rg");
+    const args = buildSearchArgs({ pattern: "test", context: 3 });
     expect(args).toContain("--context");
     expect(args).toContain("3");
   });
 
   test("sets max-count to 100", () => {
-    const args = buildSearchArgs({ pattern: "foo" }, "/usr/bin/rg");
+    const args = buildSearchArgs({ pattern: "foo" });
     const maxCountIdx = args.indexOf("--max-count");
     expect(maxCountIdx).not.toBe(-1);
     expect(args[maxCountIdx + 1]).toBe("100");

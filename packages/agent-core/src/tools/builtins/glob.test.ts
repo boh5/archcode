@@ -6,6 +6,7 @@ import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
 import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { setProcessRunnerForTest } from "../../process/runner";
 
 function mockReadableStream(data: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -16,8 +17,14 @@ function mockReadableStream(data: string): ReadableStream<Uint8Array> {
   });
 }
 
-function mockReadableStreamFromLines(lines: string[]): ReadableStream<Uint8Array> {
-  return mockReadableStream(lines.join("\n") + (lines.length > 0 ? "\n" : ""));
+function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
+  return {
+    stdout: mockReadableStream(stdout),
+    stderr: mockReadableStream(stderr),
+    exited: Promise.resolve(exitCode),
+    exitCode,
+    kill: mock(() => undefined),
+  };
 }
 
 function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
@@ -86,12 +93,9 @@ describe("GlobInputSchema", () => {
   });
 });
 
-const originalSpawn = Bun.spawn;
-
 describe("glob tool", () => {
   let tool: ToolDescriptor<any, string | ToolExecutionResult>;
   let setRgService: (svc: RipgrepService) => void;
-  let mockSpawn: ReturnType<typeof mock>;
 
   beforeAll(async () => {
     const mod = await import("./glob");
@@ -101,27 +105,19 @@ describe("glob tool", () => {
 
   beforeEach(() => {
     setRgService(createMockRgService());
-
-    mockSpawn = mock((..._args: any[]) => ({
-      stdout: mockReadableStreamFromLines(["file1.ts", "file2.ts", "file3.ts"]),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
-    (Bun as any).spawn = mockSpawn;
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("file1.ts\nfile2.ts\nfile3.ts\n")),
+    );
   });
 
   afterEach(() => {
-    (Bun as any).spawn = originalSpawn;
+    setProcessRunnerForTest(undefined);
   });
 
   test("returns list of files sorted by mtime", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStreamFromLines(["c.ts", "a.ts", "b.ts"]),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("c.ts\na.ts\nb.ts\n")),
+    );
 
     const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
     expect(result).toBe("c.ts\na.ts\nb.ts");
@@ -129,15 +125,12 @@ describe("glob tool", () => {
 
   test("respects path parameter", async () => {
     let capturedArgs: readonly string[] = [];
-    mockSpawn.mockImplementation((cmdAndArgs: readonly string[], _options?: any) => {
-      capturedArgs = cmdAndArgs;
-      return {
-        stdout: mockReadableStreamFromLines(["src/bar.ts"]),
-        stderr: mockReadableStream(""),
-        exited: Promise.resolve(0),
-        pid: 99999,
-      };
-    });
+    setProcessRunnerForTest(
+      mock((cmdAndArgs: readonly [string, ...string[]]) => {
+        capturedArgs = cmdAndArgs;
+        return mockSpawnResult("src/bar.ts\n");
+      }),
+    );
 
     await tool.execute({ pattern: "*.ts", path: "src/" }, createMockCtx());
     expect(capturedArgs).toContain("src/");
@@ -145,12 +138,9 @@ describe("glob tool", () => {
 
   test("truncates to 100 results", async () => {
     const manyFiles = Array.from({ length: 150 }, (_, i) => `file${i}.ts`);
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStreamFromLines(manyFiles),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult(manyFiles.join("\n") + "\n")),
+    );
 
     const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
     expect(typeof result).toBe("string");
@@ -162,12 +152,9 @@ describe("glob tool", () => {
   });
 
   test("returns helpful message when no files match", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("")),
+    );
 
     const result = await tool.execute({ pattern: "*.xyz" }, createMockCtx());
     expect(result).toBe("No files matched pattern: *.xyz");
@@ -188,12 +175,9 @@ describe("glob tool", () => {
   });
 
   test("handles spawn error exit code >= 2", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream("parse error: invalid pattern"),
-      exited: Promise.resolve(2),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "parse error: invalid pattern", 2)),
+    );
 
     const result = await tool.execute({ pattern: "[" }, createMockCtx());
     expectToolError(result, {
@@ -205,9 +189,11 @@ describe("glob tool", () => {
   });
 
   test("handles spawn error gracefully", async () => {
-    mockSpawn.mockImplementation(() => {
-      throw new Error("ENOENT: spawn rg ENOENT");
-    });
+    setProcessRunnerForTest(
+      mock(() => {
+        throw new Error("ENOENT: spawn rg ENOENT");
+      }),
+    );
 
     const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
     expectToolError(result, {

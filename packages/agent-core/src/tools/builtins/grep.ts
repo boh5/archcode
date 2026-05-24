@@ -4,6 +4,8 @@ import { createToolErrorResult } from "../errors";
 import { createRipgrepService } from "../ripgrep/service";
 import type { RipgrepService } from "../ripgrep/service";
 import { createWorkspacePermission } from "../permission";
+import { createProcessRunner } from "../../process/runner";
+import type { ProcessRunnerResult } from "../../process/types";
 import { buildFileListArgs, buildCountArgs, buildSearchArgs, formatSearchResult, parseRgOutput } from "../ripgrep/search";
 import type { ToolExecutionResult } from "../types";
 
@@ -43,135 +45,47 @@ export const grepTool = defineTool({
     try {
       const rgPath = await rgService.ensure();
       const outputMode = input.output_mode ?? "content";
+      const runner = createProcessRunner();
 
-    if (outputMode === "files_with_matches") {
-      const args = buildFileListArgs(input.pattern, input.include, input.path);
-      const proc = Bun.spawn([rgPath, ...args], {
-        cwd: ctx.workspaceRoot,
-        stdout: "pipe",
-        stderr: "pipe",
-        signal: ctx.abort,
-        env: { ...process.env },
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-
-      if (exitCode >= 2) {
-        return createToolErrorResult({
-          kind: "grep-error",
-          code: "TOOL_GREP_ERROR",
-          message: stderr
-            ? `rg exited with code ${exitCode}: ${stderr}`
-            : `rg exited with code ${exitCode}`,
-          meta: { exitCode },
+      const runRg = async (args: string[]) => {
+        return runner.run({
+          argv: [rgPath, ...args],
+          cwd: ctx.workspaceRoot,
+          env: { ...process.env },
+          signal: ctx.abort,
         });
+      };
+
+      if (outputMode === "files_with_matches") {
+        return await formatFileListResult(await runRg(buildFileListArgs(input.pattern, input.include, input.path)), input.pattern);
       }
 
-      const lines = stdout.trim().split("\n").filter(Boolean);
-      if (lines.length === 0) {
+      if (outputMode === "count") {
+        return await formatFileListResult(await runRg(buildCountArgs(input.pattern, input.include, input.path)), input.pattern);
+      }
+
+      const searchArgs = {
+        pattern: input.pattern,
+        path: input.path,
+        include: input.include,
+        context: input.context,
+      };
+
+      const result = await runRg(buildSearchArgs(searchArgs));
+      const output = getProcessRunnerStdout(result);
+      if (output.ok === false) return output.error;
+
+      const parsed = parseRgOutput(output.stdout, 100);
+
+      if (parsed.matches.length === 0) {
         return `No matches found for pattern: ${input.pattern}`;
       }
 
-      const truncated = lines.length > 100;
-      const display = truncated ? lines.slice(0, 100) : lines;
-      let result = display.join("\n");
-      if (truncated) {
-        result += "\n[Output truncated: showing first 100 files]";
+      const formatted = formatSearchResult(parsed, "content");
+
+      if (parsed.truncated) {
+        return `${formatted}\n[Output truncated: showing first 100 matches]`;
       }
-      return result;
-    }
-
-    if (outputMode === "count") {
-      const args = buildCountArgs(input.pattern, input.include, input.path);
-      const proc = Bun.spawn([rgPath, ...args], {
-        cwd: ctx.workspaceRoot,
-        stdout: "pipe",
-        stderr: "pipe",
-        signal: ctx.abort,
-        env: { ...process.env },
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ]);
-
-      if (exitCode >= 2) {
-        return createToolErrorResult({
-          kind: "grep-error",
-          code: "TOOL_GREP_ERROR",
-          message: stderr
-            ? `rg exited with code ${exitCode}: ${stderr}`
-            : `rg exited with code ${exitCode}`,
-          meta: { exitCode },
-        });
-      }
-
-      const lines = stdout.trim().split("\n").filter(Boolean);
-      if (lines.length === 0) {
-        return `No matches found for pattern: ${input.pattern}`;
-      }
-
-      const truncated = lines.length > 100;
-      const display = truncated ? lines.slice(0, 100) : lines;
-      let result = display.join("\n");
-      if (truncated) {
-        result += "\n[Output truncated: showing first 100 files]";
-      }
-      return result;
-    }
-
-    // Content mode — use --json parsing for structured output
-    const searchArgs = {
-      pattern: input.pattern,
-      path: input.path,
-      include: input.include,
-      context: input.context,
-    };
-
-    const args = buildSearchArgs(searchArgs, rgPath);
-
-    const proc = Bun.spawn([rgPath, ...args], {
-      cwd: ctx.workspaceRoot,
-      stdout: "pipe",
-      stderr: "pipe",
-      signal: ctx.abort,
-      env: { ...process.env },
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    if (exitCode >= 2) {
-      return createToolErrorResult({
-        kind: "grep-error",
-        code: "TOOL_GREP_ERROR",
-        message: stderr
-          ? `rg exited with code ${exitCode}: ${stderr}`
-          : `rg exited with code ${exitCode}`,
-        meta: { exitCode },
-      });
-    }
-
-    const result = parseRgOutput(stdout, 100);
-
-    if (result.matches.length === 0) {
-      return `No matches found for pattern: ${input.pattern}`;
-    }
-
-    const formatted = formatSearchResult(result, "content");
-
-    if (result.truncated) {
-      return `${formatted}\n[Output truncated: showing first 100 matches]`;
-    }
 
       return formatted;
     } catch (error) {
@@ -184,3 +98,85 @@ export const grepTool = defineTool({
     }
   },
 });
+
+async function formatFileListResult(result: ProcessRunnerResult, pattern: string): Promise<string | ToolExecutionResult> {
+  const output = getProcessRunnerStdout(result);
+  if (output.ok === false) return output.error;
+
+  const stdout = output.stdout;
+  const lines = stdout.trim().split("\n").filter(Boolean);
+  if (lines.length === 0) {
+    return `No matches found for pattern: ${pattern}`;
+  }
+
+  const truncated = lines.length > 100;
+  const display = truncated ? lines.slice(0, 100) : lines;
+  let formatted = display.join("\n");
+  if (truncated) {
+    formatted += "\n[Output truncated: showing first 100 files]";
+  }
+  return formatted;
+}
+
+function getProcessRunnerStdout(
+  result: ProcessRunnerResult,
+): { ok: true; stdout: string } | { ok: false; error: ToolExecutionResult } {
+  switch (result.kind) {
+    case "success":
+      return { ok: true, stdout: result.output.stdout };
+    case "nonzero":
+      if (result.exitCode === 1) return { ok: true, stdout: result.output.stdout };
+      return {
+        ok: false,
+        error: createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: result.output.stderr
+            ? `rg exited with code ${result.exitCode}: ${result.output.stderr}`
+            : `rg exited with code ${result.exitCode}`,
+          meta: { exitCode: result.exitCode },
+        }),
+      };
+    case "timeout":
+      return {
+        ok: false,
+        error: createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: `rg timed out after ${result.timeoutMs}ms`,
+          meta: { timeoutMs: result.timeoutMs },
+        }),
+      };
+    case "aborted":
+      return {
+        ok: false,
+        error: createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: "rg was aborted",
+          meta: { aborted: true },
+        }),
+      };
+    case "signal":
+      return {
+        ok: false,
+        error: createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          message: `rg was terminated by signal ${result.signal}`,
+          meta: { signal: result.signal, exitCode: result.exitCode },
+        }),
+      };
+    case "spawn-failure":
+      return {
+        ok: false,
+        error: createToolErrorResult({
+          kind: "grep-error",
+          code: "TOOL_GREP_ERROR",
+          error: new Error(result.error.message),
+          message: result.error.message,
+          meta: { argv: result.argv, cwd: result.cwd },
+        }),
+      };
+  }
+}

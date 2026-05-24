@@ -190,7 +190,7 @@ export function buildCountArgs(pattern: string, include?: string, path?: string)
  * Build rg command-line arguments for content (--json) mode.
  * Only handles content mode; use buildFileListArgs / buildCountArgs for other modes.
  */
-export function buildSearchArgs(args: SearchArgs, _rgPath: string): string[] {
+export function buildSearchArgs(args: SearchArgs): string[] {
   const cmdArgs: string[] = [];
 
   cmdArgs.push("--json");

@@ -5,8 +5,7 @@ import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
 import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
-
-// ─── Helpers ───
+import { setProcessRunnerForTest } from "../../process/runner";
 
 function mockReadableStream(data: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
@@ -15,6 +14,16 @@ function mockReadableStream(data: string): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
+  return {
+    stdout: mockReadableStream(stdout),
+    stderr: mockReadableStream(stderr),
+    exited: Promise.resolve(exitCode),
+    exitCode,
+    kill: mock(() => undefined),
+  };
 }
 
 function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
@@ -56,21 +65,16 @@ function expectToolError(
   }
 }
 
-// ─── Fixtures ───
-
 const sampleNdjson = [
   '{"type":"match","data":{"path":{"text":"file1.ts"},"lines":{"text":"hello world"},"line_number":42}}',
   '{"type":"match","data":{"path":{"text":"file2.ts"},"lines":{"text":"hello foo"},"line_number":10}}',
 ].join("\n") + "\n";
-
-const originalSpawn = Bun.spawn;
 
 // ─── Tests ───
 
 describe("grep tool", () => {
   let tool: ToolDescriptor<any, string | ToolExecutionResult>;
   let setRgService: (svc: RipgrepService) => void;
-  let mockSpawn: ReturnType<typeof mock>;
 
   beforeAll(async () => {
     const mod = await import("./grep");
@@ -80,17 +84,13 @@ describe("grep tool", () => {
 
   beforeEach(() => {
     setRgService(createMockRgService());
-    mockSpawn = mock((..._args: any[]) => ({
-      stdout: mockReadableStream(sampleNdjson),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
-    (Bun as any).spawn = mockSpawn;
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult(sampleNdjson)),
+    );
   });
 
   afterEach(() => {
-    (Bun as any).spawn = originalSpawn;
+    setProcessRunnerForTest(undefined);
   });
 
   test("returns formatted results for successful search", async () => {
@@ -99,12 +99,9 @@ describe("grep tool", () => {
   });
 
   test("returns no matches message when result is empty", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("")),
+    );
 
     const result = await tool.execute({ pattern: "nonexistent" }, createMockCtx());
     expect(result).toBe("No matches found for pattern: nonexistent");
@@ -125,12 +122,9 @@ describe("grep tool", () => {
   });
 
   test("handles spawn error exit code >= 2", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream("parse error: invalid pattern"),
-      exited: Promise.resolve(2),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "parse error: invalid pattern", 2)),
+    );
 
     const result = await tool.execute({ pattern: "[" }, createMockCtx());
     expectToolError(result, {
@@ -142,9 +136,11 @@ describe("grep tool", () => {
   });
 
   test("handles spawn throw gracefully", async () => {
-    mockSpawn.mockImplementation(() => {
-      throw new Error("ENOENT: spawn rg ENOENT");
-    });
+    setProcessRunnerForTest(
+      mock(() => {
+        throw new Error("ENOENT: spawn rg ENOENT");
+      }),
+    );
 
     const result = await tool.execute({ pattern: "foo" }, createMockCtx());
     expectToolError(result, {
@@ -155,12 +151,9 @@ describe("grep tool", () => {
   });
 
   test("formats output in files_with_matches mode", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream("file1.ts\nfile2.ts\n"),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("file1.ts\nfile2.ts\n")),
+    );
 
     const result = await tool.execute(
       { pattern: "hello", output_mode: "files_with_matches" },
@@ -170,12 +163,9 @@ describe("grep tool", () => {
   });
 
   test("formats output in count mode", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream("file1.ts:2\nfile2.ts:1\n"),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(0),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("file1.ts:2\nfile2.ts:1\n")),
+    );
 
     const result = await tool.execute(
       { pattern: "hello", output_mode: "count" },
@@ -185,12 +175,9 @@ describe("grep tool", () => {
   });
 
   test("files_with_matches mode returns no matches message on empty result", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(1),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "", 1)),
+    );
 
     const result = await tool.execute(
       { pattern: "nonexistent", output_mode: "files_with_matches" },
@@ -200,12 +187,9 @@ describe("grep tool", () => {
   });
 
   test("count mode returns no matches message on empty result", async () => {
-    mockSpawn.mockImplementation(() => ({
-      stdout: mockReadableStream(""),
-      stderr: mockReadableStream(""),
-      exited: Promise.resolve(1),
-      pid: 99999,
-    }));
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "", 1)),
+    );
 
     const result = await tool.execute(
       { pattern: "nonexistent", output_mode: "count" },
@@ -260,15 +244,12 @@ describe("grep tool", () => {
 
   test("respects path parameter", async () => {
     let capturedArgs: readonly string[] = [];
-    mockSpawn.mockImplementation((cmdAndArgs: readonly string[], _options?: any) => {
-      capturedArgs = cmdAndArgs;
-      return {
-        stdout: mockReadableStream(sampleNdjson),
-        stderr: mockReadableStream(""),
-        exited: Promise.resolve(0),
-        pid: 99999,
-      };
-    });
+    setProcessRunnerForTest(
+      mock((cmdAndArgs: readonly [string, ...string[]]) => {
+        capturedArgs = cmdAndArgs;
+        return mockSpawnResult(sampleNdjson);
+      }),
+    );
 
     await tool.execute({ pattern: "hello", path: "src/" }, createMockCtx());
     expect(capturedArgs).toContain("src/");
@@ -276,15 +257,12 @@ describe("grep tool", () => {
 
   test("respects include (glob) parameter", async () => {
     let capturedArgs: readonly string[] = [];
-    mockSpawn.mockImplementation((cmdAndArgs: readonly string[], _options?: any) => {
-      capturedArgs = cmdAndArgs;
-      return {
-        stdout: mockReadableStream(sampleNdjson),
-        stderr: mockReadableStream(""),
-        exited: Promise.resolve(0),
-        pid: 99999,
-      };
-    });
+    setProcessRunnerForTest(
+      mock((cmdAndArgs: readonly [string, ...string[]]) => {
+        capturedArgs = cmdAndArgs;
+        return mockSpawnResult(sampleNdjson);
+      }),
+    );
 
     await tool.execute({ pattern: "hello", include: "*.ts" }, createMockCtx());
     const globIndex = capturedArgs.indexOf("--glob");
