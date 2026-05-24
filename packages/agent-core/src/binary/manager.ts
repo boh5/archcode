@@ -227,8 +227,10 @@ export function setBinaryManagerForTest(manager: BinaryManager | undefined): voi
 }
 
 export function createDefaultBinaryManagerSeam(): BinaryManagerSeam {
+  const processRunner = createProcessRunner();
+
   return {
-    processRunner: createProcessRunner(),
+    processRunner,
     platform: process.platform,
     arch: process.arch,
     which(binaryName) {
@@ -241,21 +243,16 @@ export function createDefaultBinaryManagerSeam(): BinaryManagerSeam {
       return access(path, constants.X_OK).then(() => true, () => false);
     },
     async download(params) {
-      throw new BinaryDownloadError({
-        binaryId: params.spec.binaryId,
-        url: params.url,
-        message: `Automatic download for binary "${params.spec.binaryId}" is not implemented yet.`,
-      });
+      const { downloadBinaryArchive } = await import("./installer");
+      return downloadBinaryArchive(params);
     },
-    verifySha256() {
-      return false;
+    async verifySha256(params) {
+      const { verifyBinarySha256 } = await import("./installer");
+      return verifyBinarySha256(params);
     },
     async install(params) {
-      throw new BinaryInstallError({
-        binaryId: params.spec.binaryId,
-        cachePath: params.cachePath,
-        message: `Automatic install for binary "${params.spec.binaryId}" is not implemented yet.`,
-      });
+      const { installBinaryArchive } = await import("./installer");
+      return installBinaryArchive(params, processRunner);
     },
   };
 }
