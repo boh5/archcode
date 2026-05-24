@@ -34,6 +34,12 @@ export type ToolErrorKind =
   | "edit-identical"
   | "grep-error"
   | "glob-error"
+  | "binary-not-found"
+  | "binary-download-failed"
+  | "binary-checksum-mismatch"
+  | "binary-install-failed"
+  | "binary-unsupported-platform"
+  | "ast-grep-error"
   | "todo-validation"
   | "lsp-error"
   | "lsp-timeout"
@@ -98,6 +104,12 @@ const HINTS: Record<ToolErrorKind, string> = {
   "edit-identical": "oldString and newString are identical; provide a meaningful change.",
   "grep-error": "The search command failed; check the pattern and try again.",
   "glob-error": "The file listing command failed; check the pattern and try again.",
+  "binary-not-found": "Install the required binary, ensure it is on PATH, or let Specra install it into the binary cache.",
+  "binary-download-failed": "Check network access to the binary release URL and retry later.",
+  "binary-checksum-mismatch": "Do not use this download; retry later or verify the pinned binary manifest before proceeding.",
+  "binary-install-failed": "Check cache directory permissions and available disk space, then retry.",
+  "binary-unsupported-platform": "Use a supported macOS or Linux arm64/x64 environment, or install the binary manually on PATH.",
+  "ast-grep-error": "The ast-grep command failed; inspect stderr, pattern, language, and file globs before retrying.",
   "todo-validation": "Invalid todo input; check for duplicate IDs or multiple in_progress items.",
   "lsp-error": "The LSP operation failed; check the server status and retry.",
   "lsp-timeout": "The LSP operation timed out; retry or check if the language server is responsive.",
@@ -344,6 +356,18 @@ export function kindFromCode(code: string): ToolErrorKind | undefined {
       return "grep-error";
     case "TOOL_GLOB_ERROR":
       return "glob-error";
+    case "TOOL_BINARY_NOT_FOUND":
+      return "binary-not-found";
+    case "TOOL_BINARY_DOWNLOAD_FAILED":
+      return "binary-download-failed";
+    case "TOOL_BINARY_CHECKSUM_MISMATCH":
+      return "binary-checksum-mismatch";
+    case "TOOL_BINARY_INSTALL_FAILED":
+      return "binary-install-failed";
+    case "TOOL_BINARY_UNSUPPORTED_PLATFORM":
+      return "binary-unsupported-platform";
+    case "TOOL_AST_GREP_ERROR":
+      return "ast-grep-error";
     case "TOOL_TODO_VALIDATION":
       return "todo-validation";
     case "TOOL_LSP_ERROR":
@@ -427,6 +451,18 @@ export function codeFromKind(kind: ToolErrorKind | undefined): string | undefine
       return "TOOL_GREP_ERROR";
     case "glob-error":
       return "TOOL_GLOB_ERROR";
+    case "binary-not-found":
+      return "TOOL_BINARY_NOT_FOUND";
+    case "binary-download-failed":
+      return "TOOL_BINARY_DOWNLOAD_FAILED";
+    case "binary-checksum-mismatch":
+      return "TOOL_BINARY_CHECKSUM_MISMATCH";
+    case "binary-install-failed":
+      return "TOOL_BINARY_INSTALL_FAILED";
+    case "binary-unsupported-platform":
+      return "TOOL_BINARY_UNSUPPORTED_PLATFORM";
+    case "ast-grep-error":
+      return "TOOL_AST_GREP_ERROR";
     case "todo-validation":
       return "TOOL_TODO_VALIDATION";
     case "lsp-error":
