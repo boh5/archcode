@@ -86,7 +86,7 @@ function getProcessRunnerStdout(
     case "success":
       return { ok: true, stdout: result.output.stdout };
     case "nonzero":
-      if (result.exitCode === 1) return { ok: true, stdout: result.output.stdout };
+      if (result.exitCode === 1 && !result.output.stdout.trim() && !result.output.stderr.trim()) return { ok: true, stdout: result.output.stdout };
       return {
         ok: false,
         error: createToolErrorResult({

@@ -22,43 +22,67 @@ const AstGrepRangePositionSchema = z
     line: z.number(),
     column: z.number(),
   })
-  .strict();
+  .passthrough();
+
+const AstGrepRangeSchema = z
+  .object({
+    byteOffset: z
+      .object({
+        start: z.number(),
+        end: z.number(),
+      })
+      .passthrough(),
+    start: AstGrepRangePositionSchema,
+    end: AstGrepRangePositionSchema,
+  })
+  .passthrough();
+
+/**
+ * Match node in metaVariables — ast-grep outputs { text, range } where
+ * the key in the record IS the variable name (no "name" field).
+ * Uses passthrough to accept future fields from newer ast-grep versions.
+ */
+const AstGrepMatchNodeSchema = z
+  .object({
+    text: z.string(),
+    range: AstGrepRangeSchema.optional(),
+  })
+  .passthrough();
 
 const AstGrepMatchSchema = z
   .object({
     text: z.string(),
-    range: z
-      .object({
-        byteOffset: z
-          .object({
-            start: z.number(),
-            end: z.number(),
-          })
-          .strict(),
-        start: AstGrepRangePositionSchema,
-        end: AstGrepRangePositionSchema,
-      })
-      .strict(),
+    range: AstGrepRangeSchema,
     file: z.string(),
     lines: z.string(),
+    /** ast-grep v0.42+ outputs charCount for context character counts */
+    charCount: z
+      .object({
+        leading: z.number(),
+        trailing: z.number(),
+      })
+      .passthrough()
+      .optional(),
+    /** ast-grep v0.42+ outputs the matched language */
+    language: z.string().optional(),
     replacement: z.string().optional(),
     replacementOffsets: z
       .object({
         start: z.number(),
         end: z.number(),
       })
-      .strict()
+      .passthrough()
       .optional(),
     metaVariables: z
       .object({
-        single: z.record(z.string(), z.object({ name: z.string(), text: z.string() }).strict()).optional(),
-        multi: z.record(z.string(), z.array(z.object({ name: z.string(), text: z.string() }).strict())).optional(),
+        single: z.record(z.string(), AstGrepMatchNodeSchema).optional(),
+        multi: z.record(z.string(), z.array(AstGrepMatchNodeSchema)).optional(),
         transformed: z.record(z.string(), z.string()).optional(),
       })
-      .strict()
+      .passthrough()
       .optional(),
   })
-  .strict();
+  .passthrough();
 
 const AstGrepMatchesSchema = z.array(AstGrepMatchSchema);
 
@@ -167,7 +191,7 @@ function getAstGrepStdout(
     case "success":
       return { ok: true, stdout: result.output.stdout };
     case "nonzero":
-      if (result.exitCode === 1) return { ok: true, stdout: result.output.stdout };
+      if (result.exitCode === 1 && !result.output.stdout.trim() && !result.output.stderr.trim()) return { ok: true, stdout: result.output.stdout };
       return {
         ok: false,
         error: createAstGrepErrorResult({

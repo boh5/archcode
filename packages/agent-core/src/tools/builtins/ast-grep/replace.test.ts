@@ -45,6 +45,7 @@ function manager(binaryPath = "/managed/bin/ast-grep"): BinaryManager {
     download: mock(() => Promise.reject(new Error("download should not run"))),
     verifySha256: mock(() => false),
     install: mock(() => Promise.reject(new Error("install should not run"))),
+    validateBinary: mock(() => Promise.resolve(true)),
   });
 }
 
@@ -70,7 +71,7 @@ const replacementJson = JSON.stringify([
     lines: "  console.log(message)",
     replacement: "logger.info(message)",
     replacementOffsets: { start: 10, end: 30 },
-    metaVariables: { single: { MSG: { name: "MSG", text: "message" } }, multi: {}, transformed: {} },
+    metaVariables: { single: { MSG: { text: "message", range: { byteOffset: { start: 15, end: 22 }, start: { line: 1, column: 15 }, end: { line: 1, column: 22 } } } }, multi: {}, transformed: {} },
   },
 ]);
 
@@ -277,6 +278,18 @@ describe("ast_grep_replace tool", () => {
     setProcessRunnerForTest(mock(() => spawnResult("", "", 1)));
     const result = await astGrepReplaceTool.execute({ pattern: "nope", rewrite: "replacement", dryRun: true }, ctx());
     expect(result).toBe(JSON.stringify({ dryRun: true, applied: false, count: 0, matches: [] }, null, 2));
+  });
+
+  test("treats exit code 1 with non-empty stdout as error (broken binary)", async () => {
+    setProcessRunnerForTest(mock(() => spawnResult("ast-grep shim file was executed...", "", 1)));
+    const result = await astGrepReplaceTool.execute({ pattern: "x", rewrite: "y", dryRun: true }, ctx());
+    expectToolError(result, { kind: "ast-grep-error", code: "TOOL_AST_GREP_ERROR", messageIncludes: "exited with code 1" });
+  });
+
+  test("treats exit code 1 with non-empty stderr as error", async () => {
+    setProcessRunnerForTest(mock(() => spawnResult("", "error: inaccessible files", 1)));
+    const result = await astGrepReplaceTool.execute({ pattern: "x", rewrite: "y", dryRun: true }, ctx());
+    expectToolError(result, { kind: "ast-grep-error", code: "TOOL_AST_GREP_ERROR", messageIncludes: "error: inaccessible files" });
   });
 
   test("surfaces ast-grep errors as typed ast-grep errors", async () => {

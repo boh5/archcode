@@ -8,6 +8,8 @@ import {
   BinaryManager,
   BinaryNotFoundError,
   BinaryUnsupportedPlatformError,
+  BinaryValidationError,
+  createBinaryManager,
   type BinaryDownloadParams,
   type BinaryInstallParams,
   type BinaryManagerSeam,
@@ -45,14 +47,43 @@ describe("BinaryManager", () => {
     expect(seam.calls.which).toBe(1);
   });
 
-  test("returns PATH hit without download", async () => {
+  test("returns PATH hit without download after validation", async () => {
     const seam = createSeam({ pathHits: { rg: "/usr/local/bin/rg" } });
     const manager = new BinaryManager(seam);
 
     expect(manager.resolve("rg")).resolves.toBe("/usr/local/bin/rg");
     expect(seam.calls.download).toBe(0);
     expect(seam.calls.install).toBe(0);
-    expect(seam.calls.exists).toBe(0);
+    expect(seam.calls.validateBinary).toBe(1);
+  });
+
+  test("falls through to cache when PATH binary fails validation", async () => {
+    const seam = createSeam({ pathHits: { "ast-grep": "/broken/ast-grep" }, validateBinaryResult: false, cacheHit: true });
+    const manager = new BinaryManager(seam);
+
+    const resolved = await manager.resolve("ast-grep");
+    expect(resolved).toEndWith("/ast-grep");
+    expect(seam.calls.validateBinary).toBe(1);
+    expect(seam.calls.exists).toBeGreaterThanOrEqual(1);
+  });
+
+  test("tries alternate binary name sg when ast-grep not on PATH", async () => {
+    const seam = createSeam({ pathHits: { sg: "/usr/local/bin/sg" } });
+    const manager = new BinaryManager(seam);
+
+    const resolved = await manager.resolve("ast-grep");
+    expect(resolved).toBe("/usr/local/bin/sg");
+    expect(seam.calls.which).toBeGreaterThanOrEqual(1);
+  });
+
+  test("falls through to download when all PATH binaries fail validation", async () => {
+    const seam = createSeam({ pathHits: { "ast-grep": "/broken/ast-grep", sg: "/broken/sg" }, validateBinaryResult: false });
+    const manager = new BinaryManager(seam);
+
+    const resolved = await manager.resolve("ast-grep");
+    expect(resolved).toEndWith("/ast-grep");
+    expect(seam.calls.download).toBe(1);
+    expect(seam.calls.validateBinary).toBe(2);
   });
 
   test("returns executable cache hit without download", async () => {
@@ -129,6 +160,19 @@ describe("BinaryManager", () => {
     expect(runner.inputs).toHaveLength(1);
     expect(runner.inputs[0]).toMatchObject({ argv: ["/bin/rg", "--version"], cwd: "/workspace", env: { A: "B" } });
   });
+
+  test("createBinaryManager returns a singleton without seam", () => {
+    const a = createBinaryManager();
+    const b = createBinaryManager();
+    expect(a).toBe(b);
+  });
+
+  test("createBinaryManager creates fresh instance with seam", () => {
+    const seam = createSeam();
+    const a = createBinaryManager(seam);
+    const b = createBinaryManager(seam);
+    expect(a).not.toBe(b);
+  });
 });
 
 describe("binary tool error taxonomy", () => {
@@ -138,6 +182,7 @@ describe("binary tool error taxonomy", () => {
     expect(codeFromKind("binary-checksum-mismatch")).toBe("TOOL_BINARY_CHECKSUM_MISMATCH");
     expect(codeFromKind("binary-install-failed")).toBe("TOOL_BINARY_INSTALL_FAILED");
     expect(codeFromKind("binary-unsupported-platform")).toBe("TOOL_BINARY_UNSUPPORTED_PLATFORM");
+    expect(codeFromKind("binary-validation-failed")).toBe("TOOL_BINARY_VALIDATION_FAILED");
     expect(codeFromKind("ast-grep-error")).toBe("TOOL_AST_GREP_ERROR");
 
     expect(kindFromCode("TOOL_BINARY_NOT_FOUND")).toBe("binary-not-found");
@@ -145,15 +190,19 @@ describe("binary tool error taxonomy", () => {
     expect(kindFromCode("TOOL_BINARY_CHECKSUM_MISMATCH")).toBe("binary-checksum-mismatch");
     expect(kindFromCode("TOOL_BINARY_INSTALL_FAILED")).toBe("binary-install-failed");
     expect(kindFromCode("TOOL_BINARY_UNSUPPORTED_PLATFORM")).toBe("binary-unsupported-platform");
+    expect(kindFromCode("TOOL_BINARY_VALIDATION_FAILED")).toBe("binary-validation-failed");
     expect(kindFromCode("TOOL_AST_GREP_ERROR")).toBe("ast-grep-error");
 
     const notFound = new BinaryNotFoundError({ binaryId: "rg", binaryName: "rg" });
     expect(formatToolError(notFound.toToolError())).toMatchObject({ kind: "binary-not-found", code: "TOOL_BINARY_NOT_FOUND" });
+
+    const validationErr = new BinaryValidationError({ binaryId: "ast-grep", path: "/broken/ast-grep" });
+    expect(formatToolError(validationErr.toToolError())).toMatchObject({ kind: "binary-validation-failed", code: "TOOL_BINARY_VALIDATION_FAILED" });
   });
 });
 
 interface TestSeam extends BinaryManagerSeam {
-  readonly calls: Record<"which" | "exists" | "isExecutable" | "download" | "verifySha256" | "install", number>;
+  readonly calls: Record<"which" | "exists" | "isExecutable" | "download" | "verifySha256" | "install" | "validateBinary", number>;
 }
 
 function createSeam(options: {
@@ -165,8 +214,9 @@ function createSeam(options: {
   processRunner?: ProcessRunner;
   download?: (params: BinaryDownloadParams) => Promise<Uint8Array>;
   install?: (params: BinaryInstallParams) => Promise<string>;
+  validateBinaryResult?: boolean;
 } = {}): TestSeam {
-  const calls = { which: 0, exists: 0, isExecutable: 0, download: 0, verifySha256: 0, install: 0 };
+  const calls = { which: 0, exists: 0, isExecutable: 0, download: 0, verifySha256: 0, install: 0, validateBinary: 0 };
 
   return {
     calls,
@@ -196,6 +246,10 @@ function createSeam(options: {
     async install(params) {
       calls.install++;
       return options.install ? options.install(params) : params.cachePath;
+    },
+    async validateBinary(_path: string, _binaryId: string) {
+      calls.validateBinary++;
+      return options.validateBinaryResult ?? true;
     },
   };
 }

@@ -41,6 +41,7 @@ function manager(binaryPath = "/managed/bin/ast-grep"): BinaryManager {
     download: mock(() => Promise.reject(new Error("download should not run"))),
     verifySha256: mock(() => false),
     install: mock(() => Promise.reject(new Error("install should not run"))),
+    validateBinary: mock(() => Promise.resolve(true)),
   });
 }
 
@@ -54,7 +55,7 @@ function expectToolError(result: unknown, expected: { kind: ToolErrorKind; code:
   if (expected.messageIncludes) expect(r.output).toContain(expected.messageIncludes);
 }
 
-const sampleJson = JSON.stringify([{ text: "console.log(message)", range: { byteOffset: { start: 10, end: 30 }, start: { line: 1, column: 2 }, end: { line: 1, column: 22 } }, file: "src/app.ts", lines: "  console.log(message)", metaVariables: { single: { MSG: { name: "MSG", text: "message" } }, multi: {}, transformed: {} } }]);
+const sampleJson = JSON.stringify([{ text: "console.log(message)", range: { byteOffset: { start: 10, end: 30 }, start: { line: 1, column: 2 }, end: { line: 1, column: 22 } }, file: "src/app.ts", lines: "  console.log(message)", charCount: { leading: 2, trailing: 0 }, language: "TypeScript", metaVariables: { single: { MSG: { text: "message", range: { byteOffset: { start: 15, end: 22 }, start: { line: 1, column: 15 }, end: { line: 1, column: 22 } } } }, multi: {}, transformed: {} } }]);
 
 describe("ast_grep_search tool", () => {
   beforeEach(() => {
@@ -96,13 +97,25 @@ describe("ast_grep_search tool", () => {
     const parsed = JSON.parse(result) as { count: number; matches: Array<Record<string, unknown>> };
     expect(parsed.count).toBe(1);
     expect(parsed.matches[0]).toMatchObject({ file: "src/app.ts", text: "console.log(message)", lines: "  console.log(message)", range: { byteOffset: { start: 10, end: 30 }, start: { line: 1, column: 2 }, end: { line: 1, column: 22 } } });
-    expect(parsed.matches[0]?.metaVariables).toEqual({ single: { MSG: { name: "MSG", text: "message" } }, multi: {}, transformed: {} });
+    expect(parsed.matches[0]?.metaVariables).toEqual({ single: { MSG: { text: "message", range: { byteOffset: { start: 15, end: 22 }, start: { line: 1, column: 15 }, end: { line: 1, column: 22 } } } }, multi: {}, transformed: {} });
   });
 
   test("treats exit code 1 as an empty result", async () => {
     setProcessRunnerForTest(mock(() => spawnResult("", "", 1)));
     const result = await astGrepSearchTool.execute({ pattern: "nope" }, ctx());
     expect(result).toBe(JSON.stringify({ count: 0, matches: [] }, null, 2));
+  });
+
+  test("treats exit code 1 with non-empty stdout as error (broken binary)", async () => {
+    setProcessRunnerForTest(mock(() => spawnResult("ast-grep shim file was executed...", "", 1)));
+    const result = await astGrepSearchTool.execute({ pattern: "x" }, ctx());
+    expectToolError(result, { kind: "ast-grep-error", code: "TOOL_AST_GREP_ERROR", messageIncludes: "exited with code 1" });
+  });
+
+  test("treats exit code 1 with non-empty stderr as error", async () => {
+    setProcessRunnerForTest(mock(() => spawnResult("", "error: inaccessible files", 1)));
+    const result = await astGrepSearchTool.execute({ pattern: "x" }, ctx());
+    expectToolError(result, { kind: "ast-grep-error", code: "TOOL_AST_GREP_ERROR", messageIncludes: "error: inaccessible files" });
   });
 
   test("surfaces invalid pattern errors as typed ast-grep errors", async () => {

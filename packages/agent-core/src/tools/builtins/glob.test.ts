@@ -160,6 +160,32 @@ describe("glob tool", () => {
     expect(result).toBe("No files matched pattern: *.xyz");
   });
 
+  test("treats exit code 1 with non-empty stdout as error (broken binary)", async () => {
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("rg shim file was executed...", "", 1)),
+    );
+
+    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
+    expectToolError(result, {
+      kind: "glob-error",
+      code: "TOOL_GLOB_ERROR",
+      messageIncludes: "rg exited with code 1",
+    });
+  });
+
+  test("treats exit code 1 with non-empty stderr as error", async () => {
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "error: inaccessible files", 1)),
+    );
+
+    const result = await tool.execute({ pattern: "*.ts" }, createMockCtx());
+    expectToolError(result, {
+      kind: "glob-error",
+      code: "TOOL_GLOB_ERROR",
+      messageIncludes: "error: inaccessible files",
+    });
+  });
+
   test("handles rg binary not found (RipgrepNotFoundError)", async () => {
     const failing = createMockRgService({
       ensure: mock(() => Promise.reject(new RipgrepNotFoundError("rg not found on this system"))),

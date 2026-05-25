@@ -198,6 +198,32 @@ describe("grep tool", () => {
     expect(result).toBe("No matches found for pattern: nonexistent");
   });
 
+  test("treats exit code 1 with non-empty stdout as error (broken binary)", async () => {
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("rg shim file was executed...", "", 1)),
+    );
+
+    const result = await tool.execute({ pattern: "test" }, createMockCtx());
+    expectToolError(result, {
+      kind: "grep-error",
+      code: "TOOL_GREP_ERROR",
+      messageIncludes: "rg exited with code 1",
+    });
+  });
+
+  test("treats exit code 1 with non-empty stderr as error", async () => {
+    setProcessRunnerForTest(
+      mock(() => mockSpawnResult("", "error: inaccessible files", 1)),
+    );
+
+    const result = await tool.execute({ pattern: "test" }, createMockCtx());
+    expectToolError(result, {
+      kind: "grep-error",
+      code: "TOOL_GREP_ERROR",
+      messageIncludes: "error: inaccessible files",
+    });
+  });
+
   test("rejects unknown input fields", () => {
     const parse = tool.inputSchema.safeParse({
       pattern: "foo",

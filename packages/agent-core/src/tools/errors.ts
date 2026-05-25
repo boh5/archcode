@@ -39,6 +39,7 @@ export type ToolErrorKind =
   | "binary-checksum-mismatch"
   | "binary-install-failed"
   | "binary-unsupported-platform"
+  | "binary-validation-failed"
   | "ast-grep-error"
   | "todo-validation"
   | "lsp-error"
@@ -109,6 +110,7 @@ const HINTS: Record<ToolErrorKind, string> = {
   "binary-checksum-mismatch": "Do not use this download; retry later or verify the pinned binary manifest before proceeding.",
   "binary-install-failed": "Check cache directory permissions and available disk space, then retry.",
   "binary-unsupported-platform": "Use a supported macOS or Linux arm64/x64 environment, or install the binary manually on PATH.",
+  "binary-validation-failed": "The binary found on PATH did not pass validation. Remove the broken binary or install the correct version manually.",
   "ast-grep-error": "The ast-grep command failed; inspect stderr, pattern, language, and file globs before retrying.",
   "todo-validation": "Invalid todo input; check for duplicate IDs or multiple in_progress items.",
   "lsp-error": "The LSP operation failed; check the server status and retry.",
@@ -366,6 +368,8 @@ export function kindFromCode(code: string): ToolErrorKind | undefined {
       return "binary-install-failed";
     case "TOOL_BINARY_UNSUPPORTED_PLATFORM":
       return "binary-unsupported-platform";
+    case "TOOL_BINARY_VALIDATION_FAILED":
+      return "binary-validation-failed";
     case "TOOL_AST_GREP_ERROR":
       return "ast-grep-error";
     case "TOOL_TODO_VALIDATION":
@@ -461,6 +465,8 @@ export function codeFromKind(kind: ToolErrorKind | undefined): string | undefine
       return "TOOL_BINARY_INSTALL_FAILED";
     case "binary-unsupported-platform":
       return "TOOL_BINARY_UNSUPPORTED_PLATFORM";
+    case "binary-validation-failed":
+      return "TOOL_BINARY_VALIDATION_FAILED";
     case "ast-grep-error":
       return "TOOL_AST_GREP_ERROR";
     case "todo-validation":

@@ -7,6 +7,18 @@ import { getBinaryCachePath, getCurrentTargetTriple, UnsupportedBinaryPlatformEr
 import { getBinaryReleaseUrl, getBinarySpec } from "./manifest";
 import type { BinaryPlatformSpec, BinarySpec, SupportedBinaryId, SupportedTargetTriple } from "./types";
 
+/** Alternate binary names to try on PATH before falling back to download. */
+const ALTERNATE_BINARY_NAMES: Record<SupportedBinaryId, readonly string[]> = {
+  rg: [],
+  "ast-grep": ["sg"],
+};
+
+/** Substrings expected in `--version` output for each binary. */
+const VALIDATION_PATTERNS: Record<SupportedBinaryId, string> = {
+  rg: "ripgrep",
+  "ast-grep": "ast-grep",
+};
+
 export type BinaryManagerRunOptions = Omit<ProcessRunnerInput, "argv">;
 
 export interface BinaryManagerSeam {
@@ -19,6 +31,7 @@ export interface BinaryManagerSeam {
   download(params: BinaryDownloadParams): Promise<Uint8Array>;
   verifySha256(params: BinaryChecksumParams): Promise<boolean> | boolean;
   install(params: BinaryInstallParams): Promise<string>;
+  validateBinary?(path: string, binaryId: SupportedBinaryId): Promise<boolean>;
 }
 
 export interface BinaryDownloadParams {
@@ -122,6 +135,22 @@ export class BinaryUnsupportedPlatformError extends Error {
   }
 }
 
+export class BinaryValidationError extends Error {
+  readonly binaryId: SupportedBinaryId;
+  readonly path: string;
+
+  constructor(params: { binaryId: SupportedBinaryId; path: string; message?: string; cause?: unknown }) {
+    super(params.message ?? `Binary "${params.binaryId}" at "${params.path}" failed validation.`, { cause: params.cause });
+    this.name = "BinaryValidationError";
+    this.binaryId = params.binaryId;
+    this.path = params.path;
+  }
+
+  toToolError(): FormatToolErrorOptions {
+    return binaryToolError(this, "binary-validation-failed", { binaryId: this.binaryId, path: this.path });
+  }
+}
+
 export class BinaryManager {
   private readonly seam: BinaryManagerSeam;
   private readonly installLocks = new Map<SupportedBinaryId, Promise<string>>();
@@ -158,7 +187,7 @@ export class BinaryManager {
 
   private async resolveUncached(binaryId: SupportedBinaryId): Promise<string> {
     const spec = getBinarySpec(binaryId);
-    const pathBinary = await this.seam.which(spec.binaryName);
+    const pathBinary = await this.resolveValidPathBinary(binaryId, spec);
     if (pathBinary) return pathBinary;
 
     const platform = this.resolvePlatform(binaryId, spec);
@@ -166,6 +195,25 @@ export class BinaryManager {
     if ((await this.seam.exists(cachePath)) && (await this.seam.isExecutable(cachePath))) return cachePath;
 
     return this.downloadAndInstall(spec, platform, cachePath);
+  }
+
+  private async resolveValidPathBinary(binaryId: SupportedBinaryId, spec: BinarySpec): Promise<string | undefined> {
+    const names = [spec.binaryName, ...ALTERNATE_BINARY_NAMES[binaryId]];
+    for (const name of names) {
+      const path = await this.seam.which(name);
+      if (!path) continue;
+      if (await this.validateBinary(path, binaryId)) {
+        return path;
+      }
+    }
+    return undefined;
+  }
+
+  private async validateBinary(path: string, binaryId: SupportedBinaryId): Promise<boolean> {
+    if (this.seam.validateBinary) {
+      return this.seam.validateBinary(path, binaryId);
+    }
+    return defaultValidateBinary(path, binaryId);
   }
 
   private resolvePlatform(binaryId: SupportedBinaryId, spec: BinarySpec): BinaryPlatformSpec {
@@ -218,8 +266,14 @@ export class BinaryManager {
 
 let binaryManagerForTest: BinaryManager | undefined;
 
+/** Default singleton instance — resolved paths are cached across calls. */
+let defaultManager: BinaryManager | undefined;
+
 export function createBinaryManager(seam?: BinaryManagerSeam): BinaryManager {
-  return seam ? new BinaryManager(seam) : (binaryManagerForTest ?? new BinaryManager());
+  if (seam) return new BinaryManager(seam);
+  if (binaryManagerForTest) return binaryManagerForTest;
+  if (!defaultManager) defaultManager = new BinaryManager();
+  return defaultManager;
 }
 
 export function setBinaryManagerForTest(manager: BinaryManager | undefined): void {
@@ -254,7 +308,24 @@ export function createDefaultBinaryManagerSeam(): BinaryManagerSeam {
       const { installBinaryArchive } = await import("./installer");
       return installBinaryArchive(params, processRunner);
     },
+    validateBinary: defaultValidateBinary,
   };
+}
+
+async function defaultValidateBinary(path: string, binaryId: SupportedBinaryId): Promise<boolean> {
+  const pattern = VALIDATION_PATTERNS[binaryId];
+  if (!pattern) return true;
+  const runner = createProcessRunner();
+  try {
+    const result = await runner.run({ argv: [path, "--version"], timeoutMs: 5000, maxOutputBytes: 65536 });
+    if (result.kind === "success") {
+      const output = `${result.output.stdout} ${result.output.stderr}`.toLowerCase();
+      return output.includes(pattern);
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function binaryToolError(error: Error, kind: ToolErrorKind, details: Record<string, unknown>): FormatToolErrorOptions {
