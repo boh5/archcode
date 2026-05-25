@@ -2096,3 +2096,86 @@ describe("runQueryLoop slash commands", () => {
     expect(store.getState().toModelMessages()).toEqual([]);
   });
 });
+
+describe("runQueryLoop abort handling", () => {
+  test("abort before loop starts emits aborted run-end", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([{ text: "should not appear" }]);
+
+    const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
+
+    expect(result.steps).toBe(0);
+    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    expect(runEnd?.status).toBe("aborted");
+  });
+
+  test("abort during stream breaks out and emits aborted run-end", async () => {
+    const abortController = new AbortController();
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([{ text: "partial" }]);
+
+    setTimeout(() => abortController.abort(), 0);
+
+    const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
+
+    expect(result.steps).toBeLessThanOrEqual(1);
+    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    expect(runEnd).toBeDefined();
+  });
+
+  test("abort after tool calls emits Aborted result for remaining tools", async () => {
+    const abortController = new AbortController();
+    const store = createStore();
+    const events = captureEvents(store);
+    const registry = createTestRegistry(async () => "ok");
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} },
+          { type: "tool-call", toolCallId: "tc-2", toolName: "echo", input: {} },
+        ],
+      },
+      { text: "done" },
+    ]);
+
+    abortController.abort();
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], abort: abortController.signal }),
+      "Hi",
+    );
+
+    expect(result.steps).toBeLessThanOrEqual(1);
+    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    expect(runEnd?.status).toBe("aborted");
+  });
+
+  test("abort between stream end and tool execution emits aborted run-end", async () => {
+    const abortController = new AbortController();
+    const store = createStore();
+    const events = captureEvents(store);
+    const registry = createTestRegistry(async () => "ok");
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }],
+      },
+      { text: "after" },
+    ]);
+
+    abortController.abort();
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], abort: abortController.signal }),
+      "Hi",
+    );
+
+    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    expect(runEnd?.status).toBe("aborted");
+  });
+});

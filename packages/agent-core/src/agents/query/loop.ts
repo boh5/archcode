@@ -94,6 +94,8 @@ export async function runQueryLoop(
     }
 
     while (steps < maxSteps) {
+      if (abort.aborted) break;
+
       store.getState().append({ type: "step-start", step: steps });
       await runHooks(beforeModelBuild, { store, modelInfo, modelOptions: options.modelOptions, abort, systemPrompt });
       const messages = store.getState().toModelMessages();
@@ -109,7 +111,10 @@ export async function runQueryLoop(
         ...(systemPrompt ? { system: systemPrompt } : {}),
       });
 
-      await consumeFullStream(result.fullStream, store);
+      await consumeFullStream(result.fullStream, store, abort);
+
+      if (abort.aborted) break;
+
       const finishReason = await result.finishReason;
       const usage = await result.usage;
       lastText = await result.text;
@@ -120,6 +125,7 @@ export async function runQueryLoop(
       if (finishReason !== "tool-calls") break;
 
       const toolCalls = await result.toolCalls;
+      if (abort.aborted) break;
       if (resolvedWorkspaceRoot === undefined) {
         resolvedWorkspaceRoot = options.projectContext.project.workspaceRoot;
       }
@@ -261,12 +267,15 @@ async function runHooks<T>(
 async function consumeFullStream(
   fullStream: AsyncIterable<TextStreamPart>,
   store: StoreApi<SessionStoreState>,
+  abort?: AbortSignal,
 ): Promise<void> {
   let textOpen = false;
   let reasoningOpen = false;
 
   try {
     for await (const chunk of fullStream) {
+      if (abort?.aborted) break;
+
       if (chunk.type === "text-delta") {
         if (!textOpen) {
           store.getState().append({ type: "text-start" });
@@ -338,10 +347,27 @@ async function executeToolCalls(
 
   const batches = partitionToolCalls(executableToolCalls, registry);
 
-  for (const batch of batches) {
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+
+    if (abort.aborted) {
+      for (let j = i; j < batches.length; j++) {
+        const remaining = batches[j];
+        const calls = remaining.type === "parallel" ? remaining.calls : [remaining.call];
+        for (const tc of calls) {
+          appendToolResult(store, tc, "Aborted", true, undefined);
+        }
+      }
+      break;
+    }
+
     if (batch.type === "parallel") {
       await Promise.all(
         batch.calls.map(async (toolCall) => {
+          if (abort.aborted) {
+            appendToolResult(store, toolCall, "Aborted", true, undefined);
+            return;
+          }
           const ctx = createToolExecutionContext({
             store,
             toolName: toolCall.toolName,
@@ -364,6 +390,17 @@ async function executeToolCalls(
         }),
       );
     } else {
+      if (abort.aborted) {
+        appendToolResult(store, batch.call, "Aborted", true, undefined);
+        for (let j = i + 1; j < batches.length; j++) {
+          const remaining = batches[j];
+          const calls = remaining.type === "parallel" ? remaining.calls : [remaining.call];
+          for (const tc of calls) {
+            appendToolResult(store, tc, "Aborted", true, undefined);
+          }
+        }
+        break;
+      }
       const toolCall = batch.call;
       const ctx = createToolExecutionContext({
         store,

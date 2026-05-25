@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePostMessage, usePostCommand } from "../../api/mutations";
+import { usePostMessage, usePostCommand, useAbortSession } from "../../api/mutations";
 import { useSessionStore } from "../../store/session-store";
 
 const SLASH_COMMANDS = [
@@ -26,6 +26,7 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const isRunning = useSessionStore(sessionId, (s) => s.isRunning, slug);
   const postMessage = usePostMessage();
   const postCommand = usePostCommand();
+  const abortSession = useAbortSession();
 
   const isPending = postMessage.isPending || postCommand.isPending;
   const canSend = value.trim().length > 0 && !isPending;
@@ -143,7 +144,7 @@ useEffect(() => {
 
       if (e.key === "Escape" && isRunning) {
         e.preventDefault();
-        postCommand.mutate({ slug, sessionId, name: "abort" });
+        abortSession.mutate({ slug, sessionId });
         return;
       }
     },
@@ -156,7 +157,7 @@ useEffect(() => {
       isRunning,
       slug,
       sessionId,
-      postCommand,
+      abortSession,
     ],
   );
 
@@ -266,7 +267,7 @@ useEffect(() => {
             type="button"
             className="w-9 h-9 rounded-sm border border-border-default bg-transparent text-text-tertiary flex items-center justify-center cursor-pointer shrink-0 transition-all duration-150 hover:bg-error-muted hover:border-error hover:text-error"
             onClick={() =>
-              postCommand.mutate({ slug, sessionId, name: "abort" })
+              abortSession.mutate({ slug, sessionId })
             }
             title="Stop"
           >

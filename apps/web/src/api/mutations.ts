@@ -133,3 +133,20 @@ export function usePostCommand() {
     ),
   });
 }
+
+export function useAbortSession() {
+  return useMutation({
+    mutationFn: async ({
+      slug,
+      sessionId,
+    }: {
+      slug: string;
+      sessionId: string;
+    }) => apiFetch<{ ok: boolean; aborted: boolean }>(
+      `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/abort`,
+      {
+        method: "POST",
+      },
+    ),
+  });
+}
