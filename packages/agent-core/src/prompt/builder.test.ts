@@ -60,20 +60,34 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("## Project Context");
   });
 
-  test("sections appear in correct order", async () => {
-    const result = await buildSystemPrompt(makeCtx({ agentId: "builder", rolePrompt: "## Workflow Role: Builder\nTest content.", agentsMd: "AGENTSCONTENT" }));
+  test("sections appear in correct order with skills section between guidelines and tools", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      agentId: "builder",
+      rolePrompt: "## Workflow Role: Builder\nTest content.",
+      agentsMd: "AGENTSCONTENT",
+      availableSkills: [{ name: "git-master", description: "Git expertise", source: "builtin" }],
+    }));
     const identityIdx = result.indexOf("Specra");
     const roleIdx = result.indexOf("## Workflow Role: Builder");
     const guidelinesIdx = result.indexOf("## Guidelines");
+    const skillsIdx = result.indexOf("## Skills");
     const toolsIdx = result.indexOf("## Tools");
     const envIdx = result.indexOf("## Environment");
     const projectIdx = result.indexOf("## Project Context");
 
     expect(identityIdx).toBeLessThan(roleIdx);
     expect(roleIdx).toBeLessThan(guidelinesIdx);
-    expect(guidelinesIdx).toBeLessThan(toolsIdx);
+    expect(guidelinesIdx).toBeLessThan(skillsIdx);
+    expect(skillsIdx).toBeLessThan(toolsIdx);
     expect(toolsIdx).toBeLessThan(envIdx);
     expect(envIdx).toBeLessThan(projectIdx);
+  });
+
+  test("skills section is omitted when no available or active skills", async () => {
+    const result = await buildSystemPrompt(makeCtx());
+    expect(result).not.toContain("## Skills");
+    expect(result).not.toContain("<available-skills>");
+    expect(result).not.toContain("<active-skills>");
   });
 
   test("omits role section when rolePrompt is absent", async () => {

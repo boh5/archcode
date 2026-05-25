@@ -1,4 +1,5 @@
 import type { MemoryRoots } from "../memory";
+import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
 
 /**
  * Context provided to the system prompt builder.
@@ -25,6 +26,12 @@ export interface PromptContext {
 
   /** Resolved filesystem roots for project and user memory directories */
   readonly memoryRoots?: MemoryRoots;
+
+  /** Index of skills available to this agent (name, description, source, allowed_tools) */
+  readonly availableSkills?: readonly SkillIndexEntry[];
+
+  /** Fully resolved active skills with full body content */
+  readonly activeSkills?: readonly ResolvedSkill[];
 }
 
 export interface PromptEnv {

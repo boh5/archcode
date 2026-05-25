@@ -16,6 +16,8 @@ export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
+export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
+export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
 export { viewToolOutputTool } from "./view-tool-output";
 export * from "./workflow";
 export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
@@ -37,6 +39,8 @@ import { delegateTool } from "./delegate";
 import { backgroundOutputTool } from "./background-output";
 import { viewToolOutputTool } from "./view-tool-output";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
+import { skillListTool } from "./skill-list";
+import { skillReadTool } from "./skill-read";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -60,6 +64,8 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     waitForReminderTool,
     delegateTool,
     backgroundOutputTool,
+    skillListTool,
+    skillReadTool,
     viewToolOutputTool,
   ];
 }

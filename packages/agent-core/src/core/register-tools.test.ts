@@ -82,7 +82,7 @@ function makeLogger(): Logger & { info: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 21 builtins including 4 LSP and 2 ast-grep tools", () => {
+  it("registers all 23 builtins including 4 LSP and 2 ast-grep tools", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -107,6 +107,8 @@ describe("registerBuiltinTools", () => {
       "wait_for_reminder",
       "delegate",
       "background_output",
+      "skill_list",
+      "skill_read",
       "view_tool_output",
     ]);
   });

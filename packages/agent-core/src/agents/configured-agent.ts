@@ -160,6 +160,7 @@ export class ConfiguredAgent implements Agent {
       const allowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
+      const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
       const promptContext: PromptContext = {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
@@ -167,6 +168,8 @@ export class ConfiguredAgent implements Agent {
         rolePrompt: this.definition.rolePrompt,
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),
+        availableSkills,
+        ...(this.activeSkills.length > 0 ? { activeSkills: this.activeSkills } : {}),
         ...(this.definition.includeMemoryInPrompt ? { memoryRoots: this.memoryRoots } : {}),
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
