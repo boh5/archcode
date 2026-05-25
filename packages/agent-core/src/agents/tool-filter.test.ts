@@ -36,10 +36,11 @@ describe("delegate input schema", () => {
     });
     expect(invalid.success).toBe(false);
 
-    const missingSkills = DelegateInputSchema.safeParse({
+    const invalidSkills = DelegateInputSchema.safeParse({
       agent_type: "explore",
       prompt: "test prompt",
+      skills: "git-master",
     });
-    expect(missingSkills.success).toBe(false);
+    expect(invalidSkills.success).toBe(false);
   });
 });

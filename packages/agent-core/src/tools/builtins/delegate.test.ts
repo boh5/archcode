@@ -45,7 +45,7 @@ describe("delegate tool", () => {
   it("accepts any non-empty agent_type string in the input schema", () => {
     expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [] }).success).toBe(true);
     expect(DelegateInputSchema.safeParse({ agent_type: "", prompt: "inspect", skills: [] }).success).toBe(false);
-    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect" }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: "codemap" }).success).toBe(false);
   });
 
   it("sync delegation waits and returns last assistant text", async () => {
