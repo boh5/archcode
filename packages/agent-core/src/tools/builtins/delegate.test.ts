@@ -1,9 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { StoreApi } from "zustand";
 import { DelegateTargetNotAllowedError } from "../../agents/errors";
 import type { AgentFactoryLike, DelegateAgentOptions } from "../../delegation/types";
 import { createSessionStore } from "../../store/store";
-import type { SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
@@ -12,7 +10,7 @@ class ToolStubFactory implements AgentFactoryLike {
   lastOptions: DelegateAgentOptions | undefined;
   readonly store = createSessionStore(`delegate-child-${crypto.randomUUID()}`);
 
-  delegate(options: DelegateAgentOptions) {
+  async delegate(options: DelegateAgentOptions) {
     this.lastOptions = options;
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: "delegated output" });
@@ -45,14 +43,15 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
 
 describe("delegate tool", () => {
   it("accepts any non-empty agent_type string in the input schema", () => {
-    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect" }).success).toBe(true);
-    expect(DelegateInputSchema.safeParse({ agent_type: "", prompt: "inspect" }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [] }).success).toBe(true);
+    expect(DelegateInputSchema.safeParse({ agent_type: "", prompt: "inspect", skills: [] }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect" }).success).toBe(false);
   });
 
   it("sync delegation waits and returns last assistant text", async () => {
     const factory = new ToolStubFactory();
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", background: false },
+      { agent_type: "explore", prompt: "inspect", skills: [], background: false },
       makeContext({ agentFactory: factory, currentDepth: 1 }),
     );
 
@@ -60,6 +59,7 @@ describe("delegate tool", () => {
     expect(factory.lastOptions?.parentAgentName).toBe("orchestrator");
     expect(factory.lastOptions?.targetAgentName).toBe("explore");
     expect(factory.lastOptions?.prompt).toBe("inspect");
+    expect(factory.lastOptions?.skills).toEqual([]);
     expect(factory.lastOptions?.currentDepth).toBe(1);
     expect(factory.lastOptions?.background).toBe(false);
   });
@@ -67,18 +67,19 @@ describe("delegate tool", () => {
   it("async delegation returns session_id immediately", async () => {
     const factory = new ToolStubFactory();
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", description: "Scan", background: true },
+      { agent_type: "explore", prompt: "inspect", skills: ["codemap"], description: "Scan", background: true },
       makeContext({ agentFactory: factory }),
     );
 
     expect(JSON.parse(result)).toEqual({ ok: true, session_id: factory.store.getState().sessionId });
     expect(factory.lastOptions?.description).toBe("Scan");
     expect(factory.lastOptions?.background).toBe(true);
+    expect(factory.lastOptions?.skills).toEqual(["codemap"]);
   });
 
   it("returns structured error when factory context is missing", async () => {
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", background: false },
+      { agent_type: "explore", prompt: "inspect", skills: [], background: false },
       makeContext(),
     );
 
@@ -91,13 +92,13 @@ describe("delegate tool", () => {
 
   it("returns structured error when factory rejects a disallowed target", async () => {
     const factory: AgentFactoryLike = {
-      delegate() {
+      async delegate() {
         throw new DelegateTargetNotAllowedError("orchestrator", "writer", 0);
       },
     };
 
     const result = await executeDelegate(
-      { agent_type: "writer", prompt: "inspect", background: false },
+      { agent_type: "writer", prompt: "inspect", skills: [], background: false },
       makeContext({ agentFactory: factory }),
     );
 
@@ -120,6 +121,7 @@ describe("delegate tool", () => {
       {
         agent_type: "explore",
         prompt: "inspect",
+        skills: ["research-docs"],
         title: "Custom Title",
         description: "Scan repository",
         background: false,
@@ -132,6 +134,7 @@ describe("delegate tool", () => {
       parentAgentName: "explore",
       targetAgentName: "explore",
       prompt: "inspect",
+      skills: ["research-docs"],
       title: "Custom Title",
       description: "Scan repository",
       background: false,
@@ -144,7 +147,7 @@ describe("delegate tool", () => {
     const factory = new ToolStubFactory();
 
     await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", description: "Fallback Title", background: false },
+      { agent_type: "explore", prompt: "inspect", skills: [], description: "Fallback Title", background: false },
       makeContext({ agentFactory: factory }),
     );
 

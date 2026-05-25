@@ -6,7 +6,8 @@ import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { createSessionStore } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
-import type { SkillService } from "../skills";
+import { SkillNotFoundError, type SkillService } from "../skills";
+import { assertSkillName } from "../skills/schema";
 import type { ResolvedSkill } from "../skills/types";
 import type { ToolRegistry } from "../tools/index";
 import { ConfiguredAgent } from "./configured-agent";
@@ -17,6 +18,7 @@ import {
   DelegationToolNotAllowedError,
   DepthLimitError,
   NoModelsConfiguredError,
+  SkillNotAllowedError,
   SubAgentError,
 } from "./errors";
 import type { AgentDefinition, AgentName, AgentRunHandle, DelegateAgentOptions } from "./factory-types";
@@ -49,7 +51,7 @@ export interface CreateAgentOptions {
 export interface AgentFactory {
   createRootAgent(name: AgentName, options?: CreateAgentOptions): Agent;
   createAgent(name: AgentName, options?: CreateAgentOptions): Agent;
-  delegate(options: DelegateAgentOptions): AgentRunHandle;
+  delegate(options: DelegateAgentOptions): Promise<AgentRunHandle>;
   getDefinition(name: string): AgentDefinition;
   listAgentNames(): string[];
   resolveAllowedTools(definition: AgentDefinition, depth: number): string[];
@@ -93,7 +95,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       return createConfiguredAgent(agentConfig, factory, factory.getDefinition(name), options);
     },
 
-    delegate(options) {
+    async delegate(options) {
       const currentDepth = options.currentDepth ?? 0;
       const parentDefinition = factory.getDefinition(options.parentAgentName);
       const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
@@ -122,6 +124,13 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       if (activeChildren.size >= childPolicy.maxConcurrent) {
         throw new ConcurrentLimitError(activeChildren.size);
       }
+
+      const activeSkills = await resolveDelegatedSkills(
+        agentConfig.skillService,
+        agentConfig.workspaceRoot,
+        targetDefinition,
+        options.skills,
+      );
 
       const childSessionId = crypto.randomUUID();
       const childStore = createSessionStore(childSessionId);
@@ -157,7 +166,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
         parentSessionId,
         ...(childTitle !== undefined ? { title: childTitle } : {}),
         abortSignal: childAbortController.signal,
-        activeSkills: undefined,
+        activeSkills,
       });
 
       activeChildren.add(childSessionId);
@@ -298,6 +307,37 @@ function terminalSource(status: SubAgentTerminalStatus, sessionId: string): Remi
 function formatStatus(status: SubAgentTerminalStatus): string {
   if (status === "timed_out") return "timed out";
   return status;
+}
+
+async function resolveDelegatedSkills(
+  skillService: SkillService,
+  workspaceRoot: string,
+  targetDefinition: AgentDefinition,
+  requestedSkills: readonly string[],
+): Promise<readonly ResolvedSkill[]> {
+  const dedupedNames: string[] = [];
+  const seen = new Set<string>();
+
+  for (const skillName of requestedSkills) {
+    assertSkillName(skillName);
+    if (!targetDefinition.skills.includes(skillName)) {
+      throw new SkillNotAllowedError(targetDefinition.name, skillName, targetDefinition.skills);
+    }
+    if (seen.has(skillName)) continue;
+    seen.add(skillName);
+    dedupedNames.push(skillName);
+  }
+
+  const resolvedSkills: ResolvedSkill[] = [];
+  for (const skillName of dedupedNames) {
+    const skill = await skillService.readForAgent(workspaceRoot, skillName, targetDefinition.skills);
+    if (skill === null) {
+      throw new SkillNotFoundError(skillName);
+    }
+    resolvedSkills.push(skill);
+  }
+
+  return resolvedSkills;
 }
 
 function createConfiguredAgent(

@@ -102,3 +102,14 @@ export class AgentChildPolicyMissingError extends SubAgentError {
     this.name = "AgentChildPolicyMissingError";
   }
 }
+
+export class SkillNotAllowedError extends SubAgentError {
+  constructor(
+    public readonly targetAgentName: string,
+    public readonly skillName: string,
+    public readonly allowedSkills: readonly string[],
+  ) {
+    super(`Skill "${skillName}" is not allowed for delegated agent "${targetAgentName}"`);
+    this.name = "SkillNotAllowedError";
+  }
+}

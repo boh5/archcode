@@ -6,14 +6,14 @@ import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSessionStore } from "../../store/store";
-import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
+import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
-import { __setStreamTextForTest, runQueryLoop } from "./loop";
+import { __setStreamTextForTest, maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { MissingProjectContextError } from "../errors";
@@ -2033,6 +2033,62 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 });
 
 describe("runQueryLoop slash commands", () => {
+  test("maybeHandleCommand returns rewritten user message for command continuation", async () => {
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register({
+      name: "skill",
+      description: "Skill continuation",
+      handler: mock(async () => ({
+        success: true,
+        message: "Activating skill",
+        continueAsMessage: "Use Skill continuation",
+      })),
+    });
+
+    const result = await maybeHandleCommand(
+      makeOptions({ store, commandRegistry }),
+      "/skill use git-master commit changes",
+      new AbortController().signal,
+    );
+
+    expect(result).toEqual({ handled: false, userMessage: "Use Skill continuation" });
+    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "Activating skill",
+    });
+  });
+
+  test("command continuation is appended as user message and sent to model", async () => {
+    const streamFn = createMockStreamText([{ text: "continued answer" }]);
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register({
+      name: "skill",
+      description: "Skill continuation",
+      handler: mock(async () => ({
+        success: true,
+        message: "Activating skill",
+        continueAsMessage: "Use Skill git-master now",
+      })),
+    });
+
+    const result = await runQueryLoop(makeOptions({ store, commandRegistry }), "/skill use git-master");
+
+    expect(result).toEqual({ text: "continued answer", steps: 0 });
+    expect(streamCallMessages(streamFn, 0)).toEqual([
+      { role: "user", content: "Use Skill git-master now" },
+    ]);
+    expect(store.getState().messages[0]!.parts[0]).toMatchObject({
+      type: "system-notice",
+      notice: "Activating skill",
+    });
+    expect(store.getState().messages[1]!.parts[0]).toMatchObject({
+      type: "text",
+      text: "Use Skill git-master now",
+    });
+  });
+
   test("exact /compact handles command, stores system notice, and skips model call", async () => {
     const streamFn = createMockStreamText([{ text: "should not run" }]);
     const store = createStore();
@@ -2174,7 +2230,7 @@ describe("runQueryLoop abort handling", () => {
 
     abortController.abort();
 
-    const result = await runQueryLoop(
+    await runQueryLoop(
       makeOptions({ store, toolRegistry: registry, allowedTools: ["echo"], abort: abortController.signal }),
       "Hi",
     );

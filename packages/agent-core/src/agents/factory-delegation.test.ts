@@ -26,6 +26,7 @@ import {
   DelegateTargetNotAllowedError,
   DelegationToolNotAllowedError,
   DepthLimitError,
+  SkillNotAllowedError,
   SubAgentError,
 } from "./errors";
 import { UnknownAgentDefinitionError, createAgentFactory } from "./factory";
@@ -37,6 +38,16 @@ const tmpRoot = join(import.meta.dir, "__test_tmp__", "factory-delegation");
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
+}
+
+function createSkillServiceWithBuiltins(): SkillService {
+  return new SkillService({
+    builtinSkills: {
+      "git-master": "---\nname: git-master\ndescription: Git helper\n---\nUse git carefully.",
+      codemap: "---\nname: codemap\ndescription: Code map helper\n---\nMap code first.",
+      "research-docs": "---\nname: research-docs\ndescription: Research docs helper\n---\nRead docs carefully.",
+    },
+  });
 }
 
 function makeTool(name: string): AnyToolDescriptor {
@@ -128,15 +139,16 @@ function targetDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefini
   };
 }
 
-function makeFactory(definitions: readonly AgentDefinition[] = [parentDefinition(), targetDefinition()]) {
+function makeFactory(definitions: readonly AgentDefinition[] | undefined = undefined, skillService = createTestSkillService()) {
+  const agentDefinitionsForFactory = definitions ?? [parentDefinition(), targetDefinition()];
   const providerRegistry = makeProviderRegistry();
   return createAgentFactory({
-    definitions,
+    definitions: agentDefinitionsForFactory,
     providerRegistry,
     toolRegistry: makeToolRegistry(),
-    skillService: createTestSkillService(),
+    skillService,
     workspaceRoot: tmpRoot,
-    config: configForDefinitions(providerRegistry, definitions),
+    config: configForDefinitions(providerRegistry, agentDefinitionsForFactory),
   });
 }
 
@@ -259,11 +271,12 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactory();
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect",
+      skills: [],
       description: "Inspect files",
     });
 
@@ -293,11 +306,12 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactory();
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect",
+      skills: [],
       description: "Inspect docs",
     });
 
@@ -313,19 +327,21 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactory();
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const titled = factory.delegate({
+    const titled = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect title",
+      skills: [],
       title: "Delegated Title",
       description: "Description fallback",
     });
-    const described = factory.delegate({
+    const described = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect description",
+      skills: [],
       description: "Description Title",
     });
 
@@ -350,11 +366,12 @@ describe("AgentFactory.delegate", () => {
     });
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect titled child",
+      skills: [],
       title: "Delegated Title",
     });
 
@@ -364,18 +381,19 @@ describe("AgentFactory.delegate", () => {
     expect(btm.dispatched).not.toContain("title-generation");
   });
 
-  test("throws DepthLimitError when current depth reaches the parent child policy", () => {
+  test("throws DepthLimitError when current depth reaches the parent child policy", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 1 } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "too deep",
+      skills: [],
       currentDepth: 1,
-    })).toThrow(DepthLimitError);
+    })).rejects.toThrow(DepthLimitError);
   });
 
   test("allows Builder at depth 2 to delegate to Explore when maxDepth is 3", async () => {
@@ -386,18 +404,19 @@ describe("AgentFactory.delegate", () => {
     ]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "builder delegates to explore",
+      skills: [],
       currentDepth: 2,
     });
 
     await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
   });
 
-  test("throws error at depth 3 when maxDepth is 3 (delegate tool unavailable)", () => {
+  test("throws error at depth 3 when maxDepth is 3 (delegate tool unavailable)", async () => {
     const factory = makeFactory([
       parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
       targetDefinition(),
@@ -406,24 +425,25 @@ describe("AgentFactory.delegate", () => {
 
     // At depth 3, resolveAllowedTools strips "delegate" first (depth >= MAX_SUB_AGENT_DEPTH),
     // so DelegationToolNotAllowedError fires before DepthLimitError.
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "too deep",
+      skills: [],
       currentDepth: 3,
-    })).toThrow(DelegationToolNotAllowedError);
+    })).rejects.toThrow(DelegationToolNotAllowedError);
   });
 
-  test("throws ConcurrentLimitError when active children reach the parent child policy", () => {
+  test("throws ConcurrentLimitError when active children reach the parent child policy", async () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1, timeoutMs: 0 } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
-    const first = factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "hang" });
+    const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "hang", skills: [] });
     first.result.catch(() => {});
 
     try {
-      factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "blocked" });
+      await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "blocked", skills: [] });
       throw new Error("expected concurrency limit");
     } catch (error) {
       expect(error).toBeInstanceOf(ConcurrentLimitError);
@@ -438,10 +458,10 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1 } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const first = factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "first" });
+    const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "first", skills: [] });
     await first.result;
 
-    const second = factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "second" });
+    const second = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "second", skills: [] });
     await expect(second.result).resolves.toEqual({ text: "child result", steps: 0 });
   });
 
@@ -450,11 +470,12 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, timeoutMs: 10 } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "timeout",
+      skills: [],
       background: true,
     });
 
@@ -483,11 +504,12 @@ describe("AgentFactory.delegate", () => {
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
     const parentAbort = new AbortController();
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "abort",
+      skills: [],
       parentAbort: parentAbort.signal,
     });
 
@@ -500,11 +522,12 @@ describe("AgentFactory.delegate", () => {
     setupResolvingStreamText();
     const successFactory = makeFactory();
     const successParent = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
-    const success = successFactory.delegate({
+    const success = await successFactory.delegate({
       parentStore: successParent,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "ok",
+      skills: [],
       background: true,
     });
 
@@ -519,11 +542,12 @@ describe("AgentFactory.delegate", () => {
       return originalCreateAgent(name, options);
     };
     const failureParent = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
-    const failure = failureFactory.delegate({
+    const failure = await failureFactory.delegate({
       parentStore: failureParent,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "fail",
+      skills: [],
       background: true,
     });
 
@@ -533,43 +557,190 @@ describe("AgentFactory.delegate", () => {
     await expect(failure.result).rejects.toThrow(SubAgentError);
   });
 
-  test("rejects delegation when caller resolved tools do not include delegate", () => {
+  test("rejects delegation when caller resolved tools do not include delegate", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: ["grep"], delegateTargets: ["explore"] } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect",
-    })).toThrow(DelegationToolNotAllowedError);
+      skills: [],
+    })).rejects.toThrow(DelegationToolNotAllowedError);
   });
 
-  test("rejects delegation when target is not in caller delegate targets", () => {
+  test("rejects delegation when target is not in caller delegate targets", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: [] } }), targetDefinition()]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "explore",
       prompt: "inspect",
-    })).toThrow(DelegateTargetNotAllowedError);
+      skills: [],
+    })).rejects.toThrow(DelegateTargetNotAllowedError);
   });
 
-  test("rejects delegation when target definition is missing", () => {
+  test("rejects delegation when target definition is missing", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: ["missing"] } })]);
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
 
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "orchestrator",
       targetAgentName: "missing",
       prompt: "inspect",
-    })).toThrow(UnknownAgentDefinitionError);
+      skills: [],
+    })).rejects.toThrow(UnknownAgentDefinitionError);
+  });
+
+  test("passes no active skills when skills is empty", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    let activeSkills: readonly unknown[] | undefined;
+    const originalCreateAgent = factory.createAgent.bind(factory);
+    factory.createAgent = (name, options = {}) => {
+      activeSkills = options.activeSkills;
+      return originalCreateAgent(name, options);
+    };
+
+    const handle = await factory.delegate({
+      parentStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+    });
+
+    expect(activeSkills).toEqual([]);
+    await handle.result;
+  });
+
+  test("validates requested skills against the child allow-list, not the parent", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    let activeSkills: readonly unknown[] | undefined;
+    const originalCreateAgent = factory.createAgent.bind(factory);
+    factory.createAgent = (name, options = {}) => {
+      activeSkills = options.activeSkills;
+      return originalCreateAgent(name, options);
+    };
+
+    const handle = await factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "build with git",
+      skills: ["git-master"],
+    });
+
+    expect(activeSkills?.map((skill) => (skill as { metadata: { name: string } }).metadata.name)).toEqual(["git-master"]);
+    await handle.result;
+  });
+
+  test("rejects skills absent from the child allow-list even when the parent allows them", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+
+    await expect(factory.delegate({
+      parentStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "explore",
+      prompt: "inspect with git",
+      skills: ["git-master"],
+    })).rejects.toThrow(SkillNotAllowedError);
+  });
+
+  test("passes requested active skill bodies to the child agent", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    let activeSkills: readonly unknown[] | undefined;
+    const originalCreateAgent = factory.createAgent.bind(factory);
+    factory.createAgent = (name, options = {}) => {
+      activeSkills = options.activeSkills;
+      return originalCreateAgent(name, options);
+    };
+
+    const handle = await factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "build with skill",
+      skills: ["git-master"],
+    });
+
+    expect(activeSkills?.[0]).toMatchObject({
+      metadata: { name: "git-master", description: "Git helper" },
+      body: "Use git carefully.",
+      source: "builtin",
+    });
+    await handle.result;
+  });
+
+  test("does not leak active skills between later children", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const captured: Array<readonly unknown[]> = [];
+    const originalCreateAgent = factory.createAgent.bind(factory);
+    factory.createAgent = (name, options = {}) => {
+      captured.push([...(options.activeSkills ?? [])]);
+      return originalCreateAgent(name, options);
+    };
+
+    const first = await factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "first",
+      skills: ["git-master"],
+    });
+    await first.result;
+    const second = await factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "second",
+      skills: [],
+    });
+    await second.result;
+
+    expect(captured.map((skills) => skills.map((skill) => (skill as { metadata: { name: string } }).metadata.name))).toEqual([
+      ["git-master"],
+      [],
+    ]);
+  });
+
+  test("de-duplicates duplicate skill names in first-seen order", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
+    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    let activeSkills: readonly unknown[] | undefined;
+    const originalCreateAgent = factory.createAgent.bind(factory);
+    factory.createAgent = (name, options = {}) => {
+      activeSkills = options.activeSkills;
+      return originalCreateAgent(name, options);
+    };
+
+    const handle = await factory.delegate({
+      parentStore,
+      parentAgentName: "foreman",
+      targetAgentName: "builder",
+      prompt: "dedupe skills",
+      skills: ["codemap", "git-master", "codemap", "git-master"],
+    });
+
+    expect(activeSkills?.map((skill) => (skill as { metadata: { name: string } }).metadata.name)).toEqual(["codemap", "git-master"]);
+    await handle.result;
   });
 
   test("rejects duplicate agent definitions", () => {
@@ -712,19 +883,21 @@ describe("AgentFactory.delegate", () => {
     const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
     setupResolvingStreamText();
 
-    const handle = factory.delegate({
+    const handle = await factory.delegate({
       parentStore,
       parentAgentName: "foreman",
       targetAgentName: "builder",
       prompt: "build task",
+      skills: [],
     });
 
-    expect(() => factory.delegate({
+    await expect(factory.delegate({
       parentStore,
       parentAgentName: "foreman",
       targetAgentName: "librarian",
       prompt: "not allowed",
-    })).toThrow(DelegateTargetNotAllowedError);
+      skills: [],
+    })).rejects.toThrow(DelegateTargetNotAllowedError);
     expect(factory.getDelegateTargetsFor(foremanAgentDefinition, 0)).toEqual(["builder", "reviewer"]);
     await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
   });

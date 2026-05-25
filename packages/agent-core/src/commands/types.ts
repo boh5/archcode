@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
 import type { ModelCallOptions } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
+import type { SkillService } from "../skills/service";
 import type { SessionStoreState } from "../store/types";
 
 export interface CommandContext {
@@ -10,11 +11,16 @@ export interface CommandContext {
   modelOptions?: ModelCallOptions;
   circuitBreaker?: CircuitBreaker;
   abort?: AbortSignal;
+  workspaceRoot?: string;
+  agentName?: string;
+  agentSkills?: readonly string[];
+  skillService?: SkillService;
 }
 
 export interface CommandResult {
   success: boolean;
   message: string;
+  continueAsMessage?: string;
 }
 
 export type CommandHandler = (ctx: CommandContext, args?: string) => Promise<CommandResult>;

@@ -4,7 +4,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
 import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
-import { createToolExecutionContext, type ToolExecutionContext } from "../../tools/index";
+import { createToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
@@ -89,8 +89,10 @@ export async function runQueryLoop(
       return { text: "", steps: 0 };
     }
 
-    if (userMessage) {
-      store.getState().append({ type: "user-message", content: userMessage });
+    const activeUserMessage = commandResult.userMessage ?? userMessage;
+
+    if (activeUserMessage) {
+      store.getState().append({ type: "user-message", content: activeUserMessage });
     }
 
     while (steps < maxSteps) {
@@ -141,7 +143,6 @@ export async function runQueryLoop(
         abort,
         allowedTools,
         options.projectContext,
-        resolvedWorkspaceRoot,
         confirmPermission,
         options.askUser,
         options.agentFactory,
@@ -220,11 +221,11 @@ function pickModelCallOptions(modelOptions: QueryLoopOptions["modelOptions"]): S
   };
 }
 
-async function maybeHandleCommand(
+export async function maybeHandleCommand(
   options: QueryLoopOptions,
   userMessage: string,
   abort: AbortSignal,
-): Promise<{ handled: boolean }> {
+): Promise<{ handled: boolean; userMessage?: string }> {
   const { commandRegistry, store, modelInfo, modelOptions } = options;
   const parsed = commandRegistry?.parse(userMessage);
   if (!parsed) return { handled: false };
@@ -242,8 +243,20 @@ async function maybeHandleCommand(
     return { handled: false };
   }
 
-  const result = await descriptor.handler({ store, modelInfo, modelOptions, abort }, parsed.args);
+  const result = await descriptor.handler({
+    store,
+    modelInfo,
+    modelOptions,
+    abort,
+    workspaceRoot: options.workspaceRoot,
+    agentName: options.agentName,
+    agentSkills: options.agentSkills,
+    skillService: options.skillService,
+  }, parsed.args);
   store.getState().append({ type: "system-notice", message: result.message });
+  if (result.continueAsMessage) {
+    return { handled: false, userMessage: result.continueAsMessage };
+  }
   return { handled: true };
 }
 
@@ -329,7 +342,6 @@ async function executeToolCalls(
   abort: AbortSignal,
   allowedTools: readonly string[],
   projectContext: QueryLoopOptions["projectContext"],
-  workspaceRoot: string,
   confirmPermission: QueryLoopOptions["confirmPermission"],
   askUser: QueryLoopOptions["askUser"] | undefined,
   agentFactory: NonNullable<QueryLoopOptions["agentFactory"]> | undefined,

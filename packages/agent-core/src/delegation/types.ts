@@ -8,6 +8,7 @@ export interface DelegateAgentOptions {
   readonly parentAgentName: AgentName;
   readonly targetAgentName: string;
   readonly prompt: string;
+  readonly skills: readonly string[];
   readonly title?: string;
   readonly description?: string;
   readonly background?: boolean;
@@ -23,5 +24,5 @@ export interface AgentRunHandle {
 }
 
 export interface AgentFactoryLike {
-  delegate(options: DelegateAgentOptions): AgentRunHandle;
+  delegate(options: DelegateAgentOptions): Promise<AgentRunHandle>;
 }

@@ -8,6 +8,7 @@ export const DelegateInputSchema = z
   .object({
     agent_type: z.string().min(1),
     prompt: z.string(),
+    skills: z.array(z.string()),
     description: z.string().optional(),
     title: z.string().optional(),
     background: z.boolean().default(false),
@@ -36,11 +37,12 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
 
   let sessionId = "";
   try {
-    const handle = ctx.agentFactory.delegate({
+    const handle = await ctx.agentFactory.delegate({
       parentStore: ctx.store,
       parentAgentName: ctx.agentName ?? "orchestrator",
       targetAgentName: input.agent_type,
       prompt: input.prompt,
+      skills: input.skills,
       title: input.title ?? input.description,
       description: input.description,
       background: input.background ?? false,

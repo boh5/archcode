@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
-import { CommandRegistry, createCompactCommand } from "../commands/index";
+import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
 import type { CommandResult } from "../commands/types";
 import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
@@ -132,6 +132,14 @@ export class ConfiguredAgent implements Agent {
         this.modelOptions,
       ),
     );
+    this.commandRegistry.register(
+      createSkillCommand(
+        this.skillService,
+        this.workspaceRoot,
+        this.definition.name,
+        this.definition.skills,
+      ),
+    );
   }
 
   async run(
@@ -240,6 +248,10 @@ export class ConfiguredAgent implements Agent {
         modelInfo: this.modelInfo,
         modelOptions: this.modelOptions,
         abort: undefined,
+        workspaceRoot: this.workspaceRoot,
+        agentName: this.definition.name,
+        agentSkills: this.definition.skills,
+        skillService: this.skillService,
       },
       args,
     );

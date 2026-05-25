@@ -18,19 +18,28 @@ describe("delegate input schema", () => {
     const valid = DelegateInputSchema.safeParse({
       agent_type: "explore",
       prompt: "test prompt",
+      skills: [],
     });
     expect(valid.success).toBe(true);
 
     const dynamic = DelegateInputSchema.safeParse({
       agent_type: "unknown_type",
       prompt: "test prompt",
+      skills: [],
     });
     expect(dynamic.success).toBe(true);
 
     const invalid = DelegateInputSchema.safeParse({
       agent_type: "",
       prompt: "test prompt",
+      skills: [],
     });
     expect(invalid.success).toBe(false);
+
+    const missingSkills = DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "test prompt",
+    });
+    expect(missingSkills.success).toBe(false);
   });
 });
