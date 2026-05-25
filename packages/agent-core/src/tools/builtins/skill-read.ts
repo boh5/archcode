@@ -20,6 +20,7 @@ export function formatResolvedSkill(skill: ResolvedSkill): string {
     "---",
     `name: ${skill.metadata.name}`,
     `description: ${skill.metadata.description}`,
+    `when_to_use: ${skill.metadata.when_to_use}`,
     `source: ${skill.source}`,
   ];
   if (skill.metadata.allowed_tools !== undefined) {

@@ -43,9 +43,9 @@ function createTestSkillService(): SkillService {
 function createSkillServiceWithBuiltins(): SkillService {
   return new SkillService({
     builtinSkills: {
-      "git-master": "---\nname: git-master\ndescription: Git helper\n---\nUse git carefully.",
-      codemap: "---\nname: codemap\ndescription: Code map helper\n---\nMap code first.",
-      "research-docs": "---\nname: research-docs\ndescription: Research docs helper\n---\nRead docs carefully.",
+      "git-master": "---\nname: git-master\ndescription: Git helper\nwhen_to_use: Use for git operations.\n---\nUse git carefully.",
+      codemap: "---\nname: codemap\ndescription: Code map helper\nwhen_to_use: Use before implementation.\n---\nMap code first.",
+      "research-docs": "---\nname: research-docs\ndescription: Research docs helper\nwhen_to_use: Use when uncertain about libraries.\n---\nRead docs carefully.",
     },
   });
 }
@@ -679,7 +679,7 @@ describe("AgentFactory.delegate", () => {
     });
 
     expect(activeSkills?.[0]).toMatchObject({
-      metadata: { name: "git-master", description: "Git helper" },
+      metadata: { name: "git-master", description: "Git helper", when_to_use: "Use for git operations." },
       body: "Use git carefully.",
       source: "builtin",
     });

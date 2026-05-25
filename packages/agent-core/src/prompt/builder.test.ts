@@ -65,7 +65,7 @@ describe("buildSystemPrompt", () => {
       agentId: "builder",
       rolePrompt: "## Workflow Role: Builder\nTest content.",
       agentsMd: "AGENTSCONTENT",
-      availableSkills: [{ name: "git-master", description: "Git expertise", source: "builtin" }],
+      availableSkills: [{ name: "git-master", description: "Git expertise", when_to_use: "Use for git ops.", source: "builtin" }],
     }));
     const identityIdx = result.indexOf("Specra");
     const roleIdx = result.indexOf("## Workflow Role: Builder");

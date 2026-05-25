@@ -86,6 +86,7 @@ export class SkillService {
       entries.push({
         name: skill.metadata.name,
         description: skill.metadata.description,
+        when_to_use: skill.metadata.when_to_use,
         source: skill.source,
         allowed_tools: skill.metadata.allowed_tools,
       });

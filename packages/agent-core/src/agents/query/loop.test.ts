@@ -2065,7 +2065,7 @@ describe("runQueryLoop slash commands", () => {
     const commandRegistry = new CommandRegistry();
     const skillService = new SkillService({
       builtinSkills: {
-        "git-master": "---\nname: git-master\ndescription: Git operations expertise\n---\n\nFull git body",
+        "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
       },
     });
     commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));
@@ -2118,7 +2118,7 @@ describe("runQueryLoop slash commands", () => {
     const commandRegistry = new CommandRegistry();
     const skillService = new SkillService({
       builtinSkills: {
-        "git-master": "---\nname: git-master\ndescription: Git operations expertise\n---\n\nFull git body",
+        "git-master": "---\nname: git-master\ndescription: Git operations expertise\nwhen_to_use: Use for git operations.\n---\n\nFull git body",
       },
     });
     commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));

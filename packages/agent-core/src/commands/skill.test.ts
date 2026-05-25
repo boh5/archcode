@@ -16,7 +16,7 @@ const dummyModelInfo = {
 
 const gitMasterBody = "FULL GIT MASTER BODY MUST NOT LEAK";
 const builtinSkills = {
-  "git-master": `---\nname: git-master\ndescription: Git guidance.\n---\n\n${gitMasterBody}`,
+  "git-master": `---\nname: git-master\ndescription: Git guidance.\nwhen_to_use: Use for git operations.\n---\n\n${gitMasterBody}`,
 };
 
 function createCommand(agentSkills: readonly string[] = ["git-master"]) {

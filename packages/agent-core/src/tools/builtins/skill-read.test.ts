@@ -53,6 +53,7 @@ describe("skill_read tool", () => {
     expect(typeof result).toBe("string");
     expect(result as string).toContain("---\nname: codemap");
     expect(result as string).toContain("description:");
+    expect(result as string).toContain("when_to_use:");
     expect(result as string).toContain("source: builtin");
     expect(result as string).toContain("Trace entry points");
   });

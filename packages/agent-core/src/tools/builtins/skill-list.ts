@@ -11,7 +11,7 @@ export function createSkillListTool(): AnyToolDescriptor {
   return defineTool({
     name: "skill_list",
     description:
-      "List Skills available to the current agent. Returns JSON entries with name, description, source, and optional allowed_tools only; full Skill bodies are omitted.",
+      "List Skills available to the current agent. Returns JSON entries with name, description, when_to_use, source, and optional allowed_tools only; full Skill bodies are omitted.",
     inputSchema: SkillListInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (

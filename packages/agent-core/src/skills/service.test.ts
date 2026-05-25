@@ -5,10 +5,11 @@ import { SkillNotFoundError, SkillService, SkillValidationError } from "./servic
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-service");
 
-function skillMarkdown(name: string, description = `${name} description`, body = `${name} body`): string {
+function skillMarkdown(name: string, description = `${name} description`, body = `${name} body`, whenToUse = `Use when ${name} is needed.`): string {
   return `---
 name: ${name}
 description: ${description}
+when_to_use: ${whenToUse}
 ---
 
 ${body}
@@ -71,6 +72,7 @@ describe("SkillService", () => {
     await writeSkill(projectSkillsRoot, "codemap", `---
 name: wrong-name
 description: bad override
+when_to_use: Use when broken.
 ---
 
 Broken.
@@ -111,8 +113,8 @@ Broken.
     const entries = await service.listForAgent(projectRoot, ["git-master", "safe-refactor"]);
 
     expect(entries).toEqual([
-      { name: "git-master", description: "user git", source: "user", allowed_tools: undefined },
-      { name: "safe-refactor", description: "project safe", source: "project", allowed_tools: undefined },
+      { name: "git-master", description: "user git", when_to_use: "Use when git-master is needed.", source: "user", allowed_tools: undefined },
+      { name: "safe-refactor", description: "project safe", when_to_use: "Use when safe-refactor is needed.", source: "project", allowed_tools: undefined },
     ]);
   });
 

@@ -27,7 +27,7 @@ export interface PromptContext {
   /** Resolved filesystem roots for project and user memory directories */
   readonly memoryRoots?: MemoryRoots;
 
-  /** Index of skills available to this agent (name, description, source, allowed_tools) */
+  /** Index of skills available to this agent (name, description, when_to_use, source, allowed_tools) */
   readonly availableSkills?: readonly SkillIndexEntry[];
 
   /** Fully resolved active skills with full body content */

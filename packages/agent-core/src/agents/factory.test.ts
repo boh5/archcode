@@ -169,7 +169,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const activeSkills: readonly ResolvedSkill[] = [
       {
-        metadata: { name: "git-master", description: "Git helper" },
+        metadata: { name: "git-master", description: "Git helper", when_to_use: "Use for git operations." },
         body: "Use git carefully.",
         source: "builtin",
       },

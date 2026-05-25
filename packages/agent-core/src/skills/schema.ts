@@ -20,6 +20,7 @@ const allowedToolsSchema = z.preprocess((value) => {
 export const SkillMetadataSchema = z.strictObject({
   name: z.string().regex(SKILL_NAME_REGEX, "Skill name must match ^[a-z0-9][a-z0-9-]*$"),
   description: z.string().min(1),
+  when_to_use: z.string().trim().min(1),
   allowed_tools: allowedToolsSchema.optional(),
 });
 
