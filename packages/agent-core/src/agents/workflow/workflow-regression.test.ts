@@ -10,6 +10,7 @@ import { ModelInfo } from "../../provider/model";
 import { calculateReadyWave, parseTasksMarkdown, toggleTaskCheckbox, validateTasksMarkdown } from "./tasks-format";
 import type { Registry as ProviderRegistry } from "../../provider";
 import type { SpecraConfig } from "../../config/schema";
+import { SkillService } from "../../skills";
 
 const WORKFLOW_TOOL_NAMES = [
   "workflow_create",
@@ -69,6 +70,7 @@ describe("workflow regression hardening", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: registry,
+      skillService: new SkillService({ builtinSkills: {} }),
       workspaceRoot: import.meta.dir,
       config,
     });

@@ -21,6 +21,7 @@ import {
 import { createRegistry as createProviderRegistry, type Registry as ProviderRegistry } from "./provider/index";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
+import { SkillService } from "./skills";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 
 const DEFAULT_CONFIG_PATH = ".specra.json";
@@ -37,6 +38,7 @@ export interface SpecraRuntime {
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
   readonly providerRegistry: ProviderRegistry;
+  readonly skillService: SkillService;
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
@@ -52,6 +54,7 @@ export async function createSpecraRuntime(
   const providerRegistry = createProviderRegistry(config.provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry);
+  const skillService = new SkillService();
 
   const resolvedMcpConfig = resolveMcpConfig(config.mcp);
   const mcpManager = options.mcpManagerFactory
@@ -108,6 +111,7 @@ export async function createSpecraRuntime(
       definitions: defaultAgentDefinitions,
       providerRegistry,
       toolRegistry,
+      skillService,
       config,
       projectContextResolver: contextResolver,
     });
@@ -135,6 +139,7 @@ export async function createSpecraRuntime(
       mcpManager,
       toolRegistry,
       providerRegistry,
+      skillService,
       warnings,
       projectRegistry,
       contextResolver,

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import { UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
+import { SkillService } from "../skills";
 import { createSessionStore } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
@@ -13,7 +14,9 @@ import {
   UnknownAgentDefinitionError,
   createAgentFactory,
 } from "./factory";
+import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition } from "./factory-types";
+import type { ResolvedSkill } from "../skills/types";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -23,6 +26,10 @@ function makeTool(name: string): AnyToolDescriptor {
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: () => `${name} result`,
   };
+}
+
+function createTestSkillService(): SkillService {
+  return new SkillService({ builtinSkills: {} });
 }
 
 function makeProviderRegistry(): ProviderRegistry {
@@ -108,6 +115,7 @@ function makeFactory(
       ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
+    skillService: createTestSkillService(),
     workspaceRoot: import.meta.dir,
     config,
   });
@@ -147,6 +155,50 @@ describe("createAgentFactory", () => {
     expect(typeof agent.run).toBe("function");
   });
 
+  test("root agents default to no active skills", () => {
+    const factory = makeFactory();
+
+    const agent = factory.createRootAgent("orchestrator");
+
+    expect(agent).toBeInstanceOf(ConfiguredAgent);
+    expect((agent as ConfiguredAgent).activeSkills).toEqual([]);
+  });
+
+  test("threads SkillService and explicit active skills through factory creation", () => {
+    const skillService = createTestSkillService();
+    const providerRegistry = makeProviderRegistry();
+    const activeSkills: readonly ResolvedSkill[] = [
+      {
+        metadata: { name: "git-master", description: "Git helper" },
+        body: "Use git carefully.",
+        source: "builtin",
+      },
+    ];
+    const factory = createAgentFactory({
+      definitions: [definition()],
+      providerRegistry,
+      toolRegistry: createRegistry([
+        makeTool("unknown_tool"),
+        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+        ...DELEGATION_TOOLS.map(makeTool),
+      ]),
+      skillService,
+      workspaceRoot: import.meta.dir,
+      config: {
+        provider: {},
+        agents: {
+          orchestrator: { model: providerRegistry.modelIds[1]! },
+        },
+      } as SpecraConfig,
+    });
+
+    const agent = factory.createAgent("orchestrator", { activeSkills });
+
+    expect(agent).toBeInstanceOf(ConfiguredAgent);
+    expect((agent as ConfiguredAgent).activeSkills).toBe(activeSkills);
+    expect((agent as unknown as { skillService: SkillService }).skillService).toBe(skillService);
+  });
+
   test("resolves the configured model instead of the first registry entry", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({
@@ -157,6 +209,7 @@ describe("createAgentFactory", () => {
         ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
         ...DELEGATION_TOOLS.map(makeTool),
       ]),
+      skillService: createTestSkillService(),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},
@@ -182,6 +235,7 @@ describe("createAgentFactory", () => {
         ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
         ...DELEGATION_TOOLS.map(makeTool),
       ]),
+      skillService: createTestSkillService(),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},
@@ -214,6 +268,7 @@ describe("createAgentFactory", () => {
         ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
         ...DELEGATION_TOOLS.map(makeTool),
       ]),
+      skillService: createTestSkillService(),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},
@@ -253,6 +308,7 @@ describe("createAgentFactory", () => {
         ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
         ...DELEGATION_TOOLS.map(makeTool),
       ]),
+      skillService: createTestSkillService(),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},
@@ -275,6 +331,7 @@ describe("createAgentFactory", () => {
         ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
         ...DELEGATION_TOOLS.map(makeTool),
       ]),
+      skillService: createTestSkillService(),
       workspaceRoot: import.meta.dir,
       config: {
         provider: {},

@@ -3,6 +3,7 @@ import type { ModelMessage, streamText as aiStreamText } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
+import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSessionStore } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo, StreamEvent } from "../../store/types";
@@ -61,6 +62,7 @@ const dummyModelInfo = {
 } as unknown as ModelInfo;
 
 const testToolSchema = z.object({ message: z.string().optional() }).strict();
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 function createTestTool(
   name = "echo",
@@ -149,6 +151,8 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
     toolRegistry: createRegistry(),
     store: createStore(),
     allowedTools: [],
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext: createTestProjectContext(workspaceRoot),
     workspaceRoot,
     ...overrides,

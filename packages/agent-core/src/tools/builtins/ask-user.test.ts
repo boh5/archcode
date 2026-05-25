@@ -3,6 +3,7 @@ import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
 import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { SkillService } from "../../skills";
 
 const SINGLE_QUESTION: AskUserQuestion = {
   question: "What is your name?",
@@ -50,6 +51,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["ask_user"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
     workspaceRoot: "/tmp/test",
     projectContext: createTestProjectContext("/tmp/test"),
     ...overrides,

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
+import { SkillService } from "../skills";
+import type { ResolvedSkill } from "../skills/types";
 import { createSessionStore } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
@@ -17,6 +19,10 @@ import { MissingProjectContextError } from "./errors";
 import type { MemoryExtractionConfig } from "../config";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
+
+function createTestSkillService(): SkillService {
+  return new SkillService({ builtinSkills: {} });
+}
 
 class RecordingBackgroundTaskManager {
   readonly dispatched: string[] = [];
@@ -167,6 +173,8 @@ function createAgent(options: {
   providerRegistry?: ProviderRegistry;
   modelInfo?: ModelInfo;
   memoryConfig?: MemoryExtractionConfig;
+  skillService?: SkillService;
+  activeSkills?: readonly ResolvedSkill[];
 }) {
   const toolRegistry = options.toolRegistry ?? makeToolRegistry();
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
@@ -176,6 +184,8 @@ function createAgent(options: {
     modelInfo: options.modelInfo ?? providerRegistry.getModel("test:configured"),
     modelOptions: { temperature: 0.3 },
     toolRegistry,
+    skillService: options.skillService ?? createTestSkillService(),
+    activeSkills: options.activeSkills,
     store: options.store,
     workspaceRoot: options.workspaceRoot ?? tmpRoot,
     depth: options.depth,
@@ -259,6 +269,7 @@ describe("ConfiguredAgent", () => {
       providerRegistry,
       modelInfo: providerRegistry.getModel("test:configured"),
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       resolveAllowedTools: () => [],
     })).toThrow(MissingProjectContextError);
 
@@ -293,6 +304,36 @@ describe("ConfiguredAgent", () => {
 
     await expect(agent.run("explicit model"))
       .resolves.toEqual({ text: "explicit model ok", steps: 0 });
+  });
+
+  test("passes definition skills and SkillService into tool execution context", async () => {
+    const skillService = createTestSkillService();
+    let capturedContext: { agentSkills: readonly string[]; skillService: SkillService } | undefined;
+    const toolRegistry = createRegistry([
+      {
+        name: "capture_context",
+        description: "Capture context",
+        inputSchema: z.object({ agentSkills: z.array(z.string()).optional() }).strict(),
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        execute: (_input, ctx) => {
+          if (!ctx.agentSkills || !ctx.skillService) throw new Error("missing skill context");
+          capturedContext = { agentSkills: ctx.agentSkills, skillService: ctx.skillService };
+          return "captured";
+        },
+      } satisfies AnyToolDescriptor,
+    ]);
+    setupToolCallStreamText("capture_context", { agentSkills: ["input-must-not-win"] });
+    const agentSkills = ["git-master", "review-work"];
+    const agent = createAgent({
+      definition: definitionWith({ tools: { tools: ["capture_context"] }, skills: agentSkills }),
+      toolRegistry,
+      skillService,
+    });
+
+    await agent.run("capture skill context");
+
+    expect(capturedContext?.agentSkills).toEqual(agentSkills);
+    expect(capturedContext?.skillService).toBe(skillService);
   });
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {

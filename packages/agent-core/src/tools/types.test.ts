@@ -21,6 +21,9 @@ import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { ProjectApprovalManager } from "./permission";
+import { SkillService } from "../skills";
+
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {
   const workflowState = new WorkflowStateManager(workspaceRoot);
@@ -254,9 +257,13 @@ test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
     startedAt: Date.now(),
     durationMs: 10,
     allowedTools: new Set(["echo"]),
+    agentSkills: ["git-master"],
+    skillService: testSkillService,
     projectContext: makeProjectContext("/tmp/workspace"),
   });
   expect(ctx.allowedTools.has("echo")).toBe(true);
+  expect(ctx.agentSkills).toEqual(["git-master"]);
+  expect(ctx.skillService).toBe(testSkillService);
   expect(ctx.workspaceRoot).toBe("/tmp/workspace");
 });
 
@@ -270,6 +277,8 @@ test("ToolExecutionContext confirmPermission is optional", () => {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(),
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext: makeProjectContext("/tmp"),
   });
   expect(ctx.confirmPermission).toBeUndefined();
@@ -401,6 +410,8 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
       abort: new AbortController().signal,
       startedAt: Date.now(),
       allowedTools: new Set(),
+      agentSkills: [],
+      skillService: testSkillService,
       projectContext: makeProjectContext("/tmp"),
       permissionOutcome: "allow",
     });
@@ -429,6 +440,8 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
       abort: new AbortController().signal,
       startedAt: Date.now(),
       allowedTools: new Set(),
+      agentSkills: [],
+      skillService: testSkillService,
       projectContext: makeProjectContext("/tmp"),
     });
     expect(ctx.permissionOutcome).toBeUndefined();

@@ -6,6 +6,7 @@ import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
+import { SkillService } from "../skills";
 import { createMockStore } from "../store/test-helpers";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
@@ -14,6 +15,7 @@ import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionCont
 import { z } from "zod";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "registry-projectcontext");
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 const APPROVAL_SCOPE: PermissionApprovalScope = {
   kind: "tool-operation",
@@ -60,6 +62,8 @@ function createContext(projectContext: ProjectContext): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["ctx_sensitive_tool"]),
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext,
   });
 }

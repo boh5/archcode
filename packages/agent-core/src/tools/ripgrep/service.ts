@@ -48,6 +48,7 @@ function createRipgrepBinaryManagerSeam(seam?: DiscoverySeam): BinaryManagerSeam
         if (seam.install) return seam.install(params);
         throw new BinaryNotFoundError({ binaryId: "rg", binaryName: "rg" });
       },
+      validateBinary: async () => true,
       ...seam,
     };
   }

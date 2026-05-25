@@ -7,6 +7,7 @@ import { WorkflowStateManager } from "../../../agents/workflow/state";
 import { MemoryFileManager } from "../../../memory/file-manager";
 import { ProjectApprovalManager } from "../../permission";
 import type { ProjectContext } from "../../../projects/types";
+import { SkillService } from "../../../skills";
 import { createMockStore } from "../../../store/test-helpers";
 import { registerBuiltinTools } from "../../../core/register-tools";
 import { inferToolErrorKindFromResult } from "../../errors";
@@ -22,6 +23,7 @@ import {
 } from "./index";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "workflow-tools");
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 const VALID_TASKS = `# TASKS
 
@@ -101,6 +103,8 @@ function makeCtx(toolName: string, input: unknown, projectContext: ProjectContex
       "artifact_write",
       "workflow_task_check",
     ]),
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext,
   });
 }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 
 import { z } from "zod";
+import { SkillService } from "../skills";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
@@ -248,6 +249,8 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       abort: ac.signal,
       startedAt: 0,
       allowedTools: new Set(["echo"]),
+      agentSkills: [],
+      skillService: new SkillService({ builtinSkills: {} }),
       projectContext: makeProjectContext(workspaceRoot),
       ...overrides,
     });
@@ -1619,6 +1622,8 @@ describe("hook integration with registry", () => {
       abort: ac.signal,
       startedAt: 0,
       allowedTools: new Set(["echo"]),
+      agentSkills: [],
+      skillService: new SkillService({ builtinSkills: {} }),
       projectContext: makeProjectContext(workspaceRoot),
       ...overrides,
     });
@@ -1912,6 +1917,8 @@ describe("Permission API contract — registry", () => {
         abort: ac.signal,
         startedAt: 0,
         allowedTools: new Set(["echo"]),
+        agentSkills: [],
+        skillService: new SkillService({ builtinSkills: {} }),
         projectContext: makeProjectContext(workspaceRoot),
         ...overrides,
       });

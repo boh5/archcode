@@ -20,6 +20,7 @@ import {
   PREFERENCES_MARKER_START,
 } from "../../memory/constants";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
+import { SkillService } from "../../skills";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 
@@ -34,6 +35,7 @@ const knowledgeDir = join(projectDir, KNOWLEDGE_DIR_NAME);
 
 let fileManager: MemoryFileManager;
 let memoryReadTool: ReturnType<typeof createMemoryReadTool>;
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 beforeAll(async () => {
   await mkdir(projectDir, { recursive: true });
@@ -90,6 +92,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(["memory_read"]),
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext,
     ...overrides,
   });

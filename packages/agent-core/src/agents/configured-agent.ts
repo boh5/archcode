@@ -11,6 +11,8 @@ import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
+import type { SkillService } from "../skills";
+import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
 import { createSessionStore } from "../store/store";
@@ -40,6 +42,8 @@ export interface ConfiguredAgentOptions {
   readonly modelInfo: ModelInfo;
   readonly modelOptions?: ModelCallOptions;
   readonly toolRegistry: ToolRegistry;
+  readonly skillService: SkillService;
+  readonly activeSkills?: readonly ResolvedSkill[];
   readonly store?: StoreApi<SessionStoreState>;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
@@ -65,8 +69,10 @@ function buildEnv(workspaceRoot: string): PromptEnv {
 
 export class ConfiguredAgent implements Agent {
   readonly store: StoreApi<SessionStoreState>;
+  readonly activeSkills: readonly ResolvedSkill[];
   private readonly definition: AgentDefinition;
   private readonly toolRegistry: ToolRegistry;
+  private readonly skillService: SkillService;
   private readonly modelInfo: ModelInfo;
   private readonly modelOptions: ModelCallOptions | undefined;
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
@@ -91,6 +97,8 @@ export class ConfiguredAgent implements Agent {
   constructor(options: ConfiguredAgentOptions) {
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
+    this.skillService = options.skillService;
+    this.activeSkills = options.activeSkills ?? [];
     this.modelInfo = options.modelInfo;
     this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
@@ -150,6 +158,7 @@ export class ConfiguredAgent implements Agent {
       await this.ensureAgentsMd();
 
       const allowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
+      const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const promptContext: PromptContext = {
         allowedTools,
@@ -171,6 +180,8 @@ export class ConfiguredAgent implements Agent {
             modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,
+            agentSkills,
+            skillService: this.skillService,
             projectContext,
             workspaceRoot: this.workspaceRoot,
             confirmPermission: confirm,

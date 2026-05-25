@@ -5,12 +5,14 @@ import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../../agents/workflow/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
+import { SkillService } from "../../skills";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import { ProjectApprovalManager } from "../permission";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
+const testSkillService = new SkillService({ builtinSkills: {} });
 
 function makeFileManager(): MemoryFileManager {
   return new MemoryFileManager({
@@ -37,6 +39,8 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set<string>() as ReadonlySet<string>,
+    agentSkills: [],
+    skillService: testSkillService,
     projectContext,
   });
 }

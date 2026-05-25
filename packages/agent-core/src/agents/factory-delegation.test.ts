@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
+import { SkillService } from "../skills";
 import { createSessionStore, getSessionStore } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
@@ -33,6 +34,10 @@ import { __setStreamTextForTest } from "./query/loop";
 import type { Agent, AgentResult } from "./types";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "factory-delegation");
+
+function createTestSkillService(): SkillService {
+  return new SkillService({ builtinSkills: {} });
+}
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -129,6 +134,7 @@ function makeFactory(definitions: readonly AgentDefinition[] = [parentDefinition
     definitions,
     providerRegistry,
     toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
     workspaceRoot: tmpRoot,
     config: configForDefinitions(providerRegistry, definitions),
   });
@@ -143,6 +149,7 @@ function makeFactoryWithBackgroundTaskManager(
     definitions,
     providerRegistry,
     toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
     workspaceRoot: tmpRoot,
     config: configForDefinitions(providerRegistry, definitions),
     backgroundTaskManager: backgroundTaskManager as never,
@@ -336,6 +343,7 @@ describe("AgentFactory.delegate", () => {
       definitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, definitions),
       backgroundTaskManager: btm as never,
@@ -571,6 +579,7 @@ describe("AgentFactory.delegate", () => {
       definitions: [productAgentDefinition, productAgentDefinition],
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, [productAgentDefinition]),
     })).toThrow("Duplicate agent definition: product");
@@ -582,6 +591,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
@@ -605,6 +615,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
@@ -622,6 +633,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
@@ -641,6 +653,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
@@ -662,6 +675,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
@@ -691,6 +705,7 @@ describe("AgentFactory.delegate", () => {
       definitions: agentDefinitions,
       providerRegistry,
       toolRegistry: makeToolRegistry(),
+      skillService: createTestSkillService(),
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });

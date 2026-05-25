@@ -6,6 +6,7 @@ import type { ZodTypeAny } from "zod";
 import type { AgentFactoryLike } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
+import { SkillService } from "../skills";
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -34,6 +35,10 @@ export interface ToolExecutionContext {
   startedAt: number;
   durationMs?: number;
   allowedTools: ReadonlySet<string>;
+  /** Agent definition Skill allow-list used for Skill permission decisions. */
+  agentSkills?: readonly string[];
+  /** Shared Skill service for agent-scoped skill lookup. */
+  skillService?: SkillService;
   projectContext: ProjectContext;
   /** Derived from projectContext.project.workspaceRoot by createToolExecutionContext(). */
   workspaceRoot: string;
@@ -43,10 +48,16 @@ export interface ToolExecutionContext {
   currentDepth?: number;
 }
 
+type ToolExecutionContextInput = Omit<ToolExecutionContext, "workspaceRoot">;
+
 export function createToolExecutionContext(
-  base: Omit<ToolExecutionContext, "workspaceRoot">,
+  base: ToolExecutionContextInput,
 ): ToolExecutionContext {
-  const ctx = { ...base } as ToolExecutionContext;
+  const ctx = {
+    ...base,
+    agentSkills: base.agentSkills ?? [],
+    skillService: base.skillService ?? createMissingSkillService(),
+  } as ToolExecutionContext;
   Object.defineProperty(ctx, "workspaceRoot", {
     enumerable: true,
     configurable: false,
@@ -55,6 +66,10 @@ export function createToolExecutionContext(
     },
   });
   return ctx;
+}
+
+function createMissingSkillService(): SkillService {
+  return new SkillService({ builtinSkills: {} });
 }
 
 export interface Logger {

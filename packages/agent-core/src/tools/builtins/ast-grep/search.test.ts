@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { BinaryManager, setBinaryManagerForTest } from "../../../binary/manager";
 import { setProcessRunnerForTest } from "../../../process/runner";
+import { SkillService } from "../../../skills";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../../errors";
 import { createTestProjectContext } from "../../test-project-context";
 import type { FormattedToolError, ToolErrorKind } from "../../errors";
@@ -27,6 +28,8 @@ function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
     agentName: "orchestrator-agent",
     startedAt: Date.now(),
     allowedTools: new Set(["ast_grep_search"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
     workspaceRoot: "/workspace",
     projectContext: createTestProjectContext("/workspace"),
     ...overrides,

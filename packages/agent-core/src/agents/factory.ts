@@ -6,6 +6,8 @@ import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { createSessionStore } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
+import type { SkillService } from "../skills";
+import type { ResolvedSkill } from "../skills/types";
 import type { ToolRegistry } from "../tools/index";
 import { ConfiguredAgent } from "./configured-agent";
 import {
@@ -28,6 +30,7 @@ export interface AgentFactoryConfig {
   readonly definitions: readonly AgentDefinition[];
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
+  readonly skillService: SkillService;
   readonly workspaceRoot: string;
   readonly config?: SpecraConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
@@ -40,6 +43,7 @@ export interface CreateAgentOptions {
   readonly parentSessionId?: string;
   readonly title?: string;
   readonly abortSignal?: AbortSignal;
+  readonly activeSkills?: readonly ResolvedSkill[];
 }
 
 export interface AgentFactory {
@@ -153,6 +157,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
         parentSessionId,
         ...(childTitle !== undefined ? { title: childTitle } : {}),
         abortSignal: childAbortController.signal,
+        activeSkills: undefined,
       });
 
       activeChildren.add(childSessionId);
@@ -315,6 +320,7 @@ function createConfiguredAgent(
     modelInfo,
     modelOptions,
     toolRegistry: config.toolRegistry,
+    skillService: config.skillService,
     workspaceRoot: config.workspaceRoot,
     store,
     depth: options.depth,
@@ -323,6 +329,7 @@ function createConfiguredAgent(
     projectContextResolver: config.projectContextResolver,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     agentFactory: factory,
+    activeSkills: options.activeSkills,
   });
 }
 

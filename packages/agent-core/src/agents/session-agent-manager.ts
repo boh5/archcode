@@ -5,6 +5,7 @@ import { loadSessionTranscript } from "../store/helpers";
 import { createSessionStore, deleteSessionStore, scopedKey } from "../store/store";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
+import type { SkillService } from "../skills";
 import type { StoreApi } from "zustand";
 import { ConcurrentSessionLimitError } from "./errors";
 import { createAgentFactory } from "./factory";
@@ -16,6 +17,7 @@ export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
+  readonly skillService: SkillService;
   readonly config?: SpecraConfig;
   readonly projectContextResolver?: ProjectContextResolver;
   readonly maxConcurrentSessions?: number;
@@ -152,6 +154,7 @@ export class SessionAgentManager {
         definitions: this.#config.definitions,
         providerRegistry: this.#config.providerRegistry,
         toolRegistry: this.#config.toolRegistry,
+        skillService: this.#config.skillService,
         workspaceRoot,
         config: this.#config.config,
         projectContextResolver: this.#config.projectContextResolver,

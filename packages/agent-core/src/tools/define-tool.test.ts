@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { defineTool } from "./define-tool";
+import { SkillService } from "../skills";
 import { createTestProjectContext } from "./test-project-context";
 import type {
   ToolDescriptor,
@@ -20,6 +21,8 @@ function mockCtx(): ToolExecutionContext {
     abort: new AbortController().signal,
     startedAt: Date.now(),
     allowedTools: new Set(),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
     workspaceRoot: "/tmp",
     projectContext: createTestProjectContext("/tmp"),
   };

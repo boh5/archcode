@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { BinaryManager, setBinaryManagerForTest } from "../../../binary/manager";
 import { setProcessRunnerForTest } from "../../../process/runner";
+import { SkillService } from "../../../skills";
 import { createMockStore } from "../../../store/test-helpers";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../../errors";
 import { createTestProjectContext } from "../../test-project-context";
@@ -31,6 +32,8 @@ function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
     agentName: "orchestrator-agent",
     startedAt: Date.now(),
     allowedTools: new Set(["ast_grep_replace"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
     workspaceRoot: "/workspace",
     projectContext: createTestProjectContext("/workspace"),
     ...overrides,

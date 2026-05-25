@@ -6,6 +6,7 @@ import type { FormattedToolError, ToolErrorKind } from "../errors";
 import type { RipgrepService } from "../ripgrep/service";
 import type { ToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
+import { SkillService } from "../../skills";
 import { setProcessRunnerForTest } from "../../process/runner";
 
 function mockReadableStream(data: string): ReadableStream<Uint8Array> {
@@ -38,6 +39,8 @@ function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecution
     agentName: "orchestrator-agent",
     startedAt: Date.now(),
     allowedTools: new Set(["glob"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
     workspaceRoot: "/workspace",
     projectContext: createTestProjectContext("/workspace"),
     ...overrides,

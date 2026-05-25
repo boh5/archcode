@@ -7,6 +7,7 @@ import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/inde
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
 import type { AgentFactoryLike } from "../../delegation/types";
+import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
@@ -16,6 +17,8 @@ export interface QueryLoopOptions {
   modelOptions?: ModelCallOptions;
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];
+  agentSkills: readonly string[];
+  skillService: SkillService;
   workspaceRoot?: string;
   projectContext: ProjectContext;
   confirmPermission?: ToolConfirmationCallback;
