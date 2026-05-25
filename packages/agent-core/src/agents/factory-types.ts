@@ -11,6 +11,7 @@ export interface AgentDefinition {
   readonly childPolicy?: AgentChildPolicy;
   readonly includeMemoryInPrompt: boolean;
   readonly enforceToolOutputQuota?: boolean;
+  readonly skills: readonly string[];
 }
 
 export interface AgentToolPolicy {

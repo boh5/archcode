@@ -4,12 +4,19 @@ import {
   EXPLORER_READ_ONLY_TOOLS,
   MAX_CONCURRENT_SUB_AGENTS,
   MAX_SUB_AGENT_DEPTH,
+  SKILL_TOOLS,
 } from "../constants";
 import {
   agentDefinitions,
+  builderAgentDefinition,
+  criticAgentDefinition,
   exploreAgentDefinition,
   foremanAgentDefinition,
+  librarianAgentDefinition,
   orchestratorAgentDefinition,
+  productAgentDefinition,
+  reviewerAgentDefinition,
+  specAgentDefinition,
 } from "./index";
 
 describe("agentDefinitions", () => {
@@ -81,11 +88,91 @@ describe("agentDefinitions", () => {
     const extraTools = exploreTools.filter(
       (t) => !(EXPLORER_READ_ONLY_TOOLS as readonly string[]).includes(t),
     );
-    expect(extraTools).toEqual(["todo_write"]);
+    expect(extraTools).toEqual(["todo_write", "skill_list", "skill_read"]);
   });
 
   test("explore agent cannot delegate", () => {
     expect("delegateTargets" in exploreAgentDefinition.tools).toBe(false);
     expect("childPolicy" in exploreAgentDefinition).toBe(false);
+  });
+
+  const KNOWN_SKILLS = [
+    "git-master",
+    "safe-refactor",
+    "codemap",
+    "review-work",
+    "research-docs",
+  ] as const;
+
+  describe("skills", () => {
+    test("all definitions have an explicit skills array", () => {
+      for (const definition of agentDefinitions) {
+        expect(definition).toHaveProperty("skills");
+        expect(Array.isArray(definition.skills)).toBe(true);
+      }
+    });
+
+    test("all skill names are valid", () => {
+      for (const definition of agentDefinitions) {
+        for (const skill of definition.skills) {
+          expect(KNOWN_SKILLS).toContain(skill);
+        }
+      }
+    });
+
+    test("all agents with non-empty skills include skill_list and skill_read in tools", () => {
+      for (const definition of agentDefinitions) {
+        if (definition.skills.length > 0) {
+          for (const skillTool of SKILL_TOOLS) {
+            expect(definition.tools.tools).toContain(skillTool);
+          }
+        }
+      }
+    });
+
+    test("allocation matrix matches exactly", () => {
+      expect(orchestratorAgentDefinition.skills).toEqual([
+        "git-master",
+        "safe-refactor",
+        "codemap",
+        "review-work",
+        "research-docs",
+      ]);
+      expect(exploreAgentDefinition.skills).toEqual([
+        "codemap",
+        "research-docs",
+      ]);
+      expect(productAgentDefinition.skills).toEqual(["research-docs"]);
+      expect(specAgentDefinition.skills).toEqual([
+        "codemap",
+        "research-docs",
+      ]);
+      expect(criticAgentDefinition.skills).toEqual([
+        "codemap",
+        "review-work",
+        "research-docs",
+      ]);
+      expect(foremanAgentDefinition.skills).toEqual([
+        "codemap",
+        "review-work",
+      ]);
+      expect(builderAgentDefinition.skills).toEqual([
+        "git-master",
+        "safe-refactor",
+        "codemap",
+        "review-work",
+        "research-docs",
+      ]);
+      expect(reviewerAgentDefinition.skills).toEqual([
+        "codemap",
+        "safe-refactor",
+        "review-work",
+        "research-docs",
+      ]);
+      expect(librarianAgentDefinition.skills).toEqual([
+        "codemap",
+        "research-docs",
+      ]);
+    });
   });
 });

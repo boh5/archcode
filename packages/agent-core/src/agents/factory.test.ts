@@ -80,6 +80,7 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       titleGeneration: "enabled",
     },
     includeMemoryInPrompt: true,
+    skills: [],
     ...overrides,
   };
 }

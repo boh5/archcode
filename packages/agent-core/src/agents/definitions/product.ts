@@ -40,4 +40,5 @@ Refusal rules:
     titleGeneration: "unless-supplied",
   },
   includeMemoryInPrompt: true,
+  skills: ["research-docs"],
 } as const satisfies AgentDefinition;

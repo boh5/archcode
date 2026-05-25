@@ -1,5 +1,5 @@
 import type { AgentDefinition } from "../factory-types";
-import { EXPLORER_READ_ONLY_TOOLS } from "../constants";
+import { EXPLORER_READ_ONLY_TOOLS, SKILL_TOOLS } from "../constants";
 
 export const exploreAgentDefinition = {
   name: "explore",
@@ -27,7 +27,7 @@ Refusal rules:
 - Refuse requests to update workflow stage/status.
 - Refuse to invent facts not supported by retrieved evidence.`,
   tools: {
-    tools: [...EXPLORER_READ_ONLY_TOOLS, "todo_write"],
+    tools: [...EXPLORER_READ_ONLY_TOOLS, "todo_write", ...SKILL_TOOLS],
   },
   hooks: {
     autoCompact: true,
@@ -39,4 +39,5 @@ Refusal rules:
     titleGeneration: "unless-supplied",
   },
   includeMemoryInPrompt: true,
+  skills: ["codemap", "research-docs"],
 } as const satisfies AgentDefinition;

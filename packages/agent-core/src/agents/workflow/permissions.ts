@@ -1,4 +1,4 @@
-import { EXPLORER_READ_ONLY_TOOLS } from "../constants";
+import { EXPLORER_READ_ONLY_TOOLS, SKILL_TOOLS } from "../constants";
 
 const WORKFLOW_PRD_SPEC_WRITE_TOOLS = ["workflow_read", "artifact_write"] as const;
 const WORKFLOW_CREATE_PRD_SPEC_WRITE_TOOLS = ["workflow_create", ...WORKFLOW_PRD_SPEC_WRITE_TOOLS] as const;
@@ -25,22 +25,26 @@ export const workflowRoleToolPermissions = {
     ...WORKFLOW_CREATE_PRD_SPEC_WRITE_TOOLS,
     ...EXPLORER_READ_ONLY_TOOLS,
     ...TODO_AND_ASK_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   spec: uniqueTools([
     ...WORKFLOW_PRD_SPEC_WRITE_TOOLS,
     ...EXPLORER_READ_ONLY_TOOLS,
     ...TODO_AND_ASK_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   critic: uniqueTools([
     ...WORKFLOW_PRD_SPEC_WRITE_TOOLS,
     ...EXPLORER_READ_ONLY_TOOLS,
     ...TODO_AND_ASK_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   foreman: uniqueTools([
     ...WORKFLOW_TASK_CHECK_TOOLS,
     ...EXPLORER_READ_ONLY_TOOLS,
     ...DELEGATION_EXECUTION_TOOLS,
     ...TODO_AND_ASK_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   builder: uniqueTools([
     ...EXPLORER_READ_ONLY_TOOLS,
@@ -49,16 +53,19 @@ export const workflowRoleToolPermissions = {
     ...TODO_AND_ASK_TOOLS,
     ...MEMORY_WRITE_TOOLS,
     ...ARTIFACT_EVIDENCE_WRITE_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   reviewer: uniqueTools([
     ...EXPLORER_READ_ONLY_TOOLS,
     ...ARTIFACT_EVIDENCE_WRITE_TOOLS,
     ...TODO_AND_ASK_TOOLS,
     ...MEMORY_READ_TOOLS,
+    ...SKILL_TOOLS,
   ]),
   librarian: uniqueTools([
     ...EXPLORER_READ_ONLY_TOOLS,
     ...MEMORY_READ_TOOLS,
+    ...SKILL_TOOLS,
     "ask_user",
   ]),
 } as const;

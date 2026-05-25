@@ -58,4 +58,5 @@ Refusal rules:
   },
   includeMemoryInPrompt: true,
   enforceToolOutputQuota: true,
+  skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"],
 } as const satisfies AgentDefinition;

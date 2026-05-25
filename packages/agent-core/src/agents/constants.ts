@@ -20,3 +20,5 @@ export const EXPLORER_READ_ONLY_TOOLS = [
 ] as const;
 
 export const DELEGATION_TOOLS = ["delegate", "wait_for_reminder", "background_output"] as const;
+
+export const SKILL_TOOLS = ["skill_list", "skill_read"] as const;

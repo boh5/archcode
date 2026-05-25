@@ -2,6 +2,7 @@ import {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   MAX_CONCURRENT_SUB_AGENTS,
   MAX_SUB_AGENT_DEPTH,
+  SKILL_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
 
@@ -66,6 +67,7 @@ Delegation boundaries:
       "artifact_read",
       "artifact_write",
       "workflow_task_check",
+      ...SKILL_TOOLS,
     ],
     delegateTargets: ["explore", "product", "critic", "spec", "foreman", "librarian"],
   },
@@ -87,4 +89,5 @@ Delegation boundaries:
   },
   includeMemoryInPrompt: true,
   enforceToolOutputQuota: true,
+  skills: ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"],
 } as const satisfies AgentDefinition;
