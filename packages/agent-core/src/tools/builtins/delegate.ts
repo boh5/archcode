@@ -3,12 +3,15 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext } from "../types";
 import type { StoredMessage } from "../../store/types";
+import { SKILL_NAME_REGEX } from "../../skills/schema";
+
+const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const DelegateInputSchema = z
   .object({
     agent_type: z.string().min(1),
     prompt: z.string(),
-    skills: z.array(z.string()),
+    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)),
     description: z.string().optional(),
     title: z.string().optional(),
     background: z.boolean().default(false),
@@ -19,20 +22,22 @@ export type DelegateInput = z.infer<typeof DelegateInputSchema>;
 
 export interface DelegateErrorOutput {
   ok: false;
-  sessionId: string;
+  session_id: string;
   error: {
     name: string;
     message: string;
   };
 }
 
-export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext): Promise<string> {
+export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
   if (ctx.agentFactory === undefined) {
-    return JSON.stringify({
-      ok: false,
-      sessionId: "",
-      error: { name: "SubAgentError", message: "AgentFactory is not available in this execution context" },
-    } satisfies DelegateErrorOutput);
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DELEGATE_FACTORY_UNAVAILABLE",
+      name: "SubAgentError",
+      message: "AgentFactory is not available in this execution context",
+      details: { ok: false, session_id: "" } satisfies Pick<DelegateErrorOutput, "ok" | "session_id">,
+    });
   }
 
   let sessionId = "";
@@ -58,14 +63,19 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
     await handle.result;
     return getLastAssistantText(handle.store.getState().messages);
   } catch (error) {
-    return JSON.stringify({
-      ok: false,
-      sessionId,
-      error: {
-        name: error instanceof Error ? error.name : "Error",
-        message: error instanceof Error ? error.message : String(error),
-      },
-    } satisfies DelegateErrorOutput);
+    const safeError = error instanceof Error ? error : new Error(String(error));
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DELEGATE_FAILED",
+      message: safeError.message,
+      name: safeError.name,
+      error: safeError,
+      details: {
+        ok: false,
+        session_id: sessionId,
+        error: { name: safeError.name, message: safeError.message },
+      } satisfies DelegateErrorOutput,
+    });
   }
 }
 
@@ -85,7 +95,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    "Delegate a prompt to another allowed agent. Use background=true to start it asynchronously and retrieve output later with background_output.",
+    "Delegate a prompt to another allowed agent. The skills field is required; pass [] when no Skill should be active. Use background=true to start it asynchronously and retrieve output later with background_output.",
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

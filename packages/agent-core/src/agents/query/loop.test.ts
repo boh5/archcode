@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
+import { createSkillCommand } from "../../commands/skill";
 import { createSessionStore } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
@@ -2059,6 +2060,28 @@ describe("runQueryLoop slash commands", () => {
     });
   });
 
+  test("maybeHandleCommand rewrites real /skill use command to require skill_read", async () => {
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+    const skillService = new SkillService({
+      builtinSkills: {
+        "git-master": "---\nname: git-master\ndescription: Git operations expertise\n---\n\nFull git body",
+      },
+    });
+    commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));
+
+    const result = await maybeHandleCommand(
+      makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),
+      "/skill use git-master do something",
+      new AbortController().signal,
+    );
+
+    expect(result.handled).toBe(false);
+    expect(result.userMessage).toContain("skill_read");
+    expect(result.userMessage).toContain('{"name":"git-master"}');
+    expect(result.userMessage).toContain("do something");
+  });
+
   test("command continuation is appended as user message and sent to model", async () => {
     const streamFn = createMockStreamText([{ text: "continued answer" }]);
     const store = createStore();
@@ -2087,6 +2110,32 @@ describe("runQueryLoop slash commands", () => {
       type: "text",
       text: "Use Skill git-master now",
     });
+  });
+
+  test("real /skill use continuation is appended through query loop and sent to model", async () => {
+    const streamFn = createMockStreamText([{ text: "continued answer" }]);
+    const store = createStore();
+    const commandRegistry = new CommandRegistry();
+    const skillService = new SkillService({
+      builtinSkills: {
+        "git-master": "---\nname: git-master\ndescription: Git operations expertise\n---\n\nFull git body",
+      },
+    });
+    commandRegistry.register(createSkillCommand(skillService, import.meta.dir, "orchestrator", ["git-master"]));
+
+    const result = await runQueryLoop(
+      makeOptions({ store, commandRegistry, skillService, agentName: "orchestrator", agentSkills: ["git-master"] }),
+      "/skill use git-master do something",
+    );
+
+    expect(result).toEqual({ text: "continued answer", steps: 0 });
+    expect(streamCallMessages(streamFn, 0)).toEqual([
+      {
+        role: "user",
+        content: expect.stringContaining("skill_read"),
+      },
+    ]);
+    expect(streamCallMessages(streamFn, 0)[0]!.content).toContain("do something");
   });
 
   test("exact /compact handles command, stores system notice, and skips model call", async () => {

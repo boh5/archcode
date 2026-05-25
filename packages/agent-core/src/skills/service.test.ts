@@ -74,14 +74,33 @@ description: bad override
 ---
 
 Broken.
-`);
+    `);
 
     const service = new SkillService({ userSkillsRoot });
-    await expect(service.readForAgent(projectRoot, "codemap")).rejects.toMatchObject({
+    let thrown: unknown;
+    try {
+      await service.readForAgent(projectRoot, "codemap");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
       name: "SkillValidationError",
       source: "project",
       skillName: "codemap",
     } satisfies Partial<SkillValidationError>);
+  });
+
+  test("does not fall back when a higher priority skill file cannot be read", async () => {
+    await mkdir(join(projectSkillsRoot, "codemap", "SKILL.md"), { recursive: true });
+
+    const service = new SkillService({ userSkillsRoot });
+    let thrown: unknown;
+    try {
+      await service.readForAgent(projectRoot, "codemap");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeDefined();
   });
 
   test("lists only highest priority index entries and respects allowed names", async () => {
@@ -99,7 +118,13 @@ Broken.
 
   test("rejects reads outside an agent allow-list", async () => {
     const service = new SkillService({ userSkillsRoot });
-    await expect(service.readForAgent(projectRoot, "codemap", ["git-master"])).rejects.toMatchObject({
+    let thrown: unknown;
+    try {
+      await service.readForAgent(projectRoot, "codemap", ["git-master"]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
       name: "SkillNotFoundError",
       skillName: "codemap",
     } satisfies Partial<SkillNotFoundError>);

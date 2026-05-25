@@ -2,7 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { DelegateTargetNotAllowedError } from "../../agents/errors";
 import type { AgentFactoryLike, DelegateAgentOptions } from "../../delegation/types";
 import { createSessionStore } from "../../store/store";
-import type { ToolExecutionContext } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { TOOL_ERROR_META_KEY } from "../errors";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
 
@@ -48,6 +49,16 @@ describe("delegate tool", () => {
     expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: "codemap" }).success).toBe(false);
   });
 
+  it("rejects input that omits the required skills field", () => {
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect" }).success).toBe(false);
+  });
+
+  it("rejects invalid skill names in the input schema", () => {
+    for (const invalidName of ["../x", "Git-Master", ""]) {
+      expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [invalidName] }).success).toBe(false);
+    }
+  });
+
   it("sync delegation waits and returns last assistant text", async () => {
     const factory = new ToolStubFactory();
     const result = await executeDelegate(
@@ -71,7 +82,7 @@ describe("delegate tool", () => {
       makeContext({ agentFactory: factory }),
     );
 
-    expect(JSON.parse(result)).toEqual({ ok: true, session_id: factory.store.getState().sessionId });
+    expect(JSON.parse(result as string)).toEqual({ ok: true, session_id: factory.store.getState().sessionId });
     expect(factory.lastOptions?.description).toBe("Scan");
     expect(factory.lastOptions?.background).toBe(true);
     expect(factory.lastOptions?.skills).toEqual(["codemap"]);
@@ -83,10 +94,14 @@ describe("delegate tool", () => {
       makeContext(),
     );
 
-    expect(JSON.parse(result)).toEqual({
-      ok: false,
-      sessionId: "",
-      error: { name: "SubAgentError", message: "AgentFactory is not available in this execution context" },
+    const errorResult = result as ToolExecutionResult;
+    expect(errorResult.isError).toBe(true);
+    expect(errorResult.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(JSON.parse(errorResult.output)).toMatchObject({
+      name: "SubAgentError",
+      code: "TOOL_DELEGATE_FACTORY_UNAVAILABLE",
+      message: "AgentFactory is not available in this execution context",
+      details: { ok: false, session_id: "" },
     });
   });
 
@@ -102,12 +117,20 @@ describe("delegate tool", () => {
       makeContext({ agentFactory: factory }),
     );
 
-    expect(JSON.parse(result)).toEqual({
-      ok: false,
-      sessionId: "",
-      error: {
-        name: "DelegateTargetNotAllowedError",
-        message: 'Agent "orchestrator" cannot delegate to "writer" at depth 0',
+    const errorResult = result as ToolExecutionResult;
+    expect(errorResult.isError).toBe(true);
+    expect(errorResult.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(JSON.parse(errorResult.output)).toMatchObject({
+      name: "DelegateTargetNotAllowedError",
+      code: "TOOL_DELEGATE_FAILED",
+      message: 'Agent "orchestrator" cannot delegate to "writer" at depth 0',
+      details: {
+        ok: false,
+        session_id: "",
+        error: {
+          name: "DelegateTargetNotAllowedError",
+          message: 'Agent "orchestrator" cannot delegate to "writer" at depth 0',
+        },
       },
     });
   });

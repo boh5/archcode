@@ -3,10 +3,13 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import { SkillNotFoundError, SkillPathError, SkillValidationError, type ResolvedSkill } from "../../skills";
+import { SKILL_NAME_REGEX } from "../../skills/schema";
+
+const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string(),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE),
   })
   .strict();
 

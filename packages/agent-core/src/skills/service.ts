@@ -215,11 +215,14 @@ export class SkillService {
 
   async #readFileOrUndefined(filePath: string): Promise<string | undefined> {
     try {
-      const file = Bun.file(filePath);
-      if (!(await file.exists())) return undefined;
-      return await file.text();
-    } catch {
-      return undefined;
+      return await Bun.file(filePath).text();
+    } catch (error) {
+      if (isNoEntryError(error)) return undefined;
+      throw error;
     }
   }
+}
+
+function isNoEntryError(error: unknown): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 }

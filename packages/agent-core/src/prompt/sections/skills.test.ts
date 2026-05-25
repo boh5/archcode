@@ -60,6 +60,24 @@ describe("buildSkillsSection", () => {
     }
   });
 
+  test("normal agent prompt includes available skill summaries without full skill bodies", async () => {
+    const fullSkillBody = "FULL SKILL BODY MUST NOT APPEAR";
+    const ctx = makeCtx({
+      availableSkills: [
+        { name: "git-master", description: "Git operations expertise", source: "builtin" },
+        { name: "codemap", description: "Codebase navigation", source: "project" },
+      ],
+      activeSkills: [],
+    });
+    const result = await buildSkillsSection(ctx);
+
+    expect(result).toContain("<available-skills>");
+    expect(result).toContain("**git-master** — Git operations expertise (source: builtin)");
+    expect(result).toContain("**codemap** — Codebase navigation (source: project)");
+    expect(result).not.toContain("<active-skills>");
+    expect(result).not.toContain(fullSkillBody);
+  });
+
   test("explore prompt includes only codemap and research-docs", async () => {
     const ctx = makeCtx({ availableSkills: exploreSkills });
     const result = await buildSkillsSection(ctx);

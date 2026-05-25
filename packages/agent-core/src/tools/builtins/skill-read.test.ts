@@ -114,6 +114,12 @@ Broken body.
     expect(SkillReadInputSchema.safeParse({ name: "codemap", path: "/tmp/SKILL.md" }).success).toBe(false);
   });
 
+  test("input schema rejects invalid skill names", () => {
+    for (const invalidName of ["../x", "Git-Master", ""]) {
+      expect(SkillReadInputSchema.safeParse({ name: invalidName }).success).toBe(false);
+    }
+  });
+
   test("has correct read-only concurrency-safe traits and is registered", () => {
     expect(skillReadTool.traits).toEqual({
       readOnly: true,
