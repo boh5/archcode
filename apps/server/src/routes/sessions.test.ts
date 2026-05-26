@@ -1,14 +1,11 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { sessionFileInternals } from "../../../../packages/agent-core/src/store/helpers";
-import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
-const manager = new SessionStoreManager();
 
 interface SessionSummaryBody {
   sessions: Array<{
@@ -28,24 +25,68 @@ interface SessionFileBody {
   eventCursor?: number;
 }
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
-    return {
+type StoredSessionBody = SessionFileBody & {
+  title: string | null;
+  todos: unknown[];
+  reminders: unknown[];
+};
+
+class MissingSessionFileError extends Error {
+  code = "ENOENT";
+}
+
+function createStoredSession(sessionId: string = crypto.randomUUID(), createdAt = Date.now(), title: string | null = null): StoredSessionBody {
+  return {
+    sessionId,
+    createdAt,
+    title,
+    messages: [],
+    steps: [],
+    todos: [],
+    reminders: [],
+  };
+}
+
+function createTestRuntime(projectRegistry: ProjectRegistry) {
+  const sessions = new Map<string, StoredSessionBody>();
+  const calls = {
+    createSession: 0,
+    getSessionFile: 0,
+    listSessions: 0,
+    deleteSession: [] as Array<{ workspaceRoot: string; sessionId: string }>,
+  };
+
+  const runtime = {
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
+    skillService: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
     createSession: async (workspaceRoot: string) => {
-      const store = manager.create(crypto.randomUUID(), workspaceRoot);
-      await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
-      return sessionFileInternals.toSessionFile(store.getState());
+      calls.createSession += 1;
+      const session = createStoredSession();
+      sessions.set(`${workspaceRoot}\0${session.sessionId}`, session);
+      return session;
     },
     getSessionFile: async (workspaceRoot: string, sessionId: string) => {
-      const store = await manager.getOrLoad(sessionId, workspaceRoot);
-      return sessionFileInternals.toSessionFile(store.getState());
+      calls.getSessionFile += 1;
+      const session = sessions.get(`${workspaceRoot}\0${sessionId}`);
+      if (!session) throw new MissingSessionFileError();
+      return session;
     },
-    listSessions: sessionFileInternals.listSessionSummaries,
+    listSessions: async (workspaceRoot: string) => {
+      calls.listSessions += 1;
+      return [...sessions.entries()]
+        .filter(([key]) => key.startsWith(`${workspaceRoot}\0`))
+        .map(([, session]) => ({
+          sessionId: session.sessionId,
+          title: session.title,
+          createdAt: session.createdAt,
+        }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    },
     submitAgentJob: () => {
       throw new Error("not implemented");
     },
@@ -56,11 +97,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     getAgentJob: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async (workspaceRoot: string, sessionId: string) => {
-      manager.delete(sessionId, workspaceRoot);
-      const path = join(workspaceRoot, ".specra", "sessions", `${sessionId}.json`);
-      if (await Bun.file(path).exists()) {
-        await rm(path);
-      }
+      calls.deleteSession.push({ workspaceRoot, sessionId });
+      sessions.delete(`${workspaceRoot}\0${sessionId}`);
     },
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
@@ -72,19 +110,21 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
   } as unknown as SpecraRuntime;
+
+  return { runtime, sessions, calls };
 }
 
 async function makeWorkspace(name: string): Promise<string> {
-  const workspaceRoot = join(tempRoot, "workspaces", name);
+  const workspaceRoot = resolve(tempRoot, "workspaces", name);
   await mkdir(workspaceRoot, { recursive: true });
   return workspaceRoot;
 }
 
 async function createTestApp(testName: string) {
-  const homeDir = join(tempRoot, "homes", testName);
+  const homeDir = resolve(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir });
-  const runtime = createTestRuntime(projectRegistry);
+  const { runtime, sessions, calls } = createTestRuntime(projectRegistry);
   const workspaceRoot = await makeWorkspace(testName);
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
@@ -92,32 +132,23 @@ async function createTestApp(testName: string) {
     app: createServerApp(runtime, { dev: true }).app,
     project,
     workspaceRoot,
+    sessions,
+    calls,
   };
 }
 
-async function saveEmptySession(
+function saveEmptySession(
   workspaceRoot: string,
+  sessions: Map<string, StoredSessionBody>,
   sessionId: string,
   createdAt: number,
   title: string | null = null,
-): Promise<void> {
-  await sessionFileInternals.saveSessionTranscript({
-    sessionId,
-    createdAt,
-    title,
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    parentSessionId: undefined,
-    subAgentDescriptions: new Map(),
-  }, workspaceRoot);
+): void {
+  sessions.set(`${workspaceRoot}\0${sessionId}`, createStoredSession(sessionId, createdAt, title));
 }
 
 describe("sessions routes", () => {
   beforeEach(async () => {
-    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
@@ -198,31 +229,17 @@ describe("sessions routes", () => {
     });
   });
 
-  test("GET /api/projects/:slug/sessions/:sessionId returns eventCursor from live store without resetting events", async () => {
-    const { app, project, workspaceRoot } = await createTestApp("live-store-events");
-    const sessionId = crypto.randomUUID();
+  test("GET /api/projects/:slug/sessions/:sessionId delegates to runtime session projection", async () => {
+    const { app, project, calls } = await createTestApp("runtime-get-session");
+    const created = await app.request(`/api/projects/${project.slug}/sessions`, {
+      method: "POST",
+    });
+    const session = (await created.json()) as SessionFileBody;
 
-    // Create a store and register it (simulating an active session)
-    const store = manager.create(sessionId, workspaceRoot);
-
-    // Append events to simulate an active session
-    const state = store.getState();
-    state.append({ type: "text-delta", text: "Hello" });
-    state.append({ type: "text-delta", text: "World" });
-
-    const nextEventId = store.getState().nextEventId;
-    const eventsBefore = store.getState().events.length;
-
-    // GET session — should hit Priority 2: registered store
-    const res = await app.request(`/api/projects/${project.slug}/sessions/${sessionId}`);
-    const body = (await res.json()) as SessionFileBody;
+    const res = await app.request(`/api/projects/${project.slug}/sessions/${session.sessionId}`);
 
     expect(res.status).toBe(200);
-    // eventCursor should be nextEventId - 1 (not -1)
-    expect(body.eventCursor).toBe(nextEventId - 1);
-    // The live store's events must NOT be reset
-    expect(store.getState().events.length).toBe(eventsBefore);
-    expect(store.getState().nextEventId).toBe(nextEventId);
+    expect(calls.getSessionFile).toBe(1);
   });
 
   test("DELETE /api/projects/:slug/sessions/:sessionId returns ok", async () => {
@@ -263,14 +280,28 @@ describe("sessions routes", () => {
   });
 
   test("GET /api/projects/:slug/sessions sorts sessions by latest timestamp descending", async () => {
-    const { app, project, workspaceRoot } = await createTestApp("sorted-sessions");
-    await saveEmptySession(workspaceRoot, "older", 1_000, "Older");
-    await saveEmptySession(workspaceRoot, "newer", 2_000, "Newer");
+    const { app, project, workspaceRoot, sessions } = await createTestApp("sorted-sessions");
+    saveEmptySession(workspaceRoot, sessions, "older", 1_000, "Older");
+    saveEmptySession(workspaceRoot, sessions, "newer", 2_000, "Newer");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions`);
     const body = (await res.json()) as SessionSummaryBody;
 
     expect(res.status).toBe(200);
     expect(body.sessions.map((session) => session.sessionId)).toEqual(["newer", "older"]);
+  });
+
+  test("DELETE /api/projects/:slug/sessions/:sessionId delegates cleanup to runtime", async () => {
+    const { app, project, calls } = await createTestApp("delete-session-runtime");
+    const created = await app.request(`/api/projects/${project.slug}/sessions`, {
+      method: "POST",
+    });
+    const session = (await created.json()) as SessionFileBody;
+
+    await app.request(`/api/projects/${project.slug}/sessions/${session.sessionId}`, {
+      method: "DELETE",
+    });
+
+    expect(calls.deleteSession).toEqual([{ workspaceRoot: project.workspaceRoot, sessionId: session.sessionId }]);
   });
 });

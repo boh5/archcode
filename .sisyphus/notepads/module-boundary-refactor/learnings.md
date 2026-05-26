@@ -90,3 +90,11 @@
 - Server `AgentRunner` is now a thin adapter that subscribes runtime session events into `globalEventBus` and delegates all job lifecycle/command methods to runtime; server route tests use runtime lifecycle APIs instead of importing core `Agent`/callback internals.
 - `scopedKey` moved to internal `store/key.ts` and is no longer exported from `store/store.ts`.
 - Verification passed: LSP diagnostics clean, `bun run typecheck`, full `bun run test`, and `bun test packages/agent-core/src/__arch__`.
+
+## 2026-05-26 Task: Server depends on runtime session APIs
+- `apps/server/src/routes/sessions.ts` now delegates create/get/list/delete to `SpecraRuntime` APIs; delete calls only `runtime.deleteSession()` and no longer aborts/disposes/unregisters/removes files directly.
+- Deleted the old server `session-event-bridge`; runtime `subscribeSessionEvents()` plus the thin `AgentRunner` global-bus adapter owns SSE forwarding, so server no longer registers raw store bridges.
+- `apps/server/src/routes/workflow.ts` verifies session existence through `runtime.getSessionFile()` instead of importing `getSessionsDir()` or checking session files directly.
+- Server route tests now use runtime-shaped fakes rather than `SessionStoreManager`, session helper internals, `sessionAgentManager`, or `agentFor` fields.
+- Boundary search confirmed no `StoreApi`, `SessionStoreState`, `saveSessionTranscript`, `readSessionFile`, `scopedKey`, `sessionAgentManager`, `getSessionsDir`, raw `.getState()`, or `session-event-bridge` references remain under `apps/server/src`.
+- Verification passed: LSP diagnostics clean on changed server files, `bun test apps/server/src packages/agent-core/src/__arch__`, and `bun run typecheck`.

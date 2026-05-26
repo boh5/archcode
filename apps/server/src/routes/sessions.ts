@@ -1,14 +1,9 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { Hono } from "hono";
-import { getSessionsDir } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, SessionNotFoundError } from "../errors";
-import { unregisterSessionEventBridge } from "../events/session-event-bridge";
 import { resolveProject } from "../resolve";
 
-export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
+export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => {
@@ -41,16 +36,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
 
-    await agentRunner.abortAndWait(project.workspaceRoot, sessionId);
-    runtime.disposeSessionAgent(project.workspaceRoot, sessionId);
-    unregisterSessionEventBridge(project.workspaceRoot, sessionId);
-    agentRunner.cleanupSession(project.workspaceRoot, sessionId);
-
-    const path = join(getSessionsDir(project.workspaceRoot), `${sessionId}.json`);
-
-    if (await Bun.file(path).exists()) {
-      await rm(path);
-    }
+    await runtime.deleteSession(project.workspaceRoot, sessionId);
 
     return c.json({ ok: true });
   });

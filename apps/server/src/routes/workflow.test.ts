@@ -5,38 +5,59 @@ import type { SpecraRuntime } from "@specra/agent-core";
 import { WorkflowArtifactManager } from "@specra/agent-core";
 import { WorkflowStateManager } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { sessionFileInternals } from "../../../../packages/agent-core/src/store/helpers";
-import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
-const manager = new SessionStoreManager();
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
-  return {
-    storeManager: manager,
+class MissingSessionFileError extends Error {
+  code = "ENOENT";
+}
+
+function createTestRuntime(projectRegistry: ProjectRegistry) {
+  const sessionIds = new Set<string>();
+  const runtime = {
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
+    skillService: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async (_root: string, _sid: string) => undefined,
     createSession: async (workspaceRoot: string) => {
-      const store = manager.create(crypto.randomUUID(), workspaceRoot);
-      return sessionFileInternals.toSessionFile(store.getState());
+      const sessionId = crypto.randomUUID();
+      sessionIds.add(`${workspaceRoot}\0${sessionId}`);
+      return { sessionId, createdAt: Date.now(), title: null, messages: [], steps: [], todos: [], reminders: [] };
     },
     getSessionFile: async (workspaceRoot: string, sessionId: string) => {
-      const store = await manager.getOrLoad(sessionId, workspaceRoot);
-      return sessionFileInternals.toSessionFile(store.getState());
+      if (!sessionIds.has(`${workspaceRoot}\0${sessionId}`)) throw new MissingSessionFileError();
+      return { sessionId, createdAt: Date.now(), title: null, messages: [], steps: [], todos: [], reminders: [] };
     },
-    listSessions: sessionFileInternals.listSessionSummaries,
-    acquireSessionSlot: () => undefined,
-    releaseSessionSlot: () => undefined,
+    listSessions: async () => [],
+    submitAgentJob: () => {
+      throw new Error("not implemented");
+    },
+    abortAgentJob: () => false,
+    abortAgentJobAndWait: async () => undefined,
+    abortAllAgentJobs: async () => undefined,
+    isAgentJobRunning: () => false,
+    getAgentJob: () => undefined,
+    subscribeSessionEvents: () => () => undefined,
+    deleteSession: async (workspaceRoot: string, sessionId: string) => {
+      sessionIds.delete(`${workspaceRoot}\0${sessionId}`);
+    },
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
+    dispatchCommand: async () => null,
+    requestPermission: async () => "timeout",
+    respondPermission: () => false,
+    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
+    respondQuestion: () => false,
+    cleanupDeferredSession: () => undefined,
+    notifyRuntimeShutdown: () => undefined,
   } as unknown as SpecraRuntime;
+
+  return { runtime, sessionIds };
 }
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -49,7 +70,7 @@ async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir });
-  const runtime = createTestRuntime(projectRegistry);
+  const { runtime, sessionIds } = createTestRuntime(projectRegistry);
   const workspaceRoot = await makeWorkspace(testName);
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
@@ -58,32 +79,20 @@ async function createTestApp(testName: string) {
     project,
     workspaceRoot,
     projectRegistry,
+    sessionIds,
   };
 }
 
-async function saveEmptySession(
+function saveEmptySession(
   workspaceRoot: string,
+  sessionIds: Set<string>,
   sessionId: string,
-): Promise<void> {
-  const store = manager.create(sessionId, workspaceRoot);
-  store.setState({
-    sessionId,
-    createdAt: Date.now(),
-    title: null,
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    parentSessionId: undefined,
-    subAgentDescriptions: new Map(),
-  });
-  await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
+): void {
+  sessionIds.add(`${workspaceRoot}\0${sessionId}`);
 }
 
 describe("workflow routes", () => {
   beforeEach(async () => {
-    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
@@ -94,11 +103,11 @@ describe("workflow routes", () => {
 
   describe("GET /api/projects/:slug/sessions/:sessionId/workflow", () => {
     test("returns the workflow referencing the given session", async () => {
-      const { app, project, workspaceRoot } = await createTestApp("session-workflow-found");
+      const { app, project, workspaceRoot, sessionIds } = await createTestApp("session-workflow-found");
       const sessionId = "my-session-id";
       const workflowId = "wf-1";
 
-      await saveEmptySession(workspaceRoot, sessionId);
+      saveEmptySession(workspaceRoot, sessionIds, sessionId);
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       await stateManager.create({
@@ -118,10 +127,10 @@ describe("workflow routes", () => {
     });
 
     test("returns 200 with null workflow when session has no matching workflow", async () => {
-      const { app, project, workspaceRoot } = await createTestApp("session-no-workflow");
+      const { app, project, workspaceRoot, sessionIds } = await createTestApp("session-no-workflow");
       const sessionId = "orphan-session";
 
-      await saveEmptySession(workspaceRoot, sessionId);
+      saveEmptySession(workspaceRoot, sessionIds, sessionId);
 
       const res = await app.request(
         `/api/projects/${project.slug}/sessions/${sessionId}/workflow`,
@@ -158,11 +167,11 @@ describe("workflow routes", () => {
     });
 
     test("finds workflow via taskSessionIds as well", async () => {
-      const { app, project, workspaceRoot } = await createTestApp("via-tasksession-ids");
+      const { app, project, workspaceRoot, sessionIds } = await createTestApp("via-tasksession-ids");
       const sessionId = "task-session-id";
       const workflowId = "wf-tasks";
 
-      await saveEmptySession(workspaceRoot, sessionId);
+      saveEmptySession(workspaceRoot, sessionIds, sessionId);
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       await stateManager.create({

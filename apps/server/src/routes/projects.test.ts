@@ -10,24 +10,36 @@ const tempRoot = resolve(import.meta.dir, "__test_tmp__", "projects-routes");
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
-    sessionAgentManager: {
-      get: () => undefined,
-      getOrCreate: async () => undefined,
-      dispose: () => undefined,
-      disposeAll: () => undefined,
-      getByWorkspace: () => [],
-      isTombstoned: () => false,
-      acquireSlot: () => undefined,
-      releaseSlot: () => undefined,
-      abortAndDispose: async () => undefined,
-    },
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
+    skillService: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async (_root: string, _sid: string) => undefined,
+    createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
+    getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
+    listSessions: async () => [],
+    submitAgentJob: () => {
+      throw new Error("not implemented");
+    },
+    abortAgentJob: () => false,
+    abortAgentJobAndWait: async () => undefined,
+    abortAllAgentJobs: async () => undefined,
+    isAgentJobRunning: () => false,
+    getAgentJob: () => undefined,
+    subscribeSessionEvents: () => () => undefined,
+    deleteSession: async () => undefined,
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
+    dispatchCommand: async () => null,
+    requestPermission: async () => "timeout",
+    respondPermission: () => false,
+    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
+    respondQuestion: () => false,
+    cleanupDeferredSession: () => undefined,
+    notifyRuntimeShutdown: () => undefined,
   } as unknown as SpecraRuntime;
 }
 

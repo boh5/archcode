@@ -1,9 +1,7 @@
-import { join } from "node:path";
 import { Hono } from "hono";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { WorkflowArtifactKindSchema, WorkflowStateManager } from "@specra/agent-core";
 import { WorkflowArtifactManager } from "@specra/agent-core";
-import { getSessionsDir } from "@specra/agent-core";
 import {
   ArtifactNotFoundError,
   BadRequestError,
@@ -33,8 +31,10 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
     const project = await resolveProject(runtime, slug);
     const workspaceRoot = project.workspaceRoot;
 
-    const sessionFile = join(getSessionsDir(workspaceRoot), `${sessionId}.json`);
-    if (!(await Bun.file(sessionFile).exists())) {
+    try {
+      await runtime.getSessionFile(workspaceRoot, sessionId);
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
       throw new SessionNotFoundError(sessionId);
     }
 

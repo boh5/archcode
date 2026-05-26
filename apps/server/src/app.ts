@@ -73,7 +73,7 @@ export function createServerApp(
 
   const projects = createProjectsRoutes(runtime);
   const agentRunner = new AgentRunner(runtime);
-  const sessions = createSessionsRoutes(runtime, agentRunner);
+  const sessions = createSessionsRoutes(runtime);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
   const permissions = createPermissionRoutes(new PermissionService(runtime));
