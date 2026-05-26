@@ -11,6 +11,7 @@ export { WorkflowArtifactManager } from "./agents/workflow/artifacts";
 export { WorkflowArtifactKindSchema, WorkflowStateManager } from "./agents/workflow/state";
 
 export type { CommandResult } from "./commands/types";
+export type { RunningJob, SubscribeSessionEventsInput } from "./runner";
 
 export type { McpWarning } from "./mcp/index";
 

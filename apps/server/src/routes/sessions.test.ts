@@ -29,15 +29,13 @@ interface SessionFileBody {
 }
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
-  return {
-    storeManager: manager,
+    return {
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    agentFor: async (_root: string, _sid: string) => undefined,
     createSession: async (workspaceRoot: string) => {
       const store = manager.create(crypto.randomUUID(), workspaceRoot);
       await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
@@ -48,8 +46,22 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
       return sessionFileInternals.toSessionFile(store.getState());
     },
     listSessions: sessionFileInternals.listSessionSummaries,
-    acquireSessionSlot: () => undefined,
-    releaseSessionSlot: () => undefined,
+    submitAgentJob: () => {
+      throw new Error("not implemented");
+    },
+    abortAgentJob: () => false,
+    abortAgentJobAndWait: async () => undefined,
+    abortAllAgentJobs: async () => undefined,
+    isAgentJobRunning: () => false,
+    getAgentJob: () => undefined,
+    subscribeSessionEvents: () => () => undefined,
+    deleteSession: async (workspaceRoot: string, sessionId: string) => {
+      manager.delete(sessionId, workspaceRoot);
+      const path = join(workspaceRoot, ".specra", "sessions", `${sessionId}.json`);
+      if (await Bun.file(path).exists()) {
+        await rm(path);
+      }
+    },
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
@@ -89,8 +101,7 @@ async function saveEmptySession(
   createdAt: number,
   title: string | null = null,
 ): Promise<void> {
-  const store = manager.create(sessionId, workspaceRoot);
-  store.setState({
+  await sessionFileInternals.saveSessionTranscript({
     sessionId,
     createdAt,
     title,
@@ -101,8 +112,7 @@ async function saveEmptySession(
     childSessionIds: new Set(),
     parentSessionId: undefined,
     subAgentDescriptions: new Map(),
-  });
-  await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
+  }, workspaceRoot);
 }
 
 describe("sessions routes", () => {

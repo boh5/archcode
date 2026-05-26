@@ -1,111 +1,72 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError } from "@specra/agent-core";
-import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
-import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry } from "@specra/agent-core";
-import type { ToolConfirmationCallback } from "@specra/agent-core";
-import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
+import { AgentRunningError, ProjectRegistry } from "@specra/agent-core";
+import type { RunningJob, SpecraRuntime } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
-const manager = new SessionStoreManager();
-type TestSessionStore = ReturnType<typeof manager.create>;
 
-type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
-
-class MockAgent implements Agent {
-  readonly store: TestSessionStore;
-  readonly runMock: RunMock;
-
-  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string) {
-    this.store = manager.create(sessionId, workspaceRoot);
-    this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
-      const signal = options instanceof AbortSignal ? options : options?.abort;
-      return await withAbort(result, signal);
-    });
-  }
-
-  run(
-    userMessage: string,
-    abort?: AbortSignal,
-    confirmPermission?: ToolConfirmationCallback,
-  ): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
-    return this.runMock(userMessage, options);
-  }
-
-  dispose(): void {}
-}
-
-function createMockAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent {
-  return new MockAgent(sessionId, result, workspaceRoot);
-}
-
-async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) {
-    return await promise;
-  }
-
-  signal.throwIfAborted();
-  return await Promise.race([
-    promise,
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener(
-        "abort",
-        () => reject(new DOMException("Aborted", "AbortError")),
-        { once: true },
-      );
-    }),
-  ]);
-}
-
-function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): SpecraRuntime {
-  const sessionId = agent.store.getState().sessionId;
+function makeJob(sessionId: string, workspaceRoot: string): RunningJob {
   return {
-    sessionAgentManager: {
-      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
-      getOrCreate: async () => agent,
-      dispose: () => undefined,
-      disposeAll: () => undefined,
-      getByWorkspace: () => [],
-      isTombstoned: () => false,
-      acquireSlot: () => undefined,
-      releaseSlot: () => undefined,
-      abortAndDispose: async () => undefined,
-    },
-    storeManager: manager,
+    jobId: crypto.randomUUID(),
+    sessionId,
+    workspaceRoot,
+    abortController: new AbortController(),
+    promise: new Promise(() => undefined),
+  };
+}
+
+function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
+  const running = new Set<string>();
+  return {
     projectRegistry,
+    warnings: [],
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
-    warnings: [],
+    skillService: undefined,
     contextResolver: undefined,
-    acquireSessionSlot: () => undefined,
-    releaseSessionSlot: () => undefined,
-    disposeSessionAgent: () => undefined,
-    disposeAllSessionAgents: () => undefined,
-    isSessionTombstoned: () => false,
-    requestPermission: async () => "timeout",
-    respondPermission: () => false,
-    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
-    respondQuestion: () => false,
-    cleanupDeferredSession: () => undefined,
-    notifyRuntimeShutdown: () => undefined,
-    agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
+    createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
+    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
+    listSessions: mock(async () => []),
+    submitAgentJob: mock((input) => {
+      if (running.has(input.sessionId)) throw new AgentRunningError();
+      running.add(input.sessionId);
+      return makeJob(input.sessionId, input.workspaceRoot);
+    }),
+    abortAgentJob: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
+    abortAgentJobAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
+      running.delete(sessionId);
+    }),
+    abortAllAgentJobs: mock(async () => running.clear()),
+    isAgentJobRunning: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId)),
+    getAgentJob: mock(() => undefined),
+    subscribeSessionEvents: mock(() => () => undefined),
+    deleteSession: mock(async (_workspaceRoot: string, sessionId: string) => {
+      running.delete(sessionId);
+    }),
+    disposeSessionAgent: mock(() => undefined),
+    disposeAllSessionAgents: mock(() => undefined),
+    isSessionTombstoned: mock(() => false),
+    dispatchCommand: mock(async () => null),
+    requestPermission: mock(async () => "timeout"),
+    respondPermission: mock(() => false),
+    requestQuestion: mock(async () => ({ isError: true, reason: "Cancelled" })),
+    respondQuestion: mock(() => false),
+    cleanupDeferredSession: mock(() => undefined),
+    notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as SpecraRuntime;
 }
 
-async function createTestApp(testName: string, agent: Agent) {
+async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
   await mkdir(homeDir, { recursive: true });
   await mkdir(workspaceRoot, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir });
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
-  const runtime = createTestRuntime(projectRegistry, agent);
+  const runtime = createTestRuntime(projectRegistry);
 
   return {
     app: createServerApp(runtime, { dev: true }).app,
@@ -115,7 +76,6 @@ async function createTestApp(testName: string, agent: Agent) {
 
 describe("messages routes", () => {
   beforeEach(async () => {
-    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
@@ -125,8 +85,7 @@ describe("messages routes", () => {
   });
 
   test("POST message with valid text returns 202 and jobId", async () => {
-    const agent = createMockAgent("session-valid", Promise.resolve({ text: "ok", steps: 1 }));
-    const { app, project } = await createTestApp("valid-message", agent);
+    const { app, project } = await createTestApp("valid-message");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/session-valid/messages`, {
       method: "POST",
@@ -140,8 +99,7 @@ describe("messages routes", () => {
   });
 
   test("POST message with missing text returns 400", async () => {
-    const agent = createMockAgent("session-missing", Promise.resolve({ text: "ok", steps: 1 }));
-    const { app, project } = await createTestApp("missing-text", agent);
+    const { app, project } = await createTestApp("missing-text");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/session-missing/messages`, {
       method: "POST",
@@ -156,8 +114,7 @@ describe("messages routes", () => {
   });
 
   test("POST message for non-existent project returns 404", async () => {
-    const agent = createMockAgent("session-project", Promise.resolve({ text: "ok", steps: 1 }));
-    const { app } = await createTestApp("missing-project", agent);
+    const { app } = await createTestApp("missing-project");
 
     const res = await app.request("/api/projects/missing/sessions/session-project/messages", {
       method: "POST",
@@ -172,8 +129,7 @@ describe("messages routes", () => {
   });
 
   test("POST message while agent running returns 409", async () => {
-    const agent = createMockAgent("session-conflict", new Promise(() => undefined));
-    const { app, project } = await createTestApp("running-conflict", agent);
+    const { app, project } = await createTestApp("running-conflict");
     const path = `/api/projects/${project.slug}/sessions/session-conflict/messages`;
 
     await app.request(path, {
@@ -194,29 +150,23 @@ describe("messages routes", () => {
   });
 
   test("POST abort returns ok true and aborted true", async () => {
-    const agent = createMockAgent("session-abort", new Promise(() => undefined));
-    const { app, project } = await createTestApp("abort-running", agent);
+    const { app, project } = await createTestApp("abort-running");
 
     await app.request(`/api/projects/${project.slug}/sessions/session-abort/messages`, {
       method: "POST",
       body: JSON.stringify({ text: "Hello" }),
       headers: { "content-type": "application/json" },
     });
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-abort/abort`, {
-      method: "POST",
-    });
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-abort/abort`, { method: "POST" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, aborted: true });
   });
 
   test("POST abort for non-running session returns ok true and aborted false", async () => {
-    const agent = createMockAgent("session-idle", Promise.resolve({ text: "ok", steps: 1 }));
-    const { app, project } = await createTestApp("abort-idle", agent);
+    const { app, project } = await createTestApp("abort-idle");
 
-    const res = await app.request(`/api/projects/${project.slug}/sessions/session-idle/abort`, {
-      method: "POST",
-    });
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-idle/abort`, { method: "POST" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, aborted: false });

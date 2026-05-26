@@ -1,460 +1,118 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { AgentRunningError } from "@specra/agent-core";
-import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
-import type { CommandResult } from "@specra/agent-core";
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { AskUserRequest, AskUserResponse, ToolConfirmationCallback, ToolConfirmationRequest, ToolConfirmationResult } from "@specra/agent-core";
-import { SessionStoreManager } from "../../../packages/agent-core/src/store/session-store-manager";
+import { describe, expect, mock, test } from "bun:test";
+import type { GlobalSSEEvent } from "@specra/protocol";
+import type { CommandResult, RunningJob, SpecraRuntime } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
-import { GlobalEventBus } from "./events/global-event-bus";
-import { __getSessionEventBridgeCountForTest, __resetSessionEventBridgesForTest, __setGlobalEventBusForTest } from "./events/session-event-bridge";
-import { PermissionService } from "./permission-service";
+import { globalEventBus } from "./events/global-event-bus";
 
-const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
-const manager = new SessionStoreManager();
-type TestSessionStore = ReturnType<typeof manager.create>;
-
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve(value: T): void;
-  reject(error: Error): void;
-}
-
-type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
-
-function abortJob(runner: AgentRunner, workspaceRoot: string, sessionId: string): boolean {
-  return (runner.abort as unknown as (workspaceRoot: string, sessionId: string) => boolean)(workspaceRoot, sessionId);
-}
-
-function isJobRunning(runner: AgentRunner, workspaceRoot: string, sessionId: string): boolean {
-  return (runner.isRunning as unknown as (workspaceRoot: string, sessionId: string) => boolean)(workspaceRoot, sessionId);
-}
-
-async function dispatchRunnerCommand(
-  runner: AgentRunner,
-  workspaceRoot: string,
-  sessionId: string,
-  name: string,
-  args?: string,
-): Promise<CommandResult | null> {
-  return await (runner.dispatchCommand as unknown as (
-    workspaceRoot: string,
-    sessionId: string,
-    name: string,
-    args?: string,
-  ) => Promise<CommandResult | null>)(workspaceRoot, sessionId, name, args);
-}
-
-class MockAgent implements Agent {
-  readonly store: TestSessionStore;
-  readonly runMock: RunMock;
-
-  constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
-    this.store = manager.create(sessionId, workspaceRoot);
-    this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
-      const signal = options instanceof AbortSignal ? options : options?.abort;
-      return await withAbort(result, signal);
-    });
-  }
-
-  run(
-    userMessage: string,
-    abort?: AbortSignal,
-    confirmPermission?: ToolConfirmationCallback,
-  ): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions): Promise<AgentResult>;
-  run(userMessage: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> {
-    return this.runMock(userMessage, options);
-  }
-
-  dispose(): void {}
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolveValue: (value: T) => void = () => undefined;
-  let rejectValue: (error: Error) => void = () => undefined;
-  const promise = new Promise<T>((resolve, reject) => {
-    resolveValue = resolve;
-    rejectValue = reject;
-  });
-
-  return { promise, resolve: resolveValue, reject: rejectValue };
-}
-
-function createMockAgent(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot): MockAgent {
-  return new MockAgent(sessionId, result, workspaceRoot);
-}
-
-function createRuntime(agent: Agent): SpecraRuntime {
-  const sessionId = agent.store.getState().sessionId;
-  const runningSessions = new Set<string>();
-  let runningAgent: Agent | undefined;
-  const pendingPermissions = new Map<string, (response: ToolConfirmationResult) => void>();
-  const pendingQuestions = new Map<string, (response: AskUserResponse) => void>();
+function makeJob(sessionId = "session-one", workspaceRoot = "/workspace"): RunningJob {
   return {
-    sessionAgentManager: {
-      get: (_workspaceRoot: string, requestedSessionId: string) => {
-        const isRunning = runningSessions.has(requestedSessionId);
-        if (!isRunning || runningAgent === undefined) return undefined;
+    jobId: crypto.randomUUID(),
+    sessionId,
+    workspaceRoot,
+    abortController: new AbortController(),
+    promise: Promise.resolve(),
+  };
+}
 
-        const activeAgent = runningAgent;
-        runningAgent = undefined;
-        return activeAgent;
-      },
-      getOrCreate: async () => agent,
-      dispose: () => undefined,
-      disposeAll: () => undefined,
-      getByWorkspace: () => [],
-      isTombstoned: () => false,
-      acquireSlot: () => undefined,
-      releaseSlot: (_workspaceRoot: string, requestedSessionId: string) => {
-        runningSessions.delete(requestedSessionId);
-        runningAgent = undefined;
-      },
-      abortAndDispose: async () => undefined,
-    },
-    storeManager: manager,
+function makeRuntime(overrides: Partial<SpecraRuntime> = {}): SpecraRuntime {
+  return {
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
+    skillService: undefined,
     warnings: [],
     projectRegistry: undefined,
     contextResolver: undefined,
-    acquireSessionSlot: (_workspaceRoot: string, requestedSessionId: string) => {
-      runningSessions.add(requestedSessionId);
-      runningAgent = agent;
-    },
-    releaseSessionSlot: (_workspaceRoot: string, requestedSessionId: string) => {
-      runningSessions.delete(requestedSessionId);
-      runningAgent = undefined;
-    },
-    disposeSessionAgent: () => undefined,
-    disposeAllSessionAgents: () => undefined,
-    isSessionTombstoned: () => false,
-    agentFor: async (_workspaceRoot: string, requestedSessionId: string) => {
-      if (requestedSessionId === sessionId) {
-        runningSessions.add(requestedSessionId);
-        runningAgent = agent;
-      }
-      return agent;
-    },
-    dispatchCommand: async (_workspaceRoot: string, requestedSessionId: string, name: string, args?: string) => {
-      const isRunning = runningSessions.has(requestedSessionId);
-      if (!isRunning || runningAgent === undefined) return null;
-
-      const dispatchable = runningAgent as Agent & { dispatchCommand?: (name: string, args?: string) => Promise<CommandResult> };
-      return await dispatchable.dispatchCommand?.(name, args) ?? null;
-    },
-    requestPermission: async (_workspaceRoot: string, _requestedSessionId: string, request: ToolConfirmationRequest) => {
-      const permissionId = crypto.randomUUID();
-      const state = agent.store.getState();
-      state.append({
-        type: "permission.request",
-        permissionId,
-        toolName: request.toolName,
-        args: request.input,
-        description: request.description,
-      });
-      return await new Promise<ToolConfirmationResult>((resolve) => {
-        pendingPermissions.set(permissionId, resolve);
-      });
-    },
-    respondPermission: (permissionId: string, response: ToolConfirmationResult) => {
-      const resolve = pendingPermissions.get(permissionId);
-      if (!resolve) return false;
-      pendingPermissions.delete(permissionId);
-      resolve(response);
-      const state = agent.store.getState();
-      state.append({
-        type: "permission.terminal",
-        permissionId,
-        status: response === "deny" ? "denied" : response === "timeout" ? "timeout" : "resolved",
-      });
-      return true;
-    },
-    requestQuestion: async (_workspaceRoot: string, _requestedSessionId: string, request: AskUserRequest) => {
-      const questionId = crypto.randomUUID();
-      const state = agent.store.getState();
-      state.append({
-        type: "question.request",
-        questionId,
-        question: JSON.stringify({ toolName: request.toolName, toolCallId: request.toolCallId, questions: request.questions }),
-      });
-      return await new Promise<AskUserResponse>((resolve) => {
-        pendingQuestions.set(questionId, resolve);
-      });
-    },
-    respondQuestion: (questionId: string, response: AskUserResponse) => {
-      const resolve = pendingQuestions.get(questionId);
-      if (!resolve) return false;
-      pendingQuestions.delete(questionId);
-      resolve(response);
-      const answer = "isError" in response ? undefined : JSON.stringify(response.answers);
-      const state = agent.store.getState();
-      state.append({ type: "question.terminal", questionId, status: answer ? "resolved" : "denied", answer });
-      return true;
-    },
-    cleanupDeferredSession: () => undefined,
-    createSession: async (workspaceRoot: string) => manager.createSessionFile(workspaceRoot),
-    getSessionFile: async (workspaceRoot: string, requestedSessionId: string) => manager.getSessionFile(workspaceRoot, requestedSessionId),
-    listSessions: async (workspaceRoot: string) => manager.listSessionSummaries(workspaceRoot),
-    notifyRuntimeShutdown: (reason?: string) => {
-      const state = agent.store.getState();
-      state.append({ type: "shutdown", reason });
-    },
+    createSession: mock(async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
+    getSessionFile: mock(async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
+    listSessions: mock(async () => []),
+    submitAgentJob: mock(() => makeJob()),
+    abortAgentJob: mock(() => true),
+    abortAgentJobAndWait: mock(async () => undefined),
+    abortAllAgentJobs: mock(async () => undefined),
+    isAgentJobRunning: mock(() => false),
+    getAgentJob: mock(() => undefined),
+    subscribeSessionEvents: mock(() => () => undefined),
+    deleteSession: mock(async () => undefined),
+    disposeSessionAgent: mock(() => undefined),
+    disposeAllSessionAgents: mock(() => undefined),
+    isSessionTombstoned: mock(() => false),
+    dispatchCommand: mock(async () => null),
+    requestPermission: mock(async () => "timeout"),
+    respondPermission: mock(() => false),
+    requestQuestion: mock(async () => ({ isError: true, reason: "Cancelled" })),
+    respondQuestion: mock(() => false),
+    cleanupDeferredSession: mock(() => undefined),
+    notifyRuntimeShutdown: mock(() => undefined),
+    ...overrides,
   } as unknown as SpecraRuntime;
 }
 
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) {
-    return await promise;
-  }
-
-  signal.throwIfAborted();
-  return await Promise.race([
-    promise,
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener(
-        "abort",
-        () => reject(new DOMException("Aborted", "AbortError")),
-        { once: true },
-      );
-    }),
-  ]);
-}
-
-describe("AgentRunner", () => {
-  beforeEach(async () => {
-    manager.clearAll();
-    __resetSessionEventBridgesForTest();
-    await rm(tempRoot, { recursive: true, force: true });
-    await mkdir(tempRoot, { recursive: true });
-  });
-
-  afterAll(async () => {
-    __resetSessionEventBridgesForTest();
-    await rm(tempRoot, { recursive: true, force: true });
-  });
-
-  test("submit starts a job and returns RunningJob with jobId", async () => {
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-start", run.promise);
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({ slug: "project-start", sessionId: "session-start", workspaceRoot: tempRoot, userMessage: "Hello" });
-
-    expect(job.sessionId).toBe("session-start");
-    expect(job.workspaceRoot).toBe(tempRoot);
-    expect(typeof job.jobId).toBe("string");
-    expect(job.abortController.signal.aborted).toBe(false);
-    await flushMicrotasks();
-    expect(agent.runMock).toHaveBeenCalledWith("Hello", { abort: job.abortController.signal });
-  });
-
-  test("submit injects confirmPermission callback when PermissionService is provided", async () => {
-    const agent = createMockAgent("session-permission", Promise.resolve({ text: "Done", steps: 1 }));
-    const runtime = createRuntime(agent);
-    const permissionService = new PermissionService(runtime);
-    const runner = new AgentRunner(runtime, permissionService);
-
-    const job = runner.submit({ slug: "project-permission", sessionId: "session-permission", workspaceRoot: tempRoot, userMessage: "Needs permission" });
-    await job.promise;
-    await flushMicrotasks();
-
-    const [_message, options] = agent.runMock.mock.calls[0];
-    if (!options || options instanceof AbortSignal) {
-      throw new Error("Expected AgentRunOptions");
-    }
-
-    expect(typeof options.confirmPermission).toBe("function");
-    const promise = options.confirmPermission?.({
-      toolName: "bash",
-      toolCallId: "call-1",
-      input: {},
-      description: "Confirm",
+describe("AgentRunner adapter", () => {
+  test("submit subscribes through runtime, forwards global events, and unsubscribes after settle", async () => {
+    let onEvent: ((event: GlobalSSEEvent) => void) | undefined;
+    const unsubscribe = mock(() => undefined);
+    const runtime = makeRuntime({
+      subscribeSessionEvents: mock((input) => {
+        onEvent = input.onEvent;
+        return unsubscribe;
+      }),
+      submitAgentJob: mock(() => makeJob("session-one", "/workspace")),
     });
-    const permissionEvent = agent.store.getState().events.find((event) => event.kind === "permission.request");
-    const permissionId = permissionEvent?.payload.type === "permission.request"
-      ? permissionEvent.payload.permissionId
-      : undefined;
-
-    if (permissionId === undefined) {
-      throw new Error("Expected permission request event");
-    }
-    expect(permissionService.respond(permissionId, "deny")).toBe(true);
-    await expect(promise).resolves.toBe("deny");
-  });
-
-  test("submit for same sessionId twice throws AgentRunningError", () => {
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-duplicate", run.promise);
-    const runner = new AgentRunner(createRuntime(agent));
-
-    runner.submit({ slug: "project-duplicate", sessionId: "session-duplicate", workspaceRoot: tempRoot, userMessage: "First" });
-
-    expect(() => runner.submit({ slug: "project-duplicate", sessionId: "session-duplicate", workspaceRoot: tempRoot, userMessage: "Second" })).toThrow(AgentRunningError);
-  });
-
-  test("isRunning returns true while running and false after completion", async () => {
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-running", run.promise);
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({ slug: "project-running", sessionId: "session-running", workspaceRoot: tempRoot, userMessage: "Hello" });
-    expect(isJobRunning(runner, tempRoot, "session-running")).toBe(true);
-
-    run.resolve({ text: "Done", steps: 1 });
-    await job.promise;
-
-    expect(isJobRunning(runner, tempRoot, "session-running")).toBe(false);
-  });
-
-  test("abort cancels the job and isRunning becomes false", async () => {
-    const agent = createMockAgent("session-abort", new Promise(() => undefined));
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({ slug: "project-abort", sessionId: "session-abort", workspaceRoot: tempRoot, userMessage: "Stop me" });
-    const aborted = abortJob(runner, tempRoot, "session-abort");
-    await job.promise;
-
-    expect(aborted).toBe(true);
-    expect(job.abortController.signal.aborted).toBe(true);
-    expect(isJobRunning(runner, tempRoot, "session-abort")).toBe(false);
-  });
-
-  test("after agent.run completes, session transcript is saved", async () => {
-    const workspaceRoot = join(tempRoot, "workspace-save");
-    await mkdir(workspaceRoot, { recursive: true });
-    const agent = createMockAgent("session-save", Promise.resolve({ text: "Saved", steps: 1 }), workspaceRoot);
-    const state = agent.store.getState();
-    state.append({ type: "user-message", content: "persist me" });
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({ slug: "project-save", sessionId: "session-save", workspaceRoot, userMessage: "persist me" });
-    await job.promise;
-    await flushMicrotasks();
-
-    const saved = await manager.getOrLoad("session-save", workspaceRoot);
-    expect(saved.getState().messages).toHaveLength(1);
-  });
-
-  test("does not perform runner-owned transcript save when session is tombstoned before job settles", async () => {
-    const workspaceRoot = join(tempRoot, "workspace-tombstone");
-    await mkdir(workspaceRoot, { recursive: true });
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-tombstone", run.promise, workspaceRoot);
-    const state = agent.store.getState();
-    state.append({ type: "user-message", content: "do not resurrect" });
-    let tombstoned = false;
-    const runtime = createRuntime(agent);
-    runtime.isSessionTombstoned = () => tombstoned;
+    const received: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => received.push(event));
     const runner = new AgentRunner(runtime);
 
-    const job = runner.submit({ slug: "project-tombstone", sessionId: "session-tombstone", workspaceRoot, userMessage: "delete me" });
-    await flushMicrotasks();
-    tombstoned = true;
-    run.resolve({ text: "Done", steps: 1 });
+    const job = runner.submit({ slug: "project", workspaceRoot: "/workspace", sessionId: "session-one", userMessage: "hi" });
+    onEvent?.({ type: "shutdown", reason: "test" });
     await job.promise;
+    await Promise.resolve();
+    unsubscribeBus();
 
-    // Store-owned persistence is asynchronous; tombstoned sessions should not be resurrected by a runner final save.
-    manager.delete("session-tombstone", workspaceRoot);
-    await expect(manager.getOrLoad("session-tombstone", workspaceRoot)).rejects.toThrow();
+    expect(runtime.subscribeSessionEvents).toHaveBeenCalledWith({
+      slug: "project",
+      workspaceRoot: "/workspace",
+      sessionId: "session-one",
+      onEvent: expect.any(Function),
+    });
+    expect(runtime.submitAgentJob).toHaveBeenCalledWith({ slug: "project", workspaceRoot: "/workspace", sessionId: "session-one", userMessage: "hi" });
+    expect(received).toEqual([{ type: "shutdown", reason: "test" }]);
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
-  test("acquires and releases per-workspace session slots", async () => {
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-slot", run.promise);
-    const runtime = createRuntime(agent);
-    const acquired: string[] = [];
-    const released: string[] = [];
-    runtime.acquireSessionSlot = (_workspaceRoot: string, sessionId: string) => acquired.push(sessionId);
-    runtime.releaseSessionSlot = (_workspaceRoot: string, sessionId: string) => released.push(sessionId);
+  test("submit unsubscribes when runtime rejects submission", () => {
+    const unsubscribe = mock(() => undefined);
+    const runtime = makeRuntime({
+      subscribeSessionEvents: mock(() => unsubscribe),
+      submitAgentJob: mock(() => {
+        throw new Error("boom");
+      }),
+    });
     const runner = new AgentRunner(runtime);
 
-    const job = runner.submit({ slug: "project-slot", sessionId: "session-slot", workspaceRoot: tempRoot, userMessage: "Hello" });
-    expect(acquired).toEqual(["session-slot"]);
-
-    run.resolve({ text: "Done", steps: 1 });
-    await job.promise;
-
-    expect(released).toEqual(["session-slot"]);
+    expect(() => runner.submit({ slug: "project", workspaceRoot: "/workspace", sessionId: "session", userMessage: "hi" })).toThrow("boom");
+    expect(unsubscribe).toHaveBeenCalled();
   });
 
-  test("dispatchCommand returns null without running configured agent and delegates while running", async () => {
-    const run = deferred<AgentResult>();
-    const commandResult: CommandResult = { success: true, message: "dispatched" };
-    const dispatchCommand = mock(async (_name: string, _args?: string) => commandResult);
-    const agent = createMockAgent("session-command", run.promise) as MockAgent & { dispatchCommand: typeof dispatchCommand };
-    agent.dispatchCommand = dispatchCommand;
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const missingResult = await dispatchRunnerCommand(runner, tempRoot, "missing", "compact");
-    expect(missingResult).toBeNull();
-
-    const job = runner.submit({ slug: "project-command", sessionId: "session-command", workspaceRoot: tempRoot, userMessage: "Hello" });
-    await flushMicrotasks();
-
-    const runningResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact", "now");
-    expect(runningResult).toEqual(commandResult);
-    expect(dispatchCommand).toHaveBeenCalledWith("compact", "now");
-
-    run.resolve({ text: "Done", steps: 1 });
-    await job.promise;
-    const completedResult = await dispatchRunnerCommand(runner, tempRoot, "session-command", "compact");
-    expect(completedResult).toBeNull();
-  });
-
-  test("submit registers active agent store with the global session event bridge", async () => {
-    const bus = new GlobalEventBus();
-    const received: unknown[] = [];
-    __setGlobalEventBusForTest(bus);
-    bus.subscribe((event) => received.push(event));
-    const run = deferred<AgentResult>();
-    const agent = createMockAgent("session-bridge", run.promise);
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({ slug: "project-bridge", sessionId: "session-bridge", workspaceRoot: tempRoot, userMessage: "Hello" });
-    await flushMicrotasks();
-    const state = agent.store.getState();
-    state.append({ type: "system-notice", message: "bridged" });
-
-    expect(received).toMatchObject([
-      { type: "event", slug: "project-bridge", sessionId: "session-bridge", eventId: 0, kind: "system-notice" },
-    ]);
-
-    run.resolve({ text: "Done", steps: 1 });
-    await job.promise;
-  });
-
-  test("unregisters the session event bridge after a job settles", async () => {
-    const bus = new GlobalEventBus();
-    const received: unknown[] = [];
-    __setGlobalEventBusForTest(bus);
-    bus.subscribe((event) => received.push(event));
-    const agent = createMockAgent("session-bridge-cleanup", Promise.resolve({ text: "Done", steps: 1 }));
-    const runner = new AgentRunner(createRuntime(agent));
-
-    const job = runner.submit({
-      slug: "project-bridge-cleanup",
-      sessionId: "session-bridge-cleanup",
-      workspaceRoot: tempRoot,
-      userMessage: "Hello",
+  test("delegates lifecycle and command calls to runtime", async () => {
+    const commandResult: CommandResult = { success: true, message: "ok" };
+    const runtime = makeRuntime({
+      abortAgentJob: mock(() => true),
+      abortAgentJobAndWait: mock(async () => undefined),
+      abortAllAgentJobs: mock(async () => undefined),
+      isAgentJobRunning: mock(() => true),
+      getAgentJob: mock(() => makeJob("session", "/workspace")),
+      cleanupDeferredSession: mock(() => undefined),
+      dispatchCommand: mock(async () => commandResult),
     });
-    await flushMicrotasks();
-    expect(__getSessionEventBridgeCountForTest()).toBe(1);
+    const runner = new AgentRunner(runtime);
 
-    await job.promise;
-    expect(__getSessionEventBridgeCountForTest()).toBe(0);
-
-    const state = agent.store.getState();
-    state.append({ type: "system-notice", message: "after cleanup" });
-    expect(received).toEqual([]);
+    expect(runner.abort("/workspace", "session")).toBe(true);
+    await runner.abortAndWait("/workspace", "session");
+    await runner.abortAll();
+    expect(runner.isRunning("/workspace", "session")).toBe(true);
+    expect(runner.getJob("/workspace", "session")?.sessionId).toBe("session");
+    runner.cleanupSession("/workspace", "session");
+    await expect(runner.dispatchCommand("/workspace", "session", "compact", "now")).resolves.toEqual(commandResult);
   });
 });

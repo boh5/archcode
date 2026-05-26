@@ -82,3 +82,11 @@
 - Removed active `transcript-save` hook and deleted its hook/test; title generation now calls the store metadata action so generated titles persist.
 - Root public API no longer re-exports session store manager/state or session file read/write helpers; runtime/server routes use store-owned session file projection APIs instead.
 - Verification passed: focused store/title/architecture tests and full `bun run typecheck`; LSP diagnostics clean on changed areas.
+
+## 2026-05-26 Task: Core-owned agent job lifecycle
+- Added `packages/agent-core/src/runner/AgentJobRunner` owning active job map, abort/abortAndWait/abortAll, per-workspace session-slot acquire/release, runtime-backed permission/question callbacks, session-event subscription, and delete-session cleanup.
+- `SpecraRuntime` public surface now exposes `submitAgentJob`, `abortAgentJob`, `abortAgentJobAndWait`, `abortAllAgentJobs`, `isAgentJobRunning`, `getAgentJob`, `subscribeSessionEvents`, and `deleteSession`; it no longer exposes `sessionAgentManager`, `storeManager`, or `agentFor`.
+- `dispatchCommand` is routed through `SessionAgentManager.dispatchCommand()` against the optional `Agent.dispatchCommand` interface, removing public-runtime `instanceof ConfiguredAgent` dispatch.
+- Server `AgentRunner` is now a thin adapter that subscribes runtime session events into `globalEventBus` and delegates all job lifecycle/command methods to runtime; server route tests use runtime lifecycle APIs instead of importing core `Agent`/callback internals.
+- `scopedKey` moved to internal `store/key.ts` and is no longer exported from `store/store.ts`.
+- Verification passed: LSP diagnostics clean, `bun run typecheck`, full `bun run test`, and `bun test packages/agent-core/src/__arch__`.

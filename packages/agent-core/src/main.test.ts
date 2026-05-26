@@ -112,7 +112,8 @@ describe("createSpecraRuntime", () => {
     });
 
     expect(runtime.toolRegistry).toBeDefined();
-    expect(runtime.sessionAgentManager).toBeDefined();
+    expect(runtime.submitAgentJob).toBeDefined();
+    expect(runtime.subscribeSessionEvents).toBeDefined();
   });
 
   test("registers MCP descriptors before the agent run snapshot without calling run", async () => {
@@ -160,38 +161,19 @@ describe("createSpecraRuntime", () => {
     expect(runtime.contextResolver).toBeDefined();
   });
 
-  test("agentFor returns the same agent for the same workspaceRoot and sessionId", async () => {
+  test("runtime exposes core-owned agent job lifecycle APIs", async () => {
     const configPath = await writeConfig(makeConfig());
-    const workspaceRoot = await makeTempRoot();
-    const sessionId = `session-${crypto.randomUUID()}`;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
     const runtime = await createSpecraRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
-    const agent1 = await runtime.agentFor(workspaceRoot, sessionId);
-    const agent2 = await runtime.agentFor(workspaceRoot, sessionId);
-    const otherSessionAgent = await runtime.agentFor(workspaceRoot, `session-${crypto.randomUUID()}`);
 
-    expect(agent1).toBe(agent2);
-    expect(agent1).not.toBe(otherSessionAgent);
-  });
-
-  test("agentFor returns different agents for different workspaceRoots", async () => {
-    const configPath = await writeConfig(makeConfig());
-    const workspaceRootA = await makeTempRoot();
-    const workspaceRootB = await makeTempRoot();
-    const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-
-    const runtime = await createSpecraRuntime({
-      configPath,
-      mcpManagerFactory: () => manager,
-    });
-    const agentA = await runtime.agentFor(workspaceRootA, `session-${crypto.randomUUID()}`);
-    const agentB = await runtime.agentFor(workspaceRootB, `session-${crypto.randomUUID()}`);
-
-    expect(agentA).not.toBe(agentB);
+    expect(runtime.abortAgentJob("/workspace", "missing")).toBe(false);
+    expect(runtime.isAgentJobRunning("/workspace", "missing")).toBe(false);
+    expect(runtime.getAgentJob("/workspace", "missing")).toBeUndefined();
+    await expect(runtime.abortAgentJobAndWait("/workspace", "missing")).resolves.toBeUndefined();
   });
 
   test("starts with mcp.servers as an empty object", async () => {

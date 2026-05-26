@@ -1,7 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
-import { defaultAgentDefinitions, type Agent } from "./agents";
-import { ConfiguredAgent } from "./agents/configured-agent";
+import { defaultAgentDefinitions } from "./agents";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import type { CommandResult } from "./commands/types";
 import { loadConfig } from "./config/load";
@@ -22,12 +21,15 @@ import { createRegistry as createProviderRegistry, type Registry as ProviderRegi
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
-import { scopedKey, storeManager } from "./store/store";
+import { storeManager } from "./store/store";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "./tools/types";
+import { AgentJobRunner } from "./runner";
+import type { RunningJob, SubscribeSessionEventsInput } from "./runner";
+import { scopedKey } from "./store/key";
 
 const DEFAULT_CONFIG_PATH = ".specra.json";
 
@@ -39,8 +41,6 @@ export interface SpecraRuntimeOptions {
 }
 
 export interface SpecraRuntime {
-  readonly sessionAgentManager: SessionAgentManager;
-  readonly storeManager: import("./store/session-store-manager").SessionStoreManager;
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
   readonly providerRegistry: ProviderRegistry;
@@ -48,12 +48,17 @@ export interface SpecraRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
-  agentFor(workspaceRoot: string, sessionId: string): Promise<Agent>;
   createSession(workspaceRoot: string): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
-  acquireSessionSlot(workspaceRoot: string, sessionId: string): void;
-  releaseSessionSlot(workspaceRoot: string, sessionId: string): void;
+  submitAgentJob(input: { slug: string; workspaceRoot: string; sessionId: string; userMessage: string }): RunningJob;
+  abortAgentJob(workspaceRoot: string, sessionId: string): boolean;
+  abortAgentJobAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
+  abortAllAgentJobs(): Promise<void>;
+  isAgentJobRunning(workspaceRoot: string, sessionId: string): boolean;
+  getAgentJob(workspaceRoot: string, sessionId: string): RunningJob | undefined;
+  subscribeSessionEvents(input: SubscribeSessionEventsInput): () => void;
+  deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
@@ -68,7 +73,7 @@ export interface SpecraRuntime {
   requestQuestion(workspaceRoot: string, sessionId: string, request: AskUserRequest): Promise<AskUserResponse>;
   respondQuestion(questionId: string, response: AskUserResponse): boolean;
   cleanupDeferredSession(workspaceRoot: string, sessionId: string): void;
-  notifyRuntimeShutdown(reason?: string): void;
+  notifyRuntimeShutdown(reason: string): void;
 }
 
 export async function createSpecraRuntime(
@@ -154,24 +159,13 @@ export async function createSpecraRuntime(
     const permissionService = new DeferredPermissionService(deferredEvents);
     const questionService = new DeferredQuestionService(deferredEvents);
 
-    async function agentFor(workspaceRoot: string, sessionId: string): Promise<Agent> {
-      const agent = await sessionAgentManager.getOrCreate(workspaceRoot, sessionId);
-      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
-      return agent;
-    }
-
     async function dispatchCommand(
       workspaceRoot: string,
       sessionId: string,
       name: string,
       args?: string,
     ): Promise<CommandResult | null> {
-      const agent = sessionAgentManager.get(workspaceRoot, sessionId);
-      if (!(agent instanceof ConfiguredAgent)) {
-        return null;
-      }
-
-      return await agent.dispatchCommand(name, args);
+      return await jobRunner.dispatchCommand(workspaceRoot, sessionId, name, args);
     }
 
     function requestPermission(
@@ -199,15 +193,31 @@ export async function createSpecraRuntime(
       activeSessionKeys.delete(scopedKey(workspaceRoot, sessionId));
     }
 
-    function notifyRuntimeShutdown(reason?: string): void {
+    function notifyRuntimeShutdown(reason: string): void {
       for (const { workspaceRoot, sessionId } of activeSessionKeys.values()) {
         submitDeferredEvent(workspaceRoot, sessionId, { type: "shutdown", reason });
       }
     }
 
-    return {
+    const trackSession = (workspaceRoot: string, sessionId: string): void => {
+      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
+    };
+
+    const untrackSession = (workspaceRoot: string, sessionId: string): void => {
+      activeSessionKeys.delete(scopedKey(workspaceRoot, sessionId));
+    };
+
+    const jobRunner = new AgentJobRunner({
       sessionAgentManager,
       storeManager,
+      requestPermission,
+      requestQuestion,
+      cleanupDeferredSession,
+      trackSession,
+      untrackSession,
+    });
+
+    return {
       mcpManager,
       toolRegistry,
       providerRegistry,
@@ -215,12 +225,17 @@ export async function createSpecraRuntime(
       warnings,
       projectRegistry,
       contextResolver,
-      agentFor,
       createSession: (workspaceRoot) => storeManager.createSessionFile(workspaceRoot),
       getSessionFile: (workspaceRoot, sessionId) => storeManager.getSessionFile(workspaceRoot, sessionId),
       listSessions: (workspaceRoot) => storeManager.listSessionSummaries(workspaceRoot),
-      acquireSessionSlot: (workspaceRoot, sessionId) => sessionAgentManager.acquireSlot(workspaceRoot, sessionId),
-      releaseSessionSlot: (workspaceRoot, sessionId) => sessionAgentManager.releaseSlot(workspaceRoot, sessionId),
+      submitAgentJob: (input) => jobRunner.submit(input),
+      abortAgentJob: (workspaceRoot, sessionId) => jobRunner.abort(workspaceRoot, sessionId),
+      abortAgentJobAndWait: (workspaceRoot, sessionId) => jobRunner.abortAndWait(workspaceRoot, sessionId),
+      abortAllAgentJobs: () => jobRunner.abortAll(),
+      isAgentJobRunning: (workspaceRoot, sessionId) => jobRunner.isRunning(workspaceRoot, sessionId),
+      getAgentJob: (workspaceRoot, sessionId) => jobRunner.getJob(workspaceRoot, sessionId),
+      subscribeSessionEvents: (input) => jobRunner.subscribe(input),
+      deleteSession: (workspaceRoot, sessionId) => jobRunner.deleteSession(workspaceRoot, sessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),

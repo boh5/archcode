@@ -1,25 +1,7 @@
-import { AgentRunningError } from "@specra/agent-core";
-import type { Agent } from "@specra/agent-core";
-import type { CommandResult } from "@specra/agent-core";
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { AskUserCallback, ToolConfirmationCallback } from "@specra/agent-core";
-import type { AskUserService } from "./ask-user-service";
-import { registerSessionEventBridge, unregisterSessionEventBridge } from "./events/session-event-bridge";
-import type { PermissionService } from "./permission-service";
+import type { CommandResult, RunningJob, SpecraRuntime } from "@specra/agent-core";
+import { globalEventBus } from "./events/global-event-bus";
 
-const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
-
-function runnerKey(workspaceRoot: string, sessionId: string): string {
-  return `${workspaceRoot}\0${sessionId}`;
-}
-
-export interface RunningJob {
-  jobId: string;
-  sessionId: string;
-  workspaceRoot: string;
-  abortController: AbortController;
-  promise: Promise<void>;
-}
+export type { RunningJob } from "@specra/agent-core";
 
 export interface SubmitAgentJobInput {
   slug: string;
@@ -29,144 +11,54 @@ export interface SubmitAgentJobInput {
 }
 
 export class AgentRunner {
-  static #instances = new Set<AgentRunner>();
+  readonly #runtime: SpecraRuntime;
 
-  #jobs = new Map<string, RunningJob>();
-  #runtime: SpecraRuntime;
-  #permissionService?: PermissionService;
-  #askUserService?: AskUserService;
-
-  constructor(runtime: SpecraRuntime, permissionService?: PermissionService, askUserService?: AskUserService) {
+  constructor(runtime: SpecraRuntime) {
     this.#runtime = runtime;
-    this.#permissionService = permissionService;
-    this.#askUserService = askUserService;
-    AgentRunner.#instances.add(this);
   }
 
   submit(input: SubmitAgentJobInput): RunningJob {
-    const { slug, sessionId, workspaceRoot, userMessage } = input;
-    const key = runnerKey(workspaceRoot, sessionId);
-    if (this.#jobs.has(key)) {
-      throw new AgentRunningError();
+    const unsubscribe = this.#runtime.subscribeSessionEvents({
+      slug: input.slug,
+      workspaceRoot: input.workspaceRoot,
+      sessionId: input.sessionId,
+      onEvent: (event) => globalEventBus.emit(event),
+    });
+    try {
+      const job = this.#runtime.submitAgentJob(input);
+      void job.promise.finally(unsubscribe);
+      return job;
+    } catch (error) {
+      unsubscribe();
+      throw error;
     }
-
-    this.#runtime.acquireSessionSlot(workspaceRoot, sessionId);
-    const abortController = new AbortController();
-    const jobId = crypto.randomUUID();
-    let job: RunningJob;
-
-    const promise = this.#runJob(slug, sessionId, workspaceRoot, userMessage, abortController)
-      .finally(() => {
-        this.#jobs.delete(key);
-        this.#runtime.releaseSessionSlot(workspaceRoot, sessionId);
-      });
-
-    job = {
-      jobId,
-      sessionId,
-      workspaceRoot,
-      abortController,
-      promise,
-    };
-    this.#jobs.set(key, job);
-
-    return job;
   }
 
   abort(workspaceRoot: string, sessionId: string): boolean {
-    const key = runnerKey(workspaceRoot, sessionId);
-    const job = this.#jobs.get(key);
-    if (!job) {
-      return false;
-    }
-
-    job.abortController.abort();
-    this.#jobs.delete(key);
-    return true;
+    return this.#runtime.abortAgentJob(workspaceRoot, sessionId);
   }
 
   async abortAndWait(workspaceRoot: string, sessionId: string): Promise<void> {
-    const key = runnerKey(workspaceRoot, sessionId);
-    const job = this.#jobs.get(key);
-    if (!job) return;
-
-    job.abortController.abort();
-    this.#jobs.delete(key);
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, ABORT_AND_WAIT_TIMEOUT_MS));
-    await Promise.race([job.promise.catch(() => {}), timeout]);
+    await this.#runtime.abortAgentJobAndWait(workspaceRoot, sessionId);
   }
 
   cleanupSession(workspaceRoot: string, sessionId: string): void {
-    unregisterSessionEventBridge(workspaceRoot, sessionId);
-    this.#permissionService?.cleanup(sessionId, workspaceRoot);
-    this.#askUserService?.cleanup(sessionId, workspaceRoot);
+    this.#runtime.cleanupDeferredSession(workspaceRoot, sessionId);
   }
 
   async abortAll(): Promise<void> {
-    const jobs = AgentRunner.#runningJobs();
-    for (const job of jobs) {
-      job.abortController.abort();
-    }
-
-    await Promise.allSettled(jobs.map((job) => job.promise));
-  }
-
-  static #runningJobs(): RunningJob[] {
-    return [...AgentRunner.#instances].flatMap((runner) => [...runner.#jobs.values()]);
+    await this.#runtime.abortAllAgentJobs();
   }
 
   isRunning(workspaceRoot: string, sessionId: string): boolean {
-    return this.#jobs.has(runnerKey(workspaceRoot, sessionId));
+    return this.#runtime.isAgentJobRunning(workspaceRoot, sessionId);
   }
 
   getJob(workspaceRoot: string, sessionId: string): RunningJob | undefined {
-    return this.#jobs.get(runnerKey(workspaceRoot, sessionId));
+    return this.#runtime.getAgentJob(workspaceRoot, sessionId);
   }
 
   async dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
     return await this.#runtime.dispatchCommand(workspaceRoot, sessionId, name, args);
-  }
-
-  async #runJob(
-    slug: string,
-    sessionId: string,
-    workspaceRoot: string,
-    userMessage: string,
-    abortController: AbortController,
-  ): Promise<void> {
-    let agent: Agent | undefined;
-
-    try {
-      agent = await this.#runtime.agentFor(workspaceRoot, sessionId);
-      if (abortController.signal.aborted) {
-        return;
-      }
-
-      const activeAgent = agent;
-      registerSessionEventBridge({ slug, workspaceRoot, sessionId, store: activeAgent.store });
-
-      const confirmPermission: ToolConfirmationCallback | undefined = this.#permissionService
-        ? (request, abortSignal) => this.#permissionService!.request(sessionId, workspaceRoot, request, abortSignal)
-        : undefined;
-      const askUser: AskUserCallback | undefined = this.#askUserService
-        ? (request) => this.#askUserService!.request(sessionId, workspaceRoot, request)
-        : undefined;
-
-      await activeAgent.run(userMessage, {
-        abort: abortController.signal,
-        ...(confirmPermission ? { confirmPermission } : {}),
-        ...(askUser ? { askUser } : {}),
-      });
-    } catch (error) {
-      if (!abortController.signal.aborted) {
-        console.error(
-          `[AgentRunner] Job for session "${sessionId}" failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    } finally {
-      unregisterSessionEventBridge(workspaceRoot, sessionId);
-      this.#runtime.cleanupDeferredSession(workspaceRoot, sessionId);
-      void agent;
-    }
   }
 }

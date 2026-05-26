@@ -5,8 +5,8 @@ import { AgentRunner } from "./agent-runner";
 import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
-import { requestLogger } from "./logger";
 import { PermissionService } from "./permission-service";
+import { requestLogger } from "./logger";
 import { createCommandsRoutes } from "./routes/commands";
 import { createDirectoriesRoutes } from "./routes/directories";
 import { createFilesRoutes } from "./routes/files";
@@ -72,14 +72,12 @@ export function createServerApp(
   app.get("/api/health", (c) => c.json({ ok: true }));
 
   const projects = createProjectsRoutes(runtime);
-  const permissionService = new PermissionService(runtime);
-  const askUserService = new AskUserService(runtime);
-  const agentRunner = new AgentRunner(runtime, permissionService, askUserService);
+  const agentRunner = new AgentRunner(runtime);
   const sessions = createSessionsRoutes(runtime, agentRunner);
   const messages = createMessagesRoutes(runtime, agentRunner);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
-  const permissions = createPermissionRoutes(permissionService);
-  const questions = createQuestionsRoutes(askUserService);
+  const permissions = createPermissionRoutes(new PermissionService(runtime));
+  const questions = createQuestionsRoutes(new AskUserService(runtime));
   const commands = createCommandsRoutes(runtime, agentRunner);
   const agents = new Hono();
   const workflow = createWorkflowRoutes(runtime);

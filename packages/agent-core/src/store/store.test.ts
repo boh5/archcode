@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
-import { createSessionStore, storeManager, scopedKey } from "./store";
+import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { __setSessionsDirForTest } from "./sessions-dir";
 
@@ -191,7 +191,6 @@ describe("SessionStoreManager", () => {
     const left = storeManager.create(sessionId, "/workspace/left");
     const right = storeManager.create(sessionId, "/workspace/right");
 
-    expect(scopedKey("/workspace/left", sessionId)).toBe(`/workspace/left\0${sessionId}`);
     expect(left).not.toBe(right);
     expect(storeManager.get(sessionId, "/workspace/left")).toBe(left);
     expect(storeManager.get(sessionId, "/workspace/right")).toBe(right);

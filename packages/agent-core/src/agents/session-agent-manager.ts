@@ -2,7 +2,7 @@ import type { SpecraConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { scopedKey } from "../store/store";
+import { scopedKey } from "../store/key";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { SkillService } from "../skills";
@@ -12,6 +12,7 @@ import { createAgentFactory } from "./factory";
 import type { AgentFactory } from "./factory";
 import type { AgentDefinition } from "./factory-types";
 import type { Agent } from "./types";
+import type { CommandResult } from "../commands/types";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -90,6 +91,18 @@ export class SessionAgentManager {
 
   get(workspaceRoot: string, sessionId: string): Agent | undefined {
     return this.#agents.get(scopedKey(workspaceRoot, sessionId));
+  }
+
+  async dispatchCommand(
+    workspaceRoot: string,
+    sessionId: string,
+    name: string,
+    args?: string,
+  ): Promise<CommandResult | null> {
+    const agent = this.get(workspaceRoot, sessionId);
+    if (!agent?.dispatchCommand) return null;
+
+    return await agent.dispatchCommand(name, args);
   }
 
   dispose(workspaceRoot: string, sessionId: string): void {
