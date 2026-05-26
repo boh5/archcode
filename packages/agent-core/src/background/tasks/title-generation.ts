@@ -70,7 +70,7 @@ export function createTitleGenerationTask(
         });
         const title = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 50);
 
-        store.setState({ title });
+        store.getState().setTitle(title);
       } catch (err) {
         console.warn(
           "Title generation failed:",

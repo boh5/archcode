@@ -1,10 +1,10 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
-import type { SessionFile } from "./helpers";
-import { readSessionFile } from "./helpers";
 import type { ModelMessage } from "ai";
+import { sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
+import { __hasSessionsDirOverrideForTest } from "./sessions-dir";
 import {
   type SessionEventEnvelope,
   type SessionEventPayload,
@@ -16,6 +16,8 @@ import {
 export class SessionStoreManager {
   #registry = new Map<string, StoreApi<SessionStoreState>>();
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
+  #pendingPersists = new Map<string, Promise<void>>();
+  #hydrating = new Set<string>();
 
   private key(sessionId: string, workspaceRoot?: string): string {
     return workspaceRoot === undefined ? sessionId : `${workspaceRoot}\0${sessionId}`;
@@ -26,7 +28,33 @@ export class SessionStoreManager {
     const existing = this.#registry.get(key);
     if (existing) return existing;
 
-    const store = createStore<SessionStoreState>((set, get) => ({
+    const shouldPersist = workspaceRoot !== undefined || __hasSessionsDirOverrideForTest();
+    const persistWorkspaceRoot = workspaceRoot ?? "__test__";
+    let store: StoreApi<SessionStoreState>;
+
+    const persist = () => {
+      if (!shouldPersist) return;
+      const state = store.getState();
+      const pending = this.#pendingPersists.get(key) ?? Promise.resolve();
+      const next = pending
+        .catch(() => {})
+        .then(() => sessionFileInternals.saveSessionTranscript(state, persistWorkspaceRoot))
+        .catch((err) => {
+          console.warn(
+            `[SessionStoreManager] Failed to persist session "${sessionId}": ${err instanceof Error ? err.message : String(err)}`,
+          );
+        })
+        .finally(() => {
+          if (this.#pendingPersists.get(key) === next) this.#pendingPersists.delete(key);
+        });
+      this.#pendingPersists.set(key, next);
+    };
+
+    const persistForEvent = (event: SessionEventPayload) => {
+      if (event.type === "user-message" || event.type === "run-end") persist();
+    };
+
+    store = createStore<SessionStoreState>((set, get) => ({
       sessionId,
       createdAt: Date.now(),
       title: null,
@@ -75,12 +103,34 @@ export class SessionStoreManager {
 
           return { ...partial, events, eventOffset, nextEventId };
         });
+        persistForEvent(event);
+      },
+      setTitle: (title: string | null) => {
+        set({ title });
+        persist();
+      },
+      setParentSessionId: (parentSessionId: string | undefined) => {
+        set({ parentSessionId });
+        persist();
+      },
+      linkChildSession: (childSessionId: string, description?: string) => {
+        set((state) => {
+          const childSessionIds = new Set(state.childSessionIds);
+          childSessionIds.add(childSessionId);
+
+          const subAgentDescriptions = new Map(state.subAgentDescriptions);
+          if (description !== undefined) subAgentDescriptions.set(childSessionId, description);
+
+          return { childSessionIds, subAgentDescriptions };
+        });
+        persist();
       },
       toModelMessages: (): ModelMessage[] =>
         toModelMessagesFromStoredMessages(get().messages),
     }));
 
     this.#registry.set(key, store);
+    if (!this.#hydrating.has(key)) persist();
     return store;
   }
 
@@ -109,11 +159,25 @@ export class SessionStoreManager {
     }
   }
 
+  async createSessionFile(workspaceRoot: string): Promise<SessionFile> {
+    const store = this.create(crypto.randomUUID(), workspaceRoot);
+    return sessionFileInternals.toSessionFile(store.getState());
+  }
+
+  async getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile> {
+    const store = await this.getOrLoad(sessionId, workspaceRoot);
+    return sessionFileInternals.toSessionFile(store.getState());
+  }
+
+  async listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
+    return await sessionFileInternals.listSessionSummaries(workspaceRoot);
+  }
+
   async #loadFromDisk(
     sessionId: string,
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
-    const parsed = await readSessionFile(sessionId, workspaceRoot);
+    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot);
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -122,29 +186,34 @@ export class SessionStoreManager {
     const existing = this.#registry.get(key);
     if (existing) return existing;
 
-    const store = this.create(sessionId, workspaceRoot);
-    store.setState({
-      sessionId: parsed.sessionId,
-      createdAt: parsed.createdAt,
-      title: parsed.title ?? null,
-      messages: parsed.messages,
-      steps: parsed.steps ?? [],
-      todos: parsed.todos ?? [],
-      reminders: parsed.reminders,
-      childSessionIds: new Set(parsed.childSessionIds),
-      parentSessionId: parsed.parentSessionId,
-      subAgentDescriptions: new Map(parsed.subAgentDescriptions),
-      isRunning: false,
-      isStreamingModel: false,
-      currentRunId: undefined,
-      currentAssistantMessageId: undefined,
-      readSnapshots: new Map(),
-      events: [],
-      eventOffset: 0,
-      nextEventId: 0,
-    });
+    this.#hydrating.add(key);
+    try {
+      const store = this.create(sessionId, workspaceRoot);
+      store.setState({
+        sessionId: parsed.sessionId,
+        createdAt: parsed.createdAt,
+        title: parsed.title ?? null,
+        messages: parsed.messages,
+        steps: parsed.steps ?? [],
+        todos: parsed.todos ?? [],
+        reminders: parsed.reminders,
+        childSessionIds: new Set(parsed.childSessionIds),
+        parentSessionId: parsed.parentSessionId,
+        subAgentDescriptions: new Map(parsed.subAgentDescriptions),
+        isRunning: false,
+        isStreamingModel: false,
+        currentRunId: undefined,
+        currentAssistantMessageId: undefined,
+        readSnapshots: new Map(),
+        events: [],
+        eventOffset: 0,
+        nextEventId: 0,
+      });
 
-    return store;
+      return store;
+    } finally {
+      this.#hydrating.delete(key);
+    }
   }
 
   delete(sessionId: string, workspaceRoot?: string): boolean {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rename } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, rename } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import { getSessionsDir } from "./sessions-dir";
@@ -190,6 +190,13 @@ const SessionFileSchema = z.strictObject({
 
 export type SessionFile = z.infer<typeof SessionFileSchema>;
 
+export interface SessionSummary {
+  sessionId: string;
+  title?: string | null;
+  createdAt: number;
+  lastUpdatedAt?: number;
+}
+
 type PersistableSessionState = Pick<
   SessionStoreState,
   "sessionId" | "createdAt" | "title" | "messages" | "steps" | "todos"
@@ -214,7 +221,7 @@ export function getAssistantText(messages: StoredMessage[]): string {
   return text;
 }
 
-export async function saveSessionTranscript(
+async function saveSessionTranscript(
   state: PersistableSessionState,
   workspaceRoot: string,
 ): Promise<void> {
@@ -256,7 +263,7 @@ export async function saveSessionTranscript(
   }
 }
 
-export async function readSessionFile(
+async function readSessionFile(
   sessionId: string,
   workspaceRoot: string,
 ): Promise<SessionFile> {
@@ -273,3 +280,76 @@ export async function readSessionFile(
 
   return parsed;
 }
+
+function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, "nextEventId">): SessionFile {
+  return {
+    sessionId: state.sessionId,
+    createdAt: state.createdAt,
+    title: state.title ?? null,
+    messages: state.messages,
+    steps: state.steps,
+    todos: state.todos,
+    reminders: state.reminders ?? [],
+    childSessionIds: Array.from(state.childSessionIds ?? []),
+    subAgentDescriptions: Array.from(state.subAgentDescriptions ?? []),
+    eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
+    ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
+  };
+}
+
+async function listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
+  const dir = getSessionsDir(workspaceRoot);
+  const names = await readSessionFileNames(dir);
+  const sessions: Array<{ summary: SessionSummary; sortKey: number }> = [];
+
+  for (const name of names) {
+    try {
+      const parsed = await readSessionFile(basename(name, ".json"), workspaceRoot);
+      const timestamps = readSessionTimestamps(parsed);
+      sessions.push({
+        summary: {
+          sessionId: parsed.sessionId,
+          title: parsed.title ?? null,
+          createdAt: parsed.createdAt,
+          ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
+        },
+        sortKey: timestamps.lastUpdatedAt ?? timestamps.updatedAt ?? parsed.createdAt,
+      });
+    } catch {
+      // Skip invalid/corrupt session files during listing.
+    }
+  }
+
+  return sessions
+    .sort((left, right) => right.sortKey - left.sortKey)
+    .map((session) => session.summary);
+}
+
+async function readSessionFileNames(dir: string): Promise<string[]> {
+  try {
+    return (await readdir(dir)).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  }
+}
+
+function readSessionTimestamps(value: unknown): { lastUpdatedAt?: number; updatedAt?: number } {
+  if (!value || typeof value !== "object") return {};
+  const record = value as Record<string, unknown>;
+  return {
+    ...(typeof record.lastUpdatedAt === "number" ? { lastUpdatedAt: record.lastUpdatedAt } : {}),
+    ...(typeof record.updatedAt === "number" ? { updatedAt: record.updatedAt } : {}),
+  };
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+export const sessionFileInternals = {
+  saveSessionTranscript,
+  readSessionFile,
+  toSessionFile,
+  listSessionSummaries,
+};

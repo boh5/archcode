@@ -13,7 +13,7 @@ async function main() {
 
   const close = () => {
     void closeMcpManagerBestEffort(runtime.mcpManager, logMcpWarning);
-    runtime.sessionAgentManager.disposeAll();
+    runtime.disposeAllSessionAgents();
   };
   process.once("SIGINT", close);
   process.once("SIGTERM", close);

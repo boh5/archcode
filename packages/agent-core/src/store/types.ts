@@ -113,6 +113,9 @@ export interface SessionStoreState {
 
   // Methods
   append: (event: SessionEventPayload) => void;
+  setTitle: (title: string | null) => void;
+  setParentSessionId: (parentSessionId: string | undefined) => void;
+  linkChildSession: (childSessionId: string, description?: string) => void;
   toModelMessages: () => ModelMessage[];
 }
 

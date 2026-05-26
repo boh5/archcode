@@ -16,6 +16,19 @@ const mockBtm = { dispatch: mockDispatch };
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation-hook");
 const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
 
+async function readPersistedTitle(sessionId: string): Promise<string | null> {
+  const path = join(TEST_TMP, `${sessionId}.json`);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await Bun.file(path).exists()) {
+      const parsed = JSON.parse(await Bun.file(path).text()) as { title?: string | null };
+      if (parsed.title !== undefined) return parsed.title;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Title was not persisted for ${sessionId}`);
+}
+
 function makeModelInfo(): ModelInfo {
   return {
     model: { provider: "test" } as never,
@@ -142,5 +155,45 @@ describe("createTitleGenerationHook", () => {
         maxOutputTokens: 128,
       }),
     );
+  });
+
+  test("dispatched title generation persists title metadata", async () => {
+    const sessionId = crypto.randomUUID();
+    const store = storeManager.create(sessionId);
+    const now = Date.now();
+    store.setState({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              id: crypto.randomUUID(),
+              text: "Persist a title from generation",
+              createdAt: now,
+              completedAt: now,
+            },
+          ],
+          createdAt: now,
+          completedAt: now,
+        },
+      ],
+    });
+
+    const ctx: BeforeModelCallContext = {
+      store,
+      modelInfo: makeModelInfo(),
+      messages: [],
+    };
+
+    const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
+    await hook(ctx);
+
+    const dispatchRun = mockDispatch.mock.calls[0]![1];
+    await dispatchRun();
+
+    expect(store.getState().title).toBe("Hook title");
+    expect(await readPersistedTitle(sessionId)).toBe("Hook title");
   });
 });

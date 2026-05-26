@@ -1,0 +1,302 @@
+import { describe, expect, test } from "bun:test";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, normalize, relative, resolve } from "node:path";
+
+const srcRoot = resolve(import.meta.dir, "..");
+const packageRoot = resolve(srcRoot, "..");
+const projectRoot = resolve(packageRoot, "../..");
+
+interface ImportRecord {
+  file: string;
+  importPath: string;
+  source: string;
+  kind: "import" | "export-from" | "dynamic-import";
+}
+
+interface Violation {
+  file: string;
+  importPath: string;
+}
+
+function findTsFiles(dir: string, options: { includeTests?: boolean } = {}): string[] {
+  if (!existsSync(dir)) return [];
+
+  const entries = readdirSync(dir);
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    const stats = statSync(fullPath);
+
+    if (stats.isDirectory()) {
+      if (entry === "dist" || entry === "__test_tmp__") continue;
+      files.push(...findTsFiles(fullPath, options));
+      continue;
+    }
+
+    const isTsFile = stats.isFile() && /\.tsx?$/.test(entry);
+    const isTestFile = entry.endsWith(".test.ts") || entry.endsWith(".test.tsx");
+    if (isTsFile && (options.includeTests || !isTestFile)) files.push(fullPath);
+  }
+
+  return files.sort();
+}
+
+function extractImports(filePath: string): ImportRecord[] {
+  const source = readFileSync(filePath, "utf8");
+  const imports: ImportRecord[] = [];
+  const importRegex = /import\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']/g;
+  const exportFromRegex = /export\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)["']([^"']+)["']/g;
+  const dynamicImportRegex = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+  for (const match of source.matchAll(importRegex)) {
+    const importPath = match[1];
+    if (!importPath) continue;
+    imports.push({ file: filePath, importPath, source: match[0], kind: "import" });
+  }
+
+  for (const match of source.matchAll(exportFromRegex)) {
+    const importPath = match[1];
+    if (!importPath) continue;
+    imports.push({ file: filePath, importPath, source: match[0], kind: "export-from" });
+  }
+
+  for (const match of source.matchAll(dynamicImportRegex)) {
+    const importPath = match[1];
+    if (!importPath) continue;
+    imports.push({ file: filePath, importPath, source: match[0], kind: "dynamic-import" });
+  }
+
+  return imports;
+}
+
+function relativeFile(filePath: string): string {
+  return normalize(relative(projectRoot, filePath));
+}
+
+function expectNoViolations(violations: Violation[]): void {
+  const message = violations.map(({ file, importPath }) => `${file} -> ${importPath}`).join("\n");
+  expect(violations, message).toEqual([]);
+}
+
+function findExportedNames(source: string, names: readonly string[]): string[] {
+  const violations = new Set<string>();
+  const exportFromRegex = /export\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+["']([^"']+)["']/g;
+
+  for (const match of source.matchAll(exportFromRegex)) {
+    const exportList = match[1] ?? "";
+    const fromPath = match[2] ?? "unknown";
+
+    for (const name of names) {
+      const exportedNameRegex = new RegExp(`(?:^|,)\\s*(?:type\\s+)?${name}(?:\\s+as\\s+\\w+)?\\s*(?:,|$)`);
+      if (exportedNameRegex.test(exportList)) violations.add(`${name} from ${fromPath}`);
+    }
+  }
+
+  return [...violations].sort();
+}
+
+const forbiddenRootExports = [
+  "storeManager",
+  "SessionStoreManager",
+  "scopedKey",
+  "saveSessionTranscript",
+  "readSessionFile",
+  "SessionStoreState",
+] as const;
+
+const forbiddenAgentExports = ["ConfiguredAgent", "runQueryLoop"] as const;
+
+const forbiddenServerSymbols = [
+  "StoreApi",
+  "SessionStoreState",
+  "saveSessionTranscript",
+  "readSessionFile",
+  "scopedKey",
+] as const;
+
+const rawBuiltinToolNames = [
+  "artifact_read",
+  "artifact_write",
+  "ask_user",
+  "ast_grep_replace",
+  "ast_grep_search",
+  "background_output",
+  "bash",
+  "delegate",
+  "file_edit",
+  "file_read",
+  "file_write",
+  "git_diff",
+  "git_status",
+  "glob",
+  "grep",
+  "lsp_diagnostics",
+  "lsp_find_references",
+  "lsp_goto_definition",
+  "lsp_symbols",
+  "memory_read",
+  "memory_write",
+  "todo_write",
+  "view_tool_output",
+  "wait_for_reminder",
+  "web_fetch",
+  "workflow_create",
+  "workflow_read",
+  "workflow_task_check",
+] as const;
+
+function findPublicApiExportViolations(filePath: string, forbiddenNames: readonly string[]): Violation[] {
+  const source = readFileSync(filePath, "utf8");
+  return findExportedNames(source, forbiddenNames).map((exportedName) => ({
+    file: relativeFile(filePath),
+    importPath: `export:${exportedName}`,
+  }));
+}
+
+function findServerBoundaryViolations(): Violation[] {
+  const serverRoot = join(projectRoot, "apps/server/src");
+  const violations: Violation[] = [];
+
+  for (const file of findTsFiles(serverRoot, { includeTests: true })) {
+    const source = readFileSync(file, "utf8");
+    const imports = extractImports(file);
+
+    for (const importRecord of imports) {
+      if (importRecord.importPath === "zustand") {
+        for (const symbol of forbiddenServerSymbols) {
+          if (new RegExp(`\\b${symbol}\\b`).test(importRecord.source)) {
+            violations.push({ file: relativeFile(file), importPath: `${symbol} from ${importRecord.importPath}` });
+          }
+        }
+      }
+
+      if (importRecord.importPath === "@specra/agent-core") {
+        for (const symbol of forbiddenServerSymbols) {
+          if (new RegExp(`\\b${symbol}\\b`).test(importRecord.source)) {
+            violations.push({ file: relativeFile(file), importPath: `${symbol} from ${importRecord.importPath}` });
+          }
+        }
+      }
+    }
+
+    for (const match of source.matchAll(/\bruntime\.sessionAgentManager\b|\bthis\.#runtime\.sessionAgentManager\b/g)) {
+      violations.push({ file: relativeFile(file), importPath: `source-pattern:${match[0]}` });
+    }
+  }
+
+  return violations;
+}
+
+function findRawToolArrayViolations(): Violation[] {
+  const files = [
+    join(srcRoot, "agents/constants.ts"),
+    join(srcRoot, "agents/workflow/permissions.ts"),
+  ];
+  const violations: Violation[] = [];
+
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    const sourceLines = source.split("\n");
+
+    for (const rawToolName of rawBuiltinToolNames) {
+      const lineIndex = sourceLines.findIndex(
+        (line) => line.includes(`"${rawToolName}"`) || line.includes(`'${rawToolName}'`),
+      );
+      if (lineIndex === -1) continue;
+
+      const previousSource = sourceLines.slice(0, lineIndex + 1).join("\n");
+      const ownerMatch = [...previousSource.matchAll(/(?:export\s+)?const\s+(\w+)\s*=\s*\[/g)].at(-1);
+      const owner = ownerMatch?.[1] ?? "unknown";
+      violations.push({ file: relativeFile(file), importPath: `source-pattern:raw built-in tool array ${owner} -> ${rawToolName}` });
+    }
+  }
+
+  return violations;
+}
+
+function findLspProductionImportViolations(): Violation[] {
+  const lspToolsRoot = join(srcRoot, "tools/builtins/lsp");
+  const violations: Violation[] = [];
+
+  for (const file of findTsFiles(lspToolsRoot)) {
+    if (relative(dirname(file), lspToolsRoot) !== "" && dirname(file) !== lspToolsRoot) continue;
+
+    for (const importRecord of extractImports(file)) {
+      if (importRecord.importPath.startsWith("../../../lsp/") || importRecord.importPath === "../../../lsp") {
+        if (importRecord.importPath !== "../../../lsp") {
+          violations.push({ file: relativeFile(file), importPath: importRecord.importPath });
+        }
+      }
+    }
+  }
+
+  return violations;
+}
+
+function findLspTestHelperImportViolations(): Violation[] {
+  const lspToolsRoot = join(srcRoot, "tools/builtins/lsp");
+  const violations: Violation[] = [];
+
+  for (const file of findTsFiles(lspToolsRoot, { includeTests: true })) {
+    if (!file.endsWith(".test.ts") && !file.endsWith(".test.tsx")) continue;
+
+    for (const importRecord of extractImports(file)) {
+      const importsFakeServer = /\bFakeLspServer\b/.test(importRecord.source);
+      const usesTestUtilsPath = /\/test-utils(\/|$)/.test(importRecord.importPath);
+      if (importsFakeServer && !usesTestUtilsPath) {
+        violations.push({ file: relativeFile(file), importPath: importRecord.importPath });
+      }
+    }
+  }
+
+  return violations;
+}
+
+function findMemoryReadOwnershipViolations(): Violation[] {
+  const file = join(srcRoot, "tools/builtins/memory-read.ts");
+  const source = readFileSync(file, "utf8");
+  const patterns = [/\bBun\.file\s*\(/, /\bparseFrontmatter\b/];
+
+  return patterns
+    .filter((pattern) => pattern.test(source))
+    .map((pattern) => ({ file: relativeFile(file), importPath: `source-pattern:${pattern.source}` }));
+}
+
+describe("module migration boundary contracts", () => {
+  describe("public API surface", () => {
+    test("package indexes do not re-export private migration internals", () => {
+      expectNoViolations([
+        ...findPublicApiExportViolations(join(srcRoot, "index.ts"), forbiddenRootExports),
+        ...findPublicApiExportViolations(join(srcRoot, "agents/index.ts"), forbiddenAgentExports),
+      ]);
+    });
+  });
+
+  describe("server boundary", () => {
+    test("server sources do not reach into agent-core session store internals", () => {
+      expectNoViolations(findServerBoundaryViolations());
+    });
+  });
+
+  describe("LSP module boundary", () => {
+    test("LSP built-ins use the lsp barrel and tests use explicit test-utils", () => {
+      expectNoViolations([
+        ...findLspProductionImportViolations(),
+        ...findLspTestHelperImportViolations(),
+      ]);
+    });
+  });
+
+  describe("tool registry ownership", () => {
+    test("agent permission modules import built-in tool names instead of declaring raw string arrays", () => {
+      expectNoViolations(findRawToolArrayViolations());
+    });
+  });
+
+  describe("memory owner boundary", () => {
+    test("memory_read delegates memory file access and parsing to the memory module", () => {
+      expectNoViolations(findMemoryReadOwnershipViolations());
+    });
+  });
+});

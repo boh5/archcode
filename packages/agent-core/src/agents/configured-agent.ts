@@ -30,7 +30,6 @@ import {
   createMemoryExtractionHook,
   createTitleGenerationHook,
   createTodoContinuationHook,
-  createTranscriptSaveHook,
 } from "./query/hooks";
 import type { QueryLoopHooks } from "./query/loop-hooks";
 import { runQueryLoop } from "./query/loop";
@@ -343,9 +342,6 @@ export class ConfiguredAgent implements Agent {
       const todoContinuation = createTodoContinuationHook();
       hooks.afterStepEnd = [todoContinuation.afterStepEnd];
       afterLoopEnd.push(todoContinuation.afterLoopEnd);
-    }
-    if (policy.transcriptSave) {
-      afterLoopEnd.push(createTranscriptSaveHook(btm, this.workspaceRoot, isCancelled));
     }
     // Memory hooks only run on the root orchestrator (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.

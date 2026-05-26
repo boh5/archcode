@@ -5,8 +5,8 @@ import type { SpecraRuntime } from "@specra/agent-core";
 import { WorkflowArtifactManager } from "@specra/agent-core";
 import { WorkflowStateManager } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { saveSessionTranscript } from "@specra/agent-core";
-import { SessionStoreManager } from "@specra/agent-core";
+import { sessionFileInternals } from "../../../../packages/agent-core/src/store/helpers";
+import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
@@ -14,17 +14,6 @@ const manager = new SessionStoreManager();
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
-    sessionAgentManager: {
-      get: () => undefined,
-      getOrCreate: async () => undefined,
-      dispose: () => undefined,
-      disposeAll: () => undefined,
-      getByWorkspace: () => [],
-      isTombstoned: () => false,
-      acquireSlot: () => undefined,
-      releaseSlot: () => undefined,
-      abortAndDispose: async () => undefined,
-    },
     storeManager: manager,
     projectRegistry,
     mcpManager: undefined,
@@ -33,6 +22,20 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     warnings: [],
     contextResolver: undefined,
     agentFor: async (_root: string, _sid: string) => undefined,
+    createSession: async (workspaceRoot: string) => {
+      const store = manager.create(crypto.randomUUID(), workspaceRoot);
+      return sessionFileInternals.toSessionFile(store.getState());
+    },
+    getSessionFile: async (workspaceRoot: string, sessionId: string) => {
+      const store = await manager.getOrLoad(sessionId, workspaceRoot);
+      return sessionFileInternals.toSessionFile(store.getState());
+    },
+    listSessions: sessionFileInternals.listSessionSummaries,
+    acquireSessionSlot: () => undefined,
+    releaseSessionSlot: () => undefined,
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
   } as unknown as SpecraRuntime;
 }
 
@@ -75,7 +78,7 @@ async function saveEmptySession(
     parentSessionId: undefined,
     subAgentDescriptions: new Map(),
   });
-  await saveSessionTranscript(store.getState(), workspaceRoot);
+  await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
 }
 
 describe("workflow routes", () => {

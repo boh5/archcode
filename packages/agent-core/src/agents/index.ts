@@ -1,5 +1,4 @@
 export type { Agent, AgentResult, AgentRunOptions } from "./types";
-export { ConfiguredAgent } from "./configured-agent";
 export type { ConfiguredAgentOptions } from "./configured-agent";
 export {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
@@ -10,7 +9,6 @@ export {
 } from "./constants";
 export type { AgentType } from "./constants";
 export type { QueryLoopOptions, QueryLoopResult } from "./query/types";
-export { runQueryLoop } from "./query/loop";
 export {
   DuplicateAgentDefinitionError,
   UnknownAgentDefinitionError,

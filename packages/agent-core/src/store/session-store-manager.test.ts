@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SessionStoreManager } from "./session-store-manager";
-import { saveSessionTranscript } from "./helpers";
+import { sessionFileInternals } from "./helpers";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager");
 
@@ -84,7 +84,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager();
     const sessionId = "disk-session";
 
-    await saveSessionTranscript(
+    await sessionFileInternals.saveSessionTranscript(
       {
         sessionId,
         createdAt: 1000,
@@ -110,7 +110,7 @@ describe("SessionStoreManager", () => {
     created.setState({ title: "in-memory-title" });
 
     // Also save a file with different data
-    await saveSessionTranscript(
+    await sessionFileInternals.saveSessionTranscript(
       {
         sessionId,
         createdAt: 1000,
@@ -145,7 +145,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager();
     const sessionId = "dedup-session";
 
-    await saveSessionTranscript(
+    await sessionFileInternals.saveSessionTranscript(
       {
         sessionId,
         createdAt: 1000,
@@ -169,7 +169,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager();
     const sessionId = "race-session";
 
-    await saveSessionTranscript(
+    await sessionFileInternals.saveSessionTranscript(
       {
         sessionId,
         createdAt: 1000,

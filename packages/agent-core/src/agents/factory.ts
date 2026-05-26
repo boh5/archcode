@@ -135,22 +135,10 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       const childSessionId = crypto.randomUUID();
       const childStore = storeManager.create(childSessionId);
       const childTitle = options.title ?? options.description;
-      childStore.setState({
-        parentSessionId,
-        ...(childTitle !== undefined ? { title: childTitle } : {}),
-      });
+      childStore.getState().setParentSessionId(parentSessionId);
+      if (childTitle !== undefined) childStore.getState().setTitle(childTitle);
 
-      options.parentStore.setState((state) => {
-        const childSessionIds = new Set(state.childSessionIds);
-        childSessionIds.add(childSessionId);
-
-        const subAgentDescriptions = new Map(state.subAgentDescriptions);
-        if (options.description !== undefined) {
-          subAgentDescriptions.set(childSessionId, options.description);
-        }
-
-        return { childSessionIds, subAgentDescriptions };
-      });
+      options.parentStore.getState().linkChildSession(childSessionId, options.description);
 
       const childAbortController = new AbortController();
       const timeout = childPolicy.timeoutMs > 0

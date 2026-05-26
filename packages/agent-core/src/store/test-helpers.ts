@@ -50,6 +50,16 @@ export function createMockStore(
         }
       }
     },
+    setTitle: (title) => {
+      state.title = title;
+    },
+    setParentSessionId: (parentSessionId) => {
+      state.parentSessionId = parentSessionId;
+    },
+    linkChildSession: (childSessionId, description) => {
+      state.childSessionIds.add(childSessionId);
+      if (description !== undefined) state.subAgentDescriptions.set(childSessionId, description);
+    },
     toModelMessages: () => [],
   };
 

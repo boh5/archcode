@@ -12,3 +12,7 @@ export function __setSessionsDirForTest(
 ): void {
   _override = fn;
 }
+
+export function __hasSessionsDirOverrideForTest(): boolean {
+  return _override !== undefined;
+}
