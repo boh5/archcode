@@ -115,3 +115,13 @@
 - Removed stale `transcript-save` assertions from configured-agent hook tests; no transcript-save hook file or registration remains.
 - Server permission/question services were verified as thin runtime response/request adapters with no store coupling or deep agent-core imports.
 - Verification passed: LSP diagnostics clean on changed files, `bun run typecheck`, `bun test packages/agent-core/src/__arch__`, and full `bun run test`.
+
+## 2026-05-26 Final verification and commit boundary audit
+- Full validation command passed: `bun run typecheck && bun run test && bun test packages/agent-core/src/__arch__` (full suite reported 2264 pass / 0 fail; architecture suite reported 19 pass / 0 fail).
+- Git working tree was clean before recording this verification note; `git diff --stat` produced no uncommitted source diff.
+- Recent migration history maps to complete boundary units: LSP barrel/test-utils (`e660f86`), tool names/groups (`eb7a7df`), memory read manager routing (`d1fa23c` + `51490cf` fix), core-owned deferred events (`fb9c15e`), store-owned persistence and green architecture tests (`7565ce5`), core agent job runner (`c71dc2d`), server runtime session APIs (`476e54d`), API leak cleanup (`5723820`), and deferred/persistence integration QA (`08c786e`).
+- `apps/server/src` boundary search found no production references to `StoreApi`, `SessionStoreState`, `saveSessionTranscript`, `readSessionFile`, `scopedKey`, or `sessionAgentManager`.
+- Deprecated/fallback search in server production found only ordinary `parseLimit(..., fallback, ...)` naming in `routes/directories.ts`; no half-migrated compatibility shim was found.
+- Recently added unsafe TypeScript pattern search found no added `as any` or `@ts-ignore` lines in the ten-commit migration diff.
+- LSP diagnostics were clean for `apps/server/src`; `packages/agent-core/src` sampled diagnostics also reported zero errors.
+- No verification fixes were needed, so no source changes were made.
