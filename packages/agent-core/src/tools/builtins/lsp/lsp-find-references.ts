@@ -1,9 +1,4 @@
-import { LspFindReferencesInputSchema, type LspLocation } from "../../../lsp/types";
-import { LspError } from "../../../lsp/client";
-import { getLspClientPool } from "../../../lsp/client-pool";
-import { getLanguageIdFromFilename } from "../../../lsp/language-mapping";
-import { getServerDefinitionsForLanguage } from "../../../lsp/server-definitions";
-import { fileUriToPath, pathToFileUri } from "../../../lsp/uri-utils";
+import { LspFindReferencesInputSchema, type LspLocation, LspError, getLspClientPool, getLanguageIdFromFilename, getServerDefinitionsForLanguage, fileUriToPath, pathToFileUri } from "../../../lsp";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";

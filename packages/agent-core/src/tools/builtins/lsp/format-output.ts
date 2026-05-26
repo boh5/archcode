@@ -1,4 +1,4 @@
-import type { LspDiagnostic, LspLocation, LspSymbol } from "../../../lsp/types";
+import type { LspDiagnostic, LspLocation, LspSymbol } from "../../../lsp";
 
 export function formatDiagnostics(diagnostics: LspDiagnostic[], filePath: string): string {
   if (diagnostics.length === 0) return "No diagnostics found.";

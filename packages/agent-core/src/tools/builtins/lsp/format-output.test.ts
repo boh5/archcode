@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { LspDiagnostic, LspLocation, LspSymbol } from "../../../lsp/types";
+import type { LspDiagnostic, LspLocation, LspSymbol } from "../../../lsp";
 import {
   formatDiagnostics,
   formatDefinition,

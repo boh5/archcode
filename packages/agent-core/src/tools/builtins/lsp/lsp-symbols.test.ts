@@ -1,11 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { mkdir, rm } from "node:fs/promises";
-import { FakeLspServer } from "../../../lsp/fake-server";
-import { LspClient } from "../../../lsp/client";
-import { setLspClientPoolForTest, type LspClientPool, type PoolKey } from "../../../lsp/client-pool";
-import { pathToFileUri } from "../../../lsp/uri-utils";
-import type { StdioLspTransportOptions } from "../../../lsp/transport";
+import { FakeLspServer } from "../../../lsp/test-utils";
+import { LspClient, setLspClientPoolForTest, type LspClientPool, type PoolKey, pathToFileUri } from "../../../lsp";
+import type { StdioLspTransportOptions } from "../../../lsp";
 import { createMockStore } from "../../../store/test-helpers";
 import { inferToolErrorKindFromResult } from "../../errors";
 import { ToolRegistry } from "../../registry";
