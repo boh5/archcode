@@ -2,7 +2,7 @@
 export type { MemoryTopicType, MemoryIndexEntry, MemoryTopicFile, MemoryPreferences, MemoryRoots } from "./types";
 
 // ─── Schemas ───
-export { MEMORY_TOPIC_VALUES, MemoryTopicTypeSchema, MemoryFrontmatterSchema, MemoryPreferencesSchema } from "./schemas";
+export { MEMORY_TOPIC_VALUES, MemoryTopicTypeSchema, MemoryFrontmatterSchema } from "./schemas";
 
 // ─── Constants ───
 export {
