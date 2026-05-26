@@ -1,22 +1,17 @@
 import { z } from "zod";
-import { join } from "node:path";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
-  INDEX_FILE,
   INDEX_TRUNCATION_SUFFIX,
-  KNOWLEDGE_DIR_NAME,
   MEMORY_CONTEXT_END,
   MEMORY_CONTEXT_START,
   MemoryFileManager,
   MemoryPathError,
-  PREFERENCES_FILE,
   PREFERENCES_MARKER_END,
   PREFERENCES_MARKER_START,
-  parseFrontmatter,
 } from "../../memory";
 
 // ─── Input Schema ───
@@ -89,13 +84,8 @@ async function readTopicFile(
   }
 
   try {
-    const resolvedPath = await fileManager.resolveProjectPath(
-      join(KNOWLEDGE_DIR_NAME, `${name}.md`),
-    );
-
-    const file = Bun.file(resolvedPath);
-    const exists = await file.exists();
-    if (!exists) {
+    const topic = await fileManager.readTopic(name);
+    if (topic === null) {
       return createToolErrorResult({
         kind: "file-not-found",
         code: "TOOL_FILE_NOT_FOUND",
@@ -103,15 +93,8 @@ async function readTopicFile(
       });
     }
 
-    const content = await file.text();
-
-    try {
-      const { frontmatter, body } = parseFrontmatter(content);
-      const header = `---\nname: ${frontmatter.name}\ndescription: ${frontmatter.description}\ntype: ${frontmatter.type}\n---`;
-      return [MEMORY_CONTEXT_START, header, body, MEMORY_CONTEXT_END].join("\n");
-    } catch {
-      return content;
-    }
+    const header = `---\nname: ${topic.name}\ndescription: ${topic.description}\ntype: ${topic.type}\n---`;
+    return [MEMORY_CONTEXT_START, header, topic.content, MEMORY_CONTEXT_END].join("\n");
   } catch (error) {
     if (error instanceof MemoryPathError) {
       return createToolErrorResult({
@@ -120,20 +103,25 @@ async function readTopicFile(
         message: error.message,
       });
     }
-    return createToolErrorResult({
-      kind: "execution",
-      error: error instanceof Error ? error : new Error(String(error)),
-    });
+
+    // Frontmatter parsing failed — try raw read as fallback
+    try {
+      const rawContent = await fileManager.readTopicContent(name);
+      if (rawContent === null) {
+        return createToolErrorResult({
+          kind: "file-not-found",
+          code: "TOOL_FILE_NOT_FOUND",
+          message: `Memory file not found: ${name}`,
+        });
+      }
+      return rawContent;
+    } catch {
+      return createToolErrorResult({
+        kind: "execution",
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
   }
-}
-
-// ─── Single-file raw reader ───
-
-async function readRawFile(path: string): Promise<string | null> {
-  const file = Bun.file(path);
-  const exists = await file.exists();
-  if (!exists) return null;
-  return await file.text();
 }
 
 // ─── Tool Definition (factory) ───
@@ -158,8 +146,7 @@ export function createMemoryReadTool(): AnyToolDescriptor {
       }
 
       if (input.name === "preferences") {
-        const userPrefsPath = join(fileManager.userRoot, PREFERENCES_FILE);
-        const content = await readRawFile(userPrefsPath);
+        const content = await fileManager.readPreferences();
         if (content === null) {
           return createToolErrorResult({
             kind: "file-not-found",
@@ -171,8 +158,7 @@ export function createMemoryReadTool(): AnyToolDescriptor {
       }
 
       if (input.name === "index") {
-        const indexPath = join(fileManager.projectRoot, INDEX_FILE);
-        const content = await readRawFile(indexPath);
+        const content = await fileManager.readIndex();
         if (content === null) {
           return createToolErrorResult({
             kind: "file-not-found",
