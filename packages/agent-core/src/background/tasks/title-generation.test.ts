@@ -3,6 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { generateText } from "ai";
 import { storeManager } from "../../store/store";
+import { createSessionStore } from "../../store/store";
+import { SessionStoreManager } from "../../store/session-store-manager";
 import { __setGenerateTextForTest } from "./title-generation";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
@@ -26,6 +28,31 @@ function makeModelInfo(): ModelInfo {
     modelId: "test-model",
     qualifiedId: "test:test-model",
   };
+}
+
+async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
+  const path = join(TEST_TMP, `${sessionId}.json`);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await Bun.file(path).exists()) {
+      return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Session file was not persisted for ${sessionId}`);
+}
+
+async function waitForPersistedSession(
+  sessionId: string,
+  predicate: (session: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const session = await readPersistedSession(sessionId);
+    if (predicate(session)) return session;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Session file did not reach expected state for ${sessionId}`);
 }
 
 describe("createTitleGenerationTask", () => {
@@ -96,6 +123,43 @@ describe("createTitleGenerationTask", () => {
         providerOptions: { title: { style: "concise" } },
       }),
     );
+  });
+
+  test("generated title persists and survives store reload without external save or flush", async () => {
+    const now = Date.now();
+    const sessionId = crypto.randomUUID();
+    const store = createSessionStore(sessionId);
+    store.setState({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              id: crypto.randomUUID(),
+              text: "Please name this session after deferred event QA",
+              createdAt: now,
+              completedAt: now,
+            },
+          ],
+          createdAt: now,
+          completedAt: now,
+        },
+      ],
+    });
+
+    const task = createTitleGenerationTask(store);
+    await task.run({
+      store,
+      modelInfo: makeModelInfo(),
+      workspaceRoot: "/tmp",
+    } as never);
+
+    await waitForPersistedSession(sessionId, (session) => session.title === "Short test title");
+    const loaded = await new SessionStoreManager().getOrLoad(sessionId, "ignored-by-test-override");
+
+    expect(loaded.getState().title).toBe("Short test title");
   });
 
   test("passes all whitelisted model options and strips variant", async () => {

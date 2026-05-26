@@ -99,6 +99,15 @@
 - Boundary search confirmed no `StoreApi`, `SessionStoreState`, `saveSessionTranscript`, `readSessionFile`, `scopedKey`, `sessionAgentManager`, `getSessionsDir`, raw `.getState()`, or `session-event-bridge` references remain under `apps/server/src`.
 - Verification passed: LSP diagnostics clean on changed server files, `bun test apps/server/src packages/agent-core/src/__arch__`, and `bun run typecheck`.
 
+## 2026-05-26 Task: Deferred SSE and persistence QA
+- Added executable integration coverage in `apps/server/src/deferred-events.integration.test.ts` using `createServerApp(...).app.request()` for `/api/events`, `/api/permissions/:id`, and `/api/questions/:id` without manual UI.
+- The integration fixture uses real `createSpecraRuntime()` deferred APIs with test-isolated sessions via `__setSessionsDirForTest`, `runtime.createSession()`, `runtime.subscribeSessionEvents()`, and a global-bus bridge to verify server-visible SSE frames.
+- Permission QA now asserts exact global/session event envelope shape: `type: "event"`, `kind: "permission.request"`, payload keys `type`, `permissionId`, `toolName`, `args`, `description`; terminal statuses covered: `resolved`, `denied`, `timeout`, `cancelled`.
+- Question QA now asserts `question.request` SSE visibility and `question.terminal` statuses `resolved`, `denied`, `cancelled`; resolved terminal includes serialized `answer` JSON that round-trips through `JSON.parse`.
+- Runtime shutdown QA calls `runtime.notifyRuntimeShutdown("server_shutdown")` and verifies the core-owned session event boundary forwards `kind: "shutdown"` to global SSE.
+- Added background-title persistence regression in `packages/agent-core/src/background/tasks/title-generation.test.ts`: generated title persists through store-owned `setTitle()` and survives reload through a fresh `SessionStoreManager` without any external save/flush call.
+- Verification passed: LSP diagnostics clean on changed tests, focused deferred/title tests pass, and full `bun run typecheck && bun run test` passes.
+
 ## 2026-05-26 Task: Final public API cleanup
 - Root `@specra/agent-core` exports now omit old session internals: `SessionAgentManager`, `createSessionStore`, `getSessionsDir`, and `SessionFile` are no longer exported from `packages/agent-core/src/index.ts`.
 - `agents/index.ts` no longer exports `ConfiguredAgentOptions`, `QueryLoopOptions`, or `QueryLoopResult`; direct query loop APIs remain internal under relative package paths.
