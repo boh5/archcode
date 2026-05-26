@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSessionStore } from "../../store/session-store";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import type {
@@ -106,7 +106,9 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
 }
 
 function ToolCard({ part }: { part: ToolPart }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [isLong, setIsLong] = useState(false);
+  const contentRef = useRef<HTMLPreElement>(null);
 
   const statusConfig: Record<
     ToolPart["state"],
@@ -132,12 +134,50 @@ function ToolCard({ part }: { part: ToolPart }) {
       ? (part as { errorMessage: string }).errorMessage
       : null;
 
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el || !outputText) {
+      setIsLong(false);
+      setExpanded(false);
+      return;
+    }
+    const style = getComputedStyle(el);
+    const parsedLh = parseFloat(style.lineHeight);
+    const fontSize = parseFloat(style.fontSize);
+    const lh = Number.isFinite(parsedLh) && parsedLh > 0
+      ? parsedLh
+      : Number.isFinite(fontSize) && fontSize > 0
+        ? fontSize * 1.625
+        : 0;
+    if (lh <= 0) {
+      setIsLong(false);
+      setExpanded(false);
+      return;
+    }
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const paddingBottom = parseFloat(style.paddingBottom) || 0;
+    const threshold = Math.ceil(lh * 5 + paddingTop + paddingBottom);
+    const nextIsLong = el.scrollHeight > threshold;
+    setIsLong(nextIsLong);
+    if (!nextIsLong) setExpanded(false);
+  }, [outputText]);
+
+  useLayoutEffect(() => {
+    if (expanded || !isLong) return;
+    const el = contentRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [expanded, isLong, outputText]);
+
   return (
     <div className="bg-bg-overlay border border-border-default rounded-md overflow-hidden my-1.5 shrink-0">
       <button
         type="button"
-        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer select-none transition-colors duration-150 hover:bg-bg-hover w-full text-left"
-        onClick={() => setExpanded((v) => !v)}
+        disabled={!isLong}
+        aria-expanded={isLong ? expanded : undefined}
+        className={`flex items-center gap-2 px-2.5 py-1.5 select-none transition-colors duration-150 w-full text-left ${
+          isLong ? "cursor-pointer hover:bg-bg-hover" : "cursor-default disabled:opacity-100"
+        }`}
+        onClick={() => { if (isLong) setExpanded((v) => !v); }}
       >
         <span
           className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`}
@@ -159,19 +199,25 @@ function ToolCard({ part }: { part: ToolPart }) {
         {part.state === "error" && (
           <span className="ml-auto text-[11px] text-text-muted">error</span>
         )}
-        <span
-          className="text-text-muted text-[10px] transition-transform duration-150"
-          style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
-        >
-          ▶
-        </span>
+        {isLong && (
+          <span
+            className="text-text-muted text-[10px] transition-transform duration-150"
+            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+          >
+            ▶
+          </span>
+        )}
       </button>
-      {expanded && outputText && (
+      {outputText && (
         <div className="border-t border-border-subtle px-2.5 py-2">
           <pre
-            className={`font-mono text-[11.5px] leading-relaxed bg-bg-elevated p-1.5 rounded-sm overflow-x-auto border border-border-subtle whitespace-pre-wrap break-all ${
+            ref={contentRef}
+            className={`font-mono text-[11.5px] leading-relaxed bg-bg-elevated p-1.5 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
+              isLong && !expanded ? "overflow-y-auto" : ""
+            } ${
               part.state === "completed" ? "text-success" : part.state === "error" ? "text-error" : "text-text-secondary"
             }`}
+            style={isLong && !expanded ? { maxHeight: "calc(8.125em + 0.75rem + 2px)" } : undefined}
           >
             {outputText}
           </pre>
