@@ -104,23 +104,11 @@ async function readTopicFile(
       });
     }
 
-    // Frontmatter parsing failed — try raw read as fallback
-    try {
-      const rawContent = await fileManager.readTopicContent(name);
-      if (rawContent === null) {
-        return createToolErrorResult({
-          kind: "file-not-found",
-          code: "TOOL_FILE_NOT_FOUND",
-          message: `Memory file not found: ${name}`,
-        });
-      }
-      return rawContent;
-    } catch {
-      return createToolErrorResult({
-        kind: "execution",
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-    }
+    // Frontmatter parsing failed — return structured error instead of falling back to raw content
+    return createToolErrorResult({
+      kind: "execution",
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
   }
 }
 

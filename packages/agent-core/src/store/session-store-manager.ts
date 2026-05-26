@@ -37,7 +37,7 @@ export class SessionStoreManager {
       const state = store.getState();
       const pending = this.#pendingPersists.get(key) ?? Promise.resolve();
       const next = pending
-        .catch(() => {})
+        .catch(() => { /* previous persist already logged — continue chain */ })
         .then(() => sessionFileInternals.saveSessionTranscript(state, persistWorkspaceRoot))
         .catch((err) => {
           console.warn(

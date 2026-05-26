@@ -260,15 +260,16 @@ React hooks are powerful.`;
       expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     });
 
-    test("returns raw content for topic file without frontmatter", async () => {
+    test("returns error for topic file without frontmatter", async () => {
       await Bun.write(join(knowledgeDir, "raw.md"), "Just raw content\nno frontmatter here.");
 
       const result = (await memoryReadTool.execute(
         { name: "raw" },
         makeCtx(),
-      )) as string;
+      )) as ToolExecutionResult;
 
-      expect(result).toBe("Just raw content\nno frontmatter here.");
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("execution");
     });
 
     test("rejects name with invalid characters", async () => {

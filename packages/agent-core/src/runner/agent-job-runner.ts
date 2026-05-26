@@ -113,7 +113,7 @@ export class AgentJobRunner {
     job.abortController.abort();
     this.#jobs.delete(scopedKey(workspaceRoot, sessionId));
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, ABORT_AND_WAIT_TIMEOUT_MS));
-    await Promise.race([job.promise.catch(() => {}), timeout]);
+    await Promise.race([job.promise.catch(() => { /* aborted — ignore rejection */ }), timeout]);
   }
 
   async abortAll(): Promise<void> {

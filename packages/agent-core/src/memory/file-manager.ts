@@ -231,13 +231,6 @@ export class MemoryFileManager {
     await this.writeIndex(entries);
   }
 
-  async readTopicContent(name: string): Promise<string | null> {
-    const resolvedPath = await this.resolveProjectPath(
-      join(KNOWLEDGE_DIR_NAME, `${name}.md`),
-    );
-    return this.#readFileOrNull(resolvedPath);
-  }
-
   // -------------------------------------------------------------------------
   // Search
   // -------------------------------------------------------------------------
