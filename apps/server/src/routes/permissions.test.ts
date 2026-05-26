@@ -1,15 +1,17 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import { SessionStoreManager } from "@specra/agent-core";
+import type { SpecraRuntime } from "@specra/agent-core";
 import { PermissionService } from "../permission-service";
 import { createPermissionRoutes } from "./permissions";
 
-const tmpRoots: string[] = [];
-const manager = new SessionStoreManager();
+const PERMISSION_ID = "permission-1";
+
+function createRuntime() {
+  return {
+    respondPermission: mock((id: string) => id === PERMISSION_ID),
+  } as unknown as SpecraRuntime;
+}
 
 function createTestApp(permissionService: PermissionService): Hono {
   const app = new Hono();
@@ -18,47 +20,12 @@ function createTestApp(permissionService: PermissionService): Hono {
   return app;
 }
 
-async function createWorkspaceRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "specra-permissions-routes-"));
-  tmpRoots.push(root);
-  return root;
-}
-
-async function createPermission(permissionService: PermissionService): Promise<string> {
-  const sessionId = `session-${crypto.randomUUID()}`;
-  const workspaceRoot = await createWorkspaceRoot();
-  const store = manager.create(sessionId, workspaceRoot);
-  void permissionService.request(
-    sessionId,
-    workspaceRoot,
-    {
-      toolName: "bash",
-      toolCallId: "call-1",
-      input: {},
-      description: "Confirm tool",
-    },
-    store,
-  );
-
-  const event = store.getState().events.find((entry) => entry.kind === "permission.request");
-  if (!event) {
-    throw new Error("permission request event missing");
-  }
-
-  return (event.payload as { permissionId: string }).permissionId;
-}
-
 describe("permission routes", () => {
-  afterEach(() => {
-    manager.clearAll();
-  });
-
   test("POST valid response returns ok", async () => {
-    const permissionService = new PermissionService();
+    const permissionService = new PermissionService(createRuntime());
     const app = createTestApp(permissionService);
-    const id = await createPermission(permissionService);
 
-    const res = await app.request(`/api/permissions/${id}`, {
+    const res = await app.request(`/api/permissions/${PERMISSION_ID}`, {
       method: "POST",
       body: JSON.stringify({ response: "approve_once" }),
       headers: { "content-type": "application/json" },
@@ -69,11 +36,10 @@ describe("permission routes", () => {
   });
 
   test("POST invalid response returns 400", async () => {
-    const permissionService = new PermissionService();
+    const permissionService = new PermissionService(createRuntime());
     const app = createTestApp(permissionService);
-    const id = await createPermission(permissionService);
 
-    const res = await app.request(`/api/permissions/${id}`, {
+    const res = await app.request(`/api/permissions/${PERMISSION_ID}`, {
       method: "POST",
       body: JSON.stringify({ response: "approve" }),
       headers: { "content-type": "application/json" },
@@ -86,7 +52,7 @@ describe("permission routes", () => {
   });
 
   test("POST non-existent id returns 400", async () => {
-    const app = createTestApp(new PermissionService());
+    const app = createTestApp(new PermissionService(createRuntime()));
 
     const res = await app.request("/api/permissions/missing", {
       method: "POST",
@@ -101,19 +67,14 @@ describe("permission routes", () => {
   });
 
   test("POST missing body returns 400", async () => {
-    const permissionService = new PermissionService();
+    const permissionService = new PermissionService(createRuntime());
     const app = createTestApp(permissionService);
-    const id = await createPermission(permissionService);
 
-    const res = await app.request(`/api/permissions/${id}`, { method: "POST" });
+    const res = await app.request(`/api/permissions/${PERMISSION_ID}`, { method: "POST" });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: { code: "BAD_REQUEST", message: "Invalid JSON body" },
     });
   });
-});
-
-afterAll(async () => {
-  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
 });

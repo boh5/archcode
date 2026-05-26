@@ -1,214 +1,54 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { ToolConfirmationRequest, ToolConfirmationResult } from "@specra/agent-core";
-import { SessionStoreManager } from "@specra/agent-core";
+import { describe, expect, mock, test } from "bun:test";
+import type { SpecraRuntime, ToolConfirmationRequest } from "@specra/agent-core";
 import { PermissionService } from "./permission-service";
-
-const tmpRoots: string[] = [];
-const manager = new SessionStoreManager();
 
 const request: ToolConfirmationRequest = {
   toolName: "bash",
   toolCallId: "call-1",
-  input: { command: "rm -rf tmp" },
+  input: { command: "pwd" },
   description: "Run command",
 };
 
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-async function createWorkspaceRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "specra-permission-service-"));
-  tmpRoots.push(root);
-  return root;
-}
-
-async function createPending(response?: ToolConfirmationResult) {
-  const service = new PermissionService();
-  const sessionId = `session-${crypto.randomUUID()}`;
-  const workspaceRoot = await createWorkspaceRoot();
-  const store = manager.create(sessionId, workspaceRoot);
-  const promise = service.request(sessionId, workspaceRoot, request, store);
-  const event = store.getState().events.find((entry) => entry.kind === "permission.request");
-  if (!event) {
-    throw new Error("permission request event missing");
-  }
-
-  const payload = event.payload as {
-    permissionId: string;
-    toolName: string;
-    args: unknown;
-    description?: string;
-  };
-
-  if (response) {
-    service.respond(payload.permissionId, response);
-  }
-
-  return { service, store, workspaceRoot, promise, id: payload.permissionId, payload };
+function createRuntime() {
+  return {
+    requestPermission: mock(async () => "approve_once" as const),
+    respondPermission: mock(() => true),
+    cleanupDeferredSession: mock(() => undefined),
+  } as unknown as SpecraRuntime;
 }
 
 describe("PermissionService", () => {
-  afterEach(() => {
-    manager.clearAll();
-  });
-
-  test("request creates Deferred, respond resolves it", async () => {
-    const { service, promise, id, payload, store } = await createPending();
-
-    expect(service.has(id)).toBe(true);
-    expect(payload).toMatchObject({
-      permissionId: id,
-      toolName: request.toolName,
-      args: request.input,
-      description: request.description,
-    });
-
-    expect(service.respond(id, "approve_once")).toBe(true);
-    await expect(promise).resolves.toBe("approve_once");
-    expect(service.has(id)).toBe(false);
-    expect(store.getState().events.map((event) => event.kind)).toEqual([
-      "permission.request",
-      "permission.terminal",
-    ]);
-    expect(store.getState().events[1]?.payload).toMatchObject({
-      permissionId: id,
-      status: "resolved",
-    });
-  });
-
-  test("respond with approve_once resolves to approve_once", async () => {
-    const { promise } = await createPending("approve_once");
-
-    await expect(promise).resolves.toBe("approve_once");
-  });
-
-  test("respond with deny resolves to deny", async () => {
-    const { promise } = await createPending("deny");
-
-    await expect(promise).resolves.toBe("deny");
-  });
-
-  test("respond with approve_always resolves to approve_always", async () => {
-    const { promise } = await createPending("approve_always");
-
-    await expect(promise).resolves.toBe("approve_always");
-  });
-
-  test("respond to non-existent id returns false", () => {
-    const service = new PermissionService();
-
-    expect(service.respond("missing", "deny")).toBe(false);
-  });
-
-  test("abort signal triggers cleanup and resolves with timeout", async () => {
-    const service = new PermissionService();
-    const sessionId = `session-${crypto.randomUUID()}`;
-    const workspaceRoot = await createWorkspaceRoot();
-    const store = manager.create(sessionId, workspaceRoot);
+  test("request delegates to runtime permission boundary", async () => {
+    const runtime = createRuntime();
+    const service = new PermissionService(runtime);
     const abortController = new AbortController();
-    const promise = service.request(sessionId, workspaceRoot, request, store, abortController.signal);
-    const event = store.getState().events.find((entry) => entry.kind === "permission.request");
-    if (!event) {
-      throw new Error("permission request event missing");
-    }
 
-    const payload = event.payload as {
-      permissionId: string;
-    };
+    await expect(service.request("session-1", "/tmp/workspace", request, abortController.signal)).resolves.toBe("approve_once");
 
-    abortController.abort();
-    await flushMicrotasks();
-
-    await expect(promise).resolves.toBe("timeout");
-    expect(service.has(payload.permissionId)).toBe(false);
-    expect(service.respond(payload.permissionId, "approve_once")).toBe(false);
-    expect(store.getState().events.map((event) => event.kind)).toEqual([
-      "permission.request",
-      "permission.terminal",
-    ]);
-    expect(store.getState().events[1]?.payload).toMatchObject({
-      permissionId: payload.permissionId,
-      status: "timeout",
-    });
+    expect(runtime.requestPermission).toHaveBeenCalledWith(
+      "/tmp/workspace",
+      "session-1",
+      request,
+      abortController.signal,
+    );
   });
 
-  test("cleanup removes all entries", async () => {
-    const service = new PermissionService();
-    const sessionOne = `session-${crypto.randomUUID()}`;
-    const sessionTwo = `session-${crypto.randomUUID()}`;
-    const workspaceOne = await createWorkspaceRoot();
-    const workspaceTwo = await createWorkspaceRoot();
-    const storeOne = manager.create(sessionOne, workspaceOne);
-    const storeTwo = manager.create(sessionTwo, workspaceTwo);
-    const first = service.request(sessionOne, workspaceOne, request, storeOne);
-    const second = service.request(sessionTwo, workspaceTwo, request, storeTwo);
-    const firstEvent = storeOne.getState().events.find((entry) => entry.kind === "permission.request");
-    const secondEvent = storeTwo.getState().events.find((entry) => entry.kind === "permission.request");
-    if (!firstEvent || !secondEvent) {
-      throw new Error("permission request event missing");
-    }
+  test("respond delegates to runtime response boundary", () => {
+    const runtime = createRuntime();
+    const service = new PermissionService(runtime);
 
-    const firstId = (firstEvent.payload as { permissionId: string }).permissionId;
-    const secondId = (secondEvent.payload as { permissionId: string }).permissionId;
-
-    service.cleanup();
-
-    expect(service.has(firstId)).toBe(false);
-    expect(service.has(secondId)).toBe(false);
-    await expect(first).resolves.toBe("timeout");
-    await expect(second).resolves.toBe("timeout");
-    expect(storeOne.getState().events[1]?.payload).toMatchObject({
-      permissionId: firstId,
-      status: "cancelled",
-    });
-    expect(storeTwo.getState().events[1]?.payload).toMatchObject({
-      permissionId: secondId,
-      status: "cancelled",
-    });
+    expect(service.respond("permission-1", "deny")).toBe(true);
+    expect(runtime.respondPermission).toHaveBeenCalledWith("permission-1", "deny");
   });
 
-  test("cleanup with workspaceRoot only clears matching entries", async () => {
-    const service = new PermissionService();
-    const sessionId = `session-${crypto.randomUUID()}`;
-    const workspaceA = await createWorkspaceRoot();
-    const workspaceB = await createWorkspaceRoot();
-    const storeA = manager.create(sessionId, workspaceA);
-    const storeB = manager.create(sessionId, workspaceB);
-    const first = service.request(sessionId, workspaceA, request, storeA);
-    const second = service.request(sessionId, workspaceB, request, storeB);
-    const firstEvent = storeA.getState().events.find((entry) => entry.kind === "permission.request");
-    const secondEvent = storeB.getState().events.find((entry) => entry.kind === "permission.request");
-    if (!firstEvent || !secondEvent) {
-      throw new Error("permission request event missing");
-    }
+  test("cleanup delegates scoped session cleanup when both identifiers are present", () => {
+    const runtime = createRuntime();
+    const service = new PermissionService(runtime);
 
-    const firstId = (firstEvent.payload as { permissionId: string }).permissionId;
-    const secondId = (secondEvent.payload as { permissionId: string }).permissionId;
+    service.cleanup("session-1", "/tmp/workspace");
+    service.cleanup("session-1");
 
-    service.cleanup(sessionId, workspaceA);
-
-    expect(service.has(firstId)).toBe(false);
-    expect(service.has(secondId)).toBe(true);
-    await expect(first).resolves.toBe("timeout");
-    expect(storeA.getState().events[1]?.payload).toMatchObject({
-      permissionId: firstId,
-      status: "cancelled",
-    });
-
-    expect(service.respond(secondId, "approve_once")).toBe(true);
-    await expect(second).resolves.toBe("approve_once");
-    expect(storeB.getState().events[1]?.payload).toMatchObject({
-      permissionId: secondId,
-      status: "resolved",
-    });
+    expect(runtime.cleanupDeferredSession).toHaveBeenCalledTimes(1);
+    expect(runtime.cleanupDeferredSession).toHaveBeenCalledWith("/tmp/workspace", "session-1");
   });
-});
-
-afterAll(async () => {
-  await Promise.all(tmpRoots.map((root) => rm(root, { recursive: true, force: true })));
 });

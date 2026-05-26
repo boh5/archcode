@@ -51,12 +51,8 @@ export type {
   SessionStoreState,
 } from "./types";
 export { BusyError } from "./types";
-export { storeManager, SessionStoreManager, scopedKey } from "./store";
-export {
-  getAssistantText,
-  saveSessionTranscript,
-  readSessionFile,
-} from "./helpers";
+export { storeManager, createSessionStore, SessionStoreManager } from "./store";
+export { getAssistantText } from "./helpers";
 export { getSessionsDir } from "./sessions-dir";
 export { toModelMessagesFromStoredMessages } from "./projection";
 export type { ProjectionMode, ProjectionOptions } from "./projection";

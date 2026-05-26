@@ -1,118 +1,31 @@
 import type {
+  SpecraRuntime,
   ToolConfirmationRequest,
   ToolConfirmationResult,
 } from "@specra/agent-core";
-import type { StoreApi } from "zustand";
-import type { SessionStoreState } from "@specra/agent-core";
-
-interface PendingPermission {
-  sessionId: string;
-  workspaceRoot: string;
-  request: ToolConfirmationRequest;
-  store: StoreApi<SessionStoreState>;
-  resolve(result: ToolConfirmationResult): void;
-  reject(error: Error): void;
-  cleanupAbortListener?(): void;
-}
 
 export class PermissionService {
-  #pending = new Map<string, PendingPermission>();
+  readonly #runtime: SpecraRuntime;
+
+  constructor(runtime: SpecraRuntime) {
+    this.#runtime = runtime;
+  }
 
   request(
     sessionId: string,
     workspaceRoot: string,
     request: ToolConfirmationRequest,
-    store: StoreApi<SessionStoreState>,
     abortSignal?: AbortSignal,
   ): Promise<ToolConfirmationResult> {
-    const permissionId = crypto.randomUUID();
-
-    store.getState().append({
-      type: "permission.request",
-      permissionId,
-      toolName: request.toolName,
-      args: request.input,
-      description: request.description,
-    });
-
-    if (abortSignal?.aborted) {
-      store.getState().append({
-        type: "permission.terminal",
-        permissionId,
-        status: "timeout",
-      });
-      return Promise.resolve("timeout");
-    }
-
-    return new Promise<ToolConfirmationResult>((resolve, reject) => {
-      const pending: PendingPermission = {
-        sessionId,
-        workspaceRoot,
-        request,
-        store,
-        resolve,
-        reject,
-      };
-
-      const onAbort = (): void => {
-        if (!this.#pending.has(permissionId)) return;
-        this.#pending.delete(permissionId);
-        pending.cleanupAbortListener?.();
-        pending.store.getState().append({
-          type: "permission.terminal",
-          permissionId,
-          status: "timeout",
-        });
-        resolve("timeout");
-      };
-
-      if (abortSignal) {
-        abortSignal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => abortSignal.removeEventListener("abort", onAbort);
-      }
-
-      this.#pending.set(permissionId, pending);
-    });
+    return this.#runtime.requestPermission(workspaceRoot, sessionId, request, abortSignal);
   }
 
   respond(permissionId: string, response: ToolConfirmationResult): boolean {
-    const pending = this.#pending.get(permissionId);
-    if (!pending) {
-      return false;
-    }
-
-    this.#pending.delete(permissionId);
-    pending.cleanupAbortListener?.();
-    pending.resolve(response);
-    pending.store.getState().append({
-      type: "permission.terminal",
-      permissionId,
-      status: response === "timeout" ? "timeout" : response === "deny" ? "denied" : "resolved",
-    });
-    return true;
-  }
-
-  has(permissionId: string): boolean {
-    return this.#pending.has(permissionId);
+    return this.#runtime.respondPermission(permissionId, response);
   }
 
   cleanup(sessionId?: string, workspaceRoot?: string): void {
-    for (const [permissionId, pending] of this.#pending) {
-      if (sessionId !== undefined && pending.sessionId !== sessionId) {
-        continue;
-      }
-      if (workspaceRoot !== undefined && pending.workspaceRoot !== workspaceRoot) {
-        continue;
-      }
-
-      this.#pending.delete(permissionId);
-      pending.cleanupAbortListener?.();
-      pending.resolve("timeout");
-      pending.store.getState().append({
-        type: "permission.terminal",
-        permissionId,
-        status: "cancelled",
-      });
-    }
+    if (sessionId === undefined || workspaceRoot === undefined) return;
+    this.#runtime.cleanupDeferredSession(workspaceRoot, sessionId);
   }
 }

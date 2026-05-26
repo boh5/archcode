@@ -1,19 +1,32 @@
-import { scopedKey } from "@specra/agent-core";
-import type { SessionStoreState } from "@specra/agent-core";
 import type {
   GlobalSSEEvent,
   GlobalSSELaggedEvent,
   GlobalSSEResetEvent,
   GlobalSessionEventEnvelope,
+  SessionEventEnvelope,
 } from "@specra/protocol";
-import type { StoreApi } from "zustand";
 import { globalEventBus, type GlobalEventBus } from "./global-event-bus";
+
+interface BridgedSessionState {
+  events: SessionEventEnvelope[];
+  eventOffset: number;
+  nextEventId: number;
+}
+
+interface BridgedSessionStore {
+  getState(): BridgedSessionState;
+  subscribe(listener: (state: BridgedSessionState) => void): () => void;
+}
+
+function bridgeKey(workspaceRoot: string, sessionId: string): string {
+  return `${workspaceRoot}\0${sessionId}`;
+}
 
 export interface RegisterSessionEventBridgeInput {
   slug: string;
   workspaceRoot: string;
   sessionId: string;
-  store: StoreApi<SessionStoreState>;
+  store: BridgedSessionStore;
 }
 
 interface BridgeRegistration extends RegisterSessionEventBridgeInput {
@@ -45,7 +58,7 @@ function emitLagged(input: RegisterSessionEventBridgeInput, dropped: number): vo
   emitGlobal(resetEvent);
 }
 
-function forwardCurrent(registration: BridgeRegistration, current: SessionStoreState): void {
+function forwardCurrent(registration: BridgeRegistration, current: BridgedSessionState): void {
   if (current.nextEventId <= registration.lastForwardedNextEventId) return;
 
   if (registration.lastForwardedNextEventId < current.eventOffset) {
@@ -73,7 +86,7 @@ function forwardCurrent(registration: BridgeRegistration, current: SessionStoreS
 }
 
 export function registerSessionEventBridge(input: RegisterSessionEventBridgeInput): () => void {
-  const key = scopedKey(input.workspaceRoot, input.sessionId);
+  const key = bridgeKey(input.workspaceRoot, input.sessionId);
   const existing = registrations.get(key);
   existing?.unsubscribeStore();
 
@@ -96,16 +109,10 @@ export function registerSessionEventBridge(input: RegisterSessionEventBridgeInpu
 }
 
 export function unregisterSessionEventBridge(workspaceRoot: string, sessionId: string): void {
-  const key = scopedKey(workspaceRoot, sessionId);
+  const key = bridgeKey(workspaceRoot, sessionId);
   const current = registrations.get(key);
   current?.unsubscribeStore();
   registrations.delete(key);
-}
-
-export function appendShutdownToActiveSessionStores(reason: string): void {
-  for (const registration of registrations.values()) {
-    registration.store.getState().append({ type: "shutdown", reason });
-  }
 }
 
 export function __setGlobalEventBusForTest(bus: GlobalEventBus): void {

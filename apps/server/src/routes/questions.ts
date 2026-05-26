@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import type { AskUserResponse, AskUserService } from "../ask-user-service";
+import type { AskUserResponse } from "@specra/agent-core";
+import type { AskUserService } from "../ask-user-service";
 import { BadRequestError, QuestionNotFoundError } from "../errors";
 
 export function createQuestionsRoutes(askUserService: AskUserService): Hono {

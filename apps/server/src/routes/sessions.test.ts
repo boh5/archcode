@@ -3,8 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { saveSessionTranscript } from "@specra/agent-core";
-import { SessionStoreManager } from "@specra/agent-core";
+import { sessionFileInternals } from "../../../../packages/agent-core/src/store/helpers";
+import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -30,17 +30,6 @@ interface SessionFileBody {
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
-    sessionAgentManager: {
-      get: () => undefined,
-      getOrCreate: async () => undefined,
-      dispose: () => undefined,
-      disposeAll: () => undefined,
-      getByWorkspace: () => [],
-      isTombstoned: () => false,
-      acquireSlot: () => undefined,
-      releaseSlot: () => undefined,
-      abortAndDispose: async () => undefined,
-    },
     storeManager: manager,
     projectRegistry,
     mcpManager: undefined,
@@ -49,6 +38,27 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     warnings: [],
     contextResolver: undefined,
     agentFor: async (_root: string, _sid: string) => undefined,
+    createSession: async (workspaceRoot: string) => {
+      const store = manager.create(crypto.randomUUID(), workspaceRoot);
+      await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
+      return sessionFileInternals.toSessionFile(store.getState());
+    },
+    getSessionFile: async (workspaceRoot: string, sessionId: string) => {
+      const store = await manager.getOrLoad(sessionId, workspaceRoot);
+      return sessionFileInternals.toSessionFile(store.getState());
+    },
+    listSessions: sessionFileInternals.listSessionSummaries,
+    acquireSessionSlot: () => undefined,
+    releaseSessionSlot: () => undefined,
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
+    requestPermission: async () => "timeout",
+    respondPermission: () => false,
+    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
+    respondQuestion: () => false,
+    cleanupDeferredSession: () => undefined,
+    notifyRuntimeShutdown: () => undefined,
   } as unknown as SpecraRuntime;
 }
 
@@ -92,7 +102,7 @@ async function saveEmptySession(
     parentSessionId: undefined,
     subAgentDescriptions: new Map(),
   });
-  await saveSessionTranscript(store.getState(), workspaceRoot);
+  await sessionFileInternals.saveSessionTranscript(store.getState(), workspaceRoot);
 }
 
 describe("sessions routes", () => {
@@ -186,8 +196,9 @@ describe("sessions routes", () => {
     const store = manager.create(sessionId, workspaceRoot);
 
     // Append events to simulate an active session
-    store.getState().append({ type: "text-delta", text: "Hello" });
-    store.getState().append({ type: "text-delta", text: "World" });
+    const state = store.getState();
+    state.append({ type: "text-delta", text: "Hello" });
+    state.append({ type: "text-delta", text: "World" });
 
     const nextEventId = store.getState().nextEventId;
     const eventsBefore = store.getState().events.length;

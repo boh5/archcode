@@ -314,6 +314,9 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
     eventOffset: 0,
     nextEventId: 0,
     append: () => {},
+    setTitle: () => {},
+    setParentSessionId: () => {},
+    linkChildSession: () => {},
     toModelMessages: () => [],
     ...overrides,
   };

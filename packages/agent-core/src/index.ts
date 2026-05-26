@@ -20,14 +20,12 @@ export type { ProjectInfo } from "./projects/types";
 
 export { reduceStreamEvent } from "./store/reduce";
 export { getSessionsDir } from "./store/sessions-dir";
-export { storeManager, SessionStoreManager, scopedKey } from "./store/store";
-export { saveSessionTranscript, readSessionFile } from "./store/helpers";
+export { createSessionStore } from "./store/store";
 export type { SessionFile } from "./store/helpers";
 export type {
   BusyError,
   InvalidTodoStateError,
   SessionEventEnvelope,
-  SessionStoreState,
 } from "./store/types";
 
 export type {
@@ -38,3 +36,4 @@ export type {
   ToolConfirmationRequest,
   ToolConfirmationResult,
 } from "./tools/types";
+export type { AskUserResponse } from "./deferred";

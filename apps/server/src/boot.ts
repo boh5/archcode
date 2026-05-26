@@ -14,7 +14,7 @@ export async function bootServer(runtime: SpecraRuntime): Promise<void> {
     port: parseInt(Bun.env.SPECRA_PORT ?? "4096", 10) || undefined,
   });
 
-  setupGracefulShutdown(server, agentRunner);
+  setupGracefulShutdown(server, agentRunner, runtime);
 
   console.info(`Specra server running at ${url}`);
 

@@ -1,10 +1,26 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
-import { storeManager, scopedKey } from "./store";
+import { createSessionStore, storeManager, scopedKey } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
+import { __setSessionsDirForTest } from "./sessions-dir";
 
-beforeEach(() => {
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store");
+
+beforeEach(async () => {
   storeManager.clearAll();
+  await rm(TMP_DIR, { recursive: true, force: true });
+  await mkdir(TMP_DIR, { recursive: true });
+});
+
+afterEach(() => {
+  __setSessionsDirForTest(undefined);
+});
+
+afterAll(async () => {
+  __setSessionsDirForTest(undefined);
+  await rm(TMP_DIR, { recursive: true, force: true });
 });
 
 function uniqueSessionId(label: string): string {
@@ -13,6 +29,35 @@ function uniqueSessionId(label: string): string {
 
 function createFreshStore(label: string) {
   return storeManager.create(uniqueSessionId(label));
+}
+
+function sessionFilePath(sessionId: string): string {
+  return join(TMP_DIR, `${sessionId}.json`);
+}
+
+async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
+  const path = sessionFilePath(sessionId);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await Bun.file(path).exists()) {
+      return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Session file was not persisted for ${sessionId}`);
+}
+
+async function waitForPersistedSession(
+  sessionId: string,
+  predicate: (session: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const session = await readPersistedSession(sessionId);
+    if (predicate(session)) return session;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  throw new Error(`Session file did not reach expected state for ${sessionId}`);
 }
 
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
@@ -80,6 +125,60 @@ describe("SessionStoreManager", () => {
     expect(state.events).toEqual([]);
     expect(state.eventOffset).toBe(0);
     expect(state.nextEventId).toBe(0);
+  });
+
+  test("createSessionStore persists a new session file", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-create");
+    createSessionStore(sessionId);
+
+    const persisted = await readPersistedSession(sessionId);
+    expect(persisted.sessionId).toBe(sessionId);
+    expect(persisted.messages).toEqual([]);
+  });
+
+  test("user-message append persists before run-end", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-user-message");
+    const store = createSessionStore(sessionId);
+    store.getState().append({ type: "user-message", content: "hello before run-end" });
+
+    const persisted = await waitForPersistedSession(sessionId, (session) => {
+      const messages = session.messages;
+      return Array.isArray(messages) && messages.length === 1;
+    });
+    expect(persisted.messages).toEqual(store.getState().messages);
+  });
+
+  test("run-end persists final transcript", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-run-end");
+    const store = createSessionStore(sessionId);
+    const state = store.getState();
+
+    state.append({ type: "run-start", runId: "run-1" });
+    state.append({ type: "text-start" });
+    state.append({ type: "text-delta", text: "final answer" });
+    state.append({ type: "run-end", status: "completed" });
+
+    const persisted = await waitForPersistedSession(sessionId, (session) => {
+      const messages = session.messages;
+      return Array.isArray(messages) && JSON.stringify(messages).includes("final answer");
+    });
+    expect(persisted.messages).toEqual(store.getState().messages);
+  });
+
+  test("title metadata action persists and survives reload", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-title");
+    const store = createSessionStore(sessionId);
+    store.getState().setTitle("Persisted Title");
+
+    await waitForPersistedSession(sessionId, (session) => session.title === "Persisted Title");
+
+    const manager = new SessionStoreManager();
+    const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");
+    expect(loaded.getState().title).toBe("Persisted Title");
   });
 
   test("create returns the same store for the same session id", () => {

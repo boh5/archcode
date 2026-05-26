@@ -1,13 +1,12 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { StoreApi } from "zustand";
-import { AgentRunningError, SessionStoreManager } from "@specra/agent-core";
+import { AgentRunningError } from "@specra/agent-core";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { CommandResult } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import type { SessionStoreState } from "@specra/agent-core";
-import type { ToolConfirmationCallback } from "@specra/agent-core";
+import type { AskUserRequest, AskUserResponse, ToolConfirmationCallback, ToolConfirmationRequest, ToolConfirmationResult } from "@specra/agent-core";
+import { SessionStoreManager } from "../../../packages/agent-core/src/store/session-store-manager";
 import { AgentRunner } from "./agent-runner";
 import { GlobalEventBus } from "./events/global-event-bus";
 import { __getSessionEventBridgeCountForTest, __resetSessionEventBridgesForTest, __setGlobalEventBusForTest } from "./events/session-event-bridge";
@@ -15,6 +14,7 @@ import { PermissionService } from "./permission-service";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
 const manager = new SessionStoreManager();
+type TestSessionStore = ReturnType<typeof manager.create>;
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -48,7 +48,7 @@ async function dispatchRunnerCommand(
 }
 
 class MockAgent implements Agent {
-  readonly store: StoreApi<SessionStoreState>;
+  readonly store: TestSessionStore;
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
@@ -91,6 +91,8 @@ function createRuntime(agent: Agent): SpecraRuntime {
   const sessionId = agent.store.getState().sessionId;
   const runningSessions = new Set<string>();
   let runningAgent: Agent | undefined;
+  const pendingPermissions = new Map<string, (response: ToolConfirmationResult) => void>();
+  const pendingQuestions = new Map<string, (response: AskUserResponse) => void>();
   return {
     sessionAgentManager: {
       get: (_workspaceRoot: string, requestedSessionId: string) => {
@@ -120,6 +122,17 @@ function createRuntime(agent: Agent): SpecraRuntime {
     warnings: [],
     projectRegistry: undefined,
     contextResolver: undefined,
+    acquireSessionSlot: (_workspaceRoot: string, requestedSessionId: string) => {
+      runningSessions.add(requestedSessionId);
+      runningAgent = agent;
+    },
+    releaseSessionSlot: (_workspaceRoot: string, requestedSessionId: string) => {
+      runningSessions.delete(requestedSessionId);
+      runningAgent = undefined;
+    },
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
     agentFor: async (_workspaceRoot: string, requestedSessionId: string) => {
       if (requestedSessionId === sessionId) {
         runningSessions.add(requestedSessionId);
@@ -133,6 +146,63 @@ function createRuntime(agent: Agent): SpecraRuntime {
 
       const dispatchable = runningAgent as Agent & { dispatchCommand?: (name: string, args?: string) => Promise<CommandResult> };
       return await dispatchable.dispatchCommand?.(name, args) ?? null;
+    },
+    requestPermission: async (_workspaceRoot: string, _requestedSessionId: string, request: ToolConfirmationRequest) => {
+      const permissionId = crypto.randomUUID();
+      const state = agent.store.getState();
+      state.append({
+        type: "permission.request",
+        permissionId,
+        toolName: request.toolName,
+        args: request.input,
+        description: request.description,
+      });
+      return await new Promise<ToolConfirmationResult>((resolve) => {
+        pendingPermissions.set(permissionId, resolve);
+      });
+    },
+    respondPermission: (permissionId: string, response: ToolConfirmationResult) => {
+      const resolve = pendingPermissions.get(permissionId);
+      if (!resolve) return false;
+      pendingPermissions.delete(permissionId);
+      resolve(response);
+      const state = agent.store.getState();
+      state.append({
+        type: "permission.terminal",
+        permissionId,
+        status: response === "deny" ? "denied" : response === "timeout" ? "timeout" : "resolved",
+      });
+      return true;
+    },
+    requestQuestion: async (_workspaceRoot: string, _requestedSessionId: string, request: AskUserRequest) => {
+      const questionId = crypto.randomUUID();
+      const state = agent.store.getState();
+      state.append({
+        type: "question.request",
+        questionId,
+        question: JSON.stringify({ toolName: request.toolName, toolCallId: request.toolCallId, questions: request.questions }),
+      });
+      return await new Promise<AskUserResponse>((resolve) => {
+        pendingQuestions.set(questionId, resolve);
+      });
+    },
+    respondQuestion: (questionId: string, response: AskUserResponse) => {
+      const resolve = pendingQuestions.get(questionId);
+      if (!resolve) return false;
+      pendingQuestions.delete(questionId);
+      resolve(response);
+      const answer = "isError" in response ? undefined : JSON.stringify(response.answers);
+      const state = agent.store.getState();
+      state.append({ type: "question.terminal", questionId, status: answer ? "resolved" : "denied", answer });
+      return true;
+    },
+    cleanupDeferredSession: () => undefined,
+    createSession: async (workspaceRoot: string) => manager.createSessionFile(workspaceRoot),
+    getSessionFile: async (workspaceRoot: string, requestedSessionId: string) => manager.getSessionFile(workspaceRoot, requestedSessionId),
+    listSessions: async (workspaceRoot: string) => manager.listSessionSummaries(workspaceRoot),
+    notifyRuntimeShutdown: (reason?: string) => {
+      const state = agent.store.getState();
+      state.append({ type: "shutdown", reason });
     },
   } as unknown as SpecraRuntime;
 }
@@ -190,8 +260,9 @@ describe("AgentRunner", () => {
 
   test("submit injects confirmPermission callback when PermissionService is provided", async () => {
     const agent = createMockAgent("session-permission", Promise.resolve({ text: "Done", steps: 1 }));
-    const permissionService = new PermissionService();
-    const runner = new AgentRunner(createRuntime(agent), permissionService);
+    const runtime = createRuntime(agent);
+    const permissionService = new PermissionService(runtime);
+    const runner = new AgentRunner(runtime, permissionService);
 
     const job = runner.submit({ slug: "project-permission", sessionId: "session-permission", workspaceRoot: tempRoot, userMessage: "Needs permission" });
     await job.promise;
@@ -262,7 +333,8 @@ describe("AgentRunner", () => {
     const workspaceRoot = join(tempRoot, "workspace-save");
     await mkdir(workspaceRoot, { recursive: true });
     const agent = createMockAgent("session-save", Promise.resolve({ text: "Saved", steps: 1 }), workspaceRoot);
-    agent.store.getState().append({ type: "user-message", content: "persist me" });
+    const state = agent.store.getState();
+    state.append({ type: "user-message", content: "persist me" });
     const runner = new AgentRunner(createRuntime(agent));
 
     const job = runner.submit({ slug: "project-save", sessionId: "session-save", workspaceRoot, userMessage: "persist me" });
@@ -273,15 +345,16 @@ describe("AgentRunner", () => {
     expect(saved.getState().messages).toHaveLength(1);
   });
 
-  test("does not save transcript when session is tombstoned before job settles", async () => {
+  test("does not perform runner-owned transcript save when session is tombstoned before job settles", async () => {
     const workspaceRoot = join(tempRoot, "workspace-tombstone");
     await mkdir(workspaceRoot, { recursive: true });
     const run = deferred<AgentResult>();
     const agent = createMockAgent("session-tombstone", run.promise, workspaceRoot);
-    agent.store.getState().append({ type: "user-message", content: "do not resurrect" });
+    const state = agent.store.getState();
+    state.append({ type: "user-message", content: "do not resurrect" });
     let tombstoned = false;
     const runtime = createRuntime(agent);
-    runtime.sessionAgentManager.isTombstoned = () => tombstoned;
+    runtime.isSessionTombstoned = () => tombstoned;
     const runner = new AgentRunner(runtime);
 
     const job = runner.submit({ slug: "project-tombstone", sessionId: "session-tombstone", workspaceRoot, userMessage: "delete me" });
@@ -290,8 +363,7 @@ describe("AgentRunner", () => {
     run.resolve({ text: "Done", steps: 1 });
     await job.promise;
 
-    // The store is still in the registry since dispose wasn't called, but no file was saved.
-    // Remove the store from the registry so getOrLoad attempts disk load, which should fail.
+    // Store-owned persistence is asynchronous; tombstoned sessions should not be resurrected by a runner final save.
     manager.delete("session-tombstone", workspaceRoot);
     await expect(manager.getOrLoad("session-tombstone", workspaceRoot)).rejects.toThrow();
   });
@@ -302,8 +374,8 @@ describe("AgentRunner", () => {
     const runtime = createRuntime(agent);
     const acquired: string[] = [];
     const released: string[] = [];
-    runtime.sessionAgentManager.acquireSlot = (_workspaceRoot: string, sessionId: string) => acquired.push(sessionId);
-    runtime.sessionAgentManager.releaseSlot = (_workspaceRoot: string, sessionId: string) => released.push(sessionId);
+    runtime.acquireSessionSlot = (_workspaceRoot: string, sessionId: string) => acquired.push(sessionId);
+    runtime.releaseSessionSlot = (_workspaceRoot: string, sessionId: string) => released.push(sessionId);
     const runner = new AgentRunner(runtime);
 
     const job = runner.submit({ slug: "project-slot", sessionId: "session-slot", workspaceRoot: tempRoot, userMessage: "Hello" });
@@ -350,7 +422,8 @@ describe("AgentRunner", () => {
 
     const job = runner.submit({ slug: "project-bridge", sessionId: "session-bridge", workspaceRoot: tempRoot, userMessage: "Hello" });
     await flushMicrotasks();
-    agent.store.getState().append({ type: "system-notice", message: "bridged" });
+    const state = agent.store.getState();
+    state.append({ type: "system-notice", message: "bridged" });
 
     expect(received).toMatchObject([
       { type: "event", slug: "project-bridge", sessionId: "session-bridge", eventId: 0, kind: "system-notice" },
@@ -380,7 +453,8 @@ describe("AgentRunner", () => {
     await job.promise;
     expect(__getSessionEventBridgeCountForTest()).toBe(0);
 
-    agent.store.getState().append({ type: "system-notice", message: "after cleanup" });
+    const state = agent.store.getState();
+    state.append({ type: "system-notice", message: "after cleanup" });
     expect(received).toEqual([]);
   });
 });

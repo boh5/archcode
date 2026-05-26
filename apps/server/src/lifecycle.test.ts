@@ -1,12 +1,10 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { StoreApi } from "zustand";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { SessionStoreManager } from "@specra/agent-core";
-import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
+import { SessionStoreManager } from "../../../packages/agent-core/src/store/session-store-manager";
 import { AgentRunner } from "./agent-runner";
 import { globalEventBus } from "./events/global-event-bus";
 import { __resetSessionEventBridgesForTest, registerSessionEventBridge } from "./events/session-event-bridge";
@@ -14,6 +12,7 @@ import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "lifecycle");
 const manager = new SessionStoreManager();
+type TestSessionStore = ReturnType<typeof manager.create>;
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -27,7 +26,7 @@ function isJobRunning(runner: AgentRunner, workspaceRoot: string, sessionId: str
 }
 
 class MockAgent implements Agent {
-  readonly store: StoreApi<SessionStoreState>;
+  readonly store: TestSessionStore;
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
@@ -70,12 +69,17 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve: resolveValue };
 }
 
-function createRuntime(agent: Agent): SpecraRuntime {
-  const sessionId = agent.store.getState().sessionId;
+function createRuntime(agent: Agent, ...additionalAgents: Agent[]): SpecraRuntime {
+  const active = new Map<string, Agent>(
+    [agent, ...additionalAgents].map((current) => [current.store.getState().sessionId, current]),
+  );
   return {
     sessionAgentManager: {
-      get: (_workspaceRoot: string, requestedSessionId: string) => (requestedSessionId === sessionId ? agent : undefined),
-      getOrCreate: async () => agent,
+      get: (_workspaceRoot: string, requestedSessionId: string) => active.get(requestedSessionId),
+      getOrCreate: async (_workspaceRoot: string, requestedSessionId: string) => {
+        active.set(requestedSessionId, agent);
+        return agent;
+      },
       dispose: () => undefined,
       disposeAll: () => undefined,
       getByWorkspace: () => [],
@@ -91,7 +95,23 @@ function createRuntime(agent: Agent): SpecraRuntime {
     warnings: [],
     projectRegistry: undefined,
     contextResolver: undefined,
+    acquireSessionSlot: () => undefined,
+    releaseSessionSlot: () => undefined,
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
     agentFor: async (_root: string, _sid: string) => agent,
+    requestPermission: async () => "timeout",
+    respondPermission: () => false,
+    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
+    respondQuestion: () => false,
+    cleanupDeferredSession: () => undefined,
+    notifyRuntimeShutdown: (reason?: string) => {
+      for (const current of active.values()) {
+        const state = current.store.getState();
+        state.append({ type: "shutdown", reason });
+      }
+    },
   } as unknown as SpecraRuntime;
 }
 
@@ -164,7 +184,8 @@ describe("server lifecycle", () => {
     const server = { stop: mock(() => undefined) };
     const runner = new AgentRunner(createRuntime(new MockAgent("handlers", Promise.resolve({ text: "ok", steps: 1 }))));
 
-    const handle = setupGracefulShutdown(server, runner, { process: processRef });
+    const runtime = createRuntime(new MockAgent("handlers", Promise.resolve({ text: "ok", steps: 1 })));
+    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef });
 
     expect(processRef.on).toHaveBeenCalledWith("SIGINT", expect.any(Function));
     expect(processRef.on).toHaveBeenCalledWith("SIGTERM", expect.any(Function));
@@ -180,7 +201,8 @@ describe("server lifecycle", () => {
     const order: string[] = [];
     const run = deferred<AgentResult>();
     const agent = new MockAgent("sequence-session", run.promise);
-    const runner = new AgentRunner(createRuntime(agent));
+    const runtime = createRuntime(agent);
+    const runner = new AgentRunner(runtime);
     const globalEvents: unknown[] = [];
     const unsubscribeGlobalEvents = globalEventBus.subscribe((event) => globalEvents.push(event));
     const job = runner.submit({ slug: "sequence-project", sessionId: "sequence-session", workspaceRoot: tempRoot, userMessage: "work" });
@@ -200,7 +222,7 @@ describe("server lifecycle", () => {
       throw new ExitError(code);
     });
 
-    const handle = setupGracefulShutdown(server, runner, { process: processRef, log: () => undefined });
+    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef, log: () => undefined });
     expect(handlers.has("SIGTERM")).toBe(true);
     const shutdownPromise = expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({
       name: "ExitError",
@@ -224,7 +246,8 @@ describe("server lifecycle", () => {
     const coldAgent = new MockAgent("terminal-cold", new Promise(() => undefined), resolve(tempRoot, "workspace-cold"));
     registerSessionEventBridge({ slug: "one", workspaceRoot: resolve(tempRoot, "workspace-one"), sessionId: "terminal-one", store: agentOne.store });
     registerSessionEventBridge({ slug: "two", workspaceRoot: resolve(tempRoot, "workspace-two"), sessionId: "terminal-two", store: agentTwo.store });
-    const runner = new AgentRunner(createRuntime(agentOne));
+    const runtime = createRuntime(agentOne, agentTwo);
+    const runner = new AgentRunner(runtime);
     runner.abortAll = mock(async () => {
       order.push("abort");
       expect(agentOne.store.getState().events.at(-1)?.payload).toEqual({ type: "shutdown", reason: "server_shutdown" });
@@ -238,7 +261,7 @@ describe("server lifecycle", () => {
       throw new ExitError(code);
     });
 
-    const handle = setupGracefulShutdown(server, runner, { process: processRef, log: () => undefined });
+    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef, log: () => undefined });
 
     await expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({ name: "ExitError", code: 0 });
     expect(order).toEqual(["abort", "stop", "exit:0"]);
@@ -249,14 +272,15 @@ describe("server lifecycle", () => {
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
     const server = { stop: mock(() => undefined) };
-    const runner = new AgentRunner(createRuntime(new MockAgent("timeout", Promise.resolve({ text: "ok", steps: 1 }))));
+    const runtime = createRuntime(new MockAgent("timeout", Promise.resolve({ text: "ok", steps: 1 })));
+    const runner = new AgentRunner(runtime);
     runner.abortAll = mock(async () => {
       await new Promise(() => undefined);
     });
     const { handlers, processRef } = createProcess();
     const error = mock((_message: string) => undefined);
 
-    const handle = setupGracefulShutdown(server, runner, { process: processRef, timeoutMs: 1, log: () => undefined, error });
+    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef, timeoutMs: 1, log: () => undefined, error });
     expect(handlers.has("SIGINT")).toBe(true);
 
     await expect(handle.shutdown("SIGINT")).rejects.toMatchObject({

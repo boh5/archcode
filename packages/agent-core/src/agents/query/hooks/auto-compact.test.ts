@@ -72,6 +72,9 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     eventOffset: 0,
     nextEventId: 0,
     append: mock(() => {}),
+    setTitle: mock(() => {}),
+    setParentSessionId: mock(() => {}),
+    linkChildSession: mock(() => {}),
     toModelMessages: mock(() => []),
     ...overrides,
   };

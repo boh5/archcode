@@ -1,6 +1,6 @@
+import type { SpecraRuntime } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
 import { globalEventBus } from "./events/global-event-bus";
-import { appendShutdownToActiveSessionStores } from "./events/session-event-bridge";
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
 
@@ -32,6 +32,7 @@ export interface GracefulShutdownHandle {
 export function setupGracefulShutdown(
   server: LifecycleServer,
   agentRunner: AgentRunner,
+  runtime: SpecraRuntime,
   options: GracefulShutdownOptions = {},
 ): GracefulShutdownHandle {
   const processRef = options.process ?? process;
@@ -43,7 +44,7 @@ export function setupGracefulShutdown(
   const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
-    shutdownPromise = runShutdown(server, agentRunner, timeoutMs, log, error);
+    shutdownPromise = runShutdown(server, agentRunner, runtime, timeoutMs, log, error);
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
@@ -70,12 +71,13 @@ export function setupGracefulShutdown(
 async function runShutdown(
   server: LifecycleServer,
   agentRunner: AgentRunner,
+  runtime: SpecraRuntime,
   timeoutMs: number,
   log: (message: string) => void,
   error: (message: string) => void,
 ): Promise<number> {
   log("Shutting down gracefully...");
-  pushShutdownEvents();
+  pushShutdownEvents(runtime);
 
   const timeout = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs);
@@ -91,9 +93,9 @@ async function runShutdown(
   return exitCode;
 }
 
-function pushShutdownEvents(): void {
+function pushShutdownEvents(runtime: SpecraRuntime): void {
   globalEventBus.emit({ type: "shutdown", reason: "server_shutdown" });
-  appendShutdownToActiveSessionStores("server_shutdown");
+  runtime.notifyRuntimeShutdown("server_shutdown");
 }
 
 function removeSignalHandler(processRef: SignalProcess, signal: ShutdownSignal, handler: () => void): void {

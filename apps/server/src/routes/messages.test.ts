@@ -1,23 +1,22 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { StoreApi } from "zustand";
 import { AgentRunningError } from "@specra/agent-core";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { SessionStoreManager } from "@specra/agent-core";
-import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
+import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 const manager = new SessionStoreManager();
+type TestSessionStore = ReturnType<typeof manager.create>;
 
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
 class MockAgent implements Agent {
-  readonly store: StoreApi<SessionStoreState>;
+  readonly store: TestSessionStore;
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string) {
@@ -84,6 +83,17 @@ function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): Spec
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
+    acquireSessionSlot: () => undefined,
+    releaseSessionSlot: () => undefined,
+    disposeSessionAgent: () => undefined,
+    disposeAllSessionAgents: () => undefined,
+    isSessionTombstoned: () => false,
+    requestPermission: async () => "timeout",
+    respondPermission: () => false,
+    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
+    respondQuestion: () => false,
+    cleanupDeferredSession: () => undefined,
+    notifyRuntimeShutdown: () => undefined,
     agentFor: async (_workspaceRoot: string, _sessionId: string) => agent,
   } as unknown as SpecraRuntime;
 }

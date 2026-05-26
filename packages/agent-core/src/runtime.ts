@@ -22,8 +22,12 @@ import { createRegistry as createProviderRegistry, type Registry as ProviderRegi
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
-import { storeManager } from "./store/store";
+import { scopedKey, storeManager } from "./store/store";
+import type { SessionFile, SessionSummary } from "./store/helpers";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
+import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
+import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
+import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "./tools/types";
 
 const DEFAULT_CONFIG_PATH = ".specra.json";
 
@@ -45,7 +49,26 @@ export interface SpecraRuntime {
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
   agentFor(workspaceRoot: string, sessionId: string): Promise<Agent>;
+  createSession(workspaceRoot: string): Promise<SessionFile>;
+  getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
+  listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
+  acquireSessionSlot(workspaceRoot: string, sessionId: string): void;
+  releaseSessionSlot(workspaceRoot: string, sessionId: string): void;
+  disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
+  disposeAllSessionAgents(): void;
+  isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
   dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null>;
+  requestPermission(
+    workspaceRoot: string,
+    sessionId: string,
+    request: ToolConfirmationRequest,
+    abortSignal?: AbortSignal,
+  ): Promise<ToolConfirmationResult>;
+  respondPermission(permissionId: string, response: ToolConfirmationResult): boolean;
+  requestQuestion(workspaceRoot: string, sessionId: string, request: AskUserRequest): Promise<AskUserResponse>;
+  respondQuestion(questionId: string, response: AskUserResponse): boolean;
+  cleanupDeferredSession(workspaceRoot: string, sessionId: string): void;
+  notifyRuntimeShutdown(reason?: string): void;
 }
 
 export async function createSpecraRuntime(
@@ -118,9 +141,23 @@ export async function createSpecraRuntime(
       projectContextResolver: contextResolver,
       storeManager,
     });
+    const activeSessionKeys = new Map<string, { workspaceRoot: string; sessionId: string }>();
+    const submitDeferredEvent = (
+      workspaceRoot: string,
+      sessionId: string,
+      event: DeferredSessionEvent,
+    ): void => {
+      const store = storeManager.get(sessionId, workspaceRoot);
+      store?.getState().append(event);
+    };
+    const deferredEvents = { submitDeferredEvent };
+    const permissionService = new DeferredPermissionService(deferredEvents);
+    const questionService = new DeferredQuestionService(deferredEvents);
 
     async function agentFor(workspaceRoot: string, sessionId: string): Promise<Agent> {
-      return await sessionAgentManager.getOrCreate(workspaceRoot, sessionId);
+      const agent = await sessionAgentManager.getOrCreate(workspaceRoot, sessionId);
+      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
+      return agent;
     }
 
     async function dispatchCommand(
@@ -137,6 +174,37 @@ export async function createSpecraRuntime(
       return await agent.dispatchCommand(name, args);
     }
 
+    function requestPermission(
+      workspaceRoot: string,
+      sessionId: string,
+      request: ToolConfirmationRequest,
+      abortSignal?: AbortSignal,
+    ): Promise<ToolConfirmationResult> {
+      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
+      return permissionService.request(sessionId, workspaceRoot, request, abortSignal);
+    }
+
+    function requestQuestion(
+      workspaceRoot: string,
+      sessionId: string,
+      request: AskUserRequest,
+    ): Promise<AskUserResponse> {
+      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
+      return questionService.request(sessionId, workspaceRoot, request);
+    }
+
+    function cleanupDeferredSession(workspaceRoot: string, sessionId: string): void {
+      permissionService.cleanup(sessionId, workspaceRoot);
+      questionService.cleanup(sessionId, workspaceRoot);
+      activeSessionKeys.delete(scopedKey(workspaceRoot, sessionId));
+    }
+
+    function notifyRuntimeShutdown(reason?: string): void {
+      for (const { workspaceRoot, sessionId } of activeSessionKeys.values()) {
+        submitDeferredEvent(workspaceRoot, sessionId, { type: "shutdown", reason });
+      }
+    }
+
     return {
       sessionAgentManager,
       storeManager,
@@ -148,7 +216,21 @@ export async function createSpecraRuntime(
       projectRegistry,
       contextResolver,
       agentFor,
+      createSession: (workspaceRoot) => storeManager.createSessionFile(workspaceRoot),
+      getSessionFile: (workspaceRoot, sessionId) => storeManager.getSessionFile(workspaceRoot, sessionId),
+      listSessions: (workspaceRoot) => storeManager.listSessionSummaries(workspaceRoot),
+      acquireSessionSlot: (workspaceRoot, sessionId) => sessionAgentManager.acquireSlot(workspaceRoot, sessionId),
+      releaseSessionSlot: (workspaceRoot, sessionId) => sessionAgentManager.releaseSlot(workspaceRoot, sessionId),
+      disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
+      disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
+      isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),
       dispatchCommand,
+      requestPermission,
+      respondPermission: (permissionId, response) => permissionService.respond(permissionId, response),
+      requestQuestion,
+      respondQuestion: (questionId, response) => questionService.respond(questionId, response),
+      cleanupDeferredSession,
+      notifyRuntimeShutdown,
     };
   } catch (err) {
     await closeMcpManagerBestEffort(mcpManager, recordWarning);
