@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import { EXPLORER_READ_ONLY_TOOLS } from "../agents/constants";
+import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
 import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -379,6 +379,17 @@ describe("registerBuiltinTools", () => {
         }
       }
       expect(errors).toEqual([]);
+    });
+  });
+
+  describe("DELEGATION_EXECUTION_TOOLS", () => {
+    it("includes exactly delegate, background_output, wait_for_reminder, view_tool_output", () => {
+      expect(DELEGATION_EXECUTION_TOOLS).toEqual([
+        "delegate",
+        "background_output",
+        "wait_for_reminder",
+        "view_tool_output",
+      ]);
     });
   });
 });

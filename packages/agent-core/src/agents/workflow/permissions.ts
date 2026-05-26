@@ -1,4 +1,8 @@
-import { EXPLORER_READ_ONLY_TOOLS, SKILL_TOOLS } from "../constants";
+import {
+  EXPLORER_READ_ONLY_TOOLS,
+  SKILL_TOOLS,
+  DELEGATION_EXECUTION_TOOLS,
+} from "../../tools/groups";
 
 const WORKFLOW_PRD_SPEC_WRITE_TOOLS = ["workflow_read", "artifact_write"] as const;
 const WORKFLOW_CREATE_PRD_SPEC_WRITE_TOOLS = ["workflow_create", ...WORKFLOW_PRD_SPEC_WRITE_TOOLS] as const;
@@ -6,12 +10,6 @@ const WORKFLOW_TASK_CHECK_TOOLS = ["artifact_read", "workflow_read", "workflow_t
 const ARTIFACT_EVIDENCE_WRITE_TOOLS = ["artifact_write"] as const;
 
 const TODO_AND_ASK_TOOLS = ["ask_user", "todo_write"] as const;
-const DELEGATION_EXECUTION_TOOLS = [
-  "delegate",
-  "background_output",
-  "wait_for_reminder",
-  "view_tool_output",
-] as const;
 const MEMORY_READ_TOOLS = ["memory_read"] as const;
 const MEMORY_WRITE_TOOLS = ["memory_read", "memory_write"] as const;
 const SOURCE_WRITE_TOOLS = ["file_write", "file_edit", "bash", "ast_grep_replace"] as const;
