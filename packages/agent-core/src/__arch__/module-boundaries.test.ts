@@ -97,6 +97,10 @@ function findExportedNames(source: string, names: readonly string[]): string[] {
 }
 
 const forbiddenRootExports = [
+  "createSessionStore",
+  "getSessionsDir",
+  "SessionAgentManager",
+  "SessionFile",
   "storeManager",
   "SessionStoreManager",
   "scopedKey",
@@ -105,7 +109,13 @@ const forbiddenRootExports = [
   "SessionStoreState",
 ] as const;
 
-const forbiddenAgentExports = ["ConfiguredAgent", "runQueryLoop"] as const;
+const forbiddenAgentExports = [
+  "ConfiguredAgent",
+  "ConfiguredAgentOptions",
+  "QueryLoopOptions",
+  "QueryLoopResult",
+  "runQueryLoop",
+] as const;
 
 const forbiddenServerSymbols = [
   "StoreApi",

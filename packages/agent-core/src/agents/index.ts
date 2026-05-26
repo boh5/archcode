@@ -1,5 +1,4 @@
 export type { Agent, AgentResult, AgentRunOptions } from "./types";
-export type { ConfiguredAgentOptions } from "./configured-agent";
 export {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   DELEGATION_TOOLS,
@@ -8,7 +7,6 @@ export {
   MAX_SUB_AGENT_DEPTH,
 } from "./constants";
 export type { AgentType } from "./constants";
-export type { QueryLoopOptions, QueryLoopResult } from "./query/types";
 export {
   DuplicateAgentDefinitionError,
   UnknownAgentDefinitionError,

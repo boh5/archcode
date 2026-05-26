@@ -98,3 +98,11 @@
 - Server route tests now use runtime-shaped fakes rather than `SessionStoreManager`, session helper internals, `sessionAgentManager`, or `agentFor` fields.
 - Boundary search confirmed no `StoreApi`, `SessionStoreState`, `saveSessionTranscript`, `readSessionFile`, `scopedKey`, `sessionAgentManager`, `getSessionsDir`, raw `.getState()`, or `session-event-bridge` references remain under `apps/server/src`.
 - Verification passed: LSP diagnostics clean on changed server files, `bun test apps/server/src packages/agent-core/src/__arch__`, and `bun run typecheck`.
+
+## 2026-05-26 Task: Final public API cleanup
+- Root `@specra/agent-core` exports now omit old session internals: `SessionAgentManager`, `createSessionStore`, `getSessionsDir`, and `SessionFile` are no longer exported from `packages/agent-core/src/index.ts`.
+- `agents/index.ts` no longer exports `ConfiguredAgentOptions`, `QueryLoopOptions`, or `QueryLoopResult`; direct query loop APIs remain internal under relative package paths.
+- Deleted the obsolete `agents/tool-filter.ts` re-export and its re-export-only test; delegation tool constants now come from `agents/constants.ts` or `tools/groups.ts`.
+- Removed stale `transcript-save` assertions from configured-agent hook tests; no transcript-save hook file or registration remains.
+- Server permission/question services were verified as thin runtime response/request adapters with no store coupling or deep agent-core imports.
+- Verification passed: LSP diagnostics clean on changed files, `bun run typecheck`, `bun test packages/agent-core/src/__arch__`, and full `bun run test`.

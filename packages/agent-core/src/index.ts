@@ -6,7 +6,6 @@ export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./p
 
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
-export { SessionAgentManager } from "./agents/session-agent-manager";
 export { WorkflowArtifactManager } from "./agents/workflow/artifacts";
 export { WorkflowArtifactKindSchema, WorkflowStateManager } from "./agents/workflow/state";
 
@@ -20,9 +19,6 @@ export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
 
 export { reduceStreamEvent } from "./store/reduce";
-export { getSessionsDir } from "./store/sessions-dir";
-export { createSessionStore } from "./store/store";
-export type { SessionFile } from "./store/helpers";
 export type {
   BusyError,
   InvalidTodoStateError,

@@ -361,7 +361,7 @@ describe("ConfiguredAgent", () => {
     expect(agent.store.getState().reminders.some((reminder) => reminder.source.type === "todo_loop_continuation")).toBe(true);
   });
 
-  test("orchestrator definition dispatches memory background hooks without transcript-save", async () => {
+  test("orchestrator definition dispatches memory background hooks", async () => {
     setupMockStreamText("orchestrator memory ok");
     const btm = new RecordingBackgroundTaskManager();
     const store = storeManager.create(`configured-orchestrator-background-${crypto.randomUUID()}`);
@@ -395,7 +395,6 @@ describe("ConfiguredAgent", () => {
     const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
     await agent.run("root run");
 
-    expect(btm.dispatched).not.toContain("transcript-save");
     expect(btm.dispatched).toContain("memory-extraction");
     expect(btm.dispatched).toContain("memory-consolidation");
   });
@@ -432,7 +431,6 @@ describe("ConfiguredAgent", () => {
     });
     await agent.run("root run");
 
-    expect(btm.dispatched).not.toContain("transcript-save");
     expect(btm.dispatched).not.toContain("memory-extraction");
     expect(btm.dispatched).not.toContain("memory-consolidation");
   });
