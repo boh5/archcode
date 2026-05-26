@@ -6,7 +6,7 @@ import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
-import { createSessionStore, getSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
@@ -235,7 +235,7 @@ async function expectResultRejects(promise: Promise<AgentResult>, message: strin
 }
 
 class RejectingAgent implements Agent {
-  constructor(readonly store: ReturnType<typeof createSessionStore>) {}
+  constructor(readonly store: ReturnType<typeof storeManager.create>) {}
 
   async run(): Promise<AgentResult> {
     throw new Error("boom");
@@ -269,7 +269,7 @@ describe("AgentFactory.delegate", () => {
   test("creates child sessions and returns a run handle", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -283,7 +283,7 @@ describe("AgentFactory.delegate", () => {
     expect(handle.sessionId).toBeString();
     expect(handle.result).toBeInstanceOf(Promise);
     expect(handle.abort).toBeFunction();
-    expect(getSessionStore(handle.sessionId)?.getState().sessionId).toBe(handle.sessionId);
+    expect(storeManager.get(handle.sessionId)?.getState().sessionId).toBe(handle.sessionId);
     await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
   });
 
@@ -293,7 +293,7 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactoryWithBackgroundTaskManager(btm);
 
     const rootAgent = factory.createRootAgent("orchestrator", {
-      store: createSessionStore(`factory-root-${crypto.randomUUID()}`),
+      store: storeManager.create(`factory-root-${crypto.randomUUID()}`),
     });
     await rootAgent.run("root run");
 
@@ -304,7 +304,7 @@ describe("AgentFactory.delegate", () => {
   test("links parent and child metadata", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -315,7 +315,7 @@ describe("AgentFactory.delegate", () => {
       description: "Inspect docs",
     });
 
-    const childStore = getSessionStore(handle.sessionId);
+    const childStore = storeManager.get(handle.sessionId);
     expect(childStore?.getState().parentSessionId).toBe(parentStore.getState().sessionId);
     expect(parentStore.getState().childSessionIds.has(handle.sessionId)).toBe(true);
     expect(parentStore.getState().subAgentDescriptions.get(handle.sessionId)).toBe("Inspect docs");
@@ -325,7 +325,7 @@ describe("AgentFactory.delegate", () => {
   test("propagates delegated title or description into the child store title", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const titled = await factory.delegate({
       parentStore,
@@ -345,8 +345,8 @@ describe("AgentFactory.delegate", () => {
       description: "Description Title",
     });
 
-    expect(getSessionStore(titled.sessionId)?.getState().title).toBe("Delegated Title");
-    expect(getSessionStore(described.sessionId)?.getState().title).toBe("Description Title");
+    expect(storeManager.get(titled.sessionId)?.getState().title).toBe("Delegated Title");
+    expect(storeManager.get(described.sessionId)?.getState().title).toBe("Description Title");
     await Promise.all([titled.result, described.result]);
   });
 
@@ -364,7 +364,7 @@ describe("AgentFactory.delegate", () => {
       config: configForDefinitions(providerRegistry, definitions),
       backgroundTaskManager: btm as never,
     });
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -377,14 +377,14 @@ describe("AgentFactory.delegate", () => {
 
     await handle.result;
 
-    expect(getSessionStore(handle.sessionId)?.getState().title).toBe("Delegated Title");
+    expect(storeManager.get(handle.sessionId)?.getState().title).toBe("Delegated Title");
     expect(btm.dispatched).not.toContain("title-generation");
   });
 
   test("throws DepthLimitError when current depth reaches the parent child policy", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 1 } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -402,7 +402,7 @@ describe("AgentFactory.delegate", () => {
       parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
       targetDefinition(),
     ]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -421,7 +421,7 @@ describe("AgentFactory.delegate", () => {
       parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
       targetDefinition(),
     ]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     // At depth 3, resolveAllowedTools strips "delegate" first (depth >= MAX_SUB_AGENT_DEPTH),
     // so DelegationToolNotAllowedError fires before DepthLimitError.
@@ -438,7 +438,7 @@ describe("AgentFactory.delegate", () => {
   test("throws ConcurrentLimitError when active children reach the parent child policy", async () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1, timeoutMs: 0 } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "hang", skills: [] });
     first.result.catch(() => {});
 
@@ -456,7 +456,7 @@ describe("AgentFactory.delegate", () => {
   test("cleans active child tracking after completion", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1 } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "first", skills: [] });
     await first.result;
@@ -468,7 +468,7 @@ describe("AgentFactory.delegate", () => {
   test("times out children and emits timed_out reminders", async () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, timeoutMs: 10 } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -496,12 +496,12 @@ describe("AgentFactory.delegate", () => {
       if (name !== "explore") return originalCreateAgent(name, options);
       childAbort = options.abortSignal;
       return {
-        store: options.store ?? createSessionStore(`abort-${crypto.randomUUID()}`),
+        store: options.store ?? storeManager.create(`abort-${crypto.randomUUID()}`),
         run: async () => new Promise<AgentResult>(() => {}),
         dispose: () => undefined,
       };
     };
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     const parentAbort = new AbortController();
 
     const handle = await factory.delegate({
@@ -521,7 +521,7 @@ describe("AgentFactory.delegate", () => {
   test("emits background completion and failure reminders", async () => {
     setupResolvingStreamText();
     const successFactory = makeFactory();
-    const successParent = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const successParent = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     const success = await successFactory.delegate({
       parentStore: successParent,
       parentAgentName: "orchestrator",
@@ -538,10 +538,10 @@ describe("AgentFactory.delegate", () => {
     const failureFactory = makeFactory();
     const originalCreateAgent = failureFactory.createAgent.bind(failureFactory);
     failureFactory.createAgent = (name, options = {}) => {
-      if (name === "explore") return new RejectingAgent(options.store ?? createSessionStore(`reject-${crypto.randomUUID()}`));
+      if (name === "explore") return new RejectingAgent(options.store ?? storeManager.create(`reject-${crypto.randomUUID()}`));
       return originalCreateAgent(name, options);
     };
-    const failureParent = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const failureParent = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     const failure = await failureFactory.delegate({
       parentStore: failureParent,
       parentAgentName: "orchestrator",
@@ -560,7 +560,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when caller resolved tools do not include delegate", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: ["grep"], delegateTargets: ["explore"] } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -574,7 +574,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when target is not in caller delegate targets", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: [] } }), targetDefinition()]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -588,7 +588,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when target definition is missing", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: ["missing"] } })]);
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -602,7 +602,7 @@ describe("AgentFactory.delegate", () => {
   test("passes no active skills when skills is empty", async () => {
     setupResolvingStreamText();
     const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -625,7 +625,7 @@ describe("AgentFactory.delegate", () => {
   test("validates requested skills against the child allow-list, not the parent", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -648,7 +648,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects skills absent from the child allow-list even when the parent allows them", async () => {
     setupResolvingStreamText();
     const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -662,7 +662,7 @@ describe("AgentFactory.delegate", () => {
   test("passes requested active skill bodies to the child agent", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -689,7 +689,7 @@ describe("AgentFactory.delegate", () => {
   test("does not leak active skills between later children", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     const captured: Array<readonly unknown[]> = [];
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -723,7 +723,7 @@ describe("AgentFactory.delegate", () => {
   test("de-duplicates duplicate skill names in first-seen order", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -880,7 +880,7 @@ describe("AgentFactory.delegate", () => {
       workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions),
     });
-    const parentStore = createSessionStore(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     setupResolvingStreamText();
 
     const handle = await factory.delegate({

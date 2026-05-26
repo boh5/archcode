@@ -4,7 +4,7 @@ import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../backgr
 import type { SpecraConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
@@ -133,7 +133,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       );
 
       const childSessionId = crypto.randomUUID();
-      const childStore = createSessionStore(childSessionId);
+      const childStore = storeManager.create(childSessionId);
       const childTitle = options.title ?? options.description;
       childStore.setState({
         parentSessionId,
@@ -388,7 +388,7 @@ function factoryResolveAllowedTools(
 }
 
 function prepareStore(options: CreateAgentOptions): StoreApi<SessionStoreState> {
-  const store = options.store ?? createSessionStore(crypto.randomUUID());
+  const store = options.store ?? storeManager.create(crypto.randomUUID());
 
   const state: Partial<SessionStoreState> = {};
   if (options.parentSessionId !== undefined) {

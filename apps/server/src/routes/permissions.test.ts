@@ -1,14 +1,15 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import { PermissionService } from "../permission-service";
 import { createPermissionRoutes } from "./permissions";
 
 const tmpRoots: string[] = [];
+const manager = new SessionStoreManager();
 
 function createTestApp(permissionService: PermissionService): Hono {
   const app = new Hono();
@@ -26,7 +27,7 @@ async function createWorkspaceRoot(): Promise<string> {
 async function createPermission(permissionService: PermissionService): Promise<string> {
   const sessionId = `session-${crypto.randomUUID()}`;
   const workspaceRoot = await createWorkspaceRoot();
-  const store = createSessionStore(sessionId, workspaceRoot);
+  const store = manager.create(sessionId, workspaceRoot);
   void permissionService.request(
     sessionId,
     workspaceRoot,
@@ -48,6 +49,10 @@ async function createPermission(permissionService: PermissionService): Promise<s
 }
 
 describe("permission routes", () => {
+  afterEach(() => {
+    manager.clearAll();
+  });
+
   test("POST valid response returns ok", async () => {
     const permissionService = new PermissionService();
     const app = createTestApp(permissionService);

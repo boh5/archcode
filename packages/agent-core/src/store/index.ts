@@ -51,11 +51,11 @@ export type {
   SessionStoreState,
 } from "./types";
 export { BusyError } from "./types";
-export { createSessionStore, getSessionStore } from "./store";
+export { storeManager, SessionStoreManager, scopedKey } from "./store";
 export {
   getAssistantText,
   saveSessionTranscript,
-  loadSessionTranscript,
+  readSessionFile,
 } from "./helpers";
 export { getSessionsDir } from "./sessions-dir";
 export { toModelMessagesFromStoredMessages } from "./projection";

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { SessionStoreState } from "../../store/types";
 import { createRegistry } from "../registry";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
@@ -13,7 +13,7 @@ import { createTestProjectContext } from "../test-project-context";
 const testDir = join(import.meta.dir, "__test_tmp__", "todo-write");
 
 function makeStore(): StoreApi<SessionStoreState> {
-  return createSessionStore(`todo-test-${crypto.randomUUID()}`);
+  return storeManager.create(`todo-test-${crypto.randomUUID()}`);
 }
 
 function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {

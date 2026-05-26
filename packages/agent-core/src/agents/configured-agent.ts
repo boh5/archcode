@@ -15,7 +15,7 @@ import type { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
@@ -103,7 +103,7 @@ export class ConfiguredAgent implements Agent {
     this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
-    this.store = options.store ?? createSessionStore(crypto.randomUUID());
+    this.store = options.store ?? storeManager.create(crypto.randomUUID());
     if (options.workspaceRoot === undefined) {
       throw new MissingProjectContextError("ConfiguredAgent requires options.workspaceRoot");
     }

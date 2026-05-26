@@ -6,12 +6,11 @@ import { WorkflowArtifactManager } from "@specra/agent-core";
 import { WorkflowStateManager } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
 import { saveSessionTranscript } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
-
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+const manager = new SessionStoreManager();
 
 function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
   return {
@@ -26,6 +25,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
       releaseSlot: () => undefined,
       abortAndDispose: async () => undefined,
     },
+    storeManager: manager,
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
@@ -62,7 +62,7 @@ async function saveEmptySession(
   workspaceRoot: string,
   sessionId: string,
 ): Promise<void> {
-  const store = createScopedSessionStore(sessionId, workspaceRoot);
+  const store = manager.create(sessionId, workspaceRoot);
   store.setState({
     sessionId,
     createdAt: Date.now(),
@@ -80,6 +80,7 @@ async function saveEmptySession(
 
 describe("workflow routes", () => {
   beforeEach(async () => {
+    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });

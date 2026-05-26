@@ -10,7 +10,7 @@ import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import type { AuditEvent } from "../tools/hooks";
 import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
@@ -44,7 +44,7 @@ function makeContext(
   const input = overrides.input ?? {};
   const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
   return createToolExecutionContext({
-    store: createSessionStore(`register-tools-${crypto.randomUUID()}`),
+    store: storeManager.create(`register-tools-${crypto.randomUUID()}`),
     toolName,
     toolCallId: `${toolName}-call`,
     input,

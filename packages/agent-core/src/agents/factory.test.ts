@@ -4,7 +4,7 @@ import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import { UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
@@ -146,7 +146,7 @@ describe("createAgentFactory", () => {
 
   test("creates root agents through the factory API with a supplied store", () => {
     const factory = makeFactory();
-    const store = createSessionStore(`factory-root-${crypto.randomUUID()}`);
+    const store = storeManager.create(`factory-root-${crypto.randomUUID()}`);
 
     const agent = factory.createRootAgent("orchestrator", { store });
 

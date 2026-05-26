@@ -20,8 +20,8 @@ export type { ProjectInfo } from "./projects/types";
 
 export { reduceStreamEvent } from "./store/reduce";
 export { getSessionsDir } from "./store/sessions-dir";
-export { createSessionStore, getSessionStore, scopedKey } from "./store/store";
-export { loadSessionTranscript, saveSessionTranscript } from "./store/helpers";
+export { storeManager, SessionStoreManager, scopedKey } from "./store/store";
+export { saveSessionTranscript, readSessionFile } from "./store/helpers";
 export type { SessionFile } from "./store/helpers";
 export type {
   BusyError,

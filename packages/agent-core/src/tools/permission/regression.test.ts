@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import { defineTool } from "../define-tool";
 import { TOOL_ERROR_META_KEY } from "../errors";
 import { createRegistry } from "../registry";
@@ -86,7 +86,7 @@ function resetWorkspace(): void {
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    store: createSessionStore(crypto.randomUUID()),
+    store: storeManager.create(crypto.randomUUID()),
     toolName: "regression_tool",
     toolCallId: "call-1",
     input: {},

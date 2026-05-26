@@ -2,13 +2,9 @@ import { readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { Hono } from "hono";
 import type { SpecraRuntime } from "@specra/agent-core";
-import {
-  loadSessionTranscript,
-  saveSessionTranscript,
-  type SessionFile,
-} from "@specra/agent-core";
+import { saveSessionTranscript, type SessionFile } from "@specra/agent-core";
+import { readSessionFile } from "@specra/agent-core";
 import { getSessionsDir } from "@specra/agent-core";
-import { createSessionStore, getSessionStore } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, SessionNotFoundError } from "../errors";
@@ -44,7 +40,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
 
   app.post("/", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const store = createSessionStore(crypto.randomUUID(), project.workspaceRoot);
+    const store = runtime.storeManager.create(crypto.randomUUID(), project.workspaceRoot);
 
     await saveSessionTranscript(store.getState(), project.workspaceRoot);
 
@@ -56,22 +52,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
 
     try {
-      // Priority 1: active job agent store
-      const jobAgent = agentRunner.getJob(project.workspaceRoot, sessionId)
-        ? runtime.sessionAgentManager.get(project.workspaceRoot, sessionId)
-        : undefined;
-      if (jobAgent) {
-        return c.json(toSessionFile(jobAgent.store.getState()));
-      }
-
-      // Priority 2: registered store (from previous load or SSE connection)
-      const registered = getSessionStore(sessionId, project.workspaceRoot);
-      if (registered) {
-        return c.json(toSessionFile(registered.getState()));
-      }
-
-      // Priority 3: load from disk (cold session)
-      const store = await loadSessionTranscript(sessionId, project.workspaceRoot);
+      const store = await runtime.storeManager.getOrLoad(sessionId, project.workspaceRoot);
       return c.json(toSessionFile(store.getState()));
     } catch (error) {
       if (isMissingFileError(error)) {
@@ -116,19 +97,21 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
   const sessions: SessionWithSortKey[] = [];
 
   for (const name of names) {
-    const raw = await Bun.file(join(dir, name)).json();
-    const timestamps = readSessionTimestamps(raw);
-    const store = await loadSessionTranscript(basename(name, ".json"), workspaceRoot);
-    const parsed = toSessionFile(store.getState());
-    sessions.push({
-      summary: {
-        sessionId: parsed.sessionId,
-        title: parsed.title,
-        createdAt: parsed.createdAt,
-        ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
-      },
-      sortKey: timestamps.lastUpdatedAt ?? timestamps.updatedAt ?? parsed.createdAt,
-    });
+    try {
+      const parsed = await readSessionFile(basename(name, ".json"), workspaceRoot);
+      const timestamps = readSessionTimestamps(parsed);
+      sessions.push({
+        summary: {
+          sessionId: parsed.sessionId,
+          title: parsed.title ?? null,
+          createdAt: parsed.createdAt,
+          ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
+        },
+        sortKey: timestamps.lastUpdatedAt ?? timestamps.updatedAt ?? parsed.createdAt,
+      });
+    } catch {
+      // Skip invalid/corrupt session files during listing
+    }
   }
 
   return sessions

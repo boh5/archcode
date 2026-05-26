@@ -22,6 +22,7 @@ import { createRegistry as createProviderRegistry, type Registry as ProviderRegi
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
+import { storeManager } from "./store/store";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 
 const DEFAULT_CONFIG_PATH = ".specra.json";
@@ -35,6 +36,7 @@ export interface SpecraRuntimeOptions {
 
 export interface SpecraRuntime {
   readonly sessionAgentManager: SessionAgentManager;
+  readonly storeManager: import("./store/session-store-manager").SessionStoreManager;
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
   readonly providerRegistry: ProviderRegistry;
@@ -114,6 +116,7 @@ export async function createSpecraRuntime(
       skillService,
       config,
       projectContextResolver: contextResolver,
+      storeManager,
     });
 
     async function agentFor(workspaceRoot: string, sessionId: string): Promise<Agent> {
@@ -136,6 +139,7 @@ export async function createSpecraRuntime(
 
     return {
       sessionAgentManager,
+      storeManager,
       mcpManager,
       toolRegistry,
       providerRegistry,

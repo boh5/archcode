@@ -4,12 +4,11 @@ import { join, resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
 import { saveSessionTranscript } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
-
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+const manager = new SessionStoreManager();
 
 interface SessionSummaryBody {
   sessions: Array<{
@@ -42,6 +41,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
       releaseSlot: () => undefined,
       abortAndDispose: async () => undefined,
     },
+    storeManager: manager,
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
@@ -79,7 +79,7 @@ async function saveEmptySession(
   createdAt: number,
   title: string | null = null,
 ): Promise<void> {
-  const store = createScopedSessionStore(sessionId, workspaceRoot);
+  const store = manager.create(sessionId, workspaceRoot);
   store.setState({
     sessionId,
     createdAt,
@@ -97,6 +97,7 @@ async function saveEmptySession(
 
 describe("sessions routes", () => {
   beforeEach(async () => {
+    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });
@@ -182,7 +183,7 @@ describe("sessions routes", () => {
     const sessionId = crypto.randomUUID();
 
     // Create a store and register it (simulating an active session)
-    const store = createScopedSessionStore(sessionId, workspaceRoot);
+    const store = manager.create(sessionId, workspaceRoot);
 
     // Append events to simulate an active session
     store.getState().append({ type: "text-delta", text: "Hello" });

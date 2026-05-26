@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { ResolvedMcpConfig } from "./config/mcp";
 import type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
-import { createSessionStore } from "./store/store";
+import { storeManager } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
 import { createSpecraRuntime } from "./runtime";
@@ -89,7 +89,7 @@ function makeFakeMcpManager(result: McpDiscoveryResult | Error): McpManager {
 function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
   return {
-    store: createSessionStore(`main-test-${crypto.randomUUID()}`),
+    store: storeManager.create(`main-test-${crypto.randomUUID()}`),
     toolName,
     toolCallId: `${toolName}-call`,
     input,

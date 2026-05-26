@@ -1,8 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import type { StoreApi } from "zustand";
-import { createSessionStore } from "./store";
 import type { SessionStoreState, StoredMessage } from "./types";
 import { getSessionsDir } from "./sessions-dir";
 
@@ -242,7 +241,7 @@ export async function saveSessionTranscript(
 
   const json = JSON.stringify(data, null, 2);
   const finalPath = join(dir, `${state.sessionId}.json`);
-  const tmpPath = join(dir, `${state.sessionId}.json.tmp`);
+  const tmpPath = join(dir, `${state.sessionId}.${randomUUID()}.json.tmp`);
 
   try {
     await Bun.write(tmpPath, json);
@@ -257,10 +256,10 @@ export async function saveSessionTranscript(
   }
 }
 
-export async function loadSessionTranscript(
+export async function readSessionFile(
   sessionId: string,
   workspaceRoot: string,
-): Promise<StoreApi<SessionStoreState>> {
+): Promise<SessionFile> {
   const dir = getSessionsDir(workspaceRoot);
   const filePath = join(dir, `${sessionId}.json`);
   const raw = await Bun.file(filePath).text();
@@ -272,27 +271,5 @@ export async function loadSessionTranscript(
     );
   }
 
-  const store = createSessionStore(sessionId, workspaceRoot);
-  store.setState({
-    sessionId: parsed.sessionId,
-    createdAt: parsed.createdAt,
-    title: parsed.title ?? null,
-    messages: parsed.messages,
-    steps: parsed.steps ?? [],
-    todos: parsed.todos ?? [],
-    reminders: parsed.reminders,
-    childSessionIds: new Set(parsed.childSessionIds),
-    parentSessionId: parsed.parentSessionId,
-    subAgentDescriptions: new Map(parsed.subAgentDescriptions),
-    isRunning: false,
-    isStreamingModel: false,
-    currentRunId: undefined,
-    currentAssistantMessageId: undefined,
-    readSnapshots: new Map(),
-    events: [],
-    eventOffset: 0,
-    nextEventId: 0,
-  });
-
-  return store;
+  return parsed;
 }

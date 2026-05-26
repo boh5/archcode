@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createRegistry } from "../../tools/registry";
 import { registerBuiltinTools } from "../../core/register-tools";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import { WorkflowArtifactManager, WorkflowArtifactKindSchema, WorkflowStateManager } from "./index";
 import { agentDefinitions } from "../definitions";
 import { createAgentFactory } from "../factory";
@@ -76,7 +76,7 @@ describe("workflow regression hardening", () => {
     });
 
     for (const agentName of WORKFLOW_AGENT_NAMES) {
-      const store = createSessionStore(`workflow-regression-${agentName}`);
+      const store = storeManager.create(`workflow-regression-${agentName}`);
       const agent = factory.createAgent(agentName, { store, depth: agentName === "builder" ? 2 : 1 });
       const definition = factory.getDefinition(agentName);
       const allowedTools = factory.resolveAllowedTools(definition, agentName === "builder" ? 2 : 1);

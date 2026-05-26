@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { Reminder, SessionStoreState } from "../../store/types";
 import type { ToolExecutionContext } from "../types";
 import { createBuiltinToolDescriptors, waitForReminderTool, WaitForReminderInputSchema } from "./index";
@@ -10,7 +10,7 @@ import { createTestProjectContext } from "../test-project-context";
 const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder");
 
 function makeStore(childSessionIds: string[] = ["child-1"]): StoreApi<SessionStoreState> {
-  const store = createSessionStore(`wait-reminder-test-${crypto.randomUUID()}`);
+  const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`);
   store.setState({ childSessionIds: new Set(childSessionIds) });
   return store;
 }

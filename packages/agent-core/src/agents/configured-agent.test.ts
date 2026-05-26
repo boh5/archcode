@@ -6,7 +6,7 @@ import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
@@ -164,7 +164,7 @@ function definitionWith(overrides: Partial<AgentDefinition>): AgentDefinition {
 
 function createAgent(options: {
   definition: AgentDefinition;
-  store?: ReturnType<typeof createSessionStore>;
+  store?: ReturnType<typeof storeManager.create>;
   btm?: RecordingBackgroundTaskManager;
   quotaEnforcer?: (directory: string) => Promise<void>;
   workspaceRoot?: string;
@@ -227,7 +227,7 @@ describe("ConfiguredAgent", () => {
   test("orchestrator definition produces all configured lifecycle hooks", async () => {
     const streamFn = setupMockStreamText("root ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-root-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-root-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -338,7 +338,7 @@ describe("ConfiguredAgent", () => {
 
   test("explorer definition produces auto-compact, auto-inject, and todo-continuation hooks", async () => {
     const streamFn = setupMockStreamText("explore ok");
-    const store = createSessionStore(`configured-explore-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-explore-${crypto.randomUUID()}`);
     store.setState({
       reminders: [
         {
@@ -364,7 +364,7 @@ describe("ConfiguredAgent", () => {
   test("orchestrator definition dispatches transcript and memory background hooks", async () => {
     setupMockStreamText("orchestrator memory ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-orchestrator-background-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-orchestrator-background-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -403,7 +403,7 @@ describe("ConfiguredAgent", () => {
   test("memory config disabled skips memory background hooks", async () => {
     setupMockStreamText("memory disabled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-memory-disabled-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-disabled-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -440,7 +440,7 @@ describe("ConfiguredAgent", () => {
   test("memory config custom thresholds are used by extraction hook", async () => {
     setupMockStreamText("memory custom ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-memory-custom-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-custom-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -467,7 +467,7 @@ describe("ConfiguredAgent", () => {
   test("memory config absent uses default extraction thresholds", async () => {
     setupMockStreamText("memory defaults ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-memory-defaults-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-memory-defaults-${crypto.randomUUID()}`);
     store.setState({
       messages: [
         {
@@ -489,7 +489,7 @@ describe("ConfiguredAgent", () => {
   test('titleGeneration "unless-supplied" skips when store title already exists', async () => {
     setupMockStreamText("titled ok");
     const btm = new RecordingBackgroundTaskManager();
-    const store = createSessionStore(`configured-titled-${crypto.randomUUID()}`);
+    const store = storeManager.create(`configured-titled-${crypto.randomUUID()}`);
     store.setState({ title: "Supplied Title" });
 
     const agent = createAgent({ definition: exploreAgentDefinition, store, btm });

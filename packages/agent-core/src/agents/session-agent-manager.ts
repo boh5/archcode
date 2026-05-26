@@ -1,8 +1,8 @@
 import type { SpecraConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
-import { loadSessionTranscript } from "../store/helpers";
-import { createSessionStore, deleteSessionStore, scopedKey } from "../store/store";
+import { SessionStoreManager } from "../store/session-store-manager";
+import { scopedKey } from "../store/store";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { SkillService } from "../skills";
@@ -22,6 +22,7 @@ export interface SessionAgentManagerConfig {
   readonly projectContextResolver?: ProjectContextResolver;
   readonly maxConcurrentSessions?: number;
   readonly tombstoneTtlMs?: number;
+  readonly storeManager: SessionStoreManager;
 }
 
 const DEFAULT_TOMBSTONE_TTL_MS = 300000;
@@ -35,9 +36,11 @@ export class SessionAgentManager {
   #config: SessionAgentManagerConfig;
   readonly maxConcurrentSessions: number;
   readonly tombstoneTtlMs: number;
+  readonly #storeManager: SessionStoreManager;
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
+    this.#storeManager = config.storeManager;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
@@ -78,9 +81,9 @@ export class SessionAgentManager {
     const factory = this.#getFactory(workspaceRoot);
     let store: StoreApi<SessionStoreState>;
     try {
-      store = await loadSessionTranscript(sessionId, workspaceRoot);
+      store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
     } catch {
-      store = createSessionStore(sessionId, workspaceRoot);
+      store = this.#storeManager.create(sessionId, workspaceRoot);
     }
     return factory.createRootAgent("orchestrator", { store });
   }
@@ -94,13 +97,13 @@ export class SessionAgentManager {
     this.#tombstones.set(key, Date.now());
     const agent = this.#agents.get(key);
     if (!agent) {
-      deleteSessionStore(sessionId, workspaceRoot);
+      this.#storeManager.delete(sessionId, workspaceRoot);
       return;
     }
 
     agent.dispose();
     this.#agents.delete(key);
-    deleteSessionStore(sessionId, workspaceRoot);
+    this.#storeManager.delete(sessionId, workspaceRoot);
   }
 
   isTombstoned(workspaceRoot: string, sessionId: string): boolean {

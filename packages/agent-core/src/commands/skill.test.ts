@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "../provider/model";
 import { SkillService } from "../skills/service";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import { createSkillCommand } from "./skill";
 
 const dummyModelInfo = {
@@ -26,7 +26,7 @@ function createCommand(agentSkills: readonly string[] = ["git-master"]) {
 
 async function run(args?: string, agentSkills?: readonly string[]) {
   const command = createCommand(agentSkills);
-  return command.handler({ store: createSessionStore(crypto.randomUUID()), modelInfo: dummyModelInfo }, args);
+  return command.handler({ store: storeManager.create(crypto.randomUUID()), modelInfo: dummyModelInfo }, args);
 }
 
 describe("createSkillCommand", () => {

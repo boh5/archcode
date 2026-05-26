@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ModelMessage } from "ai";
 import type { BeforeModelCallContext } from "../loop-hooks";
-import { createSessionStore } from "../../../store/store";
+import { storeManager } from "../../../store/store";
 import type { Reminder } from "../../../store/types";
 import { createAutoInjectReminderHook } from "./auto-inject-reminder";
 
@@ -21,7 +21,7 @@ function createReminder(overrides: Partial<Reminder> = {}): Reminder {
 
 function createContext(messages: ModelMessage[] = []): BeforeModelCallContext {
   return {
-    store: createSessionStore(crypto.randomUUID()),
+    store: storeManager.create(crypto.randomUUID()),
     modelInfo: undefined as never,
     messages,
   };

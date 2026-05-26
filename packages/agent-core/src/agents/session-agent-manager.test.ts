@@ -4,6 +4,7 @@ import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { ConcurrentSessionLimitError } from "./errors";
@@ -47,6 +48,7 @@ function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): Sess
     providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
+    storeManager: new SessionStoreManager(),
     config: {
       provider: {},
       agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },

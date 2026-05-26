@@ -3,7 +3,6 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { SessionStoreState, TextPart } from "../../store/types";
-import { saveSessionTranscript } from "../../store/helpers";
 
 let _generateText: typeof aiGenerateText = aiGenerateText;
 
@@ -72,19 +71,6 @@ export function createTitleGenerationTask(
         const title = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 50);
 
         store.setState({ title });
-
-        const updatedState = store.getState();
-        await saveSessionTranscript(
-          {
-            sessionId: updatedState.sessionId,
-            createdAt: updatedState.createdAt,
-            title: updatedState.title,
-            messages: updatedState.messages,
-            steps: updatedState.steps,
-            todos: updatedState.todos,
-          },
-          ctx.workspaceRoot,
-        );
       } catch (err) {
         console.warn(
           "Title generation failed:",

@@ -2,7 +2,7 @@ import { afterAll, afterEach, describe, expect, mock, test, beforeEach } from "b
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { generateText } from "ai";
-import { createSessionStore } from "../../../store/store";
+import { storeManager } from "../../../store/store";
 import { createTitleGenerationHook } from "./title-generation";
 import type { BeforeModelCallContext } from "../loop-hooks";
 import type { ModelInfo } from "../../../provider/model";
@@ -49,7 +49,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("dispatches title-generation on first model call when no title set", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
 
     const ctx: BeforeModelCallContext = {
       store,
@@ -67,7 +67,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("skips dispatch when title already set", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({ title: "Already titled" });
 
     const ctx: BeforeModelCallContext = {
@@ -82,7 +82,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("only dispatches once (triggered guard)", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
 
     const ctx: BeforeModelCallContext = {
       store,
@@ -100,7 +100,7 @@ describe("createTitleGenerationHook", () => {
   });
 
   test("passes modelOptions to dispatched title generation task", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     const modelOptions = { temperature: 0.1, maxOutputTokens: 128 };
     const now = Date.now();
     store.setState({

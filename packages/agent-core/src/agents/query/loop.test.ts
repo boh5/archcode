@@ -6,7 +6,7 @@ import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSkillCommand } from "../../commands/skill";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
@@ -115,7 +115,7 @@ function createPermissionBranchRegistry(
 }
 
 function createStore(): StoreApi<SessionStoreState> {
-  return createSessionStore(crypto.randomUUID());
+  return storeManager.create(crypto.randomUUID());
 }
 
 function captureEvents(store: StoreApi<SessionStoreState>): SessionEventPayload[] {

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { join } from "node:path";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { randomUUID } from "crypto";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import { TOOL_OUTPUT_DIR } from "../persist-output";
 import type { ToolExecutionContext } from "../types";
 import type { CompletedToolPart, ErrorToolPart, ToolPart, StoredPart } from "../../store/types";
@@ -24,7 +24,7 @@ afterAll(async () => {
 });
 
 function makeContext(): ToolExecutionContext {
-  const store = createSessionStore(`view-test-run-${randomUUID()}`);
+  const store = storeManager.create(`view-test-run-${randomUUID()}`);
   return {
     store,
     toolName: "view_tool_output",

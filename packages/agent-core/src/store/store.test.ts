@@ -1,13 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
-import { createSessionStore, getSessionStore, scopedKey } from "./store";
+import { storeManager, scopedKey } from "./store";
+import { SessionStoreManager } from "./session-store-manager";
+
+beforeEach(() => {
+  storeManager.clearAll();
+});
 
 function uniqueSessionId(label: string): string {
   return `${label}-${crypto.randomUUID()}`;
 }
 
 function createFreshStore(label: string) {
-  return createSessionStore(uniqueSessionId(label));
+  return storeManager.create(uniqueSessionId(label));
 }
 
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
@@ -53,10 +58,10 @@ function onlyStep(steps: StepInfo[]): StepInfo {
   return steps[0]!;
 }
 
-describe("createSessionStore", () => {
-  test("creates initialized session state with empty events log", () => {
+describe("SessionStoreManager", () => {
+  test("create returns initialized session state with empty events log", () => {
     const sessionId = uniqueSessionId("creation");
-    const store = createSessionStore(sessionId);
+    const store = storeManager.create(sessionId);
     const state = store.getState();
 
     expect(state.sessionId).toBe(sessionId);
@@ -77,27 +82,68 @@ describe("createSessionStore", () => {
     expect(state.nextEventId).toBe(0);
   });
 
-  test("returns the same store for the same session id", () => {
+  test("create returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
-    expect(createSessionStore(sessionId)).toBe(createSessionStore(sessionId));
+    expect(storeManager.create(sessionId)).toBe(storeManager.create(sessionId));
   });
 
-  test("scopes stores by workspace root when provided", () => {
+  test("create scopes stores by workspace root when provided", () => {
     const sessionId = uniqueSessionId("scoped-store");
-    const left = createSessionStore(sessionId, "/workspace/left");
-    const right = createSessionStore(sessionId, "/workspace/right");
+    const left = storeManager.create(sessionId, "/workspace/left");
+    const right = storeManager.create(sessionId, "/workspace/right");
 
     expect(scopedKey("/workspace/left", sessionId)).toBe(`/workspace/left\0${sessionId}`);
     expect(left).not.toBe(right);
-    expect(getSessionStore(sessionId, "/workspace/left")).toBe(left);
-    expect(getSessionStore(sessionId, "/workspace/right")).toBe(right);
+    expect(storeManager.get(sessionId, "/workspace/left")).toBe(left);
+    expect(storeManager.get(sessionId, "/workspace/right")).toBe(right);
   });
 
-  test("getSessionStore returns undefined for unknown sessions and existing stores after creation", () => {
+  test("get returns undefined for unknown sessions and existing stores after creation", () => {
     const sessionId = uniqueSessionId("registry");
-    expect(getSessionStore(sessionId)).toBeUndefined();
-    const store = createSessionStore(sessionId);
-    expect(getSessionStore(sessionId)).toBe(store);
+    expect(storeManager.get(sessionId)).toBeUndefined();
+    const store = storeManager.create(sessionId);
+    expect(storeManager.get(sessionId)).toBe(store);
+  });
+
+  test("has returns true for registered stores and false for unknown ones", () => {
+    const sessionId = uniqueSessionId("has-check");
+    expect(storeManager.has(sessionId)).toBe(false);
+    storeManager.create(sessionId);
+    expect(storeManager.has(sessionId)).toBe(true);
+  });
+
+  test("delete removes a store from the registry", () => {
+    const sessionId = uniqueSessionId("delete-store");
+    storeManager.create(sessionId);
+    expect(storeManager.has(sessionId)).toBe(true);
+
+    const result = storeManager.delete(sessionId);
+    expect(result).toBe(true);
+    expect(storeManager.has(sessionId)).toBe(false);
+    expect(storeManager.get(sessionId)).toBeUndefined();
+  });
+
+  test("delete returns false for unknown sessions", () => {
+    expect(storeManager.delete("nonexistent")).toBe(false);
+  });
+
+  test("clearAll removes all stores from the registry", () => {
+    storeManager.create(uniqueSessionId("clear-a"));
+    storeManager.create(uniqueSessionId("clear-b"));
+    storeManager.create(uniqueSessionId("clear-c"));
+
+    storeManager.clearAll();
+
+    expect(storeManager.get("clear-a")).toBeUndefined();
+    expect(storeManager.get("clear-b")).toBeUndefined();
+    expect(storeManager.get("clear-c")).toBeUndefined();
+  });
+
+  test("clearAll on a fresh manager leaves no stores", () => {
+    const fresh = new SessionStoreManager();
+    fresh.create(uniqueSessionId("fresh-store"));
+    fresh.clearAll();
+    expect(fresh.has("fresh-store")).toBe(false);
   });
 });
 

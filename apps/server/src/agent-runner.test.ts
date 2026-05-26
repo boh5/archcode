@@ -2,12 +2,10 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { StoreApi } from "zustand";
-import { AgentRunningError } from "@specra/agent-core";
+import { AgentRunningError, SessionStoreManager } from "@specra/agent-core";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { CommandResult } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { loadSessionTranscript } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
@@ -16,8 +14,8 @@ import { __getSessionEventBridgeCountForTest, __resetSessionEventBridgesForTest,
 import { PermissionService } from "./permission-service";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "agent-runner");
+const manager = new SessionStoreManager();
 
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -54,7 +52,7 @@ class MockAgent implements Agent {
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
-    this.store = createScopedSessionStore(sessionId, workspaceRoot);
+    this.store = manager.create(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -115,6 +113,7 @@ function createRuntime(agent: Agent): SpecraRuntime {
       },
       abortAndDispose: async () => undefined,
     },
+    storeManager: manager,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
@@ -163,6 +162,7 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 
 describe("AgentRunner", () => {
   beforeEach(async () => {
+    manager.clearAll();
     __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
@@ -269,7 +269,7 @@ describe("AgentRunner", () => {
     await job.promise;
     await flushMicrotasks();
 
-    const saved = await loadSessionTranscript("session-save", workspaceRoot);
+    const saved = await manager.getOrLoad("session-save", workspaceRoot);
     expect(saved.getState().messages).toHaveLength(1);
   });
 
@@ -290,7 +290,10 @@ describe("AgentRunner", () => {
     run.resolve({ text: "Done", steps: 1 });
     await job.promise;
 
-    await expect(loadSessionTranscript("session-tombstone", workspaceRoot)).rejects.toThrow();
+    // The store is still in the registry since dispose wasn't called, but no file was saved.
+    // Remove the store from the registry so getOrLoad attempts disk load, which should fail.
+    manager.delete("session-tombstone", workspaceRoot);
+    await expect(manager.getOrLoad("session-tombstone", workspaceRoot)).rejects.toThrow();
   });
 
   test("acquires and releases per-workspace session slots", async () => {

@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createMemoryConsolidationHook } from "./memory-consolidation";
 import { CONSOLIDATION_THRESHOLD } from "../../../memory/constants";
-import { createSessionStore } from "../../../store/store";
+import { storeManager } from "../../../store/store";
 
 const mockDispatch = mock(() => {});
 const mockBtm = { dispatch: mockDispatch };
@@ -11,7 +11,7 @@ const mockBtm = { dispatch: mockDispatch };
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 function makeStore() {
-  return createSessionStore(crypto.randomUUID());
+  return storeManager.create(crypto.randomUUID());
 }
 
 describe("createMemoryConsolidationHook", () => {

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { generateText } from "ai";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import { __setGenerateTextForTest } from "./title-generation";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
@@ -50,7 +50,7 @@ describe("createTitleGenerationTask", () => {
 
   test("generates title and sets it in store on success", async () => {
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         {
@@ -101,7 +101,7 @@ describe("createTitleGenerationTask", () => {
   test("passes all whitelisted model options and strips variant", async () => {
     const now = Date.now();
     const providerOptions = { title: { mode: "full" } };
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         {
@@ -175,7 +175,7 @@ describe("createTitleGenerationTask", () => {
   });
 
   test("does nothing when no user message exists", async () => {
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({ messages: [] });
 
     const task = createTitleGenerationTask(store);
@@ -195,7 +195,7 @@ describe("createTitleGenerationTask", () => {
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         {
@@ -245,7 +245,7 @@ describe("createTitleGenerationTask", () => {
 
   test("does nothing when user message has no text parts", async () => {
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         {
@@ -271,45 +271,4 @@ describe("createTitleGenerationTask", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  test("persists after title generation via saveSessionTranscript", async () => {
-    const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
-    const sessionId = store.getState().sessionId;
-    store.setState({
-      messages: [
-        {
-          id: crypto.randomUUID(),
-          role: "user",
-          parts: [
-            {
-              type: "text",
-              id: crypto.randomUUID(),
-              text: "Test message",
-              createdAt: now,
-              completedAt: now,
-            },
-          ],
-          createdAt: now,
-          completedAt: now,
-        },
-      ],
-    });
-
-    const task = createTitleGenerationTask(store);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
-
-    await task.run(ctx as never);
-
-    const filePath = join(TEST_TMP, `${sessionId}.json`);
-    const file = Bun.file(filePath);
-    expect(await file.exists()).toBe(true);
-
-    const content = JSON.parse(await file.text());
-    expect(content.sessionId).toBe(sessionId);
-    expect(content.title).toBe("Short test title");
-  });
 });

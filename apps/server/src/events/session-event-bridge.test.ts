@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { GlobalSSEEvent } from "@specra/protocol";
 import type { StoreApi } from "zustand";
@@ -13,10 +13,10 @@ import {
   unregisterSessionEventBridge,
 } from "./session-event-bridge";
 
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => StoreApi<SessionStoreState>);
+const manager = new SessionStoreManager();
 
 function createStore(sessionId: string, workspaceRoot: string): StoreApi<SessionStoreState> {
-  return createScopedSessionStore(sessionId, workspaceRoot);
+  return manager.create(sessionId, workspaceRoot);
 }
 
 function appendNotice(store: StoreApi<SessionStoreState>, message: string): void {
@@ -28,6 +28,7 @@ describe("registerSessionEventBridge", () => {
   let received: GlobalSSEEvent[];
 
   beforeEach(() => {
+    manager.clearAll();
     bus = new GlobalEventBus();
     received = [];
     __resetSessionEventBridgesForTest();

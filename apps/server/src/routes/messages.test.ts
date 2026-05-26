@@ -6,14 +6,13 @@ import { AgentRunningError } from "@specra/agent-core";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { ProjectRegistry } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
-
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
+const manager = new SessionStoreManager();
 
 type RunMock = ReturnType<typeof mock<(message: string, options?: AgentRunOptions | AbortSignal) => Promise<AgentResult>>>;
 
@@ -22,7 +21,7 @@ class MockAgent implements Agent {
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string) {
-    this.store = createScopedSessionStore(sessionId, workspaceRoot);
+    this.store = manager.create(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -78,6 +77,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, agent: Agent): Spec
       releaseSlot: () => undefined,
       abortAndDispose: async () => undefined,
     },
+    storeManager: manager,
     projectRegistry,
     mcpManager: undefined,
     toolRegistry: undefined,
@@ -105,6 +105,7 @@ async function createTestApp(testName: string, agent: Agent) {
 
 describe("messages routes", () => {
   beforeEach(async () => {
+    manager.clearAll();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });
   });

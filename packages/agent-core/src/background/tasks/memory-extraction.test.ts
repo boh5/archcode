@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { StoredMessage } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -145,7 +145,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("skip-few-messages");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [makeUserMessage("Hi", now)],
     });
@@ -171,7 +171,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("skip-short-content");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("Hi", now),
@@ -201,7 +201,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: makeUserMessages(5, longText, now),
     });
@@ -281,7 +281,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = createSessionStore(crypto.randomUUID());
+      const store = storeManager.create(crypto.randomUUID());
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -322,7 +322,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = createSessionStore(crypto.randomUUID());
+      const store = storeManager.create(crypto.randomUUID());
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -390,7 +390,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = createSessionStore(crypto.randomUUID());
+      const store = storeManager.create(crypto.randomUUID());
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -450,7 +450,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -494,7 +494,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -547,7 +547,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -577,7 +577,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -629,7 +629,7 @@ describe("createMemoryExtractionTask", () => {
     try {
       const now = Date.now();
       const longText = "A".repeat(300);
-      const store = createSessionStore(crypto.randomUUID());
+      const store = storeManager.create(crypto.randomUUID());
       store.setState({
         messages: [
           ...makeUserMessages(5, longText, now),
@@ -670,7 +670,7 @@ describe("createMemoryExtractionTask", () => {
       messages.push(makeAssistantMessage(`Response ${i}`, now + i));
     }
 
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({ messages });
 
     const task = createMemoryExtractionTask(store, roots);
@@ -694,7 +694,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("from-index");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("OLD_SHOULD_NOT_APPEAR".repeat(100), now),
@@ -718,7 +718,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("Short message", now),
@@ -738,7 +738,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config-min-messages");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -758,7 +758,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("custom-config-min-content");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("Hi", now),
@@ -783,7 +783,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ memories: [] }));
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("A".repeat(300), now),
@@ -804,7 +804,7 @@ describe("createMemoryExtractionTask", () => {
     const roots = makeMemoryRoots("filter-prompt");
     await setupDirs(roots);
     const now = Date.now();
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         makeUserMessage("User preference ".repeat(80), now),
@@ -868,7 +868,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -943,7 +943,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1020,7 +1020,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1079,7 +1079,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),
@@ -1125,7 +1125,7 @@ describe("createMemoryExtractionTask", () => {
 
     const now = Date.now();
     const longText = "A".repeat(300);
-    const store = createSessionStore(crypto.randomUUID());
+    const store = storeManager.create(crypto.randomUUID());
     store.setState({
       messages: [
         ...makeUserMessages(5, longText, now),

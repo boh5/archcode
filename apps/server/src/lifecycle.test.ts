@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { StoreApi } from "zustand";
 import type { Agent, AgentResult, AgentRunOptions } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import type { SessionStoreState } from "@specra/agent-core";
 import type { ToolConfirmationCallback } from "@specra/agent-core";
 import { AgentRunner } from "./agent-runner";
@@ -13,8 +13,8 @@ import { __resetSessionEventBridgesForTest, registerSessionEventBridge } from ".
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "lifecycle");
+const manager = new SessionStoreManager();
 
-const createScopedSessionStore = createSessionStore as unknown as typeof createSessionStore & ((sessionId: string, workspaceRoot: string) => ReturnType<typeof createSessionStore>);
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -31,7 +31,7 @@ class MockAgent implements Agent {
   readonly runMock: RunMock;
 
   constructor(sessionId: string, result: Promise<AgentResult>, workspaceRoot: string = tempRoot) {
-    this.store = createScopedSessionStore(sessionId, workspaceRoot);
+    this.store = manager.create(sessionId, workspaceRoot);
     this.runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal) => {
       const signal = options instanceof AbortSignal ? options : options?.abort;
       return await withAbort(result, signal);
@@ -84,6 +84,7 @@ function createRuntime(agent: Agent): SpecraRuntime {
       releaseSlot: () => undefined,
       abortAndDispose: async () => undefined,
     },
+    storeManager: manager,
     mcpManager: undefined,
     toolRegistry: undefined,
     providerRegistry: undefined,
@@ -130,6 +131,7 @@ async function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined
 
 describe("server lifecycle", () => {
   beforeEach(async () => {
+    manager.clearAll();
     __resetSessionEventBridgesForTest();
     await rm(tempRoot, { recursive: true, force: true });
     await mkdir(tempRoot, { recursive: true });

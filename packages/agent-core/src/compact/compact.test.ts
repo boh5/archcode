@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoredMessage } from "../store/types";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import {
   CompactError,
   type CompactInput,
@@ -299,7 +299,7 @@ describe("compact", () => {
       makeUserMessage("u6", "Sixth message (incomplete)"),
     ];
 
-    const store = createSessionStore("test-session-txn");
+    const store = storeManager.create("test-session-txn");
     const originalMessageCount = store.getState().messages.length;
 
     let error: CompactError | null = null;
@@ -550,7 +550,7 @@ describe("compact", () => {
   // -------------------------------------------------------------------------
 
   test("commitCompact dispatches compact event to store", () => {
-    const store = createSessionStore("test-commit-session");
+    const store = storeManager.create("test-commit-session");
 
     // Add some messages first
     store.getState().append({ type: "user-message", content: "Hello" });

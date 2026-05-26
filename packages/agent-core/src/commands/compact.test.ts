@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelInfo } from "../provider/model";
-import { createSessionStore } from "../store/store";
+import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
 import { __setStreamTextForTest } from "../compact/compact";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
@@ -80,7 +80,7 @@ beforeEach(() => {
 
 describe("createCompactCommand", () => {
   test("returns compact descriptor", () => {
-    const store = createSessionStore(`compact-command-descriptor-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-descriptor-${crypto.randomUUID()}`);
 
     const descriptor = createCompactCommand(store, modelInfo);
 
@@ -89,7 +89,7 @@ describe("createCompactCommand", () => {
   });
 
   test("triggers compact pipeline and commits result", async () => {
-    const store = createSessionStore(`compact-command-success-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
 
     const result = await createCompactCommand(store, modelInfo).handler({ store, modelInfo });
@@ -115,7 +115,7 @@ describe("createCompactCommand", () => {
         };
       }) as unknown as typeof import("ai").streamText,
     );
-    const store = createSessionStore(`compact-command-options-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
 
     const result = await createCompactCommand(store, modelInfo).handler({
@@ -139,7 +139,7 @@ describe("createCompactCommand", () => {
   });
 
   test("bypasses open circuit breaker and resets it on success", async () => {
-    const store = createSessionStore(`compact-command-breaker-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-breaker-${crypto.randomUUID()}`);
     const circuitBreaker = createBreaker();
     store.setState({ messages: compactableMessages() });
 
@@ -154,7 +154,7 @@ describe("createCompactCommand", () => {
   });
 
   test("returns null-result message without resetting circuit breaker", async () => {
-    const store = createSessionStore(`compact-command-null-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-null-${crypto.randomUUID()}`);
     const circuitBreaker = createBreaker();
     store.setState({ messages: [makeUserMessage("u1", "Only one")] });
 
@@ -182,7 +182,7 @@ describe("createCompactCommand", () => {
         toolResults: Promise.resolve([]),
       })) as unknown as typeof import("ai").streamText,
     );
-    const store = createSessionStore(`compact-command-busy-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 
@@ -201,7 +201,7 @@ describe("createCompactCommand", () => {
         throw new Error("model down");
       }) as unknown as typeof import("ai").streamText,
     );
-    const store = createSessionStore(`compact-command-error-${crypto.randomUUID()}`);
+    const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
 

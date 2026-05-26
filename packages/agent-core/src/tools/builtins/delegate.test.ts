@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { DelegateTargetNotAllowedError } from "../../agents/errors";
 import type { AgentFactoryLike, DelegateAgentOptions } from "../../delegation/types";
-import { createSessionStore } from "../../store/store";
+import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { TOOL_ERROR_META_KEY } from "../errors";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
@@ -9,7 +9,7 @@ import { createTestProjectContext } from "../test-project-context";
 
 class ToolStubFactory implements AgentFactoryLike {
   lastOptions: DelegateAgentOptions | undefined;
-  readonly store = createSessionStore(`delegate-child-${crypto.randomUUID()}`);
+  readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`);
 
   async delegate(options: DelegateAgentOptions) {
     this.lastOptions = options;
@@ -27,7 +27,7 @@ class ToolStubFactory implements AgentFactoryLike {
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    store: createSessionStore(`delegate-parent-${crypto.randomUUID()}`),
+    store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`),
     toolName: "delegate",
     toolCallId: "delegate-call",
     input: {},
@@ -138,7 +138,7 @@ describe("delegate tool", () => {
   it("forwards title and description to the factory", async () => {
     const factory = new ToolStubFactory();
     const parentAbort = new AbortController();
-    const parentStore = createSessionStore(`delegate-parent-${crypto.randomUUID()}`);
+    const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
 
     await executeDelegate(
       {

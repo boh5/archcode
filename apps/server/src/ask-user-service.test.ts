@@ -1,12 +1,13 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { AskUserRequest } from "@specra/agent-core";
-import { createSessionStore } from "@specra/agent-core";
+import { SessionStoreManager } from "@specra/agent-core";
 import { AskUserService } from "./ask-user-service";
 
 const tmpRoots: string[] = [];
+const manager = new SessionStoreManager();
 
 const request: AskUserRequest = {
   toolName: "ask_user",
@@ -37,7 +38,7 @@ async function createPending() {
   const service = new AskUserService();
   const sessionId = `session-${crypto.randomUUID()}`;
   const workspaceRoot = await createWorkspaceRoot();
-  const store = createSessionStore(sessionId, workspaceRoot);
+  const store = manager.create(sessionId, workspaceRoot);
   const promise = service.request(sessionId, workspaceRoot, request, store);
   const event = store.getState().events.find((entry) => entry.kind === "question.request");
   if (!event) {
@@ -50,6 +51,10 @@ async function createPending() {
 }
 
 describe("AskUserService", () => {
+  afterEach(() => {
+    manager.clearAll();
+  });
+
   test("request creates Deferred, respond resolves it with answers", async () => {
     const { service, promise, id, payload, store } = await createPending();
 
@@ -88,7 +93,7 @@ describe("AskUserService", () => {
     const service = new AskUserService();
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceRoot = await createWorkspaceRoot();
-    const store = createSessionStore(sessionId, workspaceRoot);
+    const store = manager.create(sessionId, workspaceRoot);
     const abortController = new AbortController();
     const promise = service.request(sessionId, workspaceRoot, request, store, abortController.signal);
     const event = store.getState().events.find((entry) => entry.kind === "question.request");
@@ -116,8 +121,8 @@ describe("AskUserService", () => {
     const sessionTwo = `session-${crypto.randomUUID()}`;
     const workspaceOne = await createWorkspaceRoot();
     const workspaceTwo = await createWorkspaceRoot();
-    const storeOne = createSessionStore(sessionOne, workspaceOne);
-    const storeTwo = createSessionStore(sessionTwo, workspaceTwo);
+    const storeOne = manager.create(sessionOne, workspaceOne);
+    const storeTwo = manager.create(sessionTwo, workspaceTwo);
     const first = service.request(sessionOne, workspaceOne, request, storeOne);
     const second = service.request(sessionTwo, workspaceTwo, request, storeTwo);
     const firstEvent = storeOne.getState().events.find((entry) => entry.kind === "question.request");
@@ -154,8 +159,8 @@ describe("AskUserService", () => {
     const sessionTwo = `session-${crypto.randomUUID()}`;
     const workspaceOne = await createWorkspaceRoot();
     const workspaceTwo = await createWorkspaceRoot();
-    const storeOne = createSessionStore(sessionOne, workspaceOne);
-    const storeTwo = createSessionStore(sessionTwo, workspaceTwo);
+    const storeOne = manager.create(sessionOne, workspaceOne);
+    const storeTwo = manager.create(sessionTwo, workspaceTwo);
     const first = service.request(sessionOne, workspaceOne, request, storeOne);
     const second = service.request(sessionTwo, workspaceTwo, request, storeTwo);
     const firstEvent = storeOne.getState().events.find((entry) => entry.kind === "question.request");
@@ -204,8 +209,8 @@ describe("AskUserService", () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     const workspaceA = await createWorkspaceRoot();
     const workspaceB = await createWorkspaceRoot();
-    const storeA = createSessionStore(sessionId, workspaceA);
-    const storeB = createSessionStore(sessionId, workspaceB);
+    const storeA = manager.create(sessionId, workspaceA);
+    const storeB = manager.create(sessionId, workspaceB);
     const first = service.request(sessionId, workspaceA, request, storeA);
     const second = service.request(sessionId, workspaceB, request, storeB);
     const firstEvent = storeA.getState().events.find((entry) => entry.kind === "question.request");
