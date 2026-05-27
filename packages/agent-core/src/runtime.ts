@@ -6,6 +6,9 @@ import type { CommandResult } from "./commands/types";
 import { loadConfig } from "./config/load";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
 import { configureDefaultBinaryManagerLogger } from "./binary/manager";
+import { configureDefaultProcessRunnerLogger } from "./process/runner";
+import { configureDefaultLspToolLogger } from "./tools/builtins/lsp/tool-logger";
+import { configureDefaultWebFetchLogger } from "./tools/builtins/web-fetch";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
@@ -102,6 +105,9 @@ export async function createSpecraRuntime(
 
   configureDefaultLspClientPoolLogger(runtimeLogger.child({ module: "lsp" }));
   configureDefaultBinaryManagerLogger(runtimeLogger.child({ module: "binary" }));
+  configureDefaultProcessRunnerLogger(runtimeLogger.child({ module: "process" }));
+  configureDefaultLspToolLogger(runtimeLogger.child({ module: "lsp.tools" }));
+  configureDefaultWebFetchLogger(runtimeLogger.child({ module: "webfetch" }));
 
   const recordWarning = (warning: McpWarning): void => {
     warnings.push(warning);

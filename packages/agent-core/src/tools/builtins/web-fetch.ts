@@ -3,9 +3,19 @@ import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { gfm } from "@truto/turndown-plugin-gfm";
+import type { Logger } from "../../logger";
+import { silentLogger } from "../../logger";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
+
+// ─── Module-level logger ───
+
+let _logger: Logger = silentLogger;
+
+export function configureDefaultWebFetchLogger(logger: Logger): void {
+  _logger = logger;
+}
 
 // ─── Constants ───
 
@@ -228,6 +238,10 @@ export async function runWebFetch(
     finalUrl = currentUrl;
   } catch (error) {
     if (controller.signal.aborted && !ctx.abort.aborted) {
+      _logger.warn("webfetch.timeout", {
+        module: "webfetch",
+        context: { url: validated.url, timeoutMs: DEFAULT_TIMEOUT_MS },
+      });
       return createToolErrorResult({
         kind: "webfetch-timeout",
         code: "TOOL_WEBFETCH_TIMEOUT",
@@ -235,12 +249,21 @@ export async function runWebFetch(
       });
     }
     if (ctx.abort.aborted) {
+      _logger.debug("webfetch.cancelled", {
+        module: "webfetch",
+        context: { url: validated.url },
+      });
       return createToolErrorResult({
         kind: "cancelled",
         code: "TOOL_CANCELLED",
         message: "Web fetch was cancelled",
       });
     }
+    _logger.error("webfetch.failed", {
+      module: "webfetch",
+      error,
+      context: { url: validated.url },
+    });
     return createToolErrorResult({
       kind: "execution",
       error: error instanceof Error ? error : new Error(String(error)),
@@ -293,12 +316,21 @@ export async function runWebFetch(
     }
   } catch (error) {
     if (ctx.abort.aborted) {
+      _logger.debug("webfetch.stream.cancelled", {
+        module: "webfetch",
+        context: { url: validated.url },
+      });
       return createToolErrorResult({
         kind: "cancelled",
         code: "TOOL_CANCELLED",
         message: "Web fetch was cancelled during download",
       });
     }
+    _logger.error("webfetch.stream.failed", {
+      module: "webfetch",
+      error,
+      context: { url: validated.url },
+    });
     return createToolErrorResult({
       kind: "execution",
       error: error instanceof Error ? error : new Error(String(error)),

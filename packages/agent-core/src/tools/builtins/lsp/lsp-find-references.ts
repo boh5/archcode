@@ -3,6 +3,7 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
+import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatReferences } from "./format-output";
@@ -94,6 +95,11 @@ export const lspFindReferencesTool = defineTool({
       }
     } catch (error) {
       if (error instanceof LspError) {
+        getLspToolLogger().warn("lsp.find-references.error", {
+          module: "lsp.find-references",
+          error,
+          context: { lspCode: error.code },
+        });
         return createToolErrorResult({
           kind: error.kind,
           code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
@@ -103,6 +109,10 @@ export const lspFindReferencesTool = defineTool({
         });
       }
 
+      getLspToolLogger().error("lsp.find-references.failed", {
+        module: "lsp.find-references",
+        error,
+      });
       return createToolErrorResult({
         kind: "lsp-error",
         code: "TOOL_LSP_ERROR",

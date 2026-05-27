@@ -3,6 +3,7 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
+import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDefinition } from "./format-output";
@@ -99,6 +100,11 @@ export const lspGotoDefinitionTool = defineTool({
       }
     } catch (error) {
       if (error instanceof LspError) {
+        getLspToolLogger().warn("lsp.goto-definition.error", {
+          module: "lsp.goto-definition",
+          error,
+          context: { lspCode: error.code },
+        });
         return createToolErrorResult({
           kind: error.kind,
           code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
@@ -108,6 +114,10 @@ export const lspGotoDefinitionTool = defineTool({
         });
       }
 
+      getLspToolLogger().error("lsp.goto-definition.failed", {
+        module: "lsp.goto-definition",
+        error,
+      });
       return createToolErrorResult({
         kind: "lsp-error",
         code: "TOOL_LSP_ERROR",

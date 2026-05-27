@@ -1,3 +1,5 @@
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import type {
   ProcessRunner,
   ProcessRunnerErrorSnapshot,
@@ -9,6 +11,13 @@ import type {
 const MAX_EAGAIN_RETRIES = 3;
 const EAGAIN_RETRY_BASE_DELAY_MS = 10;
 const DEFAULT_ABORT_REASON = "aborted";
+
+let _logger: Logger = silentLogger;
+
+/** Configure the module-level logger for the default ProcessRunner. */
+export function configureDefaultProcessRunnerLogger(logger: Logger): void {
+  _logger = logger;
+}
 
 type SpawnResult = {
   readonly stdout?: ReadableStream<Uint8Array> | null;
@@ -54,6 +63,11 @@ class BunProcessRunner implements ProcessRunner {
     try {
       proc = await spawnWithEagainRetry(input);
     } catch (error) {
+      _logger.error("process.spawn.failed", {
+        module: "process.runner",
+        error,
+        context: { command: input.argv[0] },
+      });
       return {
         kind: "spawn-failure",
         argv: input.argv,
@@ -106,15 +120,27 @@ class BunProcessRunner implements ProcessRunner {
       };
 
       if (timedOut) {
+        _logger.warn("process.timeout", {
+          module: "process.runner",
+          context: { command: input.argv[0], timeoutMs: input.timeoutMs },
+        });
         return { ...base, kind: "timeout", timeoutMs: input.timeoutMs!, exitCode };
       }
 
       if (aborted) {
+        _logger.debug("process.aborted", {
+          module: "process.runner",
+          context: { command: input.argv[0], reason: abortReason() },
+        });
         return { ...base, kind: "aborted", timeoutMs: input.timeoutMs, exitCode, reason: abortReason() };
       }
 
       const signal = proc.signalCode;
       if (signal !== undefined && signal !== null) {
+        _logger.warn("process.killed", {
+          module: "process.runner",
+          context: { command: input.argv[0], signal: String(signal) },
+        });
         return { ...base, kind: "signal", exitCode, signal };
       }
 

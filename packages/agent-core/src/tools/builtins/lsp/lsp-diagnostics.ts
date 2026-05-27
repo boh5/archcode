@@ -4,6 +4,7 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
+import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDiagnostics, formatTimeout } from "./format-output";
@@ -144,6 +145,10 @@ async function handleFileDiagnostics(
     }
   } catch (error) {
     if (error instanceof DiagnosticsTimeoutError) {
+      getLspToolLogger().warn("lsp.diagnostics.timeout", {
+        module: "lsp.diagnostics",
+        context: { filePath: displayPath, timeoutMs: DIAGNOSTICS_TIMEOUT_MS },
+      });
       return createToolErrorResult({
         kind: "lsp-timeout",
         code: "TOOL_LSP_TIMEOUT",
@@ -153,6 +158,11 @@ async function handleFileDiagnostics(
     }
 
     if (error instanceof LspError) {
+      getLspToolLogger().warn("lsp.diagnostics.error", {
+        module: "lsp.diagnostics",
+        error,
+        context: { filePath: displayPath, lspCode: error.code },
+      });
       return createToolErrorResult({
         kind: error.kind,
         code: error.kind === "lsp-timeout" ? "TOOL_LSP_TIMEOUT" : "TOOL_LSP_ERROR",
@@ -162,6 +172,11 @@ async function handleFileDiagnostics(
       });
     }
 
+    getLspToolLogger().error("lsp.diagnostics.failed", {
+      module: "lsp.diagnostics",
+      error,
+      context: { filePath: displayPath },
+    });
     return createToolErrorResult({
       kind: "lsp-error",
       code: "TOOL_LSP_ERROR",
@@ -312,6 +327,11 @@ async function handleDirectoryDiagnostics(
         cwd: ctx.workspaceRoot,
       });
     } catch (error) {
+      getLspToolLogger().warn("lsp.diagnostics.server.start.failed", {
+        module: "lsp.diagnostics",
+        error,
+        context: { serverId: firstEntry.serverId, languageId: firstEntry.languageId },
+      });
       warnings.push(`[Warning: Language server for ${firstEntry.languageId} could not be started: ${formatWarningMessage(error)}]`);
       continue;
     }
@@ -345,6 +365,11 @@ async function handleDirectoryDiagnostics(
           const diagnostics = await waitForDiagnostics(diagnosticsPromise, DIAGNOSTICS_TIMEOUT_MS);
           allDiagnostics.push(...diagnostics);
         } catch (error) {
+          getLspToolLogger().warn("lsp.diagnostics.file.failed", {
+            module: "lsp.diagnostics",
+            error,
+            context: { filePath: path.basename(entry.filePath) },
+          });
           warnings.push(`[Warning: Failed to process ${path.basename(entry.filePath)}: ${formatWarningMessage(error)}]`);
           continue;
         }

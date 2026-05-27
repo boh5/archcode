@@ -3,6 +3,7 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";
 import { isRecord } from "./shared";
+import { getLspToolLogger } from "./tool-logger";
 import { resolveAndValidatePath } from "../../security/path-validator";
 import type { ToolExecutionResult } from "../../types";
 import { formatDocumentSymbols, formatWorkspaceSymbols } from "./format-output";
@@ -97,6 +98,7 @@ async function handleDocumentSymbols(
       pool.release(poolKey);
     }
   } catch (error) {
+    logLspToolError(error, "document symbols");
     return toLspToolErrorResult(error, "LSP document symbols failed");
   }
 }
@@ -135,6 +137,7 @@ async function handleWorkspaceSymbols(
       pool.release(poolKey);
     }
   } catch (error) {
+    logLspToolError(error, "workspace symbols");
     return toLspToolErrorResult(error, "LSP workspace symbols failed");
   }
 }
@@ -276,6 +279,22 @@ function symbolKindToString(kind: number): string {
 }
 
 // ─── Error helpers ───
+
+function logLspToolError(error: unknown, scope: string): void {
+  if (error instanceof LspError) {
+    getLspToolLogger().warn("lsp.symbols.error", {
+      module: "lsp.symbols",
+      error,
+      context: { scope, lspCode: error.code },
+    });
+  } else {
+    getLspToolLogger().error("lsp.symbols.failed", {
+      module: "lsp.symbols",
+      error,
+      context: { scope },
+    });
+  }
+}
 
 function toLspToolErrorResult(error: unknown, label: string): ToolExecutionResult {
   if (error instanceof LspError) {
