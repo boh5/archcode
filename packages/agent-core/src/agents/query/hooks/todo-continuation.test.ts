@@ -4,6 +4,7 @@ import type { ModelInfo } from "../../../provider/model";
 import { createMockStore } from "../../../store/test-helpers";
 import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, RunEndEvent } from "../../../store/types";
 import type { AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";
+import { silentLogger } from "../../../logger";
 import { createTodoContinuationHook } from "./todo-continuation";
 
 let mockNow = 10_000;
@@ -212,7 +213,7 @@ async function runStep(
     steps: [...state.steps, stepInfo(stepIndex)],
   }));
 
-  await hook({ store, modelInfo: modelInfoStub() });
+  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger });
 }
 
 async function runLoopEnd(
@@ -220,7 +221,7 @@ async function runLoopEnd(
   store: StoreApi<SessionStoreState>,
   loopEndStatus: RunEndEvent["status"],
 ): Promise<void> {
-  await hook({ store, modelInfo: modelInfoStub(), loopEndStatus });
+  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger, loopEndStatus });
 }
 
 function seedTodos(store: StoreApi<SessionStoreState>, todos: StoredTodo[]): void {

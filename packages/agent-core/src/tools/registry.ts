@@ -10,6 +10,7 @@ import type {
   PermissionDecision,
 } from "./types";
 import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 import { createPermissionErrorResult } from "./permission";
 import { redactString, redactValue } from "./security/redaction";
@@ -23,14 +24,14 @@ import {
 
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
-  private _logger: Logger | undefined;
+  private _logger: Logger;
 
   globalHooks: { before: BeforeHook[]; after: AfterHook[] };
   globalPermissions: ToolPermission[];
 
   constructor(logger?: Logger) {
     this._descriptors = new Map();
-    this._logger = logger;
+    this._logger = logger ?? silentLogger;
     this.globalHooks = { before: [], after: [] };
     this.globalPermissions = [];
   }
@@ -71,8 +72,8 @@ export class ToolRegistry {
       if (desc) {
         resolved.push(desc);
       } else {
-        this._logger?.warn(`Unknown tool "${name}" requested by agent`, {
-          context: { toolName: name },
+        this._logger.warn("tool.resolve.unknown", {
+          meta: { toolName: name },
         });
       }
     }

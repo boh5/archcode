@@ -1,24 +1,27 @@
-import { createConsoleLogger, type Logger } from "../../logger";
+import type { Logger } from "../../logger";
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
 
-const defaultLogger = createConsoleLogger({ module: "tools" });
-
-export function createExecutionLogger(logger?: Logger): AfterHook {
-  const log = logger ?? defaultLogger;
-
+export function createExecutionLogger(logger: Logger): AfterHook {
   return async function executionLoggerAfterHook(
     result: ToolExecutionResult,
     ctx: ToolExecutionContext,
   ): Promise<void> {
-    const context: Record<string, unknown> = {
+    const meta: Record<string, unknown> = {
       toolName: ctx.toolName,
       toolCallId: ctx.toolCallId,
-      input: ctx.redactedInput,
       isError: result.isError,
       outputSize: result.output.length,
-      durationMs: ctx.durationMs,
+      ...(ctx.durationMs !== undefined ? { durationMs: ctx.durationMs } : {}),
+      ...(ctx.step !== undefined ? { step: ctx.step } : {}),
+      ...(ctx.permissionOutcome !== undefined ? { permissionOutcome: ctx.permissionOutcome } : {}),
     };
 
-    log.debug("Tool execution completed", { context });
+    logger.debug("tool.execute.completed", {
+      context: {
+        sessionId: ctx.store.getState().sessionId,
+        agentName: ctx.agentName,
+      },
+      meta,
+    });
   };
 }

@@ -11,6 +11,7 @@ import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools
 import type { AnyToolDescriptor } from "./tools/types";
 import { createSpecraRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
+import { createInMemoryLogger } from "./logger";
 const tmpRoots: string[] = [];
 
 afterAll(() => {
@@ -206,17 +207,17 @@ describe("createSpecraRuntime", () => {
         },
       }),
     );
-    const warned: McpWarning[] = [];
+    const { logger, entries } = createInMemoryLogger();
     const manager = makeFakeMcpManager(new Error(`boom ${secret}`));
 
     const runtime = await createSpecraRuntime({
       configPath,
       mcpManagerFactory: () => manager,
-      warn: (warning) => warned.push(warning),
+      logger,
     });
 
     expect(runtime.warnings).toHaveLength(1);
-    expect(warned).toEqual(runtime.warnings);
+    expect(entries.map((entry) => entry.event)).toContain("mcp.discovery.warning");
     expect(runtime.warnings[0].message).toContain(REDACTION_MARKER);
     expect(runtime.warnings[0].message).not.toContain(secret);
   });

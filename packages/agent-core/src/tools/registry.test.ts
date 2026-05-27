@@ -1456,8 +1456,8 @@ describe("resolveForAgent()", () => {
 
     // logger.warn was called for the missing tool
     expect(logger.warn).toHaveBeenCalledTimes(1);
-    const callArg = (logger.warn as ReturnType<typeof mock>).mock.calls[0][0];
-    expect(callArg).toContain("missing");
+    expect((logger.warn as ReturnType<typeof mock>).mock.calls[0][0]).toBe("tool.resolve.unknown");
+    expect((logger.warn as ReturnType<typeof mock>).mock.calls[0][1]).toEqual({ meta: { toolName: "missing" } });
   });
 });
 
@@ -1599,6 +1599,8 @@ describe("createRegistry()", () => {
 
     expect(resolved.descriptors).toEqual([]);
     expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][0]).toBe("tool.resolve.unknown");
+    expect(logger.warn.mock.calls[0][1]).toEqual({ meta: { toolName: "missing" } });
   });
 });
 
@@ -1658,9 +1660,11 @@ describe("hook integration with registry", () => {
 
     expect(logger.debug).toHaveBeenCalledTimes(1);
     const calls = logger.debug.mock.calls;
-    expect(calls[0][0]).toBe("Tool execution completed");
+    expect(calls[0][0]).toBe("tool.execute.completed");
 
-    const meta = (calls[0][1] as { context: Record<string, unknown> }).context;
+    const fields = calls[0][1] as { context: Record<string, unknown>; meta: Record<string, unknown> };
+    expect(fields.context.sessionId).toBe("test-session");
+    const meta = fields.meta;
     expect(meta.toolName).toBe("echo");
     expect(meta.toolCallId).toBe("call-1");
     expect(meta.isError).toBe(false);
@@ -1804,8 +1808,11 @@ describe("hook integration with registry", () => {
     expect(fileContent).not.toContain(rawSecret);
     expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(events)).not.toContain(rawSecret);
-    const loggerMeta = (logger.debug.mock.calls[0][1] as { context: Record<string, unknown> }).context;
-    expect(JSON.stringify(loggerMeta)).toContain(REDACTION_MARKER);
+    const loggerMeta = (logger.debug.mock.calls[0][1] as { meta: Record<string, unknown> }).meta;
+    expect("input" in loggerMeta).toBe(false);
+    expect("redactedInput" in loggerMeta).toBe(false);
+    expect("output" in loggerMeta).toBe(false);
+    expect("rawOutput" in loggerMeta).toBe(false);
     expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
   });
 

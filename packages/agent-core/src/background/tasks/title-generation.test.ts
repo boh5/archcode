@@ -103,6 +103,7 @@ describe("createTitleGenerationTask", () => {
     const ctx = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       workspaceRoot: "/tmp",
       modelOptions: {
         temperature: 0.25,
@@ -191,6 +192,7 @@ describe("createTitleGenerationTask", () => {
     await task.run({
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       workspaceRoot: "/tmp",
       modelOptions: {
         maxOutputTokens: 64,
@@ -290,6 +292,7 @@ describe("createTitleGenerationTask", () => {
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
+        logger: silentLogger,
         workspaceRoot: "/tmp",
       };
 

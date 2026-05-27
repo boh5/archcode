@@ -1,6 +1,7 @@
 import { describe, expect, mock, test, beforeEach } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { BeforeModelBuildContext } from "../loop-hooks";
+import { silentLogger } from "../../../logger";
 import type { SessionStoreState, StoredMessage, StepInfo } from "../../../store/types";
 import { createAutoCompactHook } from "./auto-compact";
 import { COMPACT_MIN_NEW_MESSAGES } from "../../../compact/token-estimation";
@@ -107,6 +108,7 @@ function createContext(overrides: Partial<BeforeModelBuildContext> = {}): Before
   return {
     store: createMockStore(),
     modelInfo: createMockModelInfo() as never,
+    logger: silentLogger,
     ...overrides,
   };
 }

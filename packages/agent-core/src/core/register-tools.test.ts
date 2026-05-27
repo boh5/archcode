@@ -16,7 +16,7 @@ import type { AuditEvent } from "../tools/hooks";
 import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
 import { REDACTION_MARKER } from "../tools/security";
 import { ToolRegistry } from "../tools/registry";
-import type { Logger } from "../logger";
+import { silentLogger, type Logger } from "../logger";
 import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
 import { ProjectApprovalManager } from "../tools/permission";
 import { registerBuiltinTools } from "./register-tools";
@@ -122,7 +122,7 @@ describe("registerBuiltinTools", () => {
   it("registers global after hooks in redaction, truncation, audit, logger order", () => {
     const registry = new ToolRegistry();
 
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
 
     expect(registry.globalHooks.after.map((hook) => hook.name)).toEqual([
       "redactionAfterHook",
@@ -135,7 +135,7 @@ describe("registerBuiltinTools", () => {
   it("allowedTools permits and denies each Tier 2 tool through runtime registry checks", async () => {
     const workspaceRoot = await createTmpRoot("tier2-allowed");
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
     registry.globalHooks.after.pop();
 
     const cases = [
@@ -248,8 +248,17 @@ describe("registerBuiltinTools", () => {
     expect(JSON.stringify(events)).not.toContain(rawSecret);
 
     expect(logger.debug).toHaveBeenCalledTimes(1);
-    const loggerMeta = (logger.debug.mock.calls[0][1] as { context: Record<string, unknown> }).context;
-    expect(JSON.stringify(loggerMeta)).toContain(REDACTION_MARKER);
+    const loggerMeta = (logger.debug.mock.calls[0][1] as { meta: Record<string, unknown> }).meta;
+    expect(loggerMeta).toMatchObject({
+      toolName: fakeTool.name,
+      toolCallId: "fake-secret-call",
+      isError: false,
+      outputSize: result.output.length,
+    });
+    expect("input" in loggerMeta).toBe(false);
+    expect("redactedInput" in loggerMeta).toBe(false);
+    expect("output" in loggerMeta).toBe(false);
+    expect("rawOutput" in loggerMeta).toBe(false);
     expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
   });
 
@@ -259,7 +268,7 @@ describe("registerBuiltinTools", () => {
     await Bun.write(samplePath, "hello tier1\n");
 
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
     registry.globalHooks.after.pop();
 
     for (const name of [
@@ -294,7 +303,7 @@ describe("registerBuiltinTools", () => {
     it("registers memory_read and memory_write by default", () => {
       const registry = new ToolRegistry();
 
-      registerBuiltinTools(registry);
+      registerBuiltinTools(registry, silentLogger);
 
       expect(registry.get("memory_read")).toBeDefined();
       expect(registry.get("memory_write")).toBeDefined();
@@ -305,7 +314,7 @@ describe("registerBuiltinTools", () => {
     it("memory index permission denies writes to .specra/memory/index.md", async () => {
       const workspaceRoot = await createTmpRoot("perm-deny");
       const registry = new ToolRegistry();
-      registerBuiltinTools(registry);
+      registerBuiltinTools(registry, silentLogger);
       registry.globalHooks.after.pop();
 
       const result = await registry.execute(
@@ -327,7 +336,7 @@ describe("registerBuiltinTools", () => {
     it("memory index permission allows writes to non-index files", async () => {
       const workspaceRoot = await createTmpRoot("perm-allow");
       const registry = new ToolRegistry();
-      registerBuiltinTools(registry);
+      registerBuiltinTools(registry, silentLogger);
       registry.globalHooks.after.pop();
 
       const result = await registry.execute(
@@ -352,7 +361,7 @@ describe("registerBuiltinTools", () => {
       await Bun.write(samplePath, "hello permission\n");
 
       const registry = new ToolRegistry();
-      registerBuiltinTools(registry);
+      registerBuiltinTools(registry, silentLogger);
       registry.globalHooks.after.pop();
 
       const result = await registry.execute(

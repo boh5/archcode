@@ -116,7 +116,9 @@ export class ConfiguredAgent implements Agent {
     this.workspaceRoot = options.workspaceRoot;
     this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
     this.depth = options.depth ?? 0;
-    this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({ logger: this.logger });
+    this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({
+      logger: this.logger.child({ module: "background.manager" }),
+    });
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.agentFactory = options.agentFactory;
@@ -194,6 +196,7 @@ export class ConfiguredAgent implements Agent {
         const result = await runQueryLoop(
           {
             modelInfo: this.modelInfo,
+            logger: this.logger,
             modelOptions: this.modelOptions,
             toolRegistry: this.toolRegistry,
             allowedTools,

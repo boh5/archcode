@@ -24,6 +24,7 @@ export function createTitleGenerationHook(
       return task.run({
         store: ctx.store,
         modelInfo: ctx.modelInfo,
+        logger: ctx.logger,
         modelOptions: ctx.modelOptions,
         workspaceRoot,
         abort: ctx.abort,

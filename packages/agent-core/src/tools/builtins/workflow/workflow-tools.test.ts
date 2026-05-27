@@ -10,6 +10,7 @@ import type { ProjectContext } from "../../../projects/types";
 import { SkillService } from "../../../skills";
 import { createMockStore } from "../../../store/test-helpers";
 import { registerBuiltinTools } from "../../../core/register-tools";
+import { silentLogger } from "../../../logger";
 import { inferToolErrorKindFromResult } from "../../errors";
 import { createRegistry, ToolRegistry } from "../../registry";
 import { createToolExecutionContext, type AnyToolDescriptor, type ToolExecutionContext } from "../../types";
@@ -261,7 +262,7 @@ describe("workflow builtin tools", () => {
 
   test("registerBuiltinTools includes all six workflow tools", () => {
     const registry = new ToolRegistry();
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
 
     expect(registry.get("workflow_create")).toBeDefined();
     expect(registry.get("workflow_read")).toBeDefined();

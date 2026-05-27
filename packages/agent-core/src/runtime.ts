@@ -86,7 +86,7 @@ export async function createSpecraRuntime(
   const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH);
   const providerRegistry = createProviderRegistry(config.provider);
   const toolRegistry = createToolRegistry();
-  registerBuiltinTools(toolRegistry);
+  registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }));
   const skillService = new SkillService();
 
   const resolvedMcpConfig = resolveMcpConfig(config.mcp);

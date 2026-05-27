@@ -13,6 +13,8 @@ import { REDACTION_MARKER } from "../../tools/index";
 import { createTestProjectContext } from "../../tools/test-project-context";
 import type { AskUserCallback, PermissionErrorCode, ToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
+import { silentLogger } from "../../logger";
+import { createMockLogger } from "../../logger.test-helper";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
 import { __setStreamTextForTest, maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
@@ -149,6 +151,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
   const workspaceRoot = import.meta.dir;
   return {
     modelInfo: dummyModelInfo,
+    logger: silentLogger,
     toolRegistry: createRegistry(),
     store: createStore(),
     allowedTools: [],
@@ -1002,31 +1005,30 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     test("hook errors are logged and the loop continues", async () => {
       const store = createStore();
-      const warn = mock(() => {});
-      const originalWarn = console.warn;
-      console.warn = warn;
+      const logger = createMockLogger();
       createMockStreamText([{ text: "Still works" }]);
 
-      try {
-        const result = await runQueryLoop(
-          makeOptions({
-            store,
-            hooks: {
-              beforeModelCall: [
-                async () => { throw new Error("before failed"); },
-                async ({ messages }) => { messages.push({ role: "user", content: "after error" }); },
-              ],
-            },
-          }),
-          "Hi",
-        );
+      const result = await runQueryLoop(
+        makeOptions({
+          store,
+          logger,
+          agentName: "test-agent",
+          hooks: {
+            beforeModelCall: [
+              async () => { throw new Error("before failed"); },
+              async ({ messages }) => { messages.push({ role: "user", content: "after error" }); },
+            ],
+          },
+        }),
+        "Hi",
+      );
 
-        expect(result).toEqual({ text: "Still works", steps: 0 });
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      expect(warn).toHaveBeenCalledWith("Loop hook failed:", "before failed");
+      expect(result).toEqual({ text: "Still works", steps: 0 });
+      expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId, agentName: "test-agent" },
+        meta: { phase: "beforeModelCall" },
+      });
       expect(store.getState().isRunning).toBe(false);
     });
 
@@ -1050,10 +1052,11 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       );
 
       expect(contexts).toHaveLength(3);
-      for (const context of contexts as Array<{ store: unknown; modelInfo: unknown; abort: unknown }>) {
+      for (const context of contexts as Array<{ store: unknown; modelInfo: unknown; abort: unknown; logger: unknown }>) {
         expect(context.store).toBe(store);
         expect(context.modelInfo).toBe(dummyModelInfo);
         expect(context.abort).toBe(abortController.signal);
+        expect(context.logger).toBe(silentLogger);
       }
       expect("messages" in (contexts[0] as Record<string, unknown>)).toBe(true);
       expect("messages" in (contexts[1] as Record<string, unknown>)).toBe(false);
@@ -1317,29 +1320,45 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     test("beforeModelBuild hook errors are logged and loop continues", async () => {
       const store = createStore();
-      const warn = mock(() => {});
-      const originalWarn = console.warn;
-      console.warn = warn;
+      const logger = createMockLogger();
       createMockStreamText([{ text: "Still works" }]);
 
-      try {
-        const result = await runQueryLoop(
-          makeOptions({
-            store,
-            hooks: {
-              beforeModelBuild: [async () => { throw new Error("build hook failed"); }],
-            },
-          }),
-          "Hi",
-        );
+      const result = await runQueryLoop(
+        makeOptions({
+          store,
+          logger,
+          hooks: {
+            beforeModelBuild: [async () => { throw new Error("build hook failed"); }],
+          },
+        }),
+        "Hi",
+      );
 
-        expect(result).toEqual({ text: "Still works", steps: 0 });
-      } finally {
-        console.warn = originalWarn;
-      }
-
-      expect(warn).toHaveBeenCalledWith("Loop hook failed:", "build hook failed");
+      expect(result).toEqual({ text: "Still works", steps: 0 });
+      expect(logger.warn).toHaveBeenCalledWith("query.loop.hook.failed", {
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId, agentName: undefined },
+        meta: { phase: "beforeModelBuild" },
+      });
       expect(store.getState().isRunning).toBe(false);
+    });
+
+    test("AbortError hook failures propagate without warning logs", async () => {
+      const logger = createMockLogger();
+      createMockStreamText([{ text: "ok" }]);
+
+      await expect(runQueryLoop(
+        makeOptions({
+          logger,
+          hooks: {
+            afterLoopEnd: [async () => { throw new DOMException("cancelled", "AbortError"); }],
+          },
+        }),
+        "Hi",
+      )).rejects.toMatchObject({ name: "AbortError" });
+
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
     });
   });
 

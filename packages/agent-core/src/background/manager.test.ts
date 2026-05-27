@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { BackgroundTaskManager } from "./manager";
-import { createInMemoryLogger, silentLogger } from "../logger";
+import { silentLogger } from "../logger";
+import { createMockLogger } from "../logger.test-helper";
 
 function tick(ms: number = 0): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -153,7 +154,7 @@ describe("BackgroundTaskManager", () => {
 
   describe("error handling", () => {
     test("catches task errors and logs them via configured logger", async () => {
-      const { logger, entries } = createInMemoryLogger();
+      const logger = createMockLogger();
       manager = new BackgroundTaskManager({ logger });
       const error = new Error("task failure");
 
@@ -162,10 +163,10 @@ describe("BackgroundTaskManager", () => {
       });
 
       await tick(10);
-      expect(entries).toHaveLength(1);
-      expect(entries[0]?.event).toBe("background.task.failed");
-      expect(entries[0]?.meta?.backgroundTaskName).toBe("failing");
-      expect(entries[0]?.error).toEqual({ name: "Error", message: "task failure" });
+      expect(logger.warn).toHaveBeenCalledWith("background.task.failed", {
+        error,
+        meta: { backgroundTaskName: "failing" },
+      });
     });
 
     test("error does not prevent drain from completing", async () => {

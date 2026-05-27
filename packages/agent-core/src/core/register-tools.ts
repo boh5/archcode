@@ -1,4 +1,5 @@
 import type { ToolRegistry } from "../tools/index";
+import type { Logger } from "../logger";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
 import {
   createAuditHook,
@@ -19,6 +20,7 @@ import {
 
 export function registerBuiltinTools(
   registry: ToolRegistry,
+  logger: Logger,
 ): void {
   const descriptors = createBuiltinToolDescriptors();
   registry.registerAll(descriptors);
@@ -36,5 +38,5 @@ export function registerBuiltinTools(
   registry.globalHooks.after.push(createRedactionHook());
   registry.globalHooks.after.push(createOutputTruncator());
   registry.globalHooks.after.push(createAuditHook());
-  registry.globalHooks.after.push(createExecutionLogger());
+  registry.globalHooks.after.push(createExecutionLogger(logger.child({ module: "tools.execution" })));
 }

@@ -49,7 +49,7 @@ describe("workflow regression hardening", () => {
 
   test("registered tools include only workflow_* tools and no task_graph_* tools", () => {
     const registry = createRegistry();
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
     const toolNames = registry.getAll().map((tool) => tool.name).sort();
 
     expect(WORKFLOW_TOOL_NAMES.every((name) => toolNames.includes(name))).toBe(true);
@@ -64,7 +64,7 @@ describe("workflow regression hardening", () => {
 
   test("workflow agents use existing factory, registry, and session integration points", () => {
     const registry = createRegistry();
-    registerBuiltinTools(registry);
+    registerBuiltinTools(registry, silentLogger);
     const providerRegistry = createProviderRegistry();
     const config = createConfigForAgents(providerRegistry.modelIds[0]!);
     const factory = createAgentFactory({ definitions: agentDefinitions,

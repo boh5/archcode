@@ -3,6 +3,7 @@ import type { StreamTextResult, ToolSet } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
+import type { Logger } from "../../logger";
 import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
@@ -74,6 +75,12 @@ export async function runQueryLoop(
   const { beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
   let resolvedWorkspaceRoot = options.workspaceRoot;
+  const sessionId = store.getState().sessionId;
+  const agentName = options.agentName;
+  const logger = options.logger.child({
+    module: "query.loop",
+    context: { sessionId, agentName },
+  });
 
   let steps = 0;
   let lastText = "";
@@ -99,9 +106,9 @@ export async function runQueryLoop(
       if (abort.aborted) break;
 
       store.getState().append({ type: "step-start", step: steps });
-      await runHooks(beforeModelBuild, { store, modelInfo, modelOptions: options.modelOptions, abort, systemPrompt });
+      await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
       const messages = store.getState().toModelMessages();
-      await runHooks(beforeModelCall, { store, modelInfo, modelOptions: options.modelOptions, abort, messages });
+      await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, messages }, logger, { sessionId, agentName });
       const resolved = toolRegistry.resolveForAgent(allowedTools);
 
       const result = _streamText({
@@ -122,7 +129,7 @@ export async function runQueryLoop(
       lastText = await result.text;
 
       store.getState().append({ type: "step-end", step: steps, finishReason, usage });
-      await runHooks(afterStepEnd, { store, modelInfo, modelOptions: options.modelOptions, abort });
+      await runHooks("afterStepEnd", afterStepEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort }, logger, { sessionId, agentName });
 
       if (finishReason !== "tool-calls") break;
 
@@ -185,7 +192,7 @@ export async function runQueryLoop(
       status: runEndStatus,
       ...(failed ? { error: "Run failed" } : {}),
     });
-    await runHooks(afterLoopEnd, { store, modelInfo, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus });
+    await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus }, logger, { sessionId, agentName });
   }
 }
 
@@ -261,8 +268,11 @@ export async function maybeHandleCommand(
 }
 
 async function runHooks<T>(
+  phase: string,
   hooks: Array<(ctx: T) => Promise<void>> | undefined,
   ctx: T,
+  logger: Logger,
+  logContext: Record<string, unknown>,
 ): Promise<void> {
   if (!hooks?.length) return;
 
@@ -274,7 +284,11 @@ async function runHooks<T>(
       if ((err instanceof DOMException && err.name === "AbortError") || (err != null && typeof err === "object" && "name" in err && err.name === "AbortError")) {
         throw err;
       }
-      console.warn("Loop hook failed:", err instanceof Error ? err.message : String(err));
+      logger.warn("query.loop.hook.failed", {
+        error: err,
+        context: logContext,
+        meta: { phase },
+      });
     }
   }
 }

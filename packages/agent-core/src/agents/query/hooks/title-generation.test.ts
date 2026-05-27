@@ -8,6 +8,7 @@ import type { BeforeModelCallContext } from "../loop-hooks";
 import type { ModelInfo } from "../../../provider/model";
 import { __setGenerateTextForTest } from "../../../background/tasks/title-generation";
 import { __setSessionsDirForTest } from "../../../store/sessions-dir";
+import { silentLogger } from "../../../logger";
 
 const mockDispatch = mock((_name: string, _task: () => Promise<void>) => {});
 const mockGenerateText = mock(async () => ({ text: "Hook title" }));
@@ -67,6 +68,7 @@ describe("createTitleGenerationHook", () => {
     const ctx: BeforeModelCallContext = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       messages: [],
     };
     const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
@@ -86,6 +88,7 @@ describe("createTitleGenerationHook", () => {
     const ctx: BeforeModelCallContext = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       messages: [],
     };
     const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
@@ -100,6 +103,7 @@ describe("createTitleGenerationHook", () => {
     const ctx: BeforeModelCallContext = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       messages: [],
     };
     const hook = createTitleGenerationHook(mockBtm as never, WORKSPACE_ROOT);
@@ -139,6 +143,7 @@ describe("createTitleGenerationHook", () => {
     const ctx: BeforeModelCallContext = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       modelOptions,
       messages: [],
     };
@@ -184,6 +189,7 @@ describe("createTitleGenerationHook", () => {
     const ctx: BeforeModelCallContext = {
       store,
       modelInfo: makeModelInfo(),
+      logger: silentLogger,
       messages: [],
     };
 

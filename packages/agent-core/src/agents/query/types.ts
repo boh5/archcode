@@ -9,11 +9,13 @@ import type { ProjectContext } from "../../projects/types";
 import type { AgentFactoryLike } from "../../delegation/types";
 import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
+import type { Logger } from "../../logger";
 
 export const DOOM_LOOP_MESSAGE = "Doom loop detected: same tool and input repeated 3 times";
 
 export interface QueryLoopOptions {
   modelInfo: ModelInfo;
+  logger: Logger;
   modelOptions?: ModelCallOptions;
   toolRegistry: ToolRegistry;
   allowedTools: readonly string[];

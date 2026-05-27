@@ -3,6 +3,7 @@ import type { ModelMessage } from "ai";
 import type { BeforeModelCallContext } from "../loop-hooks";
 import { storeManager } from "../../../store/store";
 import type { Reminder } from "../../../store/types";
+import { silentLogger } from "../../../logger";
 import { createAutoInjectReminderHook } from "./auto-inject-reminder";
 
 function createReminder(overrides: Partial<Reminder> = {}): Reminder {
@@ -23,6 +24,7 @@ function createContext(messages: ModelMessage[] = []): BeforeModelCallContext {
   return {
     store: storeManager.create(crypto.randomUUID()),
     modelInfo: undefined as never,
+    logger: silentLogger,
     messages,
   };
 }
