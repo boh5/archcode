@@ -64,8 +64,8 @@ export function createConsoleLogger(options: {
     },
     (level, entry) => {
       const moduleName = entry.module ?? "agent-core";
-      // Resolve the sink method at emit time so tests and callers can swap it dynamically.
-      sink[level](`[specra:${moduleName}] ${entry.event}`, entry);
+      const time = formatLogTime(entry.timestamp);
+      sink[level](`[${time}] [specra:${moduleName}] ${entry.event}`, entry);
     },
   );
 }
@@ -212,6 +212,10 @@ function safeSerializeValue(value: unknown): unknown {
   } catch {
     return "[Unserializable]";
   }
+}
+
+function formatLogTime(isoTimestamp: string): string {
+  return isoTimestamp.replace("T", " ").replace(/Z$/, "");
 }
 
 function nonErrorName(error: unknown): string {
