@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
+import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 
@@ -35,7 +36,7 @@ export class ProjectContextResolver {
         user: join(homedir(), ".specra", "memory"),
       });
     });
-    this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager());
+    this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(silentLogger));
     this.#artifactsFactory = options.artifactsFactory ?? ((workspaceRoot, workflowState) => {
       return new WorkflowArtifactManager(workspaceRoot, workflowState);
     });

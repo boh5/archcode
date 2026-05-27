@@ -6,6 +6,7 @@ import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
+import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import { ProjectContextResolver } from "./context-resolver";
 
@@ -85,7 +86,7 @@ describe("ProjectContextResolver", () => {
     }
 
     const resolver = new ProjectContextResolver({
-      approvalsFactory: () => new CountingProjectApprovalManager(),
+      approvalsFactory: () => new CountingProjectApprovalManager(silentLogger),
     });
 
     const [firstA, secondA, firstB] = await Promise.all([

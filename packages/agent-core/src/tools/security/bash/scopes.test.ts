@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalizedShellRequest, PermissionApprovalScope } from "../../permission/policy-types";
+import { silentLogger } from "../../../logger";
 import { ProjectApprovalManager } from "../../permission/project-approvals";
 import { classifyCommand } from "../bash-classifier";
 import { attachShellEffects } from "./effects";
@@ -116,7 +117,7 @@ describe("deriveShellApprovalScope", () => {
   });
 
   test("does not allow a redirected command through an unrelated broad approval", async () => {
-    const manager = new ProjectApprovalManager();
+    const manager = new ProjectApprovalManager(silentLogger);
     await manager.load(workspaceRoot);
     await manager.addApproval({
       kind: "bash-command",

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry } from "@specra/agent-core";
+import { ProjectRegistry, silentLogger } from "@specra/agent-core";
 import type { ProjectInfo } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
@@ -52,7 +52,7 @@ async function makeWorkspace(name: string): Promise<string> {
 async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
-  const runtime = createTestRuntime(new ProjectRegistry({ homeDir }));
+  const runtime = createTestRuntime(new ProjectRegistry({ homeDir, logger: silentLogger }));
   return createServerApp(runtime, { dev: true }).app;
 }
 

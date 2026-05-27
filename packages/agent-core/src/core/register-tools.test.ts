@@ -69,7 +69,7 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
       project: join(workspaceRoot, ".specra", "memory"),
       user: join(workspaceRoot, ".specra", "user-memory"),
     }),
-    approvals: new ProjectApprovalManager(),
+    approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }

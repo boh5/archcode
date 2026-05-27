@@ -8,6 +8,7 @@ import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { createMockStore } from "../store/test-helpers";
+import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { createRegistry } from "./registry";
@@ -32,7 +33,7 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
   await mkdir(workspaceRoot, { recursive: true });
 
   const workflowState = new WorkflowStateManager(workspaceRoot);
-  const approvals = new ProjectApprovalManager();
+  const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(workspaceRoot);
 
   return {

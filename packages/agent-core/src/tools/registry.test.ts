@@ -17,7 +17,7 @@ import type {
   ToolCallLike,
   ToolPermission,
 } from "./types";
-import type { Logger } from "../logger";
+import { silentLogger, type Logger } from "../logger";
 import { createToolExecutionContext, DuplicateToolError } from "./types";
 import { DestructiveToolPermissionError } from "./types";
 import { createExecutionLogger } from "./hooks/logger";
@@ -62,7 +62,7 @@ function makeLogger(): Logger & { warn: ReturnType<typeof mock>; debug: ReturnTy
 
 function makeProjectContext(
   workspaceRoot: string,
-  approvals = new ProjectApprovalManager(),
+  approvals = new ProjectApprovalManager(silentLogger),
 ): ProjectContext {
   const workflowState = new WorkflowStateManager(workspaceRoot);
   return {
@@ -916,7 +916,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         toolName: "echo",
         operation: "danger",
       };
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-deny-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Existing approval", reason: "already trusted" });
@@ -950,7 +950,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         pathMode: "exact",
       };
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-prompt-${crypto.randomUUID()}`);
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
@@ -992,7 +992,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         effects: ["network"],
       };
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-redaction-${crypto.randomUUID()}`);
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       await manager.load(workspaceRoot);
       registry.register({
         ...makeDescriptor("echo"),
@@ -1031,7 +1031,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         kind: "web-origin",
         origin: "https://example.com",
       };
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-match-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       await manager.addApproval(scope, { display: "Fetch example.com", reason: "trusted origin" });
@@ -1055,7 +1055,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     });
 
     test("ineligible ask passes no persistent scope and approve always is not persisted", async () => {
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-ineligible-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       registry.register({
@@ -1091,7 +1091,7 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
         normalized: "bun test src/tools/registry.test.ts",
         effects: ["execute-code"],
       };
-      const manager = new ProjectApprovalManager();
+      const manager = new ProjectApprovalManager(silentLogger);
       const workspaceRoot = join(import.meta.dir, "__test_tmp__", `approval-persist-${crypto.randomUUID()}`);
       await manager.load(workspaceRoot);
       registry.register({

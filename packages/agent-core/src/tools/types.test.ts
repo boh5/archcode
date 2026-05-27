@@ -19,6 +19,7 @@ import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
+import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "./permission";
 import { SkillService } from "../skills";
 
@@ -30,7 +31,7 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
     project: { slug: "types-test", name: "Types Test", workspaceRoot, addedAt: new Date().toISOString() },
     workflowState,
     memory: new MemoryFileManager({ project: `${workspaceRoot}/memory`, user: `${workspaceRoot}/user-memory` }),
-    approvals: new ProjectApprovalManager(),
+    approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }

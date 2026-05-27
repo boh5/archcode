@@ -9,6 +9,7 @@ import { SkillService } from "../../skills";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { silentLogger } from "../../logger";
 import { ProjectApprovalManager } from "../permission";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
@@ -27,7 +28,7 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
     project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
     workflowState,
     memory: fileManager,
-    approvals: new ProjectApprovalManager(),
+    approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(TMP_DIR, workflowState),
   };
   return createToolExecutionContext({

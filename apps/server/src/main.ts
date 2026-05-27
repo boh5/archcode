@@ -1,18 +1,19 @@
 import { bootServer } from "./boot";
-import { closeMcpManagerBestEffort, createSpecraRuntime, type SpecraRuntime } from "@specra/agent-core";
-import type { McpWarning } from "@specra/agent-core";
+import { closeMcpManagerBestEffort, createConsoleLogger, createSpecraRuntime, type McpWarning, type SpecraRuntime } from "@specra/agent-core";
 
 export { createSpecraRuntime, type SpecraRuntime, type SpecraRuntimeOptions } from "@specra/agent-core";
 
-function logMcpWarning(warning: McpWarning): void {
-  console.warn(`MCP warning: ${warning.message}`);
-}
+const logger = createConsoleLogger({ level: "info" });
 
 async function main() {
-  const runtime: SpecraRuntime = await createSpecraRuntime({ warn: logMcpWarning });
+  const runtime: SpecraRuntime = await createSpecraRuntime({ logger });
 
   const close = () => {
-    void closeMcpManagerBestEffort(runtime.mcpManager, logMcpWarning);
+    void closeMcpManagerBestEffort(runtime.mcpManager, (warning: McpWarning) => {
+      logger.warn("mcp.close.warning", {
+        meta: { toolName: warning.toolName, message: warning.message },
+      });
+    });
     runtime.disposeAllSessionAgents();
   };
   process.once("SIGINT", close);
@@ -24,7 +25,7 @@ async function main() {
 // Only run main() when this module is the entry point
 if (import.meta.main) {
   main().catch((err) => {
-    console.error("Fatal error:", err);
+    logger.error("server.fatal", { error: err });
     process.exit(1);
   });
 }

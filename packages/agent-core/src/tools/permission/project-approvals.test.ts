@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Logger } from "../../logger";
+import { silentLogger, type Logger } from "../../logger";
 import type { PermissionApprovalScope } from "./policy-types";
 import {
   PermissionApprovalFileSchema,
@@ -27,7 +27,7 @@ const OTHER_FILE_SCOPE: PermissionApprovalScope = {
 };
 
 function makeManager(logger?: Logger): ProjectApprovalManager {
-  return new ProjectApprovalManager(logger);
+  return new ProjectApprovalManager(logger ?? silentLogger);
 }
 
 function readPermissionFile(): unknown {

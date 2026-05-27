@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { z } from "zod";
-import { createConsoleLogger, type Logger } from "../../logger";
+import type { Logger } from "../../logger";
 import { atomicWrite } from "../../utils/safe-file";
 import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
 
@@ -99,7 +99,7 @@ export class ProjectApprovalManager {
   #writeQueue: Promise<void> = Promise.resolve();
   #fileMtime: number | null = null;
 
-  constructor(private readonly logger: Logger = createConsoleLogger({ module: "project-approvals" })) {}
+  constructor(private readonly logger: Logger) {}
 
   async load(workspaceRoot: string): Promise<void> {
     this.#workspaceRoot = workspaceRoot;
@@ -117,7 +117,7 @@ export class ProjectApprovalManager {
       const parsed = PermissionApprovalFileSchema.parse(JSON.parse(await file.text()));
       this.#approvalFile = parsed;
     } catch (error) {
-      this.logger.warn("Ignoring malformed project permissions file", {
+      this.logger.warn("project.approvals.load.failed", {
         context: { path: filePath },
         error,
       });
@@ -184,8 +184,8 @@ export class ProjectApprovalManager {
     this.#writeQueue = this.#writeQueue
       .then(() => atomicWrite(approvalsPath(workspaceRoot), serializeApprovalFile(snapshot)))
       .catch((error: unknown) => {
-        this.logger.warn?.("Failed to persist permissions file", {
-          error: error instanceof Error ? error.message : String(error),
+        this.logger.warn("project.approvals.persist.failed", {
+          error,
         });
       });
     await this.#writeQueue;

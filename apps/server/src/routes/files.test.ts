@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createProcessRunner, type SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry } from "@specra/agent-core";
+import { ProjectRegistry, silentLogger } from "@specra/agent-core";
 import { createServerApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
 
@@ -52,7 +52,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
 async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir });
+  const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
   const runtime = createTestRuntime(projectRegistry);
   const workspaceRoot = join(tempRoot, "workspaces", testName);
   await initGitRepo(workspaceRoot);
@@ -241,7 +241,7 @@ Binary files a/assets/logo.png and b/assets/logo.png differ
     await mkdir(workspaceRoot, { recursive: true });
     const homeDir = join(isolatedTemp, "homes", "no-git-workspace");
     await mkdir(homeDir, { recursive: true });
-    const projectRegistry = new ProjectRegistry({ homeDir });
+    const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
     const runtime = createTestRuntime(projectRegistry);
     // Create workspace directory WITHOUT git init
     const project = await projectRegistry.add({ workspaceRoot, name: "no-git-workspace" });

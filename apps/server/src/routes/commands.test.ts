@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { ProjectRegistry } from "@specra/agent-core";
+import { ProjectRegistry, silentLogger } from "@specra/agent-core";
 import type { CommandResult, RunningJob, SpecraRuntime } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
@@ -68,7 +68,7 @@ async function createTestApp(testName: string) {
   const workspaceRoot = join(tempRoot, "workspaces", testName);
   await mkdir(homeDir, { recursive: true });
   await mkdir(workspaceRoot, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir });
+  const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
   const runtime = createTestRuntime(projectRegistry);
 

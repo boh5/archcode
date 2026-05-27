@@ -82,7 +82,7 @@ function makeProjectContext(stateManager: WorkflowStateManager, artifactManager:
     project: { slug: "workflow-tools", name: "Workflow Tools", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
     workflowState: stateManager,
     memory: new MemoryFileManager({ project: join(TMP_DIR, ".specra", "memory"), user: join(TMP_DIR, ".specra", "user-memory") }),
-    approvals: new ProjectApprovalManager(),
+    approvals: new ProjectApprovalManager(silentLogger),
     artifacts: artifactManager,
   };
 }

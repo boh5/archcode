@@ -6,6 +6,7 @@ import { MemoryFileManager } from "../../memory";
 import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../../agents/workflow/state";
 import type { ProjectContext } from "../../projects/types";
+import { silentLogger } from "../../logger";
 import { ProjectApprovalManager } from "../permission";
 import {
   DEFAULT_MAX_INDEX_LINES,
@@ -80,7 +81,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
     workflowState,
     memory: fileManager,
-    approvals: new ProjectApprovalManager(),
+    approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
   return createToolExecutionContext({
