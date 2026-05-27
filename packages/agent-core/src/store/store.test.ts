@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
+import { silentLogger } from "../logger";
 import { __setSessionsDirForTest } from "./sessions-dir";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store");
@@ -176,7 +177,7 @@ describe("SessionStoreManager", () => {
 
     await waitForPersistedSession(sessionId, (session) => session.title === "Persisted Title");
 
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");
     expect(loaded.getState().title).toBe("Persisted Title");
   });
@@ -238,7 +239,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("clearAll on a fresh manager leaves no stores", () => {
-    const fresh = new SessionStoreManager();
+    const fresh = new SessionStoreManager({ logger: silentLogger });
     fresh.create(uniqueSessionId("fresh-store"));
     fresh.clearAll();
     expect(fresh.has("fresh-store")).toBe(false);

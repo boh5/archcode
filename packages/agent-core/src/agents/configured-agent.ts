@@ -18,6 +18,7 @@ import type { PromptContext, PromptEnv } from "../prompt/index";
 import { storeManager } from "../store/store";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
+import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
@@ -54,6 +55,7 @@ export interface ConfiguredAgentOptions {
   readonly agentFactory?: AgentFactoryLike;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
+  readonly logger: Logger;
 }
 
 function buildEnv(workspaceRoot: string): PromptEnv {
@@ -88,12 +90,17 @@ export class ConfiguredAgent implements Agent {
   private readonly agentFactory: AgentFactoryLike | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
+  private readonly logger: Logger;
   private agentsMd: string | undefined;
   private agentsMdLoaded = false;
   private running = false;
   private disposed = false;
 
   constructor(options: ConfiguredAgentOptions) {
+    this.logger = options.logger.child({
+      module: "agents.configured-agent",
+      context: { agentName: options.definition.name },
+    });
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
@@ -109,7 +116,7 @@ export class ConfiguredAgent implements Agent {
     this.workspaceRoot = options.workspaceRoot;
     this.projectContextResolver = options.projectContextResolver ?? new ProjectContextResolver();
     this.depth = options.depth ?? 0;
-    this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager();
+    this.backgroundTaskManager = options.backgroundTaskManager ?? new DefaultBackgroundTaskManager({ logger: this.logger });
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.agentFactory = options.agentFactory;
@@ -308,9 +315,10 @@ export class ConfiguredAgent implements Agent {
     try {
       await this.quotaEnforcer(TOOL_OUTPUT_DIR);
     } catch (error) {
-      console.warn(
-        `[ConfiguredAgent] Failed to enforce tool output cache quota: ${error instanceof Error ? error.message : error}`,
-      );
+      this.logger.warn("tool.output.quota.failed", {
+        error,
+        meta: { directory: TOOL_OUTPUT_DIR },
+      });
     }
   }
 

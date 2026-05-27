@@ -9,9 +9,10 @@ import type { AskUserResponse } from "../deferred";
 import { SessionStoreManager } from "../store/session-store-manager";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import { AgentJobRunner } from "./agent-job-runner";
+import { silentLogger } from "../logger";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "agent-job-runner-workspace");
-const storeManager = new SessionStoreManager();
+const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -109,6 +110,7 @@ function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOpt
     cleanupDeferredSession,
     trackSession: mock(() => undefined),
     untrackSession: mock(() => undefined),
+    logger: silentLogger,
   });
   return { runner, cleanupDeferredSession, requestPermission, requestQuestion };
 }

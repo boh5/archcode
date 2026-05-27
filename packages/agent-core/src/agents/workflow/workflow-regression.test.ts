@@ -6,6 +6,7 @@ import { storeManager } from "../../store/store";
 import { WorkflowArtifactManager, WorkflowArtifactKindSchema, WorkflowStateManager } from "./index";
 import { agentDefinitions } from "../definitions";
 import { createAgentFactory } from "../factory";
+import { silentLogger } from "../../logger";
 import { ModelInfo } from "../../provider/model";
 import { calculateReadyWave, parseTasksMarkdown, toggleTaskCheckbox, validateTasksMarkdown } from "./tasks-format";
 import type { Registry as ProviderRegistry } from "../../provider";
@@ -66,14 +67,12 @@ describe("workflow regression hardening", () => {
     registerBuiltinTools(registry);
     const providerRegistry = createProviderRegistry();
     const config = createConfigForAgents(providerRegistry.modelIds[0]!);
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: registry,
-      skillService: new SkillService({ builtinSkills: {} }),
-      workspaceRoot: import.meta.dir,
-      config,
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: registry,
+    skillService: new SkillService({ builtinSkills: {} }),
+    workspaceRoot: import.meta.dir,
+      config, logger: silentLogger });
 
     for (const agentName of WORKFLOW_AGENT_NAMES) {
       const store = storeManager.create(`workflow-regression-${agentName}`);

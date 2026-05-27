@@ -17,6 +17,7 @@ import {
 import { ConfiguredAgent } from "./configured-agent";
 import type { AgentDefinition } from "./factory-types";
 import type { ResolvedSkill } from "../skills/types";
+import { silentLogger } from "../logger";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -107,18 +108,16 @@ function makeFactory(
       ),
   } as SpecraConfig;
 
-  return createAgentFactory({
-    definitions,
-    providerRegistry,
-    toolRegistry: createRegistry([
-      makeTool("unknown_tool"),
-      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-      ...DELEGATION_TOOLS.map(makeTool),
-    ]),
-    skillService: createTestSkillService(),
-    workspaceRoot: import.meta.dir,
-    config,
-  });
+  return createAgentFactory({ definitions,
+  providerRegistry,
+  toolRegistry: createRegistry([
+    makeTool("unknown_tool"),
+    ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+    ...DELEGATION_TOOLS.map(makeTool),
+  ]),
+  skillService: createTestSkillService(),
+  workspaceRoot: import.meta.dir,
+  config, logger: silentLogger });
 }
 
 const explorerTools = [...EXPLORER_READ_ONLY_TOOLS, ...DELEGATION_TOOLS] as const;
@@ -174,23 +173,21 @@ describe("createAgentFactory", () => {
         source: "builtin",
       },
     ];
-    const factory = createAgentFactory({
-      definitions: [definition()],
-      providerRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService,
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {
-          orchestrator: { model: providerRegistry.modelIds[1]! },
-        },
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [definition()],
+    providerRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService,
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {
+        orchestrator: { model: providerRegistry.modelIds[1]! },
+      },
+    } as SpecraConfig, logger: silentLogger });
 
     const agent = factory.createAgent("orchestrator", { activeSkills });
 
@@ -201,23 +198,21 @@ describe("createAgentFactory", () => {
 
   test("resolves the configured model instead of the first registry entry", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: [definition()],
-      providerRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService: createTestSkillService(),
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {
-          orchestrator: { model: providerRegistry.modelIds[1]! },
-        },
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [definition()],
+    providerRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService: createTestSkillService(),
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {
+        orchestrator: { model: providerRegistry.modelIds[1]! },
+      },
+    } as SpecraConfig, logger: silentLogger });
 
     factory.createRootAgent("orchestrator");
 
@@ -227,21 +222,19 @@ describe("createAgentFactory", () => {
 
   test("fails fast when orchestrator model config is missing", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: [definition()],
-      providerRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService: createTestSkillService(),
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {},
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [definition()],
+    providerRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService: createTestSkillService(),
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {},
+    } as SpecraConfig, logger: silentLogger });
 
     expect(() => factory.createRootAgent("orchestrator")).toThrow(MissingAgentModelConfigError);
 
@@ -257,26 +250,24 @@ describe("createAgentFactory", () => {
 
   test("fails fast when explore model config is missing", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: [
-        definition(),
-        definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
-      ],
-      providerRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService: createTestSkillService(),
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {
-          orchestrator: { model: providerRegistry.modelIds[1]! },
-        },
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [
+      definition(),
+      definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+    ],
+    providerRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService: createTestSkillService(),
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {
+        orchestrator: { model: providerRegistry.modelIds[1]! },
+      },
+    } as SpecraConfig, logger: silentLogger });
 
     expect(() => factory.createAgent("explore")).toThrow(MissingAgentModelConfigError);
 
@@ -300,46 +291,42 @@ describe("createAgentFactory", () => {
       },
     } as ProviderRegistry;
 
-    const factory = createAgentFactory({
-      definitions: [definition()],
-      providerRegistry: emptyProviderRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService: createTestSkillService(),
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {
-          orchestrator: { model: "missing:model" },
-        },
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [definition()],
+    providerRegistry: emptyProviderRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService: createTestSkillService(),
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {
+        orchestrator: { model: "missing:model" },
+      },
+    } as SpecraConfig, logger: silentLogger });
 
     expect(() => factory.createRootAgent("orchestrator")).toThrow(NoModelsConfiguredError);
   });
 
   test("fails fast with named unknown model error from provider registry", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: [definition()],
-      providerRegistry,
-      toolRegistry: createRegistry([
-        makeTool("unknown_tool"),
-        ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
-        ...DELEGATION_TOOLS.map(makeTool),
-      ]),
-      skillService: createTestSkillService(),
-      workspaceRoot: import.meta.dir,
-      config: {
-        provider: {},
-        agents: {
-          orchestrator: { model: "test:missing" },
-        },
-      } as SpecraConfig,
-    });
+    const factory = createAgentFactory({ definitions: [definition()],
+    providerRegistry,
+    toolRegistry: createRegistry([
+      makeTool("unknown_tool"),
+      ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
+      ...DELEGATION_TOOLS.map(makeTool),
+    ]),
+    skillService: createTestSkillService(),
+    workspaceRoot: import.meta.dir,
+    config: {
+      provider: {},
+      agents: {
+        orchestrator: { model: "test:missing" },
+      },
+    } as SpecraConfig, logger: silentLogger });
 
     try {
       factory.createRootAgent("orchestrator");

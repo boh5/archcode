@@ -1,5 +1,6 @@
-import { describe, test, expect, beforeEach, spyOn } from "bun:test";
+import { describe, test, expect, beforeEach } from "bun:test";
 import { BackgroundTaskManager } from "./manager";
+import { createInMemoryLogger, silentLogger } from "../logger";
 
 function tick(ms: number = 0): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -9,7 +10,7 @@ describe("BackgroundTaskManager", () => {
   let manager: BackgroundTaskManager;
 
   beforeEach(() => {
-    manager = new BackgroundTaskManager();
+    manager = new BackgroundTaskManager({ logger: silentLogger });
   });
 
   describe("dispatch", () => {
@@ -151,8 +152,9 @@ describe("BackgroundTaskManager", () => {
   });
 
   describe("error handling", () => {
-    test("catches task errors and logs them via console.warn", async () => {
-      const warn = spyOn(console, "warn").mockImplementation(() => {});
+    test("catches task errors and logs them via configured logger", async () => {
+      const { logger, entries } = createInMemoryLogger();
+      manager = new BackgroundTaskManager({ logger });
       const error = new Error("task failure");
 
       manager.dispatch("failing", async () => {
@@ -160,12 +162,10 @@ describe("BackgroundTaskManager", () => {
       });
 
       await tick(10);
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('Task "failing" failed:'),
-        error,
-      );
-      warn.mockRestore();
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.event).toBe("background.task.failed");
+      expect(entries[0]?.meta?.backgroundTaskName).toBe("failing");
+      expect(entries[0]?.error).toEqual({ name: "Error", message: "task failure" });
     });
 
     test("error does not prevent drain from completing", async () => {

@@ -13,6 +13,7 @@ import type { AgentFactory } from "./factory";
 import type { AgentDefinition } from "./factory-types";
 import type { Agent } from "./types";
 import type { CommandResult } from "../commands/types";
+import type { Logger } from "../logger";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -24,6 +25,7 @@ export interface SessionAgentManagerConfig {
   readonly maxConcurrentSessions?: number;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
+  readonly logger: Logger;
 }
 
 const DEFAULT_TOMBSTONE_TTL_MS = 300000;
@@ -38,10 +40,12 @@ export class SessionAgentManager {
   readonly maxConcurrentSessions: number;
   readonly tombstoneTtlMs: number;
   readonly #storeManager: SessionStoreManager;
+  readonly #logger: Logger;
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
     this.#storeManager = config.storeManager;
+    this.#logger = config.logger;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
@@ -174,6 +178,7 @@ export class SessionAgentManager {
         workspaceRoot,
         config: this.#config.config,
         projectContextResolver: this.#config.projectContextResolver,
+        logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);
     }

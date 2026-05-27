@@ -5,13 +5,11 @@ import { z } from "zod/v4";
 
 import { atomicWrite } from "../utils/safe-file";
 import { ProjectInfoSchema, type ProjectInfo } from "./types";
+import type { Logger } from "../logger";
 
 export interface ProjectRegistryOptions {
   homeDir?: string;
-  logger?: {
-    warn(message: string): void;
-    error?(message: string): void;
-  };
+  logger: Logger;
 }
 
 export class ProjectRegistryError extends Error {
@@ -78,11 +76,11 @@ export class ProjectRegistry {
   #indexFile: string;
   #cache: ProjectInfo[] | null = null;
   #writeQueue: Promise<void> = Promise.resolve();
-  #logger: NonNullable<ProjectRegistryOptions["logger"]>;
+  #logger: Logger;
 
-  constructor(options: ProjectRegistryOptions = {}) {
+  constructor(options: ProjectRegistryOptions) {
     this.#indexFile = join(options.homeDir ?? homedir(), ".specra", "projects", "index.json");
-    this.#logger = options.logger ?? console;
+    this.#logger = options.logger;
   }
 
   async list(): Promise<ProjectInfo[]> {
@@ -209,9 +207,10 @@ export class ProjectRegistry {
     try {
       const parsed = RegistryFileSchema.safeParse(await file.json());
       if (!parsed.success) {
-        this.#logger.warn(
-          `Ignoring malformed project registry file at "${this.#indexFile}": ${parsed.error.message}`,
-        );
+        this.#logger.warn("project.registry.load.failed", {
+          error: parsed.error,
+          meta: { path: this.#indexFile },
+        });
         this.#cache = [];
         return this.#cache;
       }
@@ -219,9 +218,10 @@ export class ProjectRegistry {
       this.#cache = cloneProjects(parsed.data.projects);
       return this.#cache;
     } catch (error) {
-      this.#logger.warn(
-        `Ignoring malformed project registry file at "${this.#indexFile}": ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.#logger.warn("project.registry.load.failed", {
+        error,
+        meta: { path: this.#indexFile },
+      });
       this.#cache = [];
       return this.#cache;
     }

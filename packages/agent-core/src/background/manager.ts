@@ -4,16 +4,27 @@
  * Tracks in-flight tasks by name, deduplicates concurrent dispatches of the
  * same task, and provides drain / cancel hooks for lifecycle management.
  */
+import type { Logger } from "../logger";
+
+export interface BackgroundTaskManagerOptions {
+  readonly logger: Logger;
+}
+
 export class BackgroundTaskManager {
   private readonly tasks = new Map<string, TaskEntry>();
   private readonly lastCompletedAt = new Map<string, number>();
+  private readonly logger: Logger;
+
+  constructor(options: BackgroundTaskManagerOptions) {
+    this.logger = options.logger;
+  }
 
   /**
    * Dispatch a background task. Returns `true` if the task was accepted,
    * `false` if a same-name task is already in-flight (dedup).
    *
    * The task runs asynchronously. Task errors are caught and logged via
-   * `console.warn`; they never propagate to the caller or crash the main loop.
+   * the configured logger; they never propagate to the caller or crash the main loop.
    */
   dispatch(name: string, task: () => Promise<void>): boolean {
     if (this.tasks.has(name)) return false;
@@ -35,7 +46,10 @@ export class BackgroundTaskManager {
     void task()
       .then(() => entry.resolve())
       .catch((err: unknown) => {
-        console.warn(`[BackgroundTaskManager] Task "${name}" failed:`, err);
+        this.logger.warn("background.task.failed", {
+          error: err,
+          meta: { backgroundTaskName: name },
+        });
         entry.resolve(); // Error caught — resolve wrapper so drain doesn't hang
       })
       .finally(() => {

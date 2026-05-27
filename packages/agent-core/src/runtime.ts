@@ -21,7 +21,6 @@ import { createRegistry as createProviderRegistry, type Registry as ProviderRegi
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
-import { storeManager } from "./store/store";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
@@ -30,6 +29,8 @@ import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } 
 import { AgentJobRunner } from "./runner";
 import type { RunningJob, SubscribeSessionEventsInput } from "./runner";
 import { scopedKey } from "./store/key";
+import { Logger, createConsoleLogger } from "./logger";
+import { SessionStoreManager } from "./store/session-store-manager";
 
 const DEFAULT_CONFIG_PATH = ".specra.json";
 
@@ -37,7 +38,7 @@ export interface SpecraRuntimeOptions {
   configPath?: string;
   workspaceRoot?: string;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
-  warn?: (warning: McpWarning) => void;
+  logger?: Logger;
 }
 
 export interface SpecraRuntime {
@@ -79,6 +80,8 @@ export interface SpecraRuntime {
 export async function createSpecraRuntime(
   options: SpecraRuntimeOptions = {},
 ): Promise<SpecraRuntime> {
+  const logger = options.logger ?? createConsoleLogger({ level: "info" });
+  const runtimeLogger = logger.child({ module: "runtime" });
   const warnings: McpWarning[] = [];
   const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH);
   const providerRegistry = createProviderRegistry(config.provider);
@@ -97,7 +100,11 @@ export async function createSpecraRuntime(
 
   const recordWarning = (warning: McpWarning): void => {
     warnings.push(warning);
-    options.warn?.(warning);
+    runtimeLogger.warn("mcp.discovery.warning", {
+      message: warning.message,
+      context: warning.toolName ? { toolName: warning.toolName } : undefined,
+      meta: { warning },
+    });
   };
 
   try {
@@ -135,8 +142,9 @@ export async function createSpecraRuntime(
     }
 
     await resolveWorkspaceRoot(options);
-    const projectRegistry = new ProjectRegistry();
+    const projectRegistry = new ProjectRegistry({ logger: logger.child({ module: "projects.registry" }) });
     const contextResolver = new ProjectContextResolver();
+    const sessionStoreManager = new SessionStoreManager({ logger });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
       providerRegistry,
@@ -144,7 +152,8 @@ export async function createSpecraRuntime(
       skillService,
       config,
       projectContextResolver: contextResolver,
-      storeManager,
+      storeManager: sessionStoreManager,
+      logger,
     });
     const activeSessionKeys = new Map<string, { workspaceRoot: string; sessionId: string }>();
     const submitDeferredEvent = (
@@ -152,7 +161,7 @@ export async function createSpecraRuntime(
       sessionId: string,
       event: DeferredSessionEvent,
     ): void => {
-      const store = storeManager.get(sessionId, workspaceRoot);
+      const store = sessionStoreManager.get(sessionId, workspaceRoot);
       store?.getState().append(event);
     };
     const deferredEvents = { submitDeferredEvent };
@@ -209,12 +218,13 @@ export async function createSpecraRuntime(
 
     const jobRunner = new AgentJobRunner({
       sessionAgentManager,
-      storeManager,
+      storeManager: sessionStoreManager,
       requestPermission,
       requestQuestion,
       cleanupDeferredSession,
       trackSession,
       untrackSession,
+      logger,
     });
 
     return {
@@ -225,9 +235,9 @@ export async function createSpecraRuntime(
       warnings,
       projectRegistry,
       contextResolver,
-      createSession: (workspaceRoot) => storeManager.createSessionFile(workspaceRoot),
-      getSessionFile: (workspaceRoot, sessionId) => storeManager.getSessionFile(workspaceRoot, sessionId),
-      listSessions: (workspaceRoot) => storeManager.listSessionSummaries(workspaceRoot),
+      createSession: (workspaceRoot) => sessionStoreManager.createSessionFile(workspaceRoot),
+      getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
+      listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
       submitAgentJob: (input) => jobRunner.submit(input),
       abortAgentJob: (workspaceRoot, sessionId) => jobRunner.abort(workspaceRoot, sessionId),
       abortAgentJobAndWait: (workspaceRoot, sessionId) => jobRunner.abortAndWait(workspaceRoot, sessionId),

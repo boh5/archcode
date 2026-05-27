@@ -10,6 +10,7 @@ import type { AnyToolDescriptor } from "../tools/types";
 import { ConcurrentSessionLimitError } from "./errors";
 import { orchestratorAgentDefinition } from "./definitions";
 import { SessionAgentManager } from "./session-agent-manager";
+import { silentLogger } from "../logger";
 
 function makeTool(name: string): AnyToolDescriptor {
   return {
@@ -48,11 +49,12 @@ function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): Sess
     providerRegistry,
     toolRegistry: createRegistry([makeTool("unknown_tool")]),
     skillService: new SkillService({ builtinSkills: {} }),
-    storeManager: new SessionStoreManager(),
+    storeManager: new SessionStoreManager({ logger: silentLogger }),
     config: {
       provider: {},
       agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
     } as SpecraConfig,
+    logger: silentLogger,
     maxConcurrentSessions,
     ...(tombstoneTtlMs === undefined ? {} : { tombstoneTtlMs }),
   });

@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
+import type { Logger } from "../logger";
 import { sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
@@ -13,11 +14,20 @@ import {
   MAX_EVENTS,
 } from "./types";
 
+export interface SessionStoreManagerOptions {
+  readonly logger: Logger;
+}
+
 export class SessionStoreManager {
   #registry = new Map<string, StoreApi<SessionStoreState>>();
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
   #hydrating = new Set<string>();
+  readonly #logger: Logger;
+
+  constructor(options: SessionStoreManagerOptions) {
+    this.#logger = options.logger;
+  }
 
   private key(sessionId: string, workspaceRoot?: string): string {
     return workspaceRoot === undefined ? sessionId : `${workspaceRoot}\0${sessionId}`;
@@ -40,9 +50,11 @@ export class SessionStoreManager {
         .catch(() => { /* previous persist already logged — continue chain */ })
         .then(() => sessionFileInternals.saveSessionTranscript(state, persistWorkspaceRoot))
         .catch((err) => {
-          console.warn(
-            `[SessionStoreManager] Failed to persist session "${sessionId}": ${err instanceof Error ? err.message : String(err)}`,
-          );
+          this.#logger.warn("session.persist.failed", {
+            error: err,
+            context: { sessionId },
+            meta: { workspaceRoot: persistWorkspaceRoot === "__test__" ? undefined : persistWorkspaceRoot },
+          });
         })
         .finally(() => {
           if (this.#pendingPersists.get(key) === next) this.#pendingPersists.delete(key);

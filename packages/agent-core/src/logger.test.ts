@@ -1,12 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
   createConsoleLogger,
-  createInMemoryLogger,
   normalizeError,
   silentLogger,
   type ConsoleLike,
   type LogEntry,
 } from "./logger";
+import { createInMemoryLogger, createMockLogger } from "./logger.test-helper";
 
 function makeConsole(): ConsoleLike & {
   debug: ReturnType<typeof mock>;
@@ -35,8 +35,10 @@ describe("createConsoleLogger", () => {
 
     expect(sink.info).toHaveBeenCalledTimes(1);
     const entry = entryFrom(sink.info.mock.calls[0]);
+    expect(Object.keys(entry)).toEqual(["level", "event", "timestamp"]);
     expect(entry.level).toBe("info");
     expect(entry.event).toBe("session.started");
+    expect(entry.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(new Date(entry.timestamp).toISOString()).toBe(entry.timestamp);
   });
 
@@ -157,6 +159,21 @@ describe("createInMemoryLogger", () => {
     expect(entries[1].level).toBe("error");
     reset();
     expect(entries).toEqual([]);
+  });
+});
+
+describe("createMockLogger", () => {
+  test("creates mock logging methods and child returns itself", () => {
+    const logger = createMockLogger();
+
+    logger.info("event.logged", { message: "hello" });
+    const child = logger.child("child-module");
+    child.warn("child.warned");
+
+    expect(logger.info).toHaveBeenCalledWith("event.logged", { message: "hello" });
+    expect(logger.child).toHaveBeenCalledWith("child-module");
+    expect(child).toBe(logger);
+    expect(logger.warn).toHaveBeenCalledWith("child.warned");
   });
 });
 

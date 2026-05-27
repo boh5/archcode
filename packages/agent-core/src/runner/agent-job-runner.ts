@@ -11,6 +11,7 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionEventEnvelope, SessionStoreState } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import type { StoreApi } from "zustand";
+import type { Logger } from "../logger";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
@@ -53,6 +54,7 @@ interface AgentJobRunnerConfig {
   readonly cleanupDeferredSession: (workspaceRoot: string, sessionId: string) => void;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
+  readonly logger: Logger;
 }
 
 interface SubscriptionRegistration extends SubscribeSessionEventsInput {
@@ -64,9 +66,11 @@ export class AgentJobRunner {
   readonly #jobs = new Map<string, RunningJob>();
   readonly #subscriptions = new Map<string, Set<SubscriptionRegistration>>();
   readonly #config: AgentJobRunnerConfig;
+  readonly #logger: Logger;
 
   constructor(config: AgentJobRunnerConfig) {
     this.#config = config;
+    this.#logger = config.logger;
   }
 
   submit(input: SubmitAgentJobInput): RunningJob {
@@ -191,9 +195,11 @@ export class AgentJobRunner {
       });
     } catch (error) {
       if (!abortController.signal.aborted) {
-        console.error(
-          `[AgentJobRunner] Job for session "${input.sessionId}" failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        this.#logger.error("agent.job.failed", {
+          error,
+          context: { sessionId: input.sessionId },
+          meta: { workspaceRoot: input.workspaceRoot },
+        });
       }
     }
   }

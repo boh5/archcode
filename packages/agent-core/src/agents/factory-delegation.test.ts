@@ -33,6 +33,7 @@ import { UnknownAgentDefinitionError, createAgentFactory } from "./factory";
 import type { AgentDefinition } from "./factory-types";
 import { __setStreamTextForTest } from "./query/loop";
 import type { Agent, AgentResult } from "./types";
+import { silentLogger } from "../logger";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "factory-delegation");
 
@@ -142,14 +143,12 @@ function targetDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefini
 function makeFactory(definitions: readonly AgentDefinition[] | undefined = undefined, skillService = createTestSkillService()) {
   const agentDefinitionsForFactory = definitions ?? [parentDefinition(), targetDefinition()];
   const providerRegistry = makeProviderRegistry();
-  return createAgentFactory({
-    definitions: agentDefinitionsForFactory,
-    providerRegistry,
-    toolRegistry: makeToolRegistry(),
-    skillService,
-    workspaceRoot: tmpRoot,
-    config: configForDefinitions(providerRegistry, agentDefinitionsForFactory),
-  });
+  return createAgentFactory({ definitions: agentDefinitionsForFactory,
+  providerRegistry,
+  toolRegistry: makeToolRegistry(),
+  skillService,
+  workspaceRoot: tmpRoot,
+    config: configForDefinitions(providerRegistry, agentDefinitionsForFactory), logger: silentLogger });
 }
 
 function makeFactoryWithBackgroundTaskManager(
@@ -157,15 +156,13 @@ function makeFactoryWithBackgroundTaskManager(
   definitions: readonly AgentDefinition[] = [parentDefinition(), targetDefinition()],
 ) {
   const providerRegistry = makeProviderRegistry();
-  return createAgentFactory({
-    definitions,
-    providerRegistry,
-    toolRegistry: makeToolRegistry(),
-    skillService: createTestSkillService(),
-    workspaceRoot: tmpRoot,
-    config: configForDefinitions(providerRegistry, definitions),
-    backgroundTaskManager: backgroundTaskManager as never,
-  });
+  return createAgentFactory({ definitions,
+  providerRegistry,
+  toolRegistry: makeToolRegistry(),
+  skillService: createTestSkillService(),
+  workspaceRoot: tmpRoot,
+  config: configForDefinitions(providerRegistry, definitions),
+    backgroundTaskManager: backgroundTaskManager as never, logger: silentLogger });
 }
 
 function configForDefinitions(providerRegistry: ProviderRegistry, definitions: readonly AgentDefinition[]): SpecraConfig {
@@ -355,15 +352,13 @@ describe("AgentFactory.delegate", () => {
     const btm = new RecordingBackgroundTaskManager();
     const providerRegistry = makeProviderRegistry();
     const definitions = [parentDefinition(), targetDefinition({ hooks: { ...exploreAgentDefinition.hooks, titleGeneration: "unless-supplied" } })];
-    const factory = createAgentFactory({
-      definitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, definitions),
-      backgroundTaskManager: btm as never,
-    });
+    const factory = createAgentFactory({ definitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+    config: configForDefinitions(providerRegistry, definitions),
+      backgroundTaskManager: btm as never, logger: silentLogger });
     const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
@@ -746,26 +741,22 @@ describe("AgentFactory.delegate", () => {
   test("rejects duplicate agent definitions", () => {
     const providerRegistry = makeProviderRegistry();
 
-    expect(() => createAgentFactory({
-      definitions: [productAgentDefinition, productAgentDefinition],
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, [productAgentDefinition]),
-    })).toThrow("Duplicate agent definition: product");
+    expect(() => createAgentFactory({ definitions: [productAgentDefinition, productAgentDefinition],
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, [productAgentDefinition]), logger: silentLogger })).toThrow("Duplicate agent definition: product");
   });
 
   test("lists all registered workflow agent names", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
     expect(factory.listAgentNames()).toEqual([
       "orchestrator",
@@ -782,14 +773,12 @@ describe("AgentFactory.delegate", () => {
 
   test("product resolves workflow artifact tools without source write tools", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
     const tools = factory.resolveAllowedTools(productAgentDefinition, 0);
 
@@ -800,14 +789,12 @@ describe("AgentFactory.delegate", () => {
 
   test("foreman resolves task and delegation tools without workflow stage updates", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
     const tools = factory.resolveAllowedTools(foremanAgentDefinition, 0);
 
@@ -820,14 +807,12 @@ describe("AgentFactory.delegate", () => {
 
   test("builder resolves source edit, delegation, and evidence tools without progress tools", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
     const tools = factory.resolveAllowedTools(builderAgentDefinition, 0);
 
@@ -842,14 +827,12 @@ describe("AgentFactory.delegate", () => {
 
   test("reviewer resolves evidence and memory read tools without source, delegation, or progress tools", () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
     const tools = factory.resolveAllowedTools(reviewerAgentDefinition, 0);
 
@@ -872,14 +855,12 @@ describe("AgentFactory.delegate", () => {
 
   test("delegate targets allow only declared workflow relationships", async () => {
     const providerRegistry = makeProviderRegistry();
-    const factory = createAgentFactory({
-      definitions: agentDefinitions,
-      providerRegistry,
-      toolRegistry: makeToolRegistry(),
-      skillService: createTestSkillService(),
-      workspaceRoot: tmpRoot,
-      config: configForDefinitions(providerRegistry, agentDefinitions),
-    });
+    const factory = createAgentFactory({ definitions: agentDefinitions,
+    providerRegistry,
+    toolRegistry: makeToolRegistry(),
+    skillService: createTestSkillService(),
+    workspaceRoot: tmpRoot,
+      config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
     const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
     setupResolvingStreamText();
 

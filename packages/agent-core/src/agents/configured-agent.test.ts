@@ -17,6 +17,7 @@ import type { AgentDefinition } from "./factory-types";
 import { __setStreamTextForTest } from "./query/loop";
 import { MissingProjectContextError } from "./errors";
 import type { MemoryExtractionConfig } from "../config";
+import { silentLogger } from "../logger";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 
@@ -192,6 +193,7 @@ function createAgent(options: {
     backgroundTaskManager: options.btm as never,
     memoryConfig: options.memoryConfig,
     quotaEnforcer: options.quotaEnforcer,
+    logger: silentLogger,
       resolveAllowedTools: (definition, depth) => {
         const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
         if (depth >= MAX_SUB_AGENT_DEPTH) {
@@ -270,6 +272,7 @@ describe("ConfiguredAgent", () => {
       modelInfo: providerRegistry.getModel("test:configured"),
       toolRegistry: makeToolRegistry(),
       skillService: createTestSkillService(),
+      logger: silentLogger,
       resolveAllowedTools: () => [],
     })).toThrow(MissingProjectContextError);
 

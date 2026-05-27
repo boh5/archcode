@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import { SessionStoreManager } from "../store/session-store-manager";
+import { silentLogger } from "../logger";
 import { DeferredPermissionService } from "./permission-service";
 import type { DeferredSessionEvent } from "./types";
 
-const manager = new SessionStoreManager();
+const manager = new SessionStoreManager({ logger: silentLogger });
 
 const request: ToolConfirmationRequest = {
   toolName: "bash",

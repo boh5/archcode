@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { ProjectRegistry, ProjectRegistryError } from "./registry";
+import { createInMemoryLogger, silentLogger } from "../logger";
 
 let tmpHome: string;
 let tmpWorkspaceA: string;
@@ -30,7 +31,7 @@ async function delay(ms = 5): Promise<void> {
 
 describe("ProjectRegistry", () => {
   test("add creates new entry with slug, addedAt, and ProjectInfo shape", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "My API" });
 
@@ -45,7 +46,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("add is idempotent for the same workspaceRoot", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const first = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
     const second = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Renamed" });
@@ -55,20 +56,20 @@ describe("ProjectRegistry", () => {
   });
 
   test("add rejects non-absolute workspaceRoot with ProjectRegistryError", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     await expect(registry.add({ workspaceRoot: "relative/project" })).rejects.toThrow(ProjectRegistryError);
   });
 
   test("add rejects non-existent directory with ProjectRegistryError", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const missingWorkspace = join(tmpHome, "missing");
 
     await expect(registry.add({ workspaceRoot: missingWorkspace })).rejects.toThrow(ProjectRegistryError);
   });
 
   test("add rejects file path with ProjectRegistryError", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const filePath = join(tmpHome, "not-a-directory.txt");
     await writeFile(filePath, "not a directory");
 
@@ -76,7 +77,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("slug conflict appends -2 and -3 suffixes", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const parentA = await mkdtemp(join(tmpdir(), "specra-same-a-"));
     const parentB = await mkdtemp(join(tmpdir(), "specra-same-b-"));
     const parentC = await mkdtemp(join(tmpdir(), "specra-same-c-"));
@@ -104,7 +105,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("CRUD round-trip adds, gets, lists, and idempotently removes projects", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const projectA = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Project A" });
     const projectB = await registry.add({ workspaceRoot: tmpWorkspaceB, name: "Project B" });
@@ -122,7 +123,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("touch updates lastOpenedAt and returns updated info", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA });
     await delay();
 
@@ -135,13 +136,13 @@ describe("ProjectRegistry", () => {
   });
 
   test("touch on missing slug returns undefined", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     await expect(registry.touch("missing")).resolves.toBeUndefined();
   });
 
   test("updateName trims and updates only the project display name", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
     const touched = await registry.touch(project.slug);
     expect(touched).toBeDefined();
@@ -156,7 +157,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("updateName allows duplicate display names without changing slugs", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const first = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "First" });
     const second = await registry.add({ workspaceRoot: tmpWorkspaceB, name: "Second" });
 
@@ -168,7 +169,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("updateName rejects empty names after trimming", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
 
     await expect(registry.updateName(project.slug, "   ")).rejects.toThrow(ProjectRegistryError);
@@ -176,7 +177,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("updateName rejects names longer than 80 characters", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "Original" });
 
     await expect(registry.updateName(project.slug, "a".repeat(81))).rejects.toThrow(ProjectRegistryError);
@@ -184,41 +185,40 @@ describe("ProjectRegistry", () => {
   });
 
   test("updateName throws ProjectRegistryError for unknown slug", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     await expect(registry.updateName("missing", "Renamed")).rejects.toThrow(ProjectRegistryError);
   });
 
   test("persistence loads entries from a new registry instance with same homeDir", async () => {
-    const firstRegistry = new ProjectRegistry({ homeDir: tmpHome });
+    const firstRegistry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await firstRegistry.add({ workspaceRoot: tmpWorkspaceA });
-    const secondRegistry = new ProjectRegistry({ homeDir: tmpHome });
+    const secondRegistry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     expect(await secondRegistry.list()).toEqual([project]);
   });
 
   test("defensive load returns empty list and logs warning for malformed JSON", async () => {
-    const warn = mock((message: string) => {
-      expect(message).toContain("Ignoring malformed project registry file");
-    });
+    const { logger, entries } = createInMemoryLogger();
     const registryDir = join(tmpHome, ".specra", "projects");
     await mkdir(registryDir, { recursive: true });
     await writeFile(join(registryDir, "index.json"), "{ malformed json");
 
-    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: { warn } });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger });
 
     expect(await registry.list()).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.event).toBe("project.registry.load.failed");
   });
 
   test("missing file returns empty list without error", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     expect(await registry.list()).toEqual([]);
   });
 
   test("list sorts by lastOpenedAt fallback addedAt descending, then addedAt descending", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const projectA = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "A" });
     await delay();
@@ -235,7 +235,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("concurrent add serializes writes without data loss or duplicate slugs", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const results = await Promise.all([
       registry.add({ workspaceRoot: tmpWorkspaceA }),
@@ -254,7 +254,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("empty slug fallback uses project", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA, name: "---" });
 
@@ -263,7 +263,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("list returns defensive copies that cannot mutate the cache", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA });
     const listed = await registry.list();
     listed[0] = { ...listed[0], slug: "mutated" };
@@ -272,7 +272,7 @@ describe("ProjectRegistry", () => {
   });
 
   test("uses basename for default project name", async () => {
-    const registry = new ProjectRegistry({ homeDir: tmpHome });
+    const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
 
     const project = await registry.add({ workspaceRoot: tmpWorkspaceA });
 

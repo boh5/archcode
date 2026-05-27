@@ -5,6 +5,7 @@ import { generateText } from "ai";
 import { storeManager } from "../../store/store";
 import { createSessionStore } from "../../store/store";
 import { SessionStoreManager } from "../../store/session-store-manager";
+import { silentLogger } from "../../logger";
 import { __setGenerateTextForTest } from "./title-generation";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
@@ -157,7 +158,7 @@ describe("createTitleGenerationTask", () => {
     } as never);
 
     await waitForPersistedSession(sessionId, (session) => session.title === "Short test title");
-    const loaded = await new SessionStoreManager().getOrLoad(sessionId, "ignored-by-test-override");
+    const loaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(sessionId, "ignored-by-test-override");
 
     expect(loaded.getState().title).toBe("Short test title");
   });

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { AskUserRequest } from "../tools/types";
 import { SessionStoreManager } from "../store/session-store-manager";
+import { silentLogger } from "../logger";
 import { DeferredQuestionService } from "./question-service";
 import type { AskUserResponse, DeferredSessionEvent } from "./types";
 
-const manager = new SessionStoreManager();
+const manager = new SessionStoreManager({ logger: silentLogger });
 
 const request: AskUserRequest = {
   toolName: "ask_user",

@@ -6,6 +6,7 @@ import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { storeManager } from "../store/store";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
+import type { Logger } from "../logger";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
 import type { ResolvedSkill } from "../skills/types";
@@ -37,6 +38,7 @@ export interface AgentFactoryConfig {
   readonly config?: SpecraConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
+  readonly logger: Logger;
 }
 
 export interface CreateAgentOptions {
@@ -75,7 +77,7 @@ export class UnknownAgentDefinitionError extends Error {
 export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
   const definitions = new Map<string, AgentDefinition>();
   const activeChildrenByParent = new Map<string, Set<string>>();
-  const sharedBackgroundTaskManager = config.backgroundTaskManager ?? new DefaultBackgroundTaskManager();
+  const sharedBackgroundTaskManager = config.backgroundTaskManager ?? new DefaultBackgroundTaskManager({ logger: config.logger });
   const agentConfig = { ...config, backgroundTaskManager: sharedBackgroundTaskManager };
 
   for (const definition of config.definitions) {
@@ -355,6 +357,7 @@ function createConfiguredAgent(
     backgroundTaskManager: config.backgroundTaskManager,
     memoryConfig: resolvedConfig.memory,
     projectContextResolver: config.projectContextResolver,
+    logger: config.logger,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     agentFactory: factory,
     activeSkills: options.activeSkills,

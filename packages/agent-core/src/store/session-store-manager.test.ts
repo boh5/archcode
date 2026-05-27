@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SessionStoreManager } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
+import { silentLogger } from "../logger";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager");
 
@@ -16,39 +17,39 @@ afterEach(async () => {
 
 describe("SessionStoreManager", () => {
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const store1 = manager.create("test-session", TMP_DIR);
     const store2 = manager.create("test-session", TMP_DIR);
     expect(store1).toBe(store2);
   });
 
   test("create() returns different stores for different sessionIds", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const store1 = manager.create("session-a", TMP_DIR);
     const store2 = manager.create("session-b", TMP_DIR);
     expect(store1).not.toBe(store2);
   });
 
   test("get() returns undefined for unknown session", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     expect(manager.get("unknown", TMP_DIR)).toBeUndefined();
   });
 
   test("get() returns existing store after create()", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const store = manager.create("test-session", TMP_DIR);
     expect(manager.get("test-session", TMP_DIR)).toBe(store);
   });
 
   test("has() returns correct boolean", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     expect(manager.has("test-session", TMP_DIR)).toBe(false);
     manager.create("test-session", TMP_DIR);
     expect(manager.has("test-session", TMP_DIR)).toBe(true);
   });
 
   test("delete() removes store from registry", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     manager.create("test-session", TMP_DIR);
     expect(manager.has("test-session", TMP_DIR)).toBe(true);
     const result = manager.delete("test-session", TMP_DIR);
@@ -57,12 +58,12 @@ describe("SessionStoreManager", () => {
   });
 
   test("delete() returns false for unknown session", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     expect(manager.delete("unknown", TMP_DIR)).toBe(false);
   });
 
   test("clearAll() removes all stores from registry", () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     manager.create("a", TMP_DIR);
     manager.create("b", TMP_DIR);
     manager.clearAll();
@@ -71,7 +72,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() returns existing store from registry without disk I/O", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const created = manager.create("existing-session", TMP_DIR);
     created.getState().title = "in-memory-title";
 
@@ -81,7 +82,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() loads from disk when not in registry", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = "disk-session";
 
     await sessionFileInternals.saveSessionTranscript(
@@ -102,7 +103,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() does NOT overwrite an existing store (Bug 1 regression)", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = "overwrite-test";
 
     // Create store with in-memory state
@@ -129,12 +130,12 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() throws on missing file", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     await expect(manager.getOrLoad("nonexistent", TMP_DIR)).rejects.toThrow();
   });
 
   test("getOrLoad() throws on invalid JSON", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = "bad-json";
     const filePath = join(TMP_DIR, `${sessionId}.json`);
     await Bun.write(filePath, "not json");
@@ -142,7 +143,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() deduplicates concurrent loads for the same session", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = "dedup-session";
 
     await sessionFileInternals.saveSessionTranscript(
@@ -166,7 +167,7 @@ describe("SessionStoreManager", () => {
   });
 
   test("getOrLoad() does not overwrite store created during I/O window", async () => {
-    const manager = new SessionStoreManager();
+    const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = "race-session";
 
     await sessionFileInternals.saveSessionTranscript(
