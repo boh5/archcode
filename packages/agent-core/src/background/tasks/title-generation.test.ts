@@ -32,6 +32,19 @@ function makeModelInfo(): ModelInfo {
   };
 }
 
+function makeTaskContext(
+  store: BackgroundTaskContext["store"],
+  overrides: Partial<BackgroundTaskContext> = {},
+): BackgroundTaskContext {
+  return {
+    store,
+    modelInfo: makeModelInfo(),
+    logger: silentLogger,
+    workspaceRoot: "/tmp",
+    ...overrides,
+  };
+}
+
 async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
   const path = join(TEST_TMP, `${sessionId}.json`);
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -101,19 +114,15 @@ describe("createTitleGenerationTask", () => {
     });
 
     const task = createTitleGenerationTask(store);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      logger: silentLogger,
-      workspaceRoot: "/tmp",
+    const ctx = makeTaskContext(store, {
       modelOptions: {
         temperature: 0.25,
         maxOutputTokens: 32,
         providerOptions: { title: { style: "concise" } },
       },
-    };
+    });
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(store.getState().title).toBe("Short test title");
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
@@ -153,11 +162,7 @@ describe("createTitleGenerationTask", () => {
     });
 
     const task = createTitleGenerationTask(store);
-    await task.run({
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    } as never);
+    await task.run(makeTaskContext(store));
 
     await waitForPersistedSession(sessionId, (session) => session.title === "Short test title");
     const loaded = await new SessionStoreManager({ logger: silentLogger }).getOrLoad(sessionId, "ignored-by-test-override");
@@ -190,11 +195,7 @@ describe("createTitleGenerationTask", () => {
     });
 
     const task = createTitleGenerationTask(store);
-    await task.run({
-      store,
-      modelInfo: makeModelInfo(),
-      logger: silentLogger,
-      workspaceRoot: "/tmp",
+    await task.run(makeTaskContext(store, {
       modelOptions: {
         maxOutputTokens: 64,
         temperature: 0.15,
@@ -209,7 +210,7 @@ describe("createTitleGenerationTask", () => {
         providerOptions,
         variant: "title-fast",
       } as unknown as BackgroundTaskContext["modelOptions"],
-    });
+    }));
 
     const calls = mockGenerateText.mock.calls as unknown as Array<[Record<string, unknown>]>;
     const callArg = calls[0]![0];
@@ -247,13 +248,9 @@ describe("createTitleGenerationTask", () => {
     store.setState({ messages: [] });
 
     const task = createTitleGenerationTask(store);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(store.getState().title).toBeNull();
     expect(mockGenerateText).not.toHaveBeenCalled();
@@ -288,14 +285,9 @@ describe("createTitleGenerationTask", () => {
 
     try {
       const task = createTitleGenerationTask(store);
-      const ctx = {
-        store,
-        modelInfo: makeModelInfo(),
-        logger,
-        workspaceRoot: "/tmp",
-      };
+      const ctx = makeTaskContext(store, { logger });
 
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       expect(store.getState().title).toBeNull();
       expect(logger.warn).toHaveBeenCalledWith("title.generation.failed", expect.objectContaining({
@@ -325,13 +317,9 @@ describe("createTitleGenerationTask", () => {
     });
 
     const task = createTitleGenerationTask(store);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(store.getState().title).toBeNull();
     expect(mockGenerateText).not.toHaveBeenCalled();

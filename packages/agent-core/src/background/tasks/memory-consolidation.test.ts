@@ -8,6 +8,8 @@ import type { ModelInfo } from "../../provider/model";
 import type { BackgroundTaskContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
 import { createMockLogger } from "../../logger.test-helper";
+import { silentLogger } from "../../logger";
+import { storeManager } from "../../store/store";
 
 type MockGenerateTextResult = GenerateTextResult<ToolSet, Output.Output>;
 
@@ -45,6 +47,16 @@ function makeModelInfo(): ModelInfo {
   };
 }
 
+function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
+  return {
+    store: storeManager.create(crypto.randomUUID()),
+    modelInfo: makeModelInfo(),
+    logger: silentLogger,
+    workspaceRoot: "/tmp",
+    ...overrides,
+  };
+}
+
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 describe("createMemoryConsolidationTask", () => {
@@ -71,7 +83,7 @@ describe("createMemoryConsolidationTask", () => {
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run(makeTaskContext());
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -90,7 +102,7 @@ describe("createMemoryConsolidationTask", () => {
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run(makeTaskContext());
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -130,14 +142,13 @@ describe("createMemoryConsolidationTask", () => {
       user: userRoot,
     });
 
-    await task.run({
-      modelInfo: makeModelInfo(),
+    await task.run(makeTaskContext({
       modelOptions: {
         temperature: 0.15,
         maxOutputTokens: 96,
         providerOptions: { memoryConsolidation: { mode: "compact" } },
       },
-    } as unknown as BackgroundTaskContext);
+    }));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     expect(mockGenerateText).toHaveBeenCalledWith(
@@ -183,7 +194,7 @@ describe("createMemoryConsolidationTask", () => {
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run(makeTaskContext());
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("exists");
@@ -216,12 +227,12 @@ describe("createMemoryConsolidationTask", () => {
     const logger = createMockLogger();
 
     try {
-const task = createMemoryConsolidationTask({
+      const task = createMemoryConsolidationTask({
         project: projectRoot,
         user: userRoot,
       });
 
-      await task.run({ modelInfo: makeModelInfo(), logger } as never);
+      await task.run(makeTaskContext({ logger }));
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
@@ -254,12 +265,12 @@ const task = createMemoryConsolidationTask({
     const logger = createMockLogger();
 
     try {
-const task = createMemoryConsolidationTask({
+      const task = createMemoryConsolidationTask({
         project: projectRoot,
         user: userRoot,
       });
 
-      await task.run({ modelInfo: makeModelInfo(), logger } as never);
+      await task.run(makeTaskContext({ logger }));
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
@@ -298,7 +309,7 @@ const task = createMemoryConsolidationTask({
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run(makeTaskContext());
 
     expect(mockGenerateText).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -340,7 +351,7 @@ const task = createMemoryConsolidationTask({
       user: userRoot,
     });
 
-    await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+    await task.run(makeTaskContext());
 
     const newIndex = await fileManager.readIndex();
     expect(newIndex).toContain("Design Patterns");

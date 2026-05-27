@@ -11,6 +11,8 @@ import { createMemoryExtractionTask, filterMessagesForExtraction } from "./memor
 import { buildMemoryManifest } from "../../memory/manifest";
 import type { ModelInfo } from "../../provider/model";
 import { createMockLogger } from "../../logger.test-helper";
+import { silentLogger } from "../../logger";
+import type { BackgroundTaskContext } from "../types";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
   return {
@@ -39,6 +41,19 @@ function makeModelInfo(): ModelInfo {
     providerId: "test",
     modelId: "test-model",
     qualifiedId: "test:test-model",
+  };
+}
+
+function makeTaskContext(
+  store: ReturnType<typeof storeManager.create>,
+  overrides: Partial<BackgroundTaskContext> = {},
+): BackgroundTaskContext {
+  return {
+    store,
+    modelInfo: makeModelInfo(),
+    logger: silentLogger,
+    workspaceRoot: "/tmp",
+    ...overrides,
   };
 }
 
@@ -152,18 +167,15 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
+    const ctx = makeTaskContext(store, {
       modelOptions: {
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
       },
-    };
+    });
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -181,18 +193,15 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
+    const ctx = makeTaskContext(store, {
       modelOptions: {
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
       },
-    };
+    });
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -231,18 +240,15 @@ describe("createMemoryExtractionTask", () => {
     );
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
+    const ctx = makeTaskContext(store, {
       modelOptions: {
         temperature: 0.55,
         maxOutputTokens: 256,
         providerOptions: { memoryExtraction: { mode: "archive" } },
       },
-    };
+    });
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     expect(mockGenerateText).toHaveBeenCalledWith(
@@ -288,14 +294,9 @@ describe("createMemoryExtractionTask", () => {
       });
 
       const task = createMemoryExtractionTask(store, roots);
-      const ctx = {
-        store,
-        modelInfo: makeModelInfo(),
-        logger,
-        workspaceRoot: "/tmp",
-      };
+      const ctx = makeTaskContext(store, { logger });
 
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       const fileManager = new MemoryFileManager(roots);
       const topics = await fileManager.listTopics();
@@ -327,14 +328,9 @@ describe("createMemoryExtractionTask", () => {
       });
 
       const task = createMemoryExtractionTask(store, roots);
-      const ctx = {
-        store,
-        modelInfo: makeModelInfo(),
-        logger,
-        workspaceRoot: "/tmp",
-      };
+      const ctx = makeTaskContext(store, { logger });
 
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       const fileManager = new MemoryFileManager(roots);
       const topics = await fileManager.listTopics();
@@ -393,14 +389,9 @@ describe("createMemoryExtractionTask", () => {
       });
 
       const task = createMemoryExtractionTask(store, roots);
-      const ctx = {
-        store,
-        modelInfo: makeModelInfo(),
-        logger,
-        workspaceRoot: "/tmp",
-      };
+      const ctx = makeTaskContext(store, { logger });
 
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       // type: "user" (preferences) should have been written successfully
       const fileManager = new MemoryFileManager(roots);
@@ -454,13 +445,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     const topic = await fileManager.readTopic("architecture");
     expect(topic).not.toBeNull();
@@ -498,13 +485,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     const fileManager = new MemoryFileManager(roots);
     const topic = await fileManager.readTopic("new_topic");
@@ -551,13 +534,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     const topic = await fileManager.readTopic("architecture");
     expect(topic).not.toBeNull();
@@ -581,13 +560,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     const fileManager = new MemoryFileManager(roots);
     const topics = await fileManager.listTopics();
@@ -631,14 +606,9 @@ describe("createMemoryExtractionTask", () => {
       });
 
       const task = createMemoryExtractionTask(store, roots);
-      const ctx = {
-        store,
-        modelInfo: makeModelInfo(),
-        logger,
-        workspaceRoot: "/tmp",
-      };
+      const ctx = makeTaskContext(store, { logger });
 
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       const fileManager = new MemoryFileManager(roots);
       const topic = await fileManager.readTopic("architecture");
@@ -668,13 +638,9 @@ describe("createMemoryExtractionTask", () => {
     store.setState({ messages });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     const call = mockGenerateText.mock.calls[0];
@@ -701,7 +667,7 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots, 1);
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     const prompt = (mockGenerateText.mock.calls[0][0] as Record<string, unknown>).prompt as string;
@@ -723,7 +689,7 @@ describe("createMemoryExtractionTask", () => {
       minMessages: 1,
       minContentLength: 10,
     });
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
@@ -743,7 +709,7 @@ describe("createMemoryExtractionTask", () => {
       minMessages: 3,
       minContentLength: 100,
     });
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -767,7 +733,7 @@ describe("createMemoryExtractionTask", () => {
       minMessages: 2,
       minContentLength: 5000,
     });
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -789,7 +755,7 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     expect(store.getState().lastExtractionIndex).toBe(5);
   });
@@ -813,7 +779,7 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    await task.run({ store, modelInfo: makeModelInfo(), workspaceRoot: "/tmp" } as never);
+    await task.run(makeTaskContext(store));
 
     const prompt = (mockGenerateText.mock.calls[0][0] as Record<string, unknown>).prompt as string;
     expect(prompt).not.toContain("ASSISTANT_TEXT_SHOULD_NOT_APPEAR");
@@ -885,13 +851,9 @@ describe("createMemoryExtractionTask", () => {
     );
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     const fileManager = new MemoryFileManager(roots);
     const topic = await fileManager.readTopic("debugging_tips");
@@ -946,15 +908,10 @@ describe("createMemoryExtractionTask", () => {
 
     const task = createMemoryExtractionTask(store, roots);
     const logger = createMockLogger();
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      logger,
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store, { logger });
 
     try {
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       const fileManager = new MemoryFileManager(roots);
       const validTopic = await fileManager.readTopic("valid_topic");
@@ -1025,15 +982,10 @@ describe("createMemoryExtractionTask", () => {
 
     const task = createMemoryExtractionTask(store, roots);
     const logger = createMockLogger();
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      logger,
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store, { logger });
 
     try {
-      await task.run(ctx as never);
+      await task.run(ctx);
 
       const fileManager = new MemoryFileManager(roots);
 
@@ -1085,13 +1037,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
     const call = mockGenerateText.mock.calls[0];
@@ -1131,13 +1079,9 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
-    const ctx = {
-      store,
-      modelInfo: makeModelInfo(),
-      workspaceRoot: "/tmp",
-    };
+    const ctx = makeTaskContext(store);
 
-    await task.run(ctx as never);
+    await task.run(ctx);
 
     expect(mockGenerateText).toHaveBeenCalled();
 
