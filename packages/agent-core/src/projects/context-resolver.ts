@@ -5,6 +5,7 @@ import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
+import type { Logger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 
@@ -17,18 +18,21 @@ export interface ProjectContextResolverOptions {
   approvalsFactory?: () => ProjectApprovalManager;
   /** Factory primarily for testing artifact manager construction. */
   artifactsFactory?: (workspaceRoot: string, workflowState: WorkflowStateManager) => WorkflowArtifactManager;
+  logger?: Logger;
 }
 
 export class ProjectContextResolver {
   #contexts = new Map<string, Promise<ProjectContext>>();
+  readonly #logger: Logger;
   readonly #workflowStateFactory: (workspaceRoot: string) => WorkflowStateManager;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
   readonly #artifactsFactory: (workspaceRoot: string, workflowState: WorkflowStateManager) => WorkflowArtifactManager;
 
   constructor(options: ProjectContextResolverOptions = {}) {
+    this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
     this.#workflowStateFactory = options.workflowStateFactory ?? ((workspaceRoot) => {
-      return new WorkflowStateManager(workspaceRoot);
+      return new WorkflowStateManager(workspaceRoot, this.#logger.child({ module: "workflow.state" }));
     });
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
@@ -36,7 +40,7 @@ export class ProjectContextResolver {
         user: join(homedir(), ".specra", "memory"),
       });
     });
-    this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(silentLogger));
+    this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));
     this.#artifactsFactory = options.artifactsFactory ?? ((workspaceRoot, workflowState) => {
       return new WorkflowArtifactManager(workspaceRoot, workflowState);
     });

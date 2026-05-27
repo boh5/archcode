@@ -228,6 +228,9 @@ export class ConfiguredAgent implements Agent {
       }
     } catch (error) {
       if (!(error instanceof BusyError)) {
+        this.logger.error("agent.run.fatal", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         this.store.getState().append({
           type: "loop-error",
           step: -1,

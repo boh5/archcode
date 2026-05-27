@@ -176,6 +176,10 @@ export async function runQueryLoop(
   } catch (err) {
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
+    logger.error("query.loop.fatal", {
+      error: errorMessage(err),
+      context: { step: steps, sessionId, agentName },
+    });
     store.getState().append({
       type: "loop-error",
       step: steps,

@@ -1,5 +1,7 @@
 import { createLspClient, LspError, type LspClient } from "./client";
 import { createLspTransport, type StdioLspTransportOptions } from "./transport";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 
 export interface PoolKey {
   workspaceRoot: string;
@@ -10,6 +12,7 @@ export interface LspClientPoolOptions {
   idleTimeoutMs?: number;
   crashWindowMs?: number;
   crashThreshold?: number;
+  logger?: Logger;
 }
 
 export interface PoolEntry {
@@ -63,11 +66,17 @@ export class LspClientPool {
   private readonly entries = new Map<string, PoolEntry>();
   private readonly crashHistory = new Map<string, number[]>();
   private readonly shutdownKeys = new Set<string>();
+  #logger: Logger;
 
   constructor(options: LspClientPoolOptions = {}) {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.crashWindowMs = options.crashWindowMs ?? DEFAULT_CRASH_WINDOW_MS;
     this.crashThreshold = options.crashThreshold ?? DEFAULT_CRASH_THRESHOLD;
+    this.#logger = (options.logger ?? silentLogger).child({ module: "lsp.pool" });
+  }
+
+  setLogger(logger: Logger): void {
+    this.#logger = logger.child({ module: "lsp.pool" });
   }
 
   async acquire(key: PoolKey, serverOptions: StdioLspTransportOptions): Promise<LspClient> {
@@ -95,15 +104,27 @@ export class LspClientPool {
     };
     this.entries.set(id, entry);
 
-    const transport = createLspTransport(serverOptions);
+    const transport = createLspTransport({
+      ...serverOptions,
+      logger: this.#logger.child({ module: "lsp.transport" }),
+    });
     entry.initializePromise = (async () => {
-      const client = createLspClient({ transport, workspaceRoot: key.workspaceRoot, timeouts: serverOptions.timeouts });
+      const client = createLspClient({
+        transport,
+        workspaceRoot: key.workspaceRoot,
+        timeouts: serverOptions.timeouts,
+        logger: this.#logger.child({ module: "lsp.client" }),
+      });
       try {
         await client.initialize(key.workspaceRoot);
         entry.client = client;
-        this.watchForCrash(id, key, entry, transport);
+        this.watchForCrash(id, entry, transport);
         return client;
       } catch (error) {
+        this.#logger.error("lsp.pool.acquire.failed", {
+          context: { serverId: id },
+          meta: errorFields(error),
+        });
         await ignoreErrors(client.shutdown());
         this.entries.delete(id);
         throw error;
@@ -159,6 +180,7 @@ export class LspClientPool {
   private async shutdownAndEvict(id: string, entry: PoolEntry): Promise<void> {
     if (this.entries.get(id) !== entry || entry.refCount > 0) return;
 
+    this.#logger.debug("lsp.pool.evict.idle", { context: { serverId: id } });
     this.entries.delete(id);
     this.clearIdleTimer(entry);
     this.shutdownKeys.add(id);
@@ -170,7 +192,7 @@ export class LspClientPool {
     }
   }
 
-  private watchForCrash(id: string, key: PoolKey, entry: PoolEntry, transport: unknown): void {
+  private watchForCrash(id: string, entry: PoolEntry, transport: unknown): void {
     const exited = getExitedPromise(transport);
     if (!exited) return;
 
@@ -178,18 +200,20 @@ export class LspClientPool {
       if (code === 0 || this.shutdownKeys.has(id)) return;
       if (this.entries.get(id) !== entry) return;
 
+      this.#logger.error("lsp.pool.crash.detected", { context: { serverId: id, exitCode: code } });
       this.entries.delete(id);
       this.clearIdleTimer(entry);
-      this.recordCrash(id, key);
+      this.recordCrash(id);
     }).catch(() => {
       if (this.shutdownKeys.has(id) || this.entries.get(id) !== entry) return;
+      this.#logger.error("lsp.pool.crash.detected", { context: { serverId: id, exitCode: undefined } });
       this.entries.delete(id);
       this.clearIdleTimer(entry);
-      this.recordCrash(id, key);
+      this.recordCrash(id);
     });
   }
 
-  private recordCrash(id: string, key: PoolKey): void {
+  private recordCrash(id: string): void {
     const crashes = [...this.currentCrashTimestamps(id), Date.now()];
     this.crashHistory.set(id, crashes);
     if (crashes.length >= this.crashThreshold) {
@@ -250,4 +274,13 @@ async function ignoreErrors(promise: Promise<unknown>): Promise<void> {
   }
 }
 
+function errorFields(error: unknown): { errorName: string; errorMessage: string } {
+  if (error instanceof Error) return { errorName: error.name, errorMessage: error.message };
+  return { errorName: "NonError", errorMessage: String(error) };
+}
+
 const defaultPool = new LspClientPool();
+
+export function configureDefaultLspClientPoolLogger(logger: Logger): void {
+  defaultPool.setLogger(logger);
+}

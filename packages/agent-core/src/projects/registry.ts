@@ -244,7 +244,11 @@ export class ProjectRegistry {
       result = mutation.result;
     });
 
-    this.#writeQueue = operation.catch(() => undefined);
+    this.#writeQueue = operation.catch((error) => {
+      this.#logger.error("project.registry.persist.failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     await operation;
     return result as T;
   }

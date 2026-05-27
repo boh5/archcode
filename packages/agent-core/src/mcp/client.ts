@@ -1,4 +1,6 @@
 import type { ResolvedMcpServerConfig } from "../config/mcp";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import { McpConnectionError, McpToolExecutionError, redactMcpMessage } from "./errors";
 
 // The MCP SDK requires this external .js subpath for its package exports map.
@@ -70,6 +72,7 @@ export function createDefaultMcpClientFactories(): McpClientFactories {
 // ─── Client Wrapper ──────────────────────────────────────────────────────────
 
 export class McpClient {
+  readonly #logger: Logger;
   private readonly sdkClient: McpSdkClientLike;
   private readonly transport: McpTransportLike;
   private readonly secrets: string[];
@@ -78,7 +81,9 @@ export class McpClient {
     private readonly serverName: string,
     private readonly config: ResolvedMcpServerConfig,
     factories: McpClientFactories = createDefaultMcpClientFactories(),
+    logger: Logger = silentLogger,
   ) {
+    this.#logger = logger.child({ module: "mcp.client" });
     this.sdkClient = factories.createClient();
     this.transport = factories.createTransport(new URL(config.url), {
       headers: config.headers,
@@ -93,6 +98,10 @@ export class McpClient {
         "connect",
       );
     } catch (err) {
+      this.#logger.warn("mcp.client.connect.failed", {
+        context: { serverName: this.serverName },
+        error: this.redactedLogError(err),
+      });
       throw new McpConnectionError(this.serverName, this.redactCause(err));
     }
   }
@@ -111,6 +120,10 @@ export class McpClient {
         cursor = result.nextCursor;
       } while (cursor);
     } catch (err) {
+      this.#logger.warn("mcp.client.list-tools.failed", {
+        context: { serverName: this.serverName },
+        error: this.redactedLogError(err),
+      });
       throw new McpConnectionError(this.serverName, this.redactCause(err));
     }
 
@@ -127,6 +140,10 @@ export class McpClient {
         `tools/call:${toolName}`,
       );
     } catch (err) {
+      this.#logger.warn("mcp.client.call-tool.failed", {
+        context: { serverName: this.serverName, toolName },
+        error: this.redactedLogError(err),
+      });
       throw new McpToolExecutionError(
         this.serverName,
         toolName,
@@ -173,4 +190,19 @@ export class McpClient {
 
     return undefined;
   }
+  private redactedLogError(error: unknown): { name: string; message: string } {
+    if (error instanceof Error) {
+      return { name: error.name || "Error", message: redactMcpMessage(error.message, this.secrets) };
+    }
+
+    return { name: typeof error, message: redactMcpMessage(String(error), this.secrets) };
+  }
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
 }

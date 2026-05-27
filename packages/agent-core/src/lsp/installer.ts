@@ -1,5 +1,7 @@
 import { join } from "node:path";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import { createProcessRunner, setProcessRunnerForTest } from "../process/runner";
 import type { ProcessRunnerResult } from "../process/types";
 import { getServerDefinitionById, type LspServerDefinition } from "./server-definitions";
@@ -34,34 +36,48 @@ export class LspInstallerError extends Error {
 const installLocks = new Map<string, Promise<string>>();
 const resolvedBinaryCache = new Map<string, string>();
 
+export interface LspInstallerOptions {
+  logger?: Logger;
+}
+
 export function setInstallerProcessRunnerForTest(fn: Parameters<typeof setProcessRunnerForTest>[0]): void {
   setProcessRunnerForTest(fn);
   installLocks.clear();
   resolvedBinaryCache.clear();
 }
 
-export async function resolveServerBinary(serverId: string): Promise<string> {
+export async function resolveServerBinary(serverId: string, options: LspInstallerOptions = {}): Promise<string> {
+  const logger = (options.logger ?? silentLogger).child({ module: "lsp.installer" });
   const cached = resolvedBinaryCache.get(serverId);
   if (cached) return cached;
 
   const existingLock = installLocks.get(serverId);
   if (existingLock) return existingLock;
 
-  const promise = resolveServerBinaryUncached(serverId);
+  const promise = resolveServerBinaryUncached(serverId, { logger });
   installLocks.set(serverId, promise);
 
   try {
     const binaryPath = await promise;
     resolvedBinaryCache.set(serverId, binaryPath);
     return binaryPath;
+  } catch (error) {
+    logger.warn("lsp.installer.resolve.failed", {
+      context: { serverId, error: error instanceof Error ? error.message : String(error) },
+    });
+    throw error;
   } finally {
     installLocks.delete(serverId);
   }
 }
 
-async function resolveServerBinaryUncached(serverId: string): Promise<string> {
+async function resolveServerBinaryUncached(serverId: string, options: LspInstallerOptions = {}): Promise<string> {
+  const logger = (options.logger ?? silentLogger).child({ module: "lsp.installer" });
   const definition = getServerDefinitionById(serverId);
   if (!definition) {
+    logger.warn("lsp.installer.resolve.failed", {
+      context: { serverId, reason: "unknown-server" },
+    });
     throw new LspInstallerError({
       serverId,
       command: "Check configured LSP server id",
@@ -70,26 +86,36 @@ async function resolveServerBinaryUncached(serverId: string): Promise<string> {
   }
 
   const binary = definition.command[0];
-  const pathBinary = await findOnPath(binary);
+  const pathBinary = await findOnPath(binary, { logger });
   if (pathBinary) return pathBinary;
 
   if (!definition.npmPackage) {
+    logger.warn("lsp.installer.resolve.failed", {
+      context: { serverId, reason: "binary-not-found", binary },
+    });
     throw createManualInstallError(definition);
   }
 
-  return installNpmServer(definition);
+  return installNpmServer(definition, { logger });
 }
 
-async function findOnPath(binary: string): Promise<string | undefined> {
+async function findOnPath(binary: string, options: LspInstallerOptions = {}): Promise<string | undefined> {
+  const logger = (options.logger ?? silentLogger).child({ module: "lsp.installer" });
   const command = process.platform === "win32" ? ["where", binary] : ["which", binary];
   const result = await runInstallerCommand(command);
-  if (result.exitCode !== 0) return undefined;
+  if (result.exitCode !== 0) {
+    logger.warn("lsp.installer.path.search.failed", {
+      context: { binary, command: command[0], exitCode: result.exitCode },
+    });
+    return undefined;
+  }
 
   const firstLine = result.stdout.trim().split(/\r?\n/).find(Boolean);
   return firstLine;
 }
 
-async function installNpmServer(definition: LspServerDefinition): Promise<string> {
+async function installNpmServer(definition: LspServerDefinition, options: LspInstallerOptions = {}): Promise<string> {
+  const logger = (options.logger ?? silentLogger).child({ module: "lsp.installer" });
   const binary = definition.command[0];
   const installRoot = getInstallRoot(definition.id);
   const tempRoot = `${installRoot}.tmp-${crypto.randomUUID()}`;
@@ -102,6 +128,9 @@ async function installNpmServer(definition: LspServerDefinition): Promise<string
 
   if (installResult.exitCode !== 0) {
     await rm(tempRoot, { recursive: true, force: true });
+    logger.warn("lsp.installer.npm.install.failed", {
+      context: { serverId: definition.id, command: "npm install", exitCode: installResult.exitCode },
+    });
     throw new LspInstallerError({
       serverId: definition.id,
       command: `npm install -g ${definition.npmPackage}`,
@@ -113,6 +142,9 @@ async function installNpmServer(definition: LspServerDefinition): Promise<string
   const binaryPath = await findInstalledBinary(tempRoot, binary);
   if (!binaryPath) {
     await rm(tempRoot, { recursive: true, force: true });
+    logger.warn("lsp.installer.npm.binary.resolve.failed", {
+      context: { serverId: definition.id, binary },
+    });
     throw new LspInstallerError({
       serverId: definition.id,
       command: `npm install -g ${definition.npmPackage}`,

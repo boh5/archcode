@@ -1,5 +1,7 @@
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import type { FormatToolErrorOptions, ToolErrorKind } from "../tools/errors";
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "../process/types";
@@ -32,6 +34,10 @@ export interface BinaryManagerSeam {
   verifySha256(params: BinaryChecksumParams): Promise<boolean> | boolean;
   install(params: BinaryInstallParams): Promise<string>;
   validateBinary?(path: string, binaryId: SupportedBinaryId): Promise<boolean>;
+}
+
+export interface BinaryManagerOptions {
+  logger?: Logger;
 }
 
 export interface BinaryDownloadParams {
@@ -155,9 +161,15 @@ export class BinaryManager {
   private readonly seam: BinaryManagerSeam;
   private readonly installLocks = new Map<SupportedBinaryId, Promise<string>>();
   private readonly resolvedBinaryCache = new Map<SupportedBinaryId, string>();
+  #logger: Logger;
 
-  constructor(seam: BinaryManagerSeam = createDefaultBinaryManagerSeam()) {
+  constructor(seam: BinaryManagerSeam = createDefaultBinaryManagerSeam(), options: BinaryManagerOptions = {}) {
     this.seam = seam;
+    this.#logger = (options.logger ?? silentLogger).child({ module: "binary.manager" });
+  }
+
+  setLogger(logger: Logger): void {
+    this.#logger = logger.child({ module: "binary.manager" });
   }
 
   async resolve(binaryId: SupportedBinaryId): Promise<string> {
@@ -246,6 +258,9 @@ export class BinaryManager {
     try {
       archive = await this.seam.download({ spec, platform, url });
     } catch (error) {
+      this.#logger.error("binary.manager.download.failed", {
+        context: { name: spec.binaryId, url, error: error instanceof Error ? error.message : String(error) },
+      });
       if (error instanceof BinaryDownloadError) throw error;
       throw new BinaryDownloadError({ binaryId: spec.binaryId, url, cause: error });
     }
@@ -258,6 +273,9 @@ export class BinaryManager {
     try {
       return await this.seam.install({ spec, platform, archive, cachePath });
     } catch (error) {
+      this.#logger.error("binary.manager.install.failed", {
+        context: { name: spec.binaryId, error: error instanceof Error ? error.message : String(error) },
+      });
       if (error instanceof BinaryInstallError) throw error;
       throw new BinaryInstallError({ binaryId: spec.binaryId, cachePath, cause: error });
     }
@@ -269,15 +287,21 @@ let binaryManagerForTest: BinaryManager | undefined;
 /** Default singleton instance — resolved paths are cached across calls. */
 let defaultManager: BinaryManager | undefined;
 
-export function createBinaryManager(seam?: BinaryManagerSeam): BinaryManager {
-  if (seam) return new BinaryManager(seam);
+export function createBinaryManager(seam?: BinaryManagerSeam, options: BinaryManagerOptions = {}): BinaryManager {
+  if (seam) return new BinaryManager(seam, options);
   if (binaryManagerForTest) return binaryManagerForTest;
   if (!defaultManager) defaultManager = new BinaryManager();
+  if (options.logger) defaultManager.setLogger(options.logger);
   return defaultManager;
 }
 
 export function setBinaryManagerForTest(manager: BinaryManager | undefined): void {
   binaryManagerForTest = manager;
+}
+
+export function configureDefaultBinaryManagerLogger(logger: Logger): void {
+  if (!defaultManager) defaultManager = new BinaryManager();
+  defaultManager.setLogger(logger);
 }
 
 export function createDefaultBinaryManagerSeam(): BinaryManagerSeam {

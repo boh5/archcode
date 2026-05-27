@@ -7,6 +7,8 @@ import {
   resolveContainedPath,
   SafePathError,
 } from "../../utils/safe-file";
+import type { Logger } from "../../logger";
+import { silentLogger } from "../../logger";
 
 export const WorkflowStageSchema = z.enum([
   "idle",
@@ -83,7 +85,14 @@ export interface ListWorkflowsOptions {
 }
 
 export class WorkflowStateManager {
-  constructor(private readonly workspaceRoot: string) {}
+  readonly #logger: Logger;
+
+  constructor(
+    private readonly workspaceRoot: string,
+    logger: Logger = silentLogger,
+  ) {
+    this.#logger = logger.child({ module: "workflow.state" });
+  }
 
   async create(input: CreateWorkflowStateInput): Promise<WorkflowState> {
     const now = new Date().toISOString();
@@ -120,6 +129,9 @@ export class WorkflowStateManager {
     const allowedStatuses = this.normalizeStatusFilter(options.status);
     const entries = await readdir(workflowsRoot, { withFileTypes: true }).catch((error: unknown) => {
       if (this.isMissingDirectoryError(error)) return [];
+      this.#logger.warn("workflow.list.readdir.failed", {
+        error: logError(error),
+      });
       throw error;
     });
     const states: WorkflowState[] = [];
@@ -133,7 +145,13 @@ export class WorkflowStateManager {
         if (allowedStatuses && !allowedStatuses.has(state.status)) continue;
         states.push(state);
       } catch (error) {
-        if (error instanceof WorkflowStateError) continue;
+        if (error instanceof WorkflowStateError) {
+          this.#logger.debug("workflow.list.parse.skipped", {
+            context: { path: join(workflowsRoot, workflowId, "workflow.json") },
+            error: logError(error),
+          });
+          continue;
+        }
         throw error;
       }
     }
@@ -229,4 +247,12 @@ export class WorkflowStateManager {
   private isMissingDirectoryError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
 }

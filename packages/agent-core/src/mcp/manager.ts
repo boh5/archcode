@@ -1,4 +1,6 @@
 import { McpConfigError, type ResolvedMcpServerConfig } from "../config/mcp";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import type { AnyToolDescriptor } from "../tools/types";
 import {
   createDefaultMcpClientFactories,
@@ -27,6 +29,7 @@ interface ConnectedMcpClient {
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 export class McpManager {
+  readonly #logger: Logger;
   private readonly clientFactories: McpClientFactories;
   private readonly connectedClients: ConnectedMcpClient[] = [];
   private readonly secrets: string[];
@@ -35,7 +38,9 @@ export class McpManager {
     private readonly builtinServers: Record<string, ResolvedMcpServerConfig>,
     private readonly userServers: Record<string, ResolvedMcpServerConfig>,
     clientFactories: McpClientFactories = createDefaultMcpClientFactories(),
+    logger: Logger = silentLogger,
   ) {
+    this.#logger = logger.child({ module: "mcp.manager" });
     this.clientFactories = clientFactories;
     this.secrets = collectSecrets(builtinServers, userServers);
   }
@@ -88,7 +93,12 @@ export class McpManager {
     serverName: string,
     config: ResolvedMcpServerConfig,
   ): Promise<McpDiscoveryResult> {
-    const client = new McpClient(serverName, config, this.clientFactories);
+    const client = new McpClient(
+      serverName,
+      config,
+      this.clientFactories,
+      this.#logger.child({ module: "mcp.client", context: { serverId: serverName } }),
+    );
 
     try {
       await client.connect();
@@ -111,6 +121,10 @@ export class McpManager {
 
       return this.adaptServerTools(serverName, client, tools);
     } catch (err) {
+      this.#logger.warn("mcp.discovery.server.failed", {
+        context: { serverId: serverName },
+        error: logError(err),
+      });
       return {
         descriptors: [],
         warnings: [
@@ -144,8 +158,23 @@ export class McpManager {
         }
 
         seenRegistryNames.add(registryName);
-        descriptors.push(adaptMcpTool(tool, serverName, client, this.secrets));
+        descriptors.push(
+          adaptMcpTool(
+            tool,
+            serverName,
+            client,
+            this.secrets,
+            this.#logger.child({
+              module: "mcp.tool-adapter",
+              context: { serverId: serverName },
+            }),
+          ),
+        );
       } catch (err) {
+        this.#logger.warn("mcp.adapt.tools.failed", {
+          context: { serverId: serverName, toolName: tool.name },
+          error: logError(err),
+        });
         warnings.push({
           serverName,
           toolName: tool.name,
@@ -203,4 +232,12 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unknown MCP manager error";
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
 }

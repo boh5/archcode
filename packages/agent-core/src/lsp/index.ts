@@ -62,6 +62,7 @@ export {
   getLspClientPool,
   createLspClientPool,
   LspClientPool,
+  configureDefaultLspClientPoolLogger,
 } from "./client-pool";
 
 // ─── Server Definitions ───

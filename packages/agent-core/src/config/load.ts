@@ -1,3 +1,5 @@
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import type { SpecraConfig } from "./schema";
 import { specraConfigSchema } from "./schema";
 
@@ -41,7 +43,9 @@ export class ConfigValidationError extends Error {
 export function parseConfig(
   value: unknown,
   filePath?: string,
+  options?: { logger?: Logger },
 ): SpecraConfig {
+  const logger = options?.logger ?? silentLogger;
   const result = specraConfigSchema.safeParse(value);
 
   if (result.success) {
@@ -53,6 +57,11 @@ export function parseConfig(
     .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
     .join("\n");
 
+  logger.warn("config.load.validation.failed", {
+    context: { filePath: location },
+    error: { name: "ConfigValidationError", message: `Invalid config at ${location}` },
+  });
+
   throw new ConfigValidationError(
     `Invalid config at ${location}:\n${issues}`,
     location,
@@ -60,12 +69,17 @@ export function parseConfig(
   );
 }
 
-export async function loadConfig(filePath: string): Promise<SpecraConfig> {
+export async function loadConfig(filePath: string, options?: { logger?: Logger }): Promise<SpecraConfig> {
+  const logger = options?.logger ?? silentLogger;
   let raw: string;
 
   try {
     raw = await Bun.file(filePath).text();
   } catch (err) {
+    logger.warn("config.load.read.failed", {
+      context: { filePath },
+      error: logError(err),
+    });
     throw new ConfigLoadError(
       `Failed to read config file: ${filePath}`,
       filePath,
@@ -78,6 +92,10 @@ export async function loadConfig(filePath: string): Promise<SpecraConfig> {
   try {
     json = JSON.parse(raw);
   } catch (err) {
+    logger.warn("config.load.parse.failed", {
+      context: { filePath },
+      error: logError(err),
+    });
     throw new ConfigParseError(
       `Config file contains invalid JSON: ${filePath}`,
       filePath,
@@ -85,5 +103,13 @@ export async function loadConfig(filePath: string): Promise<SpecraConfig> {
     );
   }
 
-  return parseConfig(json, filePath);
+  return parseConfig(json, filePath, { logger });
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
 }

@@ -4,6 +4,8 @@ import {
   WriteableStreamMessageWriter,
   createMessageConnection,
 } from "vscode-jsonrpc";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 
 export interface LspTransport {
   connect(params?: unknown): Promise<unknown>;
@@ -40,6 +42,7 @@ export interface StdioLspTransportOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
   timeouts?: Partial<LspTransportTimeouts>;
+  logger?: Logger;
 }
 
 export type LspTransportFactory = (options: StdioLspTransportOptions) => LspTransport;
@@ -65,8 +68,9 @@ export function createLspTransport(options: StdioLspTransportOptions): LspTransp
   return transportFactoryForTest ? transportFactoryForTest(options) : new StdioLspTransport(options);
 }
 
-export function adaptReader(stream: ReadableStream<Uint8Array>): RALReadable {
+export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logger?: Logger } = {}): RALReadable {
   const reader = stream.getReader();
+  const streamLogger = (options.logger ?? silentLogger).child({ module: "lsp.transport" });
 
   return {
     onData(listener: (data: Uint8Array) => void): Disposable {
@@ -78,8 +82,10 @@ export function adaptReader(stream: ReadableStream<Uint8Array>): RALReadable {
           if (cancelled || done) return;
           if (value) listener(value);
           pump();
-        }).catch(() => {
-          // Error events are not surfaced by Bun's ReadableStream reader here.
+        }).catch((error) => {
+          streamLogger.debug("lsp.transport.stream.error", {
+            context: { error: error instanceof Error ? error.message : String(error) },
+          });
         });
       };
 
@@ -116,6 +122,7 @@ export function adaptWriter(sink: { write(chunk: Uint8Array): void; end(): void 
 
 export class StdioLspTransport implements LspTransport {
   private readonly timeouts: LspTransportTimeouts;
+  #logger: Logger;
   private proc: BunSubprocess | undefined;
   private exitPromise: Promise<number> | undefined;
   private connection: MessageConnection | undefined;
@@ -124,6 +131,7 @@ export class StdioLspTransport implements LspTransport {
 
   constructor(private readonly options: StdioLspTransportOptions) {
     this.timeouts = { ...DEFAULT_LSP_TRANSPORT_TIMEOUTS, ...options.timeouts };
+    this.#logger = (options.logger ?? silentLogger).child({ module: "lsp.transport" });
   }
 
   get exited(): Promise<number> | undefined {
@@ -145,7 +153,7 @@ export class StdioLspTransport implements LspTransport {
     });
     this.exitPromise = this.proc.exited;
 
-    const reader = new ReadableStreamMessageReader(adaptReader(this.proc.stdout as ReadableStream<Uint8Array>));
+    const reader = new ReadableStreamMessageReader(adaptReader(this.proc.stdout as ReadableStream<Uint8Array>, { logger: this.#logger }));
     const writer = new WriteableStreamMessageWriter(adaptWriter(this.proc.stdin as { write(chunk: Uint8Array): void; end(): void }));
     this.connection = createMessageConnection(reader, writer);
     this.connection.listen();
@@ -204,10 +212,12 @@ export class StdioLspTransport implements LspTransport {
   private async waitOrEscalate(proc: BunSubprocess): Promise<void> {
     if (await waitForExit(proc, EXIT_WAIT_MS)) return;
 
-    safeKill(proc, "SIGTERM");
+    safeKill(proc, "SIGTERM", this.#logger);
     if (await waitForExit(proc, EXIT_WAIT_MS)) return;
+    this.#logger.warn("lsp.transport.process.kill.timeout", { context: { pid: proc.pid, signal: "SIGTERM" } });
 
-    safeKill(proc, "SIGKILL");
+    safeKill(proc, "SIGKILL", this.#logger);
+    this.#logger.error("lsp.transport.process.kill.escalated", { context: { pid: proc.pid, signal: "SIGKILL" } });
     await ignoreErrors(proc.exited);
   }
 }
@@ -246,11 +256,13 @@ async function waitForExit(proc: BunSubprocess, timeoutMs: number): Promise<bool
   }
 }
 
-function safeKill(proc: BunSubprocess, signal: "SIGTERM" | "SIGKILL"): void {
+function safeKill(proc: BunSubprocess, signal: "SIGTERM" | "SIGKILL", logger: Logger = silentLogger): void {
   try {
     proc.kill(signal);
-  } catch {
-    // Process may already have exited.
+  } catch (error) {
+    logger.debug("lsp.transport.process.kill.failed", {
+      context: { pid: proc.pid, error: error instanceof Error ? error.message : String(error) },
+    });
   }
 }
 

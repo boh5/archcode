@@ -1,10 +1,13 @@
 import type { Disposable } from "vscode-jsonrpc";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import type { LspTransport } from "./transport";
 
 export interface LspClientOptions {
   transport: LspTransport;
   workspaceRoot: string;
   timeouts?: Partial<LspClientTimeouts>;
+  logger?: Logger;
 }
 
 export interface LspClientTimeouts {
@@ -55,12 +58,14 @@ export class LspClient {
   private readonly transport: LspTransport;
   private readonly workspaceRoot: string;
   private readonly timeouts: LspClientTimeouts;
+  #logger: Logger;
   private serverCapabilities: Record<string, unknown> | undefined;
 
   constructor(options: LspClientOptions) {
     this.transport = options.transport;
     this.workspaceRoot = options.workspaceRoot;
     this.timeouts = { ...DEFAULT_LSP_CLIENT_TIMEOUTS, ...options.timeouts };
+    this.#logger = (options.logger ?? silentLogger).child({ module: "lsp.client" });
   }
 
   get capabilities(): Record<string, unknown> | undefined {
@@ -105,8 +110,13 @@ export class LspClient {
       } catch (error) {
         const lspError = toLspError(error, method);
         if (lspError.code !== CONTENT_MODIFIED_CODE || attempt >= maxRetries) {
+          this.#logger.warn("lsp.client.request.failed", {
+            context: { method, retries: attempt },
+            error: lspError,
+          });
           throw lspError;
         }
+        this.#logger.debug("lsp.client.retry.content-modified", { context: { method, attempt } });
         await delay(this.timeouts.contentModifiedBaseDelayMs * 2 ** attempt);
       }
     }

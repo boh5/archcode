@@ -2,6 +2,7 @@ import { generateText as aiGenerateText, tool, zodSchema } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { LlmObjectInput } from "./types";
 import { LlmObjectError, LlmSchemaValidationError } from "./errors";
+import { silentLogger } from "../logger";
 
 let _generateText: typeof aiGenerateText = aiGenerateText;
 
@@ -20,6 +21,7 @@ export async function llmObject<T>(input: LlmObjectInput<T>): Promise<T> {
     schemaName,
     schemaDescription,
   } = input;
+  const logger = input.logger ?? silentLogger;
   const toolName = schemaName ?? "result";
 
   const generateTextOptions = {
@@ -70,6 +72,10 @@ export async function llmObject<T>(input: LlmObjectInput<T>): Promise<T> {
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AI_TypeValidationError") {
+      logger.warn("llm.object.validation.failed", {
+        context: { schema: schemaName },
+        error: { name: err.name, message: err.message },
+      });
       throw new LlmSchemaValidationError({
         message: err.message,
         cause: err,
@@ -97,8 +103,14 @@ export async function llmObject<T>(input: LlmObjectInput<T>): Promise<T> {
   try {
     return schema.parse(toolInput);
   } catch (err) {
+    const validationErrorMessage = err instanceof Error ? err.message : "Schema validation failed";
+    logger.warn("llm.object.tool-input.validation.failed", {
+      error: err instanceof Error
+        ? { name: err.name, message: validationErrorMessage }
+        : { name: typeof err, message: validationErrorMessage },
+    });
     throw new LlmSchemaValidationError({
-      message: err instanceof Error ? err.message : "Schema validation failed",
+      message: validationErrorMessage,
       cause: err instanceof Error ? err : undefined,
     });
   }

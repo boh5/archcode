@@ -4,6 +4,8 @@ import { defaultAgentDefinitions } from "./agents";
 import { SessionAgentManager } from "./agents/session-agent-manager";
 import type { CommandResult } from "./commands/types";
 import { loadConfig } from "./config/load";
+import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
+import { configureDefaultBinaryManagerLogger } from "./binary/manager";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
@@ -83,7 +85,7 @@ export async function createSpecraRuntime(
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
   const runtimeLogger = logger.child({ module: "runtime" });
   const warnings: McpWarning[] = [];
-  const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH);
+  const config = await loadConfig(options.configPath ?? DEFAULT_CONFIG_PATH, { logger: runtimeLogger });
   const providerRegistry = createProviderRegistry(config.provider);
   const toolRegistry = createToolRegistry();
   registerBuiltinTools(toolRegistry, logger.child({ module: "tools" }));
@@ -92,11 +94,14 @@ export async function createSpecraRuntime(
   const resolvedMcpConfig = resolveMcpConfig(config.mcp);
   const mcpManager = options.mcpManagerFactory
     ? options.mcpManagerFactory(resolvedMcpConfig)
-    : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers);
+    : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers, undefined, runtimeLogger.child({ module: "mcp" }));
   const secrets = collectMcpSecrets(
     BUILTIN_MCP_SERVERS,
     resolvedMcpConfig.servers,
   );
+
+  configureDefaultLspClientPoolLogger(runtimeLogger.child({ module: "lsp" }));
+  configureDefaultBinaryManagerLogger(runtimeLogger.child({ module: "binary" }));
 
   const recordWarning = (warning: McpWarning): void => {
     warnings.push(warning);
@@ -143,7 +148,7 @@ export async function createSpecraRuntime(
 
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ logger: logger.child({ module: "projects.registry" }) });
-    const contextResolver = new ProjectContextResolver();
+    const contextResolver = new ProjectContextResolver({ logger: runtimeLogger.child({ module: "projects" }) });
     const sessionStoreManager = new SessionStoreManager({ logger });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
@@ -258,6 +263,9 @@ export async function createSpecraRuntime(
       notifyRuntimeShutdown,
     };
   } catch (err) {
+    runtimeLogger.error("runtime.init.failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     await closeMcpManagerBestEffort(mcpManager, recordWarning);
     throw err;
   }

@@ -408,6 +408,10 @@ export async function compact(
     if (err instanceof CompactError) {
       throw err;
     }
+    logger.warn("compact.summary.failed", {
+      error: err instanceof Error ? err.message : String(err),
+      context: { phase: "summarize" },
+    });
     throw new CompactError(
       `Summary generation failed: ${err instanceof Error ? err.message : String(err)}`,
       err,

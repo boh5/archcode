@@ -165,6 +165,11 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       const result = runWithAbort(childAgent.run(options.prompt, { abort: childAbortController.signal }), childAbortController.signal)
         .catch((error: unknown) => {
           if (error instanceof SubAgentError) throw error;
+          agentConfig.logger.warn("agent.delegation.sub-agent.failed", {
+            error: error instanceof Error
+              ? { name: error.name || "Error", message: error.message }
+              : { name: typeof error, message: String(error) },
+          });
           throw new SubAgentError(error instanceof Error ? error.message : String(error));
         })
         .finally(() => {

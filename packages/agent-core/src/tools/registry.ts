@@ -190,6 +190,10 @@ export class ToolRegistry {
           const output = await descriptor.execute(currentInput, ctx);
           result = normalizeExecuteOutput(output);
         } catch (err) {
+          this._logger.warn("tool.execute.failed", {
+            context: { tool: descriptor.name },
+            error: String(err),
+          });
           result = createToolErrorResult({ kind: "execution", error: err });
         }
         ctx.durationMs = Date.now() - ctx.startedAt;
@@ -202,11 +206,19 @@ export class ToolRegistry {
                 result = mutated;
               }
             } catch (err) {
+              this._logger.warn("tool.after-hook.failed", {
+                context: { tool: descriptor.name },
+                error: String(err),
+              });
               result = createToolErrorResult({ kind: "after-hook", error: err });
             }
           }
         }
       } catch (err) {
+        this._logger.warn("tool.pipeline.failed", {
+          context: { tool: descriptor.name },
+          error: String(err),
+        });
         result = createToolErrorResult({ kind: "execution", error: err });
       }
     }
@@ -354,6 +366,9 @@ export class ToolRegistry {
           result = mutated;
         }
       } catch (err) {
+        this._logger.warn("tool.global-after-hook.failed", {
+          error: String(err),
+        });
         result = createToolErrorResult({ kind: "after-hook", error: err });
       }
     }

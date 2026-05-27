@@ -1,5 +1,7 @@
 import { jsonSchema } from "ai";
 import { z } from "zod";
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
 import { defineTool } from "../tools/define-tool";
 import { createToolErrorResult } from "../tools/errors";
 import { createMcpDestructivePermission } from "../tools/permission";
@@ -23,8 +25,10 @@ export function adaptMcpTool(
   serverName: string,
   mcpClient: McpClient,
   secrets: Iterable<string>,
+  logger?: Logger,
 ): AnyToolDescriptor {
   const toolName = mcpTool.name;
+  const execLogger = logger ?? silentLogger;
 
   const traits = traitsFromAnnotations(mcpTool.annotations);
 
@@ -49,6 +53,10 @@ export function adaptMcpTool(
 
         return { output, isError: false };
       } catch (err) {
+        execLogger.warn("mcp.tool.execute.failed", {
+          context: { serverName, toolName: mcpTool.name },
+          error: logError(err),
+        });
         return createMcpErrorResult(
           serverName,
           toolName,
@@ -129,6 +137,14 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unknown MCP tool error";
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
 }
 
 function fallbackDescription(serverName: string, toolName: string): string {

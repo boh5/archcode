@@ -26,12 +26,13 @@ export function createCompactCommand(
 
       isCompacting = true;
 
+      const activeLogger = ctx.logger ?? logger;
+
       try {
         const activeStore = ctx.store ?? store;
         const activeModelInfo = ctx.modelInfo ?? modelInfo;
         const activeModelOptions = ctx.modelOptions ?? modelOptions;
         const activeCircuitBreaker = ctx.circuitBreaker ?? circuitBreaker;
-        const activeLogger = ctx.logger ?? logger;
         const beforeMessages = activeStore.getState().messages;
         const result = await compact(
           {
@@ -58,6 +59,9 @@ export function createCompactCommand(
           message: `Context compacted. ${counts.compacted} messages summarized. ${counts.tail} messages preserved in tail.`,
         };
       } catch (err) {
+        activeLogger.warn("compact.command.failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         return {
           success: false,
           message: `Compact failed: ${err instanceof Error ? err.message : String(err)}`,
