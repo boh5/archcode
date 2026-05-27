@@ -4,7 +4,6 @@ import type {
   ToolTraits,
   ToolExecutionResult,
   ToolExecutionContext,
-  Logger,
   BeforeHook,
   AfterHook,
   ToolDescriptor,
@@ -99,20 +98,6 @@ test("ToolCallLike shape", () => {
     input: { path: "/tmp/a.txt" },
   };
   expect(call.toolCallId).toBe("call_123");
-});
-
-test("Logger methods are all optional", () => {
-  // Empty logger is valid
-  const empty: Logger = {};
-  expect(empty).toBeDefined();
-
-  // Full logger is valid
-  const full: Logger = {
-    debug: (_msg, _meta?) => {},
-    info: (_msg, _meta?) => {},
-    warn: (_msg, _meta?) => {},
-  };
-  expect(full).toBeDefined();
 });
 
 test("BeforeHook and AfterHook accept void return", () => {

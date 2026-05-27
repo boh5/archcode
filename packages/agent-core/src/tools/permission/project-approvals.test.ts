@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Logger } from "../types";
+import type { Logger } from "../../logger";
 import type { PermissionApprovalScope } from "./policy-types";
 import {
   PermissionApprovalFileSchema,
@@ -57,7 +57,13 @@ describe("ProjectApprovalManager", () => {
   test("malformed permissions file loads empty approvals and logs a warning", async () => {
     mkdirSync(join(WORKSPACE, ".specra"), { recursive: true });
     writeFileSync(PERMISSIONS_PATH, "{ malformed json");
-    const logger: Logger = { warn: mock() };
+    const logger: Logger = {
+      debug: mock(),
+      info: mock(),
+      warn: mock(),
+      error: mock(),
+      child: () => logger,
+    };
     const manager = makeManager(logger);
 
     await manager.load(WORKSPACE);

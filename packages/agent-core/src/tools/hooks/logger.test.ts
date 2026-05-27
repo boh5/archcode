@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import type { Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { Logger } from "../../logger";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createExecutionLogger } from "./logger";
 import { REDACTION_MARKER } from "../security";
 import { createTestProjectContext } from "../test-project-context";
@@ -34,6 +35,8 @@ describe("createExecutionLogger", () => {
     debug: ReturnType<typeof mock>;
     info: ReturnType<typeof mock>;
     warn: ReturnType<typeof mock>;
+    error: ReturnType<typeof mock>;
+    child: ReturnType<typeof mock>;
   };
 
   beforeEach(() => {
@@ -41,6 +44,8 @@ describe("createExecutionLogger", () => {
       debug: mock(),
       info: mock(),
       warn: mock(),
+      error: mock(),
+      child: mock(() => mockLogger as unknown as Logger),
     };
   });
 
@@ -58,7 +63,7 @@ describe("createExecutionLogger", () => {
     expect(returned).toBeUndefined();
   });
 
-  it("logs one info call per tool execution with correct fields", async () => {
+  it("logs one debug call per tool execution with correct fields", async () => {
     const hook = createExecutionLogger(mockLogger as unknown as Logger);
     const result = makeResult({ output: "some output here", isError: false });
     const ctx = makeCtx({
@@ -69,13 +74,13 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    expect(mockLogger.info).toHaveBeenCalledTimes(1);
-    const callArgs = mockLogger.info.mock.calls[0] as [string, Record<string, unknown>];
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+    const callArgs = mockLogger.debug.mock.calls[0] as [string, { context: Record<string, unknown> }];
 
     // First arg is a message string
     expect(typeof callArgs[0]).toBe("string");
-    // Second arg is meta object
-    const meta = callArgs[1]!;
+    // Second arg carries structured context.
+    const meta = callArgs[1]!.context;
     expect(meta.toolName).toBe("bash");
     expect(meta.toolCallId).toBe("call-xyz");
     expect(meta.isError).toBe(false);
@@ -90,7 +95,7 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(meta.outputSize).toBe(3);
   });
 
@@ -101,7 +106,7 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(meta.isError).toBe(true);
   });
 
@@ -112,7 +117,7 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(meta.durationMs).toBe(999);
   });
 
@@ -124,15 +129,19 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(meta.durationMs).toBeUndefined();
   });
 
   it("accepts custom logger", async () => {
     const customLogger: Logger = {
-      info: (msg, meta) => {
-        mockLogger.info(msg, meta);
+      debug: (msg, meta) => {
+        mockLogger.debug(msg, meta);
       },
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      child: () => customLogger,
     };
     const hook = createExecutionLogger(customLogger);
     const result = makeResult({ output: "test" });
@@ -140,22 +149,28 @@ describe("createExecutionLogger", () => {
 
     await hook(result, ctx);
 
-    expect(mockLogger.info).toHaveBeenCalledTimes(1);
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    expect(mockLogger.debug).toHaveBeenCalledTimes(1);
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(meta.toolName).toBe("bash");
     expect(meta.outputSize).toBe(4);
   });
 
-  it("does not throw when logger has no info method", async () => {
-    // Logger interface has optional methods
-    const loggerWithoutInfo: Logger = {};
-    const hook = createExecutionLogger(loggerWithoutInfo);
+  it("uses the required debug method", async () => {
+    const debug = mock(() => {});
+    const logger: Logger = {
+      debug,
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      child: () => logger,
+    };
+    const hook = createExecutionLogger(logger);
     const result = makeResult();
     const ctx = makeCtx();
 
-    // Should not throw
     const returned = await hook(result, ctx);
     expect(returned).toBeUndefined();
+    expect(debug).toHaveBeenCalledTimes(1);
   });
 
   it("logs only redacted input metadata", async () => {
@@ -168,7 +183,7 @@ describe("createExecutionLogger", () => {
 
     await hook(makeResult(), ctx);
 
-    const meta = (mockLogger.info.mock.calls[0]! as [string, Record<string, unknown>])[1]!;
+    const meta = (mockLogger.debug.mock.calls[0]! as [string, { context: Record<string, unknown> }])[1]!.context;
     expect(JSON.stringify(meta)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(meta)).not.toContain(rawSecret);
   });

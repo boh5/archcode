@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { silentLogger, type Logger } from "../../logger";
 import { storeManager } from "../../store/store";
 import { defineTool } from "../define-tool";
 import { TOOL_ERROR_META_KEY } from "../errors";
@@ -141,11 +142,23 @@ function specraProtectedTool(): ToolDescriptor<{ path: string; content?: string 
   });
 }
 
+function makeLogger(overrides: Partial<Logger> = {}): Logger {
+  const logger: Logger = {
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    child: () => logger,
+    ...overrides,
+  };
+  return logger;
+}
+
 async function executeWithConfirmation(
   descriptor: ToolDescriptor,
   input: unknown,
   confirmation: ToolConfirmationResult,
-  manager = new ProjectApprovalManager({ warn: mock() }),
+  manager = new ProjectApprovalManager(silentLogger),
 ) {
   await manager.load(WORKSPACE);
   const confirmPermission = mock(async (_request: ToolConfirmationRequest) => confirmation);
@@ -211,7 +224,7 @@ describe("permission integration regressions", () => {
   });
 
   test("eligible Ask approved always is persisted and suppresses the next prompt", async () => {
-    const manager = new ProjectApprovalManager({ warn: mock() });
+    const manager = new ProjectApprovalManager(silentLogger);
 
     await executeWithConfirmation(
       decisionTool(async () => ELIGIBLE_ASK),
@@ -252,7 +265,7 @@ describe("permission integration regressions", () => {
   test("malformed approvals file is safe and does not satisfy eligible Ask", async () => {
     writeFileSync(join(WORKSPACE, ".specra", "permissions.json"), "{ malformed json");
     const warn = mock();
-    const manager = new ProjectApprovalManager({ warn });
+    const manager = new ProjectApprovalManager(makeLogger({ warn }));
     const confirmPermission = mock(async () => "approve_once" as ToolConfirmationResult);
     await manager.load(WORKSPACE);
     const registry = createRegistry([decisionTool(async () => ELIGIBLE_ASK)]);
@@ -316,7 +329,7 @@ describe("bash permission bypass regressions", () => {
       argumentMode: "any",
       effects: ["execute-code"],
     };
-    const manager = new ProjectApprovalManager({ warn: mock() });
+    const manager = new ProjectApprovalManager(silentLogger);
     await manager.load(WORKSPACE);
     await manager.addApproval(broadCargoScope, {
       display: "cargo *",
@@ -409,7 +422,7 @@ describe("workspace permission approval regression", () => {
       pathMode: "exact",
     };
 
-    const manager = new ProjectApprovalManager({ warn: mock() });
+    const manager = new ProjectApprovalManager(silentLogger);
     await manager.load(WORKSPACE);
     await manager.addApproval(scope, {
       display: `Read ${outsideFile}`,

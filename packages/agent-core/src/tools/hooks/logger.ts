@@ -1,10 +1,7 @@
-import type { AfterHook, Logger, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { createConsoleLogger, type Logger } from "../../logger";
+import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
 
-const defaultLogger: Logger = {
-  debug: (message, meta) => console.debug(message, meta),
-  info: (message, meta) => console.info(message, meta),
-  warn: (message, meta) => console.warn(message, meta),
-};
+const defaultLogger = createConsoleLogger({ module: "tools" });
 
 export function createExecutionLogger(logger?: Logger): AfterHook {
   const log = logger ?? defaultLogger;
@@ -13,7 +10,7 @@ export function createExecutionLogger(logger?: Logger): AfterHook {
     result: ToolExecutionResult,
     ctx: ToolExecutionContext,
   ): Promise<void> {
-    const meta: Record<string, unknown> = {
+    const context: Record<string, unknown> = {
       toolName: ctx.toolName,
       toolCallId: ctx.toolCallId,
       input: ctx.redactedInput,
@@ -22,8 +19,6 @@ export function createExecutionLogger(logger?: Logger): AfterHook {
       durationMs: ctx.durationMs,
     };
 
-    if (typeof log.info === "function") {
-      log.info("Tool execution completed", meta);
-    }
+    log.debug("Tool execution completed", { context });
   };
 }

@@ -16,7 +16,8 @@ import type { AuditEvent } from "../tools/hooks";
 import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
 import { REDACTION_MARKER } from "../tools/security";
 import { ToolRegistry } from "../tools/registry";
-import { createToolExecutionContext, type Logger, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
+import type { Logger } from "../logger";
+import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
 import { ProjectApprovalManager } from "../tools/permission";
 import { registerBuiltinTools } from "./register-tools";
 
@@ -73,11 +74,16 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
   };
 }
 
-function makeLogger(): Logger & { info: ReturnType<typeof mock> } {
-  return {
+function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
+  const logger: Logger & { debug: ReturnType<typeof mock> } = {
     debug: mock(() => {}),
     info: mock(() => {}),
     warn: mock(() => {}),
+    error: mock(() => {}),
+    child: () => logger,
+  };
+  return {
+    ...logger,
   };
 }
 
@@ -241,8 +247,8 @@ describe("registerBuiltinTools", () => {
     expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(events)).not.toContain(rawSecret);
 
-    expect(logger.info).toHaveBeenCalledTimes(1);
-    const loggerMeta = logger.info.mock.calls[0][1] as Record<string, unknown>;
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    const loggerMeta = (logger.debug.mock.calls[0][1] as { context: Record<string, unknown> }).context;
     expect(JSON.stringify(loggerMeta)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
   });

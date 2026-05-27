@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { z } from "zod";
+import { createConsoleLogger, type Logger } from "../../logger";
 import { atomicWrite } from "../../utils/safe-file";
-import type { Logger } from "../types";
 import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
 
 const SPECRA_DIR = ".specra";
@@ -99,7 +99,7 @@ export class ProjectApprovalManager {
   #writeQueue: Promise<void> = Promise.resolve();
   #fileMtime: number | null = null;
 
-  constructor(private readonly logger: Logger = console) {}
+  constructor(private readonly logger: Logger = createConsoleLogger({ module: "project-approvals" })) {}
 
   async load(workspaceRoot: string): Promise<void> {
     this.#workspaceRoot = workspaceRoot;
@@ -117,9 +117,9 @@ export class ProjectApprovalManager {
       const parsed = PermissionApprovalFileSchema.parse(JSON.parse(await file.text()));
       this.#approvalFile = parsed;
     } catch (error) {
-      this.logger.warn?.("Ignoring malformed project permissions file", {
-        path: filePath,
-        error: error instanceof Error ? error.message : String(error),
+      this.logger.warn("Ignoring malformed project permissions file", {
+        context: { path: filePath },
+        error,
       });
       this.#approvalFile = cloneApprovalFile(EMPTY_APPROVAL_FILE);
     }

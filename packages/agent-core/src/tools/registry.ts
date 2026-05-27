@@ -1,7 +1,6 @@
 import type {
   AnyToolDescriptor,
   AiToolInputSchema,
-  Logger,
   BeforeHook,
   AfterHook,
   ToolCallLike,
@@ -10,6 +9,7 @@ import type {
   ToolPermission,
   PermissionDecision,
 } from "./types";
+import type { Logger } from "../logger";
 import { DuplicateToolError, DestructiveToolPermissionError } from "./types";
 import { createPermissionErrorResult } from "./permission";
 import { redactString, redactValue } from "./security/redaction";
@@ -71,7 +71,9 @@ export class ToolRegistry {
       if (desc) {
         resolved.push(desc);
       } else {
-        this._logger?.warn?.(`Unknown tool "${name}" requested by agent`);
+        this._logger?.warn(`Unknown tool "${name}" requested by agent`, {
+          context: { toolName: name },
+        });
       }
     }
 

@@ -13,11 +13,11 @@ import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import type {
   ToolDescriptor,
-  Logger,
   ToolExecutionContext,
   ToolCallLike,
   ToolPermission,
 } from "./types";
+import type { Logger } from "../logger";
 import { createToolExecutionContext, DuplicateToolError } from "./types";
 import { DestructiveToolPermissionError } from "./types";
 import { createExecutionLogger } from "./hooks/logger";
@@ -49,12 +49,15 @@ function makeDescriptor(name: string): ToolDescriptor {
   };
 }
 
-function makeLogger(): Logger & { warn: ReturnType<typeof mock> } {
-  return {
+function makeLogger(): Logger & { warn: ReturnType<typeof mock>; debug: ReturnType<typeof mock> } {
+  const logger: Logger & { warn: ReturnType<typeof mock>; debug: ReturnType<typeof mock> } = {
     warn: mock((_message: string, _meta?: Record<string, unknown>) => {}),
     debug: mock(() => {}),
     info: mock(() => {}),
+    error: mock(() => {}),
+    child: () => logger,
   };
+  return logger;
 }
 
 function makeProjectContext(
@@ -1653,11 +1656,11 @@ describe("hook integration with registry", () => {
 
     await registry.execute(call, ctx);
 
-    expect(logger.info).toHaveBeenCalledTimes(1);
-    const calls = (logger.info as ReturnType<typeof mock>).mock.calls;
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    const calls = logger.debug.mock.calls;
     expect(calls[0][0]).toBe("Tool execution completed");
 
-    const meta = calls[0][1] as Record<string, unknown>;
+    const meta = (calls[0][1] as { context: Record<string, unknown> }).context;
     expect(meta.toolName).toBe("echo");
     expect(meta.toolCallId).toBe("call-1");
     expect(meta.isError).toBe(false);
@@ -1801,7 +1804,7 @@ describe("hook integration with registry", () => {
     expect(fileContent).not.toContain(rawSecret);
     expect(JSON.stringify(events)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(events)).not.toContain(rawSecret);
-    const loggerMeta = (logger.info as ReturnType<typeof mock>).mock.calls[0][1] as Record<string, unknown>;
+    const loggerMeta = (logger.debug.mock.calls[0][1] as { context: Record<string, unknown> }).context;
     expect(JSON.stringify(loggerMeta)).toContain(REDACTION_MARKER);
     expect(JSON.stringify(loggerMeta)).not.toContain(rawSecret);
   });

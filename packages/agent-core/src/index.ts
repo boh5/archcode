@@ -14,6 +14,14 @@ export type { RunningJob, SubscribeSessionEventsInput } from "./runner";
 
 export type { McpWarning } from "./mcp/index";
 
+export {
+  createConsoleLogger,
+  createInMemoryLogger,
+  silentLogger,
+  normalizeError,
+} from "./logger";
+export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logger";
+
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
