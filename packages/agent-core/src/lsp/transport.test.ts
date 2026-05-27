@@ -120,4 +120,18 @@ describe("StdioLspTransport", () => {
     setLspTransportForTest(() => new FakeTransport());
     setLspTransportForTest(undefined);
   });
+
+  it("captures bounded stderr for initialize failures", async () => {
+    const transport = new StdioLspTransport({
+      command: "bun",
+      args: ["-e", "console.error('lsp stderr marker'); setTimeout(() => {}, 1000);"],
+      captureStderr: true,
+      stderrBufferLimit: 64,
+      timeouts: { initializeMs: 50 },
+    });
+    transports.push(transport);
+
+    await expect(transport.connect({ processId: null, capabilities: {}, rootUri: null })).rejects.toThrow("timed out");
+    expect(transport.stderrSnapshot).toContain("lsp stderr marker");
+  });
 });

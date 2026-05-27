@@ -68,17 +68,12 @@ export const lspFindReferencesTool = defineTool({
         command: serverDefinition.command[0],
         args: serverDefinition.command.slice(1),
         cwd: ctx.workspaceRoot,
+        ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
       });
 
+      let documentHandle;
       try {
-        client.sendNotification("textDocument/didOpen", {
-          textDocument: {
-            uri,
-            languageId,
-            version: 0,
-            text,
-          },
-        });
+        documentHandle = client.openTextDocument({ uri, languageId, text });
 
         const result = await client.sendRequest("textDocument/references", {
           textDocument: { uri },
@@ -91,6 +86,7 @@ export const lspFindReferencesTool = defineTool({
         const locations = parseReferenceLocations(result).sort(sortLocations);
         return formatReferences(locations);
       } finally {
+        documentHandle?.release();
         pool.release(poolKey);
       }
     } catch (error) {
@@ -149,5 +145,4 @@ function isReferenceLocation(value: unknown): value is Required<LspReferenceLoca
   if (!isRecord(value.range) || !isRecord(value.range.start)) return false;
   return typeof value.range.start.line === "number" && typeof value.range.start.character === "number";
 }
-
 

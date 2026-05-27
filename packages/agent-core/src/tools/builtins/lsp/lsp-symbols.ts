@@ -78,23 +78,19 @@ async function handleDocumentSymbols(
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
       cwd: ctx.workspaceRoot,
+      ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
+    let documentHandle;
     try {
-      client.sendNotification("textDocument/didOpen", {
-        textDocument: {
-          uri,
-          languageId,
-          version: 0,
-          text,
-        },
-      });
+      documentHandle = client.openTextDocument({ uri, languageId, text });
 
       const response = await client.sendRequest("textDocument/documentSymbol", {
         textDocument: { uri },
       });
       return formatDocumentSymbols(parseDocumentSymbols(response, resolvedPath));
     } finally {
+      documentHandle?.release();
       pool.release(poolKey);
     }
   } catch (error) {
@@ -128,6 +124,7 @@ async function handleWorkspaceSymbols(
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
       cwd: ctx.workspaceRoot,
+      ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
     try {
@@ -314,5 +311,4 @@ function toLspToolErrorResult(error: unknown, label: string): ToolExecutionResul
     message: `${label}: ${error instanceof Error ? error.message : String(error)}`,
   });
 }
-
 

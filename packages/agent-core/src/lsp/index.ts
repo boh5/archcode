@@ -39,6 +39,10 @@ export type {
   LspClientOptions,
   LspClientTimeouts,
   LspClientFactory,
+  LspInitializeOptions,
+  OpenTextDocumentOptions,
+  TextDocumentHandle,
+  DiagnosticsSnapshot,
 } from "./client";
 export {
   DEFAULT_LSP_CLIENT_TIMEOUTS,
@@ -55,6 +59,7 @@ export type {
   LspClientPoolOptions,
   PoolEntry,
   TimerFns,
+  LspClientPoolAcquireOptions,
 } from "./client-pool";
 export {
   setTimerFnsForTest,

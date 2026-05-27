@@ -74,17 +74,12 @@ export const lspGotoDefinitionTool = defineTool({
         command: serverDefinition.command[0],
         args: serverDefinition.command.slice(1),
         cwd: ctx.workspaceRoot,
+        ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
       });
 
+      let documentHandle;
       try {
-        client.sendNotification("textDocument/didOpen", {
-          textDocument: {
-            uri,
-            languageId,
-            version: 0,
-            text,
-          },
-        });
+        documentHandle = client.openTextDocument({ uri, languageId, text });
 
         const result = await client.sendRequest("textDocument/definition", {
           textDocument: { uri },
@@ -96,6 +91,7 @@ export const lspGotoDefinitionTool = defineTool({
 
         return formatDefinition(parseDefinitionResult(result));
       } finally {
+        documentHandle?.release();
         pool.release(poolKey);
       }
     } catch (error) {
@@ -178,5 +174,4 @@ function locationFromUriAndRange(uri: string, range: unknown): LspLocation | und
     column: position.character + 1,
   };
 }
-
 

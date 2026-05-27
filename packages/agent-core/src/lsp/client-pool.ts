@@ -1,4 +1,4 @@
-import { createLspClient, LspError, type LspClient } from "./client";
+import { createLspClient, LspError, type LspClient, type LspInitializeOptions } from "./client";
 import { createLspTransport, type StdioLspTransportOptions } from "./transport";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
@@ -13,6 +13,11 @@ export interface LspClientPoolOptions {
   crashWindowMs?: number;
   crashThreshold?: number;
   logger?: Logger;
+}
+
+export interface LspClientPoolAcquireOptions extends StdioLspTransportOptions {
+  initializationOptions?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
 }
 
 export interface PoolEntry {
@@ -79,7 +84,7 @@ export class LspClientPool {
     this.#logger = logger.child({ module: "lsp.pool" });
   }
 
-  async acquire(key: PoolKey, serverOptions: StdioLspTransportOptions): Promise<LspClient> {
+  async acquire(key: PoolKey, serverOptions: LspClientPoolAcquireOptions): Promise<LspClient> {
     const id = poolKeyToString(key);
     this.assertNotCrashLooping(id, key);
 
@@ -106,6 +111,7 @@ export class LspClientPool {
 
     const transport = createLspTransport({
       ...serverOptions,
+      captureStderr: serverOptions.captureStderr ?? true,
       logger: this.#logger.child({ module: "lsp.transport" }),
     });
     entry.initializePromise = (async () => {
@@ -116,14 +122,15 @@ export class LspClientPool {
         logger: this.#logger.child({ module: "lsp.client" }),
       });
       try {
-        await client.initialize(key.workspaceRoot);
+        await client.initialize(key.workspaceRoot, initializeOptionsFromServerOptions(serverOptions));
         entry.client = client;
         this.watchForCrash(id, entry, transport);
         return client;
       } catch (error) {
         this.#logger.error("lsp.pool.acquire.failed", {
           context: { serverId: id },
-          meta: errorFields(error),
+          error,
+          meta: { ...errorFields(error), ...stderrFields(transport) },
         });
         await ignoreErrors(client.shutdown());
         this.entries.delete(id);
@@ -200,13 +207,19 @@ export class LspClientPool {
       if (code === 0 || this.shutdownKeys.has(id)) return;
       if (this.entries.get(id) !== entry) return;
 
-      this.#logger.error("lsp.pool.crash.detected", { context: { serverId: id, exitCode: code } });
+      this.#logger.error("lsp.pool.crash.detected", {
+        context: { serverId: id, exitCode: code },
+        meta: stderrFields(transport),
+      });
       this.entries.delete(id);
       this.clearIdleTimer(entry);
       this.recordCrash(id);
     }).catch(() => {
       if (this.shutdownKeys.has(id) || this.entries.get(id) !== entry) return;
-      this.#logger.error("lsp.pool.crash.detected", { context: { serverId: id, exitCode: undefined } });
+      this.#logger.error("lsp.pool.crash.detected", {
+        context: { serverId: id, exitCode: undefined },
+        meta: stderrFields(transport),
+      });
       this.entries.delete(id);
       this.clearIdleTimer(entry);
       this.recordCrash(id);
@@ -250,6 +263,14 @@ export class LspClientPool {
   }
 }
 
+function initializeOptionsFromServerOptions(serverOptions: LspClientPoolAcquireOptions): LspInitializeOptions | undefined {
+  if (!serverOptions.initializationOptions && !serverOptions.capabilities) return undefined;
+  return {
+    ...(serverOptions.initializationOptions ? { initializationOptions: serverOptions.initializationOptions } : {}),
+    ...(serverOptions.capabilities ? { capabilities: serverOptions.capabilities } : {}),
+  };
+}
+
 function poolKeyToString(key: PoolKey): string {
   return `${key.workspaceRoot}::${key.serverId}`;
 }
@@ -260,6 +281,13 @@ function getExitedPromise(transport: unknown): Promise<number> | undefined {
   return exited && typeof exited === "object" && typeof (exited as Promise<number>).then === "function"
     ? exited as Promise<number>
     : undefined;
+}
+
+function stderrFields(transport: unknown): Record<string, unknown> {
+  if (!isRecord(transport) || typeof transport.stderrSnapshot !== "string" || transport.stderrSnapshot.length === 0) {
+    return {};
+  }
+  return { lspStderr: transport.stderrSnapshot };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -43,6 +43,8 @@ export interface StdioLspTransportOptions {
   env?: Record<string, string | undefined>;
   timeouts?: Partial<LspTransportTimeouts>;
   logger?: Logger;
+  captureStderr?: boolean;
+  stderrBufferLimit?: number;
 }
 
 export type LspTransportFactory = (options: StdioLspTransportOptions) => LspTransport;
@@ -54,6 +56,7 @@ export const DEFAULT_LSP_TRANSPORT_TIMEOUTS: LspTransportTimeouts = {
 };
 
 const EXIT_WAIT_MS = 2_000;
+const DEFAULT_STDERR_BUFFER_LIMIT = 16_384;
 
 type MessageConnection = ReturnType<typeof createMessageConnection>;
 type BunSubprocess = ReturnType<typeof Bun.spawn>;
@@ -128,6 +131,8 @@ export class StdioLspTransport implements LspTransport {
   private connection: MessageConnection | undefined;
   private disposed = false;
   private initialized = false;
+  private stderrReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  private stderrBuffer = "";
 
   constructor(private readonly options: StdioLspTransportOptions) {
     this.timeouts = { ...DEFAULT_LSP_TRANSPORT_TIMEOUTS, ...options.timeouts };
@@ -136,6 +141,10 @@ export class StdioLspTransport implements LspTransport {
 
   get exited(): Promise<number> | undefined {
     return this.proc?.exited ?? this.exitPromise;
+  }
+
+  get stderrSnapshot(): string {
+    return this.stderrBuffer;
   }
 
   async connect(params: unknown = defaultInitializeParams()): Promise<unknown> {
@@ -149,9 +158,10 @@ export class StdioLspTransport implements LspTransport {
       env: this.options.env,
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: this.options.captureStderr ? "pipe" : "inherit",
     });
     this.exitPromise = this.proc.exited;
+    this.startStderrCapture(this.proc);
 
     const reader = new ReadableStreamMessageReader(adaptReader(this.proc.stdout as ReadableStream<Uint8Array>, { logger: this.#logger }));
     const writer = new WriteableStreamMessageWriter(adaptWriter(this.proc.stdin as { write(chunk: Uint8Array): void; end(): void }));
@@ -162,7 +172,13 @@ export class StdioLspTransport implements LspTransport {
       this.connection.sendRequest("initialize", params),
       this.timeouts.initializeMs,
       "initialize",
-    );
+    ).catch((error) => {
+      this.#logger.error("lsp.transport.initialize.failed", {
+        error,
+        meta: stderrMeta(this.stderrBuffer),
+      });
+      throw error;
+    });
     this.initialized = true;
     return result;
   }
@@ -202,6 +218,7 @@ export class StdioLspTransport implements LspTransport {
 
     this.connection = undefined;
     this.proc = undefined;
+    await this.stopStderrCapture();
   }
 
   private requireConnection(): MessageConnection {
@@ -219,6 +236,46 @@ export class StdioLspTransport implements LspTransport {
     safeKill(proc, "SIGKILL", this.#logger);
     this.#logger.error("lsp.transport.process.kill.escalated", { context: { pid: proc.pid, signal: "SIGKILL" } });
     await ignoreErrors(proc.exited);
+  }
+
+  private startStderrCapture(proc: BunSubprocess): void {
+    if (!this.options.captureStderr) return;
+    const stream = proc.stderr;
+    if (!(stream instanceof ReadableStream)) return;
+
+    const decoder = new TextDecoder();
+    const limit = this.options.stderrBufferLimit ?? DEFAULT_STDERR_BUFFER_LIMIT;
+    const reader = stream.getReader();
+    this.stderrReader = reader;
+
+    const pump = (): void => {
+      reader.read().then(({ done, value }) => {
+        if (done) return;
+        if (value) {
+          this.stderrBuffer += decoder.decode(value, { stream: true });
+          if (this.stderrBuffer.length > limit) {
+            this.stderrBuffer = this.stderrBuffer.slice(-limit);
+          }
+        }
+        pump();
+      }).catch((error) => {
+        this.#logger.debug("lsp.transport.stderr.capture.failed", {
+          context: { error: error instanceof Error ? error.message : String(error) },
+        });
+      });
+    };
+    pump();
+  }
+
+  private async stopStderrCapture(): Promise<void> {
+    const reader = this.stderrReader;
+    if (!reader) return;
+    this.stderrReader = undefined;
+    try {
+      await reader.cancel();
+    } catch {
+      // Stderr capture is best-effort and must not block transport disposal.
+    }
   }
 }
 
@@ -264,6 +321,10 @@ function safeKill(proc: BunSubprocess, signal: "SIGTERM" | "SIGKILL", logger: Lo
       context: { pid: proc.pid, error: error instanceof Error ? error.message : String(error) },
     });
   }
+}
+
+function stderrMeta(stderr: string): Record<string, unknown> | undefined {
+  return stderr.length > 0 ? { lspStderr: stderr } : undefined;
 }
 
 async function ignoreErrors(promise: Promise<unknown>): Promise<void> {

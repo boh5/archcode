@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import path from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { FakeLspServer } from "../../../lsp/test-utils";
-import { LspClient, setLspClientPoolForTest, type LspClientPool, type PoolKey } from "../../../lsp";
+import { LspClient, LspError, setLspClientPoolForTest, type LspClientPool, type PoolKey } from "../../../lsp";
 import type { StdioLspTransportOptions } from "../../../lsp";
 import { createMockStore } from "../../../store/test-helpers";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult, type FormattedToolError } from "../../errors";
@@ -123,10 +123,10 @@ describe("lspDiagnosticsTool", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(4_900);
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("lsp-timeout");
-    expect(result.output).toContain("Diagnostics timed out after 5000ms; showing last known diagnostics.");
+    expect(result.output).toContain("Diagnostics timed out after 10000ms; showing last known diagnostics.");
     expect(result.output).toContain("No diagnostics found.");
     expect((result.meta?.[TOOL_ERROR_META_KEY] as FormattedToolError).code).toBe("TOOL_LSP_TIMEOUT");
-  }, 7_000);
+  }, 12_000);
 
   test("returns lsp-server-not-found for unsupported extension", async () => {
     await writeWorkspaceFile("notes.unknownext", "hello\n");
@@ -398,9 +398,23 @@ class HangingPool {
 }
 
 class HangingClient {
-  sendNotification(): void {}
+  openTextDocument(): { release(): void } {
+    return { release() {} };
+  }
 
-  onNotification(): { dispose(): void } {
-    return { dispose() {} };
+  getDiagnosticsSnapshot(): undefined {
+    return undefined;
+  }
+
+  waitForDiagnostics(_uri: string, options: { timeoutMs: number }): Promise<never> {
+    return new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new LspError({
+          code: 0,
+          kind: "lsp-timeout",
+          message: `LSP diagnostics timed out after ${options.timeoutMs}ms. Check whether the language server is responsive and retry.`,
+        }));
+      }, options.timeoutMs);
+    });
   }
 }

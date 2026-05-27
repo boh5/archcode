@@ -18,6 +18,8 @@ export interface FakeLspServerConfig {
   crashAfterInitialize?: boolean;
   /** Exit code to use when crashAfterInitialize is true. */
   crashExitCode?: number;
+  /** Capabilities sent by the helper client when start() initializes the server. */
+  clientCapabilities?: Record<string, unknown>;
 }
 
 export const DEFAULT_INITIALIZE_RESULT: Record<string, unknown> = {
@@ -77,7 +79,11 @@ async function readMessage(): Promise<unknown> {
 
 // ─── Subprocess Message Handler ───
 
-async function handle(msg: any, config: FakeLspServerConfig): Promise<void> {
+interface FakeServerState {
+  clientCapabilities: Record<string, unknown>;
+}
+
+async function handle(msg: any, config: FakeLspServerConfig, state: FakeServerState): Promise<void> {
   if (config.delayMs && msg.method !== "exit") {
     await new Promise((r) => setTimeout(r, config.delayMs));
   }
@@ -85,6 +91,7 @@ async function handle(msg: any, config: FakeLspServerConfig): Promise<void> {
   if (msg.id !== undefined && msg.id !== null) {
     switch (msg.method) {
       case "initialize": {
+        state.clientCapabilities = extractClientCapabilities(msg.params);
         const result = config.initializeResult ?? DEFAULT_INITIALIZE_RESULT;
         writeMessage({ jsonrpc: "2.0", id: msg.id, result });
         if (config.crashAfterInitialize) {
@@ -118,7 +125,7 @@ async function handle(msg: any, config: FakeLspServerConfig): Promise<void> {
         process.exit(0);
         return;
       case "textDocument/didOpen":
-        if (config.autoDiagnostics) {
+        if (config.autoDiagnostics && clientAcceptsDiagnostics(state.clientCapabilities)) {
           writeMessage({
             jsonrpc: "2.0",
             method: "textDocument/publishDiagnostics",
@@ -141,15 +148,35 @@ async function handle(msg: any, config: FakeLspServerConfig): Promise<void> {
 // ─── Subprocess Main Loop ───
 
 async function main(config: FakeLspServerConfig): Promise<void> {
+  const state: FakeServerState = { clientCapabilities: {} };
   for (;;) {
     try {
       const msg = await readMessage();
       if (msg === undefined) break;
-      await handle(msg, config);
+      await handle(msg, config, state);
     } catch {
       process.exit(1);
     }
   }
+}
+
+function extractClientCapabilities(params: unknown): Record<string, unknown> {
+  if (!isRecord(params) || !isRecord(params.capabilities)) return {};
+  return params.capabilities;
+}
+
+function clientAcceptsDiagnostics(capabilities: Record<string, unknown>): boolean {
+  const textDocument = capabilities.textDocument;
+  if (!isRecord(textDocument)) return false;
+  return textDocument.publishDiagnostics !== undefined && textDocument.publishDiagnostics !== false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function defaultFakeClientCapabilities(): Record<string, unknown> {
+  return { textDocument: { publishDiagnostics: {} } };
 }
 
 // ─── FakeLspServer Test Helper ───
@@ -198,7 +225,11 @@ export class FakeLspServer {
       env: { ...process.env, FAKE_LSP_CONFIG: configPath },
     });
 
-    this._initializeResult = await this.transport.connect();
+    this._initializeResult = await this.transport.connect({
+      processId: null,
+      rootUri: null,
+      capabilities: this.config.clientCapabilities ?? defaultFakeClientCapabilities(),
+    });
     return this.transport;
   }
 

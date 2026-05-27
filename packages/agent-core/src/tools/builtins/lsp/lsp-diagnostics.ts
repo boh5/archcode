@@ -1,5 +1,4 @@
-import type { Disposable } from "vscode-jsonrpc";
-import { LspDiagnosticsInputSchema, type LspDiagnostic, type LspDiagnosticSeverity, LspError, getLspClientPool, getLanguageIdFromFilename, getServerDefinitionsForLanguage, pathToFileUri } from "../../../lsp";
+import { LspDiagnosticsInputSchema, type DiagnosticsSnapshot, type LspDiagnostic, type LspDiagnosticSeverity, LspError, getLspClientPool, getLanguageIdFromFilename, getServerDefinitionsForLanguage, pathToFileUri } from "../../../lsp";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import { createWorkspacePermission } from "../../permission";
@@ -11,7 +10,7 @@ import { formatDiagnostics, formatTimeout } from "./format-output";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-const DIAGNOSTICS_TIMEOUT_MS = 5_000;
+const DIAGNOSTICS_TIMEOUT_MS = 10_000;
 const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
@@ -26,16 +25,12 @@ const MAX_DIR_FILES = 200;
 
 type LspDiagnosticSeverityFilter = LspDiagnosticSeverity | "all";
 
-interface PublishDiagnosticsParams {
-  uri?: string;
-  diagnostics?: unknown[];
-}
-
 interface SupportedFileEntry {
   filePath: string;
   languageId: string;
   serverId: string;
   command: string[];
+  initializationOptions?: Record<string, unknown>;
 }
 
 // ─── Tool descriptor ───
@@ -107,7 +102,6 @@ async function handleFileDiagnostics(
   const pool = getLspClientPool();
   const poolKey = { workspaceRoot: ctx.workspaceRoot, serverId: serverDefinition.id };
   const uri = pathToFileUri(resolvedPath);
-  let disposable: Disposable | undefined;
   let lastDiagnostics: LspDiagnostic[] = [];
 
   try {
@@ -116,35 +110,28 @@ async function handleFileDiagnostics(
       command: serverDefinition.command[0],
       args: serverDefinition.command.slice(1),
       cwd: ctx.workspaceRoot,
+      ...(serverDefinition.initializationOptions ? { initializationOptions: serverDefinition.initializationOptions } : {}),
     });
 
+    let documentHandle;
     try {
-      const diagnosticsPromise = new Promise<LspDiagnostic[]>((resolve) => {
-        disposable = client.onNotification("textDocument/publishDiagnostics", (params) => {
-          const published = parsePublishDiagnostics(params, resolvedPath, uri, severity);
-          if (!published) return;
-          lastDiagnostics = published;
-          resolve(published);
-        });
+      const baseline = client.getDiagnosticsSnapshot(uri)?.sequence ?? -1;
+      documentHandle = client.openTextDocument({
+        uri,
+        languageId,
+        text,
       });
 
-      client.sendNotification("textDocument/didOpen", {
-        textDocument: {
-          uri,
-          languageId,
-          version: 0,
-          text,
-        },
-      });
-
-      const diagnostics = await waitForDiagnostics(diagnosticsPromise, DIAGNOSTICS_TIMEOUT_MS);
+      const snapshot = await client.waitForDiagnostics(uri, { afterSequence: baseline, timeoutMs: DIAGNOSTICS_TIMEOUT_MS });
+      const diagnostics = diagnosticsFromSnapshot(snapshot, resolvedPath, severity);
+      lastDiagnostics = diagnostics;
       return formatDiagnostics(diagnostics, displayPath);
     } finally {
-      disposable?.dispose();
+      documentHandle?.release();
       pool.release(poolKey);
     }
   } catch (error) {
-    if (error instanceof DiagnosticsTimeoutError) {
+    if (error instanceof LspError && error.kind === "lsp-timeout") {
       getLspToolLogger().warn("lsp.diagnostics.timeout", {
         module: "lsp.diagnostics",
         context: { filePath: displayPath, timeoutMs: DIAGNOSTICS_TIMEOUT_MS },
@@ -240,6 +227,7 @@ async function walkSupportedFiles(rootPath: string): Promise<{
       languageId: lang,
       serverId: serverDefs[0].id,
       command: serverDefs[0].command,
+      ...(serverDefs[0].initializationOptions ? { initializationOptions: serverDefs[0].initializationOptions } : {}),
     });
   }
 
@@ -325,6 +313,7 @@ async function handleDirectoryDiagnostics(
         command: firstEntry.command[0],
         args: firstEntry.command.slice(1),
         cwd: ctx.workspaceRoot,
+        ...(firstEntry.initializationOptions ? { initializationOptions: firstEntry.initializationOptions } : {}),
       });
     } catch (error) {
       getLspToolLogger().warn("lsp.diagnostics.server.start.failed", {
@@ -341,29 +330,14 @@ async function handleDirectoryDiagnostics(
         try {
           const text = await Bun.file(entry.filePath).text();
           const uri = pathToFileUri(entry.filePath);
-
-          // Register one-shot handler before sending didOpen
-          const diagnosticsPromise = new Promise<LspDiagnostic[]>((resolve) => {
-            const disposable = client.onNotification("textDocument/publishDiagnostics", (params) => {
-              const parsed = parsePublishDiagnostics(params, entry.filePath, uri, severity);
-              if (parsed) {
-                disposable.dispose();
-                resolve(parsed);
-              }
-            });
-          });
-
-          client.sendNotification("textDocument/didOpen", {
-            textDocument: {
-              uri,
-              languageId: entry.languageId,
-              version: 0,
-              text,
-            },
-          });
-
-          const diagnostics = await waitForDiagnostics(diagnosticsPromise, DIAGNOSTICS_TIMEOUT_MS);
-          allDiagnostics.push(...diagnostics);
+          const baseline = client.getDiagnosticsSnapshot(uri)?.sequence ?? -1;
+          const documentHandle = client.openTextDocument({ uri, languageId: entry.languageId, text });
+          try {
+            const snapshot = await client.waitForDiagnostics(uri, { afterSequence: baseline, timeoutMs: DIAGNOSTICS_TIMEOUT_MS });
+            allDiagnostics.push(...diagnosticsFromSnapshot(snapshot, entry.filePath, severity));
+          } finally {
+            documentHandle.release();
+          }
         } catch (error) {
           getLspToolLogger().warn("lsp.diagnostics.file.failed", {
             module: "lsp.diagnostics",
@@ -386,36 +360,12 @@ async function handleDirectoryDiagnostics(
 
 // ─── Diagnostics helpers ───
 
-async function waitForDiagnostics(
-  diagnosticsPromise: Promise<LspDiagnostic[]>,
-  timeoutMs: number,
-): Promise<LspDiagnostic[]> {
-  let timeout: Timer | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => reject(new DiagnosticsTimeoutError(timeoutMs)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([diagnosticsPromise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function parsePublishDiagnostics(
-  params: unknown,
+function diagnosticsFromSnapshot(
+  snapshot: DiagnosticsSnapshot,
   filePath: string,
-  expectedUri: string,
   severityFilter: LspDiagnosticSeverityFilter,
-): LspDiagnostic[] | undefined {
-  if (!isRecord(params)) return undefined;
-
-  const publishParams = params as PublishDiagnosticsParams;
-  if (publishParams.uri !== expectedUri || !Array.isArray(publishParams.diagnostics)) {
-    return undefined;
-  }
-
-  return publishParams.diagnostics
+): LspDiagnostic[] {
+  return snapshot.diagnostics
     .map((diagnostic) => toLspDiagnostic(diagnostic, filePath))
     .filter((diagnostic): diagnostic is LspDiagnostic => diagnostic !== undefined)
     .filter((diagnostic) => severityFilter === "all" || diagnostic.severity === severityFilter);
@@ -456,15 +406,6 @@ function diagnosticSeverityToString(severity: unknown): LspDiagnosticSeverity {
   }
 }
 
-
-
 function formatWarningMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-class DiagnosticsTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`LSP diagnostics timed out after ${timeoutMs}ms`);
-    this.name = "DiagnosticsTimeoutError";
-  }
 }

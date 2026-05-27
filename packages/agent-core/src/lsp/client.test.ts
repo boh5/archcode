@@ -46,9 +46,53 @@ describe("LspClient", () => {
     expect(transport.connectParams).toEqual({
       processId: null,
       rootUri: "file:///workspace",
-      capabilities: { textDocument: { hover: { dynamicRegistration: false } } },
+      capabilities: {
+        textDocument: {
+          hover: { dynamicRegistration: false },
+          publishDiagnostics: {
+            relatedInformation: true,
+            versionSupport: true,
+            codeDescriptionSupport: true,
+            dataSupport: true,
+          },
+          synchronization: {
+            didSave: true,
+            willSave: false,
+            willSaveWaitUntil: false,
+          },
+        },
+      },
     });
     expect(transport.notifications).toEqual([{ method: "initialized", params: {} }]);
+  });
+
+  test("initialize sends diagnostics capability by default", async () => {
+    const transport = new RecordingTransport();
+    const client = new LspClient({ transport, workspaceRoot: "/workspace" });
+
+    await client.initialize("/workspace");
+
+    expect(transport.connectParams).toMatchObject({
+      capabilities: {
+        textDocument: {
+          publishDiagnostics: {
+            relatedInformation: true,
+            versionSupport: true,
+          },
+        },
+      },
+    });
+  });
+
+  test("initialize forwards initializationOptions", async () => {
+    const transport = new RecordingTransport();
+    const client = new LspClient({ transport, workspaceRoot: "/workspace" });
+
+    await client.initialize("/workspace", { initializationOptions: { tsserver: { path: "/tmp/tsserver.js" } } });
+
+    expect(transport.connectParams).toMatchObject({
+      initializationOptions: { tsserver: { path: "/tmp/tsserver.js" } },
+    });
   });
 
   test("shutdown sends shutdown, exit, then disposes transport", async () => {
@@ -194,6 +238,31 @@ describe("LspClient", () => {
         diagnostics: [{ message: "diagnostic", severity: 1 }],
       });
     });
+  });
+
+  test("openTextDocument ref-counts handles and sends didClose after final release", () => {
+    const transport = new RecordingTransport();
+    const client = new LspClient({ transport, workspaceRoot: "/workspace" });
+
+    const first = client.openTextDocument({
+      uri: "file:///workspace/test.ts",
+      languageId: "typescript",
+      text: "export const value = 1;",
+    });
+    const second = client.openTextDocument({
+      uri: "file:///workspace/test.ts",
+      languageId: "typescript",
+      text: "export const value = 1;",
+    });
+
+    first.release();
+    expect(transport.notifications.map((item) => item.method)).toEqual(["textDocument/didOpen"]);
+
+    second.release();
+    expect(transport.notifications.map((item) => item.method)).toEqual([
+      "textDocument/didOpen",
+      "textDocument/didClose",
+    ]);
   });
 });
 

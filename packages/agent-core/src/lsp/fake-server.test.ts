@@ -171,6 +171,30 @@ describe("FakeLspServer", () => {
     }
   });
 
+  test("does not push diagnostics when client omits publishDiagnostics capability", async () => {
+    const server = new FakeLspServer({
+      autoDiagnostics: [{ message: "hidden diagnostic", severity: 1 }],
+      clientCapabilities: {},
+    });
+    try {
+      const transport = await server.start();
+
+      const diagPromise = server.waitForNotification("textDocument/publishDiagnostics", 100);
+      transport.sendNotification("textDocument/didOpen", {
+        textDocument: {
+          uri: "file:///test.ts",
+          languageId: "typescript",
+          version: 1,
+          text: "",
+        },
+      });
+
+      await expect(diagPromise).rejects.toThrow("timed out");
+    } finally {
+      await server.stop();
+    }
+  });
+
   test("simulates response delay", async () => {
     const server = new FakeLspServer({ delayMs: 200 });
     try {

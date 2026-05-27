@@ -37,6 +37,25 @@ describe("LspClientPool", () => {
     await pool.disposeAll();
   });
 
+  test("forwards capabilities and initializationOptions to client initialize once", async () => {
+    const seam = installMockClientSeam();
+    const pool = new LspClientPool();
+    const key = poolKey("/workspace", "typescript");
+
+    await pool.acquire(key, {
+      ...serverOptions(),
+      capabilities: { textDocument: { hover: { dynamicRegistration: false } } },
+      initializationOptions: { tsserver: { path: "/tmp/tsserver.js" } },
+    });
+
+    expect(seam.clients[0].initializeOptions).toEqual({
+      capabilities: { textDocument: { hover: { dynamicRegistration: false } } },
+      initializationOptions: { tsserver: { path: "/tmp/tsserver.js" } },
+    });
+    pool.release(key);
+    await pool.disposeAll();
+  });
+
   test("pool key uses workspaceRoot and serverId without cross sharing", async () => {
     installMockClientSeam();
     const pool = new LspClientPool();
@@ -209,6 +228,7 @@ function installMockClientSeam(options: { initializeDelayMs?: number; initialize
 class MockClient {
   initializeCount = 0;
   shutdownCount = 0;
+  initializeOptions: unknown;
 
   constructor(private readonly options: {
     transport: LspTransport;
@@ -217,8 +237,9 @@ class MockClient {
     initializeError?: Error;
   }) {}
 
-  async initialize(workspaceRoot = this.options.workspaceRoot): Promise<Record<string, unknown>> {
+  async initialize(workspaceRoot = this.options.workspaceRoot, options?: unknown): Promise<Record<string, unknown>> {
     this.initializeCount += 1;
+    this.initializeOptions = options;
     await this.options.transport.connect({ rootUri: workspaceRoot });
     if (this.options.initializeDelayMs) {
       await new Promise((resolve) => setTimeout(resolve, this.options.initializeDelayMs));

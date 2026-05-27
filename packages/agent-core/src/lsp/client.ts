@@ -18,6 +18,31 @@ export interface LspClientTimeouts {
   contentModifiedBaseDelayMs: number;
 }
 
+export interface LspInitializeOptions {
+  capabilities?: Record<string, unknown>;
+  initializationOptions?: Record<string, unknown>;
+}
+
+export interface OpenTextDocumentOptions {
+  uri: string;
+  languageId: string;
+  text: string;
+}
+
+export interface TextDocumentHandle {
+  uri: string;
+  version: number;
+  release: () => void;
+}
+
+export interface DiagnosticsSnapshot {
+  uri: string;
+  diagnostics: unknown[];
+  version?: number;
+  sequence: number;
+  updatedAt: number;
+}
+
 export const DEFAULT_LSP_CLIENT_TIMEOUTS: LspClientTimeouts = {
   initializeMs: 30_000,
   requestMs: 15_000,
@@ -60,6 +85,11 @@ export class LspClient {
   private readonly timeouts: LspClientTimeouts;
   #logger: Logger;
   private serverCapabilities: Record<string, unknown> | undefined;
+  private diagnosticsListener: Disposable | undefined;
+  private diagnosticsSequence = 0;
+  private readonly diagnosticsByUri = new Map<string, DiagnosticsSnapshot>();
+  private readonly diagnosticsWaiters = new Map<string, Set<DiagnosticsWaiter>>();
+  private readonly openDocuments = new Map<string, OpenDocumentState>();
 
   constructor(options: LspClientOptions) {
     this.transport = options.transport;
@@ -74,13 +104,14 @@ export class LspClient {
 
   async initialize(
     workspaceRoot = this.workspaceRoot,
-    options?: { capabilities?: Record<string, unknown> },
+    options?: LspInitializeOptions,
   ): Promise<Record<string, unknown>> {
     const result = await withTimeout(
       this.transport.connect({
         processId: null,
         rootUri: pathToFileUri(workspaceRoot),
-        capabilities: options?.capabilities ?? {},
+        capabilities: mergeCapabilities(defaultClientCapabilities(), options?.capabilities),
+        ...(options?.initializationOptions ? { initializationOptions: options.initializationOptions } : {}),
       }),
       this.timeouts.initializeMs,
       "initialize",
@@ -88,6 +119,7 @@ export class LspClient {
 
     const capabilities = extractCapabilities(result);
     this.serverCapabilities = capabilities;
+    this.ensureDiagnosticsListener();
     this.transport.sendNotification("initialized", {});
     return capabilities;
   }
@@ -129,6 +161,215 @@ export class LspClient {
   onNotification(method: string, handler: (params: unknown) => void): Disposable {
     return this.transport.onNotification(method, handler);
   }
+
+  hasCapability(path: string): boolean {
+    return getNestedValue(this.serverCapabilities ?? {}, path) !== undefined;
+  }
+
+  openTextDocument(options: OpenTextDocumentOptions): TextDocumentHandle {
+    const existing = this.openDocuments.get(options.uri);
+    if (existing) {
+      existing.refCount += 1;
+      if (existing.text !== options.text || existing.languageId !== options.languageId) {
+        existing.version += 1;
+        existing.text = options.text;
+        existing.languageId = options.languageId;
+        this.transport.sendNotification("textDocument/didChange", {
+          textDocument: { uri: options.uri, version: existing.version },
+          contentChanges: [{ text: options.text }],
+        });
+      }
+
+      return this.createDocumentHandle(options.uri, existing.version);
+    }
+
+    const state: OpenDocumentState = {
+      languageId: options.languageId,
+      text: options.text,
+      version: 1,
+      refCount: 1,
+    };
+    this.openDocuments.set(options.uri, state);
+    this.transport.sendNotification("textDocument/didOpen", {
+      textDocument: {
+        uri: options.uri,
+        languageId: options.languageId,
+        version: state.version,
+        text: options.text,
+      },
+    });
+
+    return this.createDocumentHandle(options.uri, state.version);
+  }
+
+  getDiagnosticsSnapshot(uri: string): DiagnosticsSnapshot | undefined {
+    return this.diagnosticsByUri.get(uri);
+  }
+
+  waitForDiagnostics(uri: string, options: { afterSequence?: number; timeoutMs: number }): Promise<DiagnosticsSnapshot> {
+    const baseline = options.afterSequence ?? -1;
+    const snapshot = this.diagnosticsByUri.get(uri);
+    if (snapshot && snapshot.sequence > baseline) {
+      return Promise.resolve(snapshot);
+    }
+
+    let timeout: Timer | undefined;
+    return new Promise((resolve, reject) => {
+      const waiter: DiagnosticsWaiter = {
+        baseline,
+        resolve: (next) => {
+          if (timeout) clearTimeout(timeout);
+          this.removeDiagnosticsWaiter(uri, waiter);
+          resolve(next);
+        },
+        reject: (error) => {
+          if (timeout) clearTimeout(timeout);
+          this.removeDiagnosticsWaiter(uri, waiter);
+          reject(error);
+        },
+      };
+
+      const waiters = this.diagnosticsWaiters.get(uri) ?? new Set<DiagnosticsWaiter>();
+      waiters.add(waiter);
+      this.diagnosticsWaiters.set(uri, waiters);
+
+      timeout = setTimeout(() => {
+        waiter.reject(new LspError({
+          code: 0,
+          kind: "lsp-timeout",
+          message: `LSP diagnostics timed out after ${options.timeoutMs}ms. Check whether the language server is responsive and retry.`,
+        }));
+      }, options.timeoutMs);
+    });
+  }
+
+  private createDocumentHandle(uri: string, version: number): TextDocumentHandle {
+    let released = false;
+    return {
+      uri,
+      version,
+      release: () => {
+        if (released) return;
+        released = true;
+        this.releaseTextDocument(uri);
+      },
+    };
+  }
+
+  private releaseTextDocument(uri: string): void {
+    const state = this.openDocuments.get(uri);
+    if (!state) return;
+    state.refCount -= 1;
+    if (state.refCount > 0) return;
+
+    this.openDocuments.delete(uri);
+    this.transport.sendNotification("textDocument/didClose", {
+      textDocument: { uri },
+    });
+  }
+
+  private ensureDiagnosticsListener(): void {
+    if (this.diagnosticsListener) return;
+    this.diagnosticsListener = this.transport.onNotification("textDocument/publishDiagnostics", (params) => {
+      const parsed = parsePublishDiagnostics(params);
+      if (!parsed) return;
+      const snapshot: DiagnosticsSnapshot = {
+        uri: parsed.uri,
+        diagnostics: parsed.diagnostics,
+        ...(parsed.version !== undefined ? { version: parsed.version } : {}),
+        sequence: ++this.diagnosticsSequence,
+        updatedAt: Date.now(),
+      };
+      this.diagnosticsByUri.set(parsed.uri, snapshot);
+      this.resolveDiagnosticsWaiters(parsed.uri, snapshot);
+    });
+  }
+
+  private resolveDiagnosticsWaiters(uri: string, snapshot: DiagnosticsSnapshot): void {
+    const waiters = this.diagnosticsWaiters.get(uri);
+    if (!waiters) return;
+    for (const waiter of [...waiters]) {
+      if (snapshot.sequence > waiter.baseline) {
+        waiter.resolve(snapshot);
+      }
+    }
+  }
+
+  private removeDiagnosticsWaiter(uri: string, waiter: DiagnosticsWaiter): void {
+    const waiters = this.diagnosticsWaiters.get(uri);
+    if (!waiters) return;
+    waiters.delete(waiter);
+    if (waiters.size === 0) {
+      this.diagnosticsWaiters.delete(uri);
+    }
+  }
+}
+
+interface DiagnosticsWaiter {
+  baseline: number;
+  resolve: (snapshot: DiagnosticsSnapshot) => void;
+  reject: (error: Error) => void;
+}
+
+interface OpenDocumentState {
+  languageId: string;
+  text: string;
+  version: number;
+  refCount: number;
+}
+
+function defaultClientCapabilities(): Record<string, unknown> {
+  return {
+    textDocument: {
+      publishDiagnostics: {
+        relatedInformation: true,
+        versionSupport: true,
+        codeDescriptionSupport: true,
+        dataSupport: true,
+      },
+      synchronization: {
+        didSave: true,
+        willSave: false,
+        willSaveWaitUntil: false,
+      },
+    },
+  };
+}
+
+function mergeCapabilities(base: Record<string, unknown>, override: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!override) return base;
+  return deepMergeRecords(base, override);
+}
+
+function deepMergeRecords(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const current = result[key];
+    if (isRecord(current) && isRecord(value)) {
+      result[key] = deepMergeRecords(current, value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function getNestedValue(source: Record<string, unknown>, path: string): unknown {
+  let current: unknown = source;
+  for (const segment of path.split(".")) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function parsePublishDiagnostics(params: unknown): { uri: string; diagnostics: unknown[]; version?: number } | undefined {
+  if (!isRecord(params)) return undefined;
+  const uri = params.uri;
+  const diagnostics = params.diagnostics;
+  if (typeof uri !== "string" || !Array.isArray(diagnostics)) return undefined;
+  const version = typeof params.version === "number" ? params.version : undefined;
+  return { uri, diagnostics, ...(version !== undefined ? { version } : {}) };
 }
 
 function extractCapabilities(result: unknown): Record<string, unknown> {

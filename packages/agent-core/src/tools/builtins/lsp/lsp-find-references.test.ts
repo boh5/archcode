@@ -222,6 +222,10 @@ class RecordingClient {
     this.requests.push({ method, params });
     return this.client.sendRequest(method, params);
   }
+
+  openTextDocument(options: Parameters<LspClient["openTextDocument"]>[0]): ReturnType<LspClient["openTextDocument"]> {
+    return this.client.openTextDocument(options);
+  }
 }
 
 class RecordingPool {
