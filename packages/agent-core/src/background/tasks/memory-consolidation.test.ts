@@ -7,6 +7,7 @@ import { generateText, Output, type GenerateTextResult, type ToolSet } from "ai"
 import type { ModelInfo } from "../../provider/model";
 import type { BackgroundTaskContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
+import { createMockLogger } from "../../logger.test-helper";
 
 type MockGenerateTextResult = GenerateTextResult<ToolSet, Output.Output>;
 
@@ -212,9 +213,7 @@ describe("createMemoryConsolidationTask", () => {
       makeGenerateTextResult({ invalid: "data" }),
     );
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
 const task = createMemoryConsolidationTask({
@@ -222,16 +221,14 @@ const task = createMemoryConsolidationTask({
         user: userRoot,
       });
 
-      await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+      await task.run({ modelInfo: makeModelInfo(), logger } as never);
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Memory consolidation: LLM output validation failed:",
-        expect.any(String),
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.consolidation.validation.failed", expect.objectContaining({
+        error: expect.any(Error),
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -254,9 +251,7 @@ const task = createMemoryConsolidationTask({
 
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
 const task = createMemoryConsolidationTask({
@@ -264,16 +259,14 @@ const task = createMemoryConsolidationTask({
         user: userRoot,
       });
 
-      await task.run({ modelInfo: makeModelInfo() } as BackgroundTaskContext);
+      await task.run({ modelInfo: makeModelInfo(), logger } as never);
 
       const index = await fileManager.readIndex();
       expect(index).toContain("Original summary");
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Memory consolidation failed:",
-        "API error",
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.consolidation.failed", expect.objectContaining({
+        error: expect.any(Error),
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 

@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { Logger } from "../logger";
 
 export const DEFAULT_QUOTA_MB = 500;
 
@@ -9,24 +10,36 @@ export interface CacheStats {
   oldestFile: { path: string; mtime: Date; size: number } | null;
 }
 
+export interface CacheStatsOptions {
+  logger: Logger;
+}
+
+export interface EnforceQuotaOptions {
+  logger: Logger;
+  quotaMB?: number;
+}
+
 interface FileEntry {
   path: string;
   size: number;
   mtime: Date;
 }
 
-async function collectFiles(dir: string): Promise<FileEntry[]> {
+async function collectFiles(
+  dir: string,
+  options: { logger: Logger; quotaEnforcement: boolean },
+): Promise<FileEntry[]> {
   const entries: FileEntry[] = [];
 
   let dirEntries;
   try {
     dirEntries = await readdir(dir, { withFileTypes: true });
   } catch (error) {
-    if (error instanceof Error) {
-      console.warn(
-        `[tool-output-cache] Warning: cannot read directory ${dir}: ${error.message}`,
-      );
-    }
+    const level = options.quotaEnforcement ? "warn" : "debug";
+    options.logger[level]("tool.output.cache.scan.failed", {
+      error,
+      meta: { directory: dir },
+    });
     return entries;
   }
 
@@ -34,7 +47,7 @@ async function collectFiles(dir: string): Promise<FileEntry[]> {
     const fullPath = join(dir, entry.name);
     try {
       if (entry.isDirectory()) {
-        const subEntries = await collectFiles(fullPath);
+        const subEntries = await collectFiles(fullPath, options);
         entries.push(...subEntries);
       } else if (entry.isFile()) {
         const bunFile = Bun.file(fullPath);
@@ -47,7 +60,10 @@ async function collectFiles(dir: string): Promise<FileEntry[]> {
       if (e && typeof e === "object" && "code" in e && ((e as { code: string }).code === "ENOENT" || (e as { code: string }).code === "EACCES")) {
         continue;
       }
-      console.warn("[tool-output-cache] skipping file:", e instanceof Error ? e.message : String(e));
+      options.logger.debug("tool.output.cache.file.skipped", {
+        error: e,
+        meta: { path: fullPath },
+      });
       continue;
     }
   }
@@ -55,8 +71,8 @@ async function collectFiles(dir: string): Promise<FileEntry[]> {
   return entries;
 }
 
-export async function getCacheStats(dir: string): Promise<CacheStats> {
-  const files = await collectFiles(dir);
+export async function getCacheStats(dir: string, options: CacheStatsOptions): Promise<CacheStats> {
+  const files = await collectFiles(dir, { logger: options.logger, quotaEnforcement: false });
 
   if (files.length === 0) {
     return { totalSizeBytes: 0, fileCount: 0, oldestFile: null };
@@ -76,10 +92,11 @@ export async function getCacheStats(dir: string): Promise<CacheStats> {
 
 export async function enforceQuota(
   dir: string,
-  quotaMB: number = DEFAULT_QUOTA_MB,
+  options: EnforceQuotaOptions,
 ): Promise<number> {
+  const quotaMB = options.quotaMB ?? DEFAULT_QUOTA_MB;
   const quotaBytes = quotaMB * 1024 * 1024;
-  const files = await collectFiles(dir);
+  const files = await collectFiles(dir, { logger: options.logger, quotaEnforcement: true });
 
   const totalSize = files.reduce((sum, f) => sum + f.size, 0);
   if (totalSize <= quotaBytes) {
@@ -107,9 +124,10 @@ export async function enforceQuota(
           currentSize -= file.size;
           deletedCount++;
         } else {
-          console.warn(
-            `[tool-output-cache] Warning: cannot delete ${file.path}: ${error.message}`,
-          );
+          options.logger.warn("tool.output.cache.delete.failed", {
+            error,
+            meta: { path: file.path, quotaMB },
+          });
         }
       }
     }

@@ -83,7 +83,7 @@ export class ConfiguredAgent implements Agent {
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
-  private readonly autoCompactHook = createAutoCompactHook();
+  private readonly autoCompactHook: ReturnType<typeof createAutoCompactHook>;
   private readonly backgroundTaskManager: BackgroundTaskManager;
   private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
@@ -101,6 +101,7 @@ export class ConfiguredAgent implements Agent {
       module: "agents.configured-agent",
       context: { agentName: options.definition.name },
     });
+    this.autoCompactHook = createAutoCompactHook(this.logger.child({ module: "compact.auto" }));
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
@@ -124,7 +125,7 @@ export class ConfiguredAgent implements Agent {
     this.agentFactory = options.agentFactory;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
-      await enforceQuota(directory);
+      await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
     });
     this.memoryRoots = {
       project: join(this.workspaceRoot, ".specra", "memory"),
@@ -138,6 +139,7 @@ export class ConfiguredAgent implements Agent {
         this.modelInfo,
         this.autoCompactHook.circuitBreaker,
         this.modelOptions,
+        this.logger.child({ module: "compact.command" }),
       ),
     );
     this.commandRegistry.register(

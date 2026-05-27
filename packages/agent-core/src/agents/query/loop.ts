@@ -253,6 +253,7 @@ export async function maybeHandleCommand(
   const result = await descriptor.handler({
     store,
     modelInfo,
+    logger: options.logger,
     modelOptions,
     abort,
     workspaceRoot: options.workspaceRoot,

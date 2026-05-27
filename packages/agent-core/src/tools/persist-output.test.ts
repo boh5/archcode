@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { silentLogger } from "../logger";
 import type { CompletedToolPart, ErrorToolPart } from "../store/types";
 import {
   persistToolOutput,
@@ -61,6 +62,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-1";
 
     const result = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -82,6 +84,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-2";
 
     const result = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -98,12 +101,14 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-3";
 
     const result1 = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
     toolPart.output = "modified output";
 
     const result2 = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -118,12 +123,14 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-4";
 
     const result1 = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
     toolPart.output = "modified output";
 
     const result2 = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       force: true,
     });
@@ -139,6 +146,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-5";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       previewLines: 0,
     });
@@ -156,6 +164,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-6";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       previewLines: 5,
     });
@@ -173,6 +182,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-7";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       previewLines: 3,
     });
@@ -190,6 +200,7 @@ describe("persistToolOutput", () => {
     await Bun.write(join(OUTPUT_DIR, sessionId), "blocker");
 
     const result = await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -205,6 +216,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-meta";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -220,6 +232,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-meta-preserve";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -235,6 +248,7 @@ describe("persistToolOutput", () => {
     const sessionId = "test-session-default-preview";
 
     await persistToolOutput(toolPart, sessionId, {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -263,7 +277,7 @@ describe("persistToolOutputValue", () => {
       toolName,
       callId,
       sessionId,
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     expect(typeof result.fullPath).toBe("string");
@@ -283,6 +297,7 @@ describe("persistToolOutputValue", () => {
     const rawOutput = "line1\nline2\nline3";
 
     const result = await persistToolOutputValue(rawOutput, "bash", "call-1", "session-1", {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       previewLines: 0,
     });
@@ -296,6 +311,7 @@ describe("persistToolOutputValue", () => {
     const rawOutput = "line1\nline2\nline3\nline4\nline5";
 
     const result = await persistToolOutputValue(rawOutput, "bash", "call-2", "session-2", {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
       previewLines: 3,
     });
@@ -316,7 +332,7 @@ describe("persistToolOutputValue", () => {
       "bash",
       "call-blocked",
       "session-blocked",
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     expect(result.fullPath).toBe("");
@@ -328,6 +344,7 @@ describe("persistToolOutputValue", () => {
       "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
 
     const result = await persistToolOutputValue(rawOutput, "bash", "call-3", "session-3", {
+      logger: silentLogger,
       outputDir: OUTPUT_DIR,
     });
 
@@ -344,7 +361,7 @@ describe("persistToolOutputValue", () => {
       "bash",
       "call-deterministic",
       "session-d",
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     const result2 = await persistToolOutputValue(
@@ -352,7 +369,7 @@ describe("persistToolOutputValue", () => {
       "bash",
       "call-deterministic",
       "session-d",
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     expect(result1.fullPath).toBe(result2.fullPath);
@@ -366,7 +383,7 @@ describe("persistToolOutputValue", () => {
       "my tool/name",
       "call/special chars",
       "session-sanitize",
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     expect(result.fullPath).toContain("my_tool_name");

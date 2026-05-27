@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "crypto";
+import { silentLogger } from "../logger";
 import {
   DEFAULT_QUOTA_MB,
   enforceQuota,
@@ -47,7 +48,7 @@ beforeEach(async () => {
 
 describe("getCacheStats", () => {
   it("returns zeros for empty directory", async () => {
-    const stats = await getCacheStats(TMP_DIR);
+    const stats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(stats.totalSizeBytes).toBe(0);
     expect(stats.fileCount).toBe(0);
     expect(stats.oldestFile).toBeNull();
@@ -57,7 +58,7 @@ describe("getCacheStats", () => {
     await writeFile(TMP_DIR, "a.txt", 100);
     await writeFile(TMP_DIR, "b.txt", 200);
 
-    const stats = await getCacheStats(TMP_DIR);
+    const stats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(stats.totalSizeBytes).toBe(300);
     expect(stats.fileCount).toBe(2);
     expect(stats.oldestFile).not.toBeNull();
@@ -73,7 +74,7 @@ describe("getCacheStats", () => {
     await delay(10);
     await writeFileWithMtime(TMP_DIR, "new.txt", 300, new Date(now - day));
 
-    const stats = await getCacheStats(TMP_DIR);
+    const stats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(stats.totalSizeBytes).toBe(600);
     expect(stats.fileCount).toBe(3);
     expect(stats.oldestFile).not.toBeNull();
@@ -83,7 +84,7 @@ describe("getCacheStats", () => {
 
   it("handles non-existent directory gracefully", async () => {
     const nonExistent = join(TMP_DIR, "does-not-exist");
-    const stats = await getCacheStats(nonExistent);
+    const stats = await getCacheStats(nonExistent, { logger: silentLogger });
 
     expect(stats.totalSizeBytes).toBe(0);
     expect(stats.fileCount).toBe(0);
@@ -98,7 +99,7 @@ describe("getCacheStats", () => {
     await writeFile(join(TMP_DIR, "sub1"), "a.txt", 100);
     await writeFile(join(TMP_DIR, "sub2"), "b.txt", 150);
 
-    const stats = await getCacheStats(TMP_DIR);
+    const stats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(stats.totalSizeBytes).toBe(300);
     expect(stats.fileCount).toBe(3);
   });
@@ -109,14 +110,14 @@ describe("enforceQuota", () => {
     await writeFile(TMP_DIR, "a.txt", 100);
     await writeFile(TMP_DIR, "b.txt", 200);
 
-    const deleted = await enforceQuota(TMP_DIR, 1);
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 1 });
     expect(deleted).toBe(0);
   });
 
   it("returns 0 at exact quota boundary", async () => {
     await writeFile(TMP_DIR, "a.txt", 300);
 
-    const deleted = await enforceQuota(TMP_DIR, 300 / (1024 * 1024));
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 300 / (1024 * 1024) });
     expect(deleted).toBe(0);
   });
 
@@ -130,7 +131,7 @@ describe("enforceQuota", () => {
     await delay(5);
     await writeFileWithMtime(TMP_DIR, "new.txt", 10, new Date(now - day));
 
-    const deleted = await enforceQuota(TMP_DIR, 500 / (1024 * 1024));
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 500 / (1024 * 1024) });
     expect(deleted).toBe(1);
 
     const oldExists = await Bun.file(join(TMP_DIR, "old.txt")).exists();
@@ -141,7 +142,7 @@ describe("enforceQuota", () => {
     expect(midExists).toBe(true);
     expect(newExists).toBe(true);
 
-    const remainingStats = await getCacheStats(TMP_DIR);
+    const remainingStats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(remainingStats.totalSizeBytes).toBe(260);
   });
 
@@ -155,7 +156,7 @@ describe("enforceQuota", () => {
     await delay(5);
     await writeFileWithMtime(TMP_DIR, "newest.txt", 10, new Date(now - day));
 
-    const deleted = await enforceQuota(TMP_DIR, 100 / (1024 * 1024));
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 100 / (1024 * 1024) });
     expect(deleted).toBe(2);
 
     const oldestExists = await Bun.file(join(TMP_DIR, "oldest.txt")).exists();
@@ -166,7 +167,7 @@ describe("enforceQuota", () => {
     expect(middleExists).toBe(false);
     expect(newestExists).toBe(true);
 
-    const remainingStats = await getCacheStats(TMP_DIR);
+    const remainingStats = await getCacheStats(TMP_DIR, { logger: silentLogger });
     expect(remainingStats.totalSizeBytes).toBe(10);
   });
 
@@ -177,27 +178,27 @@ describe("enforceQuota", () => {
 
     await Bun.file(join(TMP_DIR, "a.txt")).delete();
 
-    const deleted = await enforceQuota(TMP_DIR, 200 / (1024 * 1024));
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 200 / (1024 * 1024) });
 
     expect(deleted).toBeGreaterThanOrEqual(1);
   });
 
   it("handles empty directory gracefully", async () => {
-    const deleted = await enforceQuota(TMP_DIR);
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger });
     expect(deleted).toBe(0);
   });
 
   it("deletes nothing when single file fits within quota", async () => {
     await writeFile(TMP_DIR, "big.txt", 100);
 
-    const deleted = await enforceQuota(TMP_DIR, 1);
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 1 });
     expect(deleted).toBe(0);
   });
 
   it("deletes single oversized file", async () => {
     await writeFile(TMP_DIR, "huge.txt", 1024 * 1024 * 2);
 
-    const deleted = await enforceQuota(TMP_DIR, 1);
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 1 });
     expect(deleted).toBe(1);
 
     const exists = await Bun.file(join(TMP_DIR, "huge.txt")).exists();
@@ -207,7 +208,7 @@ describe("enforceQuota", () => {
   it("uses DEFAULT_QUOTA_MB when called without quota", async () => {
     expect(DEFAULT_QUOTA_MB).toBe(500);
     await writeFile(TMP_DIR, "a.txt", 100);
-    const deleted = await enforceQuota(TMP_DIR);
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger });
     expect(deleted).toBe(0);
   });
 
@@ -222,7 +223,7 @@ describe("enforceQuota", () => {
     await delay(5);
     await writeFileWithMtime(join(TMP_DIR, "session2"), "new.txt", 200, new Date(now - day));
 
-    const deleted = await enforceQuota(TMP_DIR, 400 / (1024 * 1024));
+    const deleted = await enforceQuota(TMP_DIR, { logger: silentLogger, quotaMB: 400 / (1024 * 1024) });
     expect(deleted).toBe(1);
 
     const oldExists = await Bun.file(join(TMP_DIR, "session1", "old.txt")).exists();

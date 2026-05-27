@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
+import { silentLogger } from "../../logger";
 import { REDACTION_MARKER } from "../security";
 import { createRedactionHook } from "./redact";
 import { createOutputTruncator } from "./truncate";
@@ -222,7 +223,7 @@ describe("createOutputTruncator", () => {
       "bash",
       "call-shared",
       TEST_SESSION_ID,
-      { outputDir: OUTPUT_DIR },
+      { logger: silentLogger, outputDir: OUTPUT_DIR },
     );
 
     expect(fullPath).toBe(directResult.fullPath);

@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Logger } from "../logger";
 import type { CompletedToolPart, ErrorToolPart } from "../store/types";
 
 export const TOOL_OUTPUT_DIR = join(homedir(), ".specra", "tool-output");
@@ -8,6 +9,7 @@ export const TOOL_OUTPUT_DIR = join(homedir(), ".specra", "tool-output");
 const DEFAULT_PREVIEW_LINES = 5;
 
 export interface PersistOptions {
+  logger: Logger;
   previewLines?: number;
   force?: boolean;
   outputDir?: string;
@@ -51,20 +53,20 @@ export async function persistToolOutputValue(
   toolName: string,
   callId: string,
   sessionId: string,
-  options?: PersistOptions,
+  options: PersistOptions,
 ): Promise<{ fullPath: string; updatedOutput: string }> {
-  const baseDir = options?.outputDir ?? TOOL_OUTPUT_DIR;
-  const previewLines = options?.previewLines ?? DEFAULT_PREVIEW_LINES;
+  const baseDir = options.outputDir ?? TOOL_OUTPUT_DIR;
+  const previewLines = options.previewLines ?? DEFAULT_PREVIEW_LINES;
   const filePath = buildFilePath(toolName, callId, sessionId, baseDir);
 
   try {
     await mkdir(join(baseDir, sanitizeSegment(sessionId)), { recursive: true });
     await Bun.write(filePath, rawOutput);
   } catch (error) {
-    console.error(
-      `[persistToolOutputValue] Failed to write output to ${filePath}:`,
-      error instanceof Error ? error.message : error,
-    );
+    options.logger.error("tool.output.persist.failed", {
+      error,
+      meta: { toolName, callId, sessionId },
+    });
     return { fullPath: "", updatedOutput: rawOutput };
   }
 
@@ -75,9 +77,9 @@ export async function persistToolOutputValue(
 export async function persistToolOutput(
   toolPart: PersistableToolPart,
   sessionId: string,
-  options?: PersistOptions,
+  options: PersistOptions,
 ): Promise<string> {
-  if (toolPart.meta?.fullOutputPath && !options?.force) {
+  if (toolPart.meta?.fullOutputPath && !options.force) {
     return toolPart.meta.fullOutputPath as string;
   }
 

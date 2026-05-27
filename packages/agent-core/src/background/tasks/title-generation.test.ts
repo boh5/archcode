@@ -6,6 +6,7 @@ import { storeManager } from "../../store/store";
 import { createSessionStore } from "../../store/store";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { silentLogger } from "../../logger";
+import { createMockLogger } from "../../logger.test-helper";
 import { __setGenerateTextForTest } from "./title-generation";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
@@ -283,28 +284,25 @@ describe("createTitleGenerationTask", () => {
       ],
     });
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
       const task = createTitleGenerationTask(store);
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
-        logger: silentLogger,
+        logger,
         workspaceRoot: "/tmp",
       };
 
       await task.run(ctx as never);
 
       expect(store.getState().title).toBeNull();
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Title generation failed:",
-        "API error",
-      );
+      expect(logger.warn).toHaveBeenCalledWith("title.generation.failed", expect.objectContaining({
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId },
+      }));
     } finally {
-      console.warn = originalWarn;
       mockGenerateText.mockImplementation(
         async () => ({ text: "Short test title" }),
       );

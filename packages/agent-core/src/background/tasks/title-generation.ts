@@ -72,10 +72,10 @@ export function createTitleGenerationTask(
 
         store.getState().setTitle(title);
       } catch (err) {
-        console.warn(
-          "Title generation failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        ctx.logger.warn("title.generation.failed", {
+          error: err,
+          context: { sessionId: state.sessionId },
+        });
       }
     },
   };

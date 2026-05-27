@@ -67,16 +67,14 @@ Instructions:
         await fileManager.writeIndex(validEntries);
       } catch (err) {
         if (err instanceof LlmSchemaValidationError) {
-          console.warn(
-            "Memory consolidation: LLM output validation failed:",
-            err.message,
-          );
+          ctx.logger.warn("memory.consolidation.validation.failed", {
+            error: err,
+          });
           return;
         }
-        console.warn(
-          "Memory consolidation failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        ctx.logger.warn("memory.consolidation.failed", {
+          error: err,
+        });
       }
     },
   };

@@ -3,6 +3,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../config/provider";
+import type { Logger } from "../logger";
 import type { SessionStoreState, StoredMessage } from "../store/types";
 import { toModelMessagesFromStoredMessages } from "../store/projection";
 import { persistToolOutput } from "../tools/persist-output";
@@ -32,6 +33,7 @@ export interface CompactInput {
   model: LanguageModelV3;
   modelOptions?: ModelCallOptions;
   sessionId: string;
+  logger: Logger;
 }
 
 export interface CompactResult {
@@ -211,6 +213,7 @@ function adjustBoundaryForToolAtomicity(messages: StoredMessage[], splitIndex: n
 async function pruneToolOutputs(
   clonedPrefix: StoredMessage[],
   sessionId: string,
+  logger: Logger,
   abort?: AbortSignal,
 ): Promise<string[]> {
   const prunedPaths: string[] = [];
@@ -224,7 +227,7 @@ async function pruneToolOutputs(
           continue;
         }
 
-        const fullPath = await persistToolOutput(part, sessionId, { previewLines: 5 });
+        const fullPath = await persistToolOutput(part, sessionId, { logger, previewLines: 5 });
         if (fullPath) {
           prunedPaths.push(fullPath);
         }
@@ -371,7 +374,7 @@ export async function compact(
   input: CompactInput,
   abort?: AbortSignal,
 ): Promise<CompactResult | null> {
-  const { messages, contextLimit, model, modelOptions, sessionId } = input;
+  const { messages, contextLimit, model, modelOptions, sessionId, logger } = input;
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");
@@ -389,7 +392,7 @@ export async function compact(
   const { tailStartId, prefixMessages } = boundary;
   const clonedPrefix = deepCloneMessages(prefixMessages);
 
-  const prunedToolOutputs = await pruneToolOutputs(clonedPrefix, sessionId, abort);
+  const prunedToolOutputs = await pruneToolOutputs(clonedPrefix, sessionId, logger, abort);
 
   if (abort?.aborted) {
     throw new DOMException("Compaction aborted", "AbortError");

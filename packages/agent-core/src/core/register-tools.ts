@@ -36,7 +36,7 @@ export function registerBuiltinTools(
   registry.register(createWorkflowTaskCheckTool());
 
   registry.globalHooks.after.push(createRedactionHook());
-  registry.globalHooks.after.push(createOutputTruncator());
+  registry.globalHooks.after.push(createOutputTruncator({ logger: logger.child({ module: "tools.truncate" }) }));
   registry.globalHooks.after.push(createAuditHook());
   registry.globalHooks.after.push(createExecutionLogger(logger.child({ module: "tools.execution" })));
 }

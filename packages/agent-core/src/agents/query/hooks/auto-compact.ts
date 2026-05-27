@@ -1,5 +1,6 @@
 import type { BeforeModelBuildContext } from "../loop-hooks";
 import type { CircuitBreaker } from "../../../compact/circuit-breaker";
+import type { Logger } from "../../../logger";
 import { createCircuitBreaker } from "../../../compact/circuit-breaker";
 import { compact, commitCompact } from "../../../compact/compact";
 import {
@@ -32,7 +33,7 @@ export interface AutoCompactHookResult {
  * the `/compact` command (Task 6) can call `circuitBreaker.reset()` after a
  * successful manual compact.
  */
-export function createAutoCompactHook(): AutoCompactHookResult {
+export function createAutoCompactHook(logger: Logger): AutoCompactHookResult {
   const circuitBreaker = createCircuitBreaker(3);
   let isCompacting = false;
 
@@ -92,6 +93,7 @@ export function createAutoCompactHook(): AutoCompactHookResult {
           model: ctx.modelInfo.model,
           sessionId: state.sessionId,
           modelOptions: ctx.modelOptions,
+          logger,
         },
         ctx.abort,
       );
@@ -107,9 +109,11 @@ export function createAutoCompactHook(): AutoCompactHookResult {
       }
       // Non-fatal: record failure, log warning, continue
       circuitBreaker.recordFailure();
-      console.warn(
-        `[AutoCompact] Compaction failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.warn("compact.failed", {
+        error: err,
+        context: { sessionId: state.sessionId },
+        meta: { contextLimit },
+      });
     } finally {
       isCompacting = false;
     }

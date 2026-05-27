@@ -10,6 +10,7 @@ import { generateText } from "ai";
 import { createMemoryExtractionTask, filterMessagesForExtraction } from "./memory-extraction";
 import { buildMemoryManifest } from "../../memory/manifest";
 import type { ModelInfo } from "../../provider/model";
+import { createMockLogger } from "../../logger.test-helper";
 
 function makeGenerateTextResult(input: unknown = { memories: [] }) {
   return {
@@ -274,9 +275,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     mockGenerateText.mockRejectedValue(new Error("API error"));
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
       const now = Date.now();
@@ -292,6 +291,7 @@ describe("createMemoryExtractionTask", () => {
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
+        logger,
         workspaceRoot: "/tmp",
       };
 
@@ -301,12 +301,11 @@ describe("createMemoryExtractionTask", () => {
       const topics = await fileManager.listTopics();
       expect(topics).toHaveLength(0);
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Memory extraction LLM call failed:",
-        "API error",
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.llm.failed", expect.objectContaining({
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId },
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -315,9 +314,7 @@ describe("createMemoryExtractionTask", () => {
     await setupDirs(roots);
     mockGenerateText.mockImplementation(async () => makeGenerateTextResult({ invalid: "data" }));
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
       const now = Date.now();
@@ -333,6 +330,7 @@ describe("createMemoryExtractionTask", () => {
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
+        logger,
         workspaceRoot: "/tmp",
       };
 
@@ -342,12 +340,11 @@ describe("createMemoryExtractionTask", () => {
       const topics = await fileManager.listTopics();
       expect(topics).toHaveLength(0);
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Memory extraction: LLM output validation failed:",
-        expect.any(String),
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.llm.validation.failed", expect.objectContaining({
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId },
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -383,9 +380,7 @@ describe("createMemoryExtractionTask", () => {
       }),
     );
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
       const now = Date.now();
@@ -401,6 +396,7 @@ describe("createMemoryExtractionTask", () => {
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
+        logger,
         workspaceRoot: "/tmp",
       };
 
@@ -413,12 +409,12 @@ describe("createMemoryExtractionTask", () => {
       expect(prefs).toContain("Prefers concise code.");
 
       // The project-level topic write should have failed (directory blocks it)
-      expect(warnSpy).toHaveBeenCalledWith(
-        'Memory extraction: failed to write "architecture":',
-        expect.any(String),
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.write.failed", expect.objectContaining({
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId },
+        meta: { memoryName: "architecture", memoryType: "project" },
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -622,9 +618,7 @@ describe("createMemoryExtractionTask", () => {
       }),
     );
 
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
+    const logger = createMockLogger();
 
     try {
       const now = Date.now();
@@ -640,6 +634,7 @@ describe("createMemoryExtractionTask", () => {
       const ctx = {
         store,
         modelInfo: makeModelInfo(),
+        logger,
         workspaceRoot: "/tmp",
       };
 
@@ -650,12 +645,11 @@ describe("createMemoryExtractionTask", () => {
       expect(topic).not.toBeNull();
       expect(topic!.name).toBe("Project Architecture");
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        "Memory extraction: failed to rebuild index:",
-        expect.any(String),
-      );
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.index.failed", expect.objectContaining({
+        error: expect.any(Error),
+        context: { sessionId: store.getState().sessionId },
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -951,15 +945,13 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
+    const logger = createMockLogger();
     const ctx = {
       store,
       modelInfo: makeModelInfo(),
+      logger,
       workspaceRoot: "/tmp",
     };
-
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
 
     try {
       await task.run(ctx as never);
@@ -975,11 +967,15 @@ describe("createMemoryExtractionTask", () => {
       const invalidHyphen = await fileManager.readTopic("has-hyphen");
       expect(invalidHyphen).toBeNull();
 
-      const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => c[0] as string);
-      expect(warnCalls.some((m: string) => m.includes("path/separator"))).toBe(true);
-      expect(warnCalls.some((m: string) => m.includes("has-hyphen"))).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.topic.invalid", expect.objectContaining({
+        context: { sessionId: store.getState().sessionId },
+        meta: { memoryName: "path/separator" },
+      }));
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.topic.invalid", expect.objectContaining({
+        context: { sessionId: store.getState().sessionId },
+        meta: { memoryName: "has-hyphen" },
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 
@@ -1028,15 +1024,13 @@ describe("createMemoryExtractionTask", () => {
     });
 
     const task = createMemoryExtractionTask(store, roots);
+    const logger = createMockLogger();
     const ctx = {
       store,
       modelInfo: makeModelInfo(),
+      logger,
       workspaceRoot: "/tmp",
     };
-
-    const warnSpy = mock(() => {});
-    const originalWarn = console.warn;
-    console.warn = warnSpy;
 
     try {
       await task.run(ctx as never);
@@ -1053,11 +1047,15 @@ describe("createMemoryExtractionTask", () => {
       const prefs = await fileManager.readPreferences();
       expect(prefs).toBeNull();
 
-      const warnCalls = warnSpy.mock.calls.map((c: unknown[]) => c[0] as string);
-      expect(warnCalls.some((m: string) => m.includes("leaked_secret"))).toBe(true);
-      expect(warnCalls.some((m: string) => m.includes("user_secret"))).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.secret.skipped", expect.objectContaining({
+        context: { sessionId: store.getState().sessionId },
+        meta: expect.objectContaining({ memoryName: "leaked_secret" }),
+      }));
+      expect(logger.warn).toHaveBeenCalledWith("memory.extraction.secret.skipped", expect.objectContaining({
+        context: { sessionId: store.getState().sessionId },
+        meta: expect.objectContaining({ memoryName: "user_secret" }),
+      }));
     } finally {
-      console.warn = originalWarn;
     }
   });
 

@@ -120,10 +120,10 @@ export function createMemoryExtractionTask(
           manifestSection = `\nExisting memories (check these before creating new topics):\n\n${manifest}\n`;
         }
       } catch (err) {
-        console.warn(
-          "Memory extraction: failed to build manifest:",
-          err instanceof Error ? err.message : String(err),
-        );
+        ctx.logger.warn("memory.extraction.manifest.failed", {
+          error: err,
+          context: { sessionId: state.sessionId },
+        });
       }
 
       // --- Build truncated conversation for LLM --------------------------------
@@ -189,17 +189,23 @@ ${conversationText}`,
         });
       } catch (err) {
         if (err instanceof LlmSchemaValidationError) {
-          console.warn("Memory extraction: LLM output validation failed:", err.message);
+          ctx.logger.warn("memory.extraction.llm.validation.failed", {
+            error: err,
+            context: { sessionId: state.sessionId },
+          });
           return;
         }
         if (err instanceof LlmObjectError) {
-          console.warn("Memory extraction LLM call failed:", err.message);
+          ctx.logger.warn("memory.extraction.llm.failed", {
+            error: err,
+            context: { sessionId: state.sessionId },
+          });
           return;
         }
-        console.warn(
-          "Memory extraction LLM call failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+        ctx.logger.warn("memory.extraction.llm.failed", {
+          error: err,
+          context: { sessionId: state.sessionId },
+        });
         return;
       }
 
@@ -214,9 +220,10 @@ ${conversationText}`,
         try {
           const secretCheck = containsSecretPattern(memory.content);
           if (secretCheck.found) {
-            console.warn(
-              `Memory extraction: skipping "${memory.name}" — content contains potential secrets (${secretCheck.patterns.join(", ")})`,
-            );
+            ctx.logger.warn("memory.extraction.secret.skipped", {
+              context: { sessionId: state.sessionId },
+              meta: { memoryName: memory.name, patterns: secretCheck.patterns },
+            });
             continue;
           }
 
@@ -228,9 +235,10 @@ ${conversationText}`,
             await fileManager.writePreferences(merged);
           } else {
             if (!TOPIC_NAME_REGEX.test(memory.name)) {
-              console.warn(
-                `Memory extraction: skipping topic "${memory.name}" — name contains invalid characters (only letters, numbers, underscores allowed)`,
-              );
+              ctx.logger.warn("memory.extraction.topic.invalid", {
+                context: { sessionId: state.sessionId },
+                meta: { memoryName: memory.name },
+              });
               continue;
             }
 
@@ -261,10 +269,11 @@ ${conversationText}`,
             }
           }
         } catch (err) {
-          console.warn(
-            `Memory extraction: failed to write "${memory.name}":`,
-            err instanceof Error ? err.message : String(err),
-          );
+          ctx.logger.warn("memory.extraction.write.failed", {
+            error: err,
+            context: { sessionId: state.sessionId },
+            meta: { memoryName: memory.name, memoryType: memory.type },
+          });
         }
       }
 
@@ -272,10 +281,10 @@ ${conversationText}`,
       try {
         await fileManager.rebuildIndex();
       } catch (err) {
-        console.warn(
-          "Memory extraction: failed to rebuild index:",
-          err instanceof Error ? err.message : String(err),
-        );
+        ctx.logger.warn("memory.extraction.index.failed", {
+          error: err,
+          context: { sessionId: state.sessionId },
+        });
       }
     },
   };

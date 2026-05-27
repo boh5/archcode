@@ -143,7 +143,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("returns hook function and circuitBreaker", () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     expect(typeof result.hook).toBe("function");
     expect(result.circuitBreaker).toBeDefined();
     expect(typeof result.circuitBreaker.isOpen).toBe("boolean");
@@ -153,7 +153,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("does NOT trigger compact when below threshold", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // toModelMessages returns empty → estimatedTokens = 0, no steps → usageTokens = 0
     const ctx = createContext();
     await result.hook(ctx);
@@ -161,7 +161,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("triggers compact when above 75% threshold via usage", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -182,7 +182,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("triggers compact when above 75% threshold via estimation fallback", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // No steps → no usage. toModelMessages returns large content → estimated > 75%
     const largeContent = "x".repeat(CONTEXT_LIMIT * 4 * 0.76); // chars/4 heuristic
     const store = createMockStore({
@@ -204,7 +204,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("uses Math.max of usage and estimated tokens", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // usage says 80k (above 75%), estimation says 10k (below) → should still trigger
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
@@ -225,7 +225,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("uses systemPrompt in fallback estimation", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // No usage, short messages, but large systemPrompt pushes over threshold
     const largeSystemPrompt = "y".repeat(CONTEXT_LIMIT * 4 * 0.76);
     const store = createMockStore({
@@ -251,7 +251,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("isCompacting guard prevents recursive compact", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -279,7 +279,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("isCompacting is reset in finally block on success", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -307,7 +307,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("isCompacting is reset in finally block on failure", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -331,7 +331,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("hysteresis: skips if fewer than COMPACT_MIN_NEW_MESSAGES since last compaction", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const compactionPart = makeCompactionPart();
     const messages: StoredMessage[] = [
       makeStoredMessage(), // before compaction
@@ -354,7 +354,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("hysteresis: triggers when enough new messages since last compaction", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const compactionPart = makeCompactionPart();
     const messages: StoredMessage[] = [
       makeStoredMessage(),
@@ -381,7 +381,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("hysteresis: no compaction part — uses total message count", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // Only 3 messages, no compaction part → below COMPACT_MIN_NEW_MESSAGES
     const messages: StoredMessage[] = [
       makeStoredMessage(),
@@ -402,7 +402,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("circuit breaker open skips compact", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -422,7 +422,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("circuit breaker recordFailure on compact error", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -439,7 +439,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("circuit breaker recordSuccess on compact success", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -465,7 +465,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("re-throws AbortError from compact", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -480,7 +480,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("isCompacting reset in finally block after AbortError", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -505,7 +505,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("uses modelInfo.limit.context for threshold calculation", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const smallContextLimit = 10_000;
     // 80k tokens > 75% of 10k → should trigger
     const store = createMockStore({
@@ -527,7 +527,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("compact returns null — does not call commitCompact", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
       messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
@@ -544,7 +544,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("passes correct input to compact", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     const messages = Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage());
     const modelInfo = createMockModelInfo();
     const store = createMockStore({
@@ -578,7 +578,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("circuitBreaker.reset() works for /compact command integration", () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     result.circuitBreaker.recordFailure();
     result.circuitBreaker.recordFailure();
     result.circuitBreaker.recordFailure();
@@ -590,7 +590,7 @@ describe("createAutoCompactHook", () => {
   });
 
   test("parseStepUsage used for token count — not direct .promptTokens access", async () => {
-    const result = createAutoCompactHook();
+    const result = createAutoCompactHook(silentLogger);
     // OpenAI-style usage with prompt_tokens instead of promptTokens
     const store = createMockStore({
       steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { prompt_tokens: 80_000 } }],

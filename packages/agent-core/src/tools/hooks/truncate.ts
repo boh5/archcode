@@ -1,7 +1,9 @@
 import type { AfterHook, ToolExecutionContext, ToolExecutionResult } from "../types";
+import { silentLogger, type Logger } from "../../logger";
 import { persistToolOutputValue, TOOL_OUTPUT_DIR } from "../persist-output";
 
 export interface TruncatorOptions {
+  logger?: Logger;
   outputDir?: string;
   maxBytes?: number;
   maxLines?: number;
@@ -12,6 +14,7 @@ const DEFAULT_MAX_LINES = 2000;
 const PREVIEW_LINES = 5;
 
 export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
+  const logger = options?.logger ?? silentLogger;
   const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxLines = options?.maxLines ?? DEFAULT_MAX_LINES;
   const outputDir = options?.outputDir ?? TOOL_OUTPUT_DIR;
@@ -37,7 +40,7 @@ export function createOutputTruncator(options?: TruncatorOptions): AfterHook {
       ctx.toolName,
       ctx.toolCallId,
       sessionId,
-      { outputDir, previewLines: PREVIEW_LINES },
+      { logger, outputDir, previewLines: PREVIEW_LINES },
     );
 
     if (!persisted.fullPath) {

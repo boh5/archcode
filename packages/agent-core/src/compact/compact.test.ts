@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
 import { storeManager } from "../store/store";
 import {
@@ -176,6 +177,7 @@ function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>)
     contextLimit: 100000,
     model: mockModel,
     sessionId: "test-session",
+    logger: silentLogger,
     ...overrides,
   };
 }
