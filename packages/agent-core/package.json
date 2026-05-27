@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@specra/protocol": "workspace:*",
+    "@specra/utils": "workspace:*",
     "@ai-sdk/openai-compatible": "^2.0.45",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",

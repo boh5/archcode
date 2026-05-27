@@ -20,6 +20,7 @@
     "@specra/agent-core": "workspace:*",
     "@specra/protocol": "workspace:*",
     "@specra/server": "workspace:*",
+    "@specra/utils": "workspace:*",
     "@specra/web": "workspace:*"
   },
   "devDependencies": {

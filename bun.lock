@@ -8,6 +8,7 @@
         "@specra/agent-core": "workspace:*",
         "@specra/protocol": "workspace:*",
         "@specra/server": "workspace:*",
+        "@specra/utils": "workspace:*",
         "@specra/web": "workspace:*",
       },
       "devDependencies": {
@@ -21,11 +22,12 @@
       "name": "@specra/server",
       "version": "0.1.0",
       "bin": {
-        "specra": "src/main.ts",
+        "specra": "./src/main.ts",
       },
       "dependencies": {
         "@specra/agent-core": "workspace:*",
         "@specra/protocol": "workspace:*",
+        "@specra/utils": "workspace:*",
         "fuzzysort": "^3.1.0",
         "hono": "^4.12.19",
         "zod": "^4.4.2",
@@ -74,6 +76,7 @@
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@mozilla/readability": "^0.6.0",
         "@specra/protocol": "workspace:*",
+        "@specra/utils": "workspace:*",
         "@truto/turndown-plugin-gfm": "^1.0.2",
         "ai": "^6.0.174",
         "fuzzysort": "^3.1.0",
@@ -94,6 +97,13 @@
     },
     "packages/protocol": {
       "name": "@specra/protocol",
+      "version": "0.0.1",
+      "devDependencies": {
+        "typescript": "^6.0.3",
+      },
+    },
+    "packages/utils": {
+      "name": "@specra/utils",
       "version": "0.0.1",
       "devDependencies": {
         "typescript": "^6.0.3",
@@ -390,6 +400,8 @@
     "@specra/protocol": ["@specra/protocol@workspace:packages/protocol"],
 
     "@specra/server": ["@specra/server@workspace:apps/server"],
+
+    "@specra/utils": ["@specra/utils@workspace:packages/utils"],
 
     "@specra/web": ["@specra/web@workspace:apps/web"],
 

@@ -1,3 +1,5 @@
+import { formatIsoTime } from "@specra/utils";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type LogFields = {
@@ -64,7 +66,7 @@ export function createConsoleLogger(options: {
     },
     (level, entry) => {
       const moduleName = entry.module ?? "agent-core";
-      const time = formatLogTime(entry.timestamp);
+      const time = formatIsoTime(entry.timestamp);
       sink[level](`[${time}] [specra:${moduleName}] ${entry.event}`, entry);
     },
   );
@@ -212,10 +214,6 @@ function safeSerializeValue(value: unknown): unknown {
   } catch {
     return "[Unserializable]";
   }
-}
-
-function formatLogTime(isoTimestamp: string): string {
-  return isoTimestamp.replace("T", " ").replace(/Z$/, "");
 }
 
 function nonErrorName(error: unknown): string {

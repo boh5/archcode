@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, normalize, relative, resolve } from "node:path";
+import { join, normalize, relative, resolve } from "node:path";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -53,7 +53,6 @@ function extractImports(filePath: string): ImportRecord[] {
   for (const match of source.matchAll(importRegex)) {
     const importPath = match[2];
     if (!importPath) continue;
-
     imports.push({
       file: filePath,
       importPath,
@@ -66,7 +65,6 @@ function extractImports(filePath: string): ImportRecord[] {
   for (const match of source.matchAll(exportFromRegex)) {
     const importPath = match[2];
     if (!importPath) continue;
-
     imports.push({
       file: filePath,
       importPath,
@@ -79,7 +77,6 @@ function extractImports(filePath: string): ImportRecord[] {
   for (const match of source.matchAll(dynamicImportRegex)) {
     const importPath = match[1];
     if (!importPath) continue;
-
     imports.push({
       file: filePath,
       importPath,
@@ -93,9 +90,8 @@ function extractImports(filePath: string): ImportRecord[] {
 }
 
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
-  if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(dirname(filePath), importPath)));
+  if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(filePath, "..", importPath)));
   if (importPath.startsWith("@specra/protocol")) return "packages/protocol/src";
-  if (importPath.startsWith("@specra/utils")) return "packages/utils/src";
   if (importPath.startsWith("@specra/agent-core")) return "packages/agent-core/src";
   if (importPath.startsWith("@specra/server")) return "apps/server/src";
   if (importPath.startsWith("@specra/web")) return "apps/web/src";
@@ -130,161 +126,78 @@ function formatViolation(importRecord: ImportRecord): Violation {
   };
 }
 
-function expectNoViolations(violations: Violation[]): void {
-  const message = violations.map(({ file, importPath }) => `${file} -> ${importPath}`).join("\n");
-  expect(violations, message).toEqual([]);
-}
-
 function readPackageDependencies(packageDir: string): Record<string, string> {
   const packageJson = JSON.parse(readFileSync(join(projectRoot, packageDir, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
   };
-
   return packageJson.dependencies ?? {};
 }
 
 function findSourceTextViolations(scopeDir: string, patterns: RegExp[]): Violation[] {
   const scopePath = join(projectRoot, scopeDir);
   const violations: Violation[] = [];
-
   for (const file of findTsFiles(scopePath)) {
     const source = readFileSync(file, "utf8");
-
     for (const pattern of patterns) {
       if (pattern.test(source)) {
         violations.push({ file: normalize(relative(projectRoot, file)), importPath: pattern.source });
       }
     }
   }
-
   return violations;
 }
 
-// Boundary rules are enforced across static imports, re-exports, and dynamic imports.
-const protocolForbiddenPatterns = [
-  /^ai$/,
+function expectNoViolations(violations: Violation[]): void {
+  const message = violations.map(({ file, importPath }) => `${file} -> ${importPath}`).join("\n");
+  expect(violations, message).toEqual([]);
+}
+
+const utilsForbiddenPatterns = [
+  /^@specra\/(agent-core|server|web)(\/|$)/,
+  /^apps\//,
+  /^packages\/(agent-core|server|web)(\/|$)/,
+  /^packages\/(agent-core|server|web)\/src(\/|$)/,
+  /^hono(\/|$)/,
+  /^react(\/|$)/,
+  /^react-dom(\/|$)/,
+  /^node:/,
+  /^bun:/,
+  /^ai(\/|$)/,
   /^zustand(\/|$)/,
-  /^hono(\/|$)/,
-  /^node:/,
-  /^bun:/,
-  /^react(\/|$)/,
-  /^react-dom(\/|$)/,
-  /^apps\//,
-  /^@specra\/(agent-core|server|web|utils)(\/|$)/,
-  /^packages\/(agent-core|server|web|utils)(\/|$)/,
-  /^packages\/(agent-core|server|web|utils)\/src(\/|$)/,
+  /^zod(\/|$)/,
 ];
 
-const agentCoreForbiddenPatterns = [
-  /^hono(\/|$)/,
-  /^apps\//,
-  /^react(\/|$)/,
-  /^react-dom(\/|$)/,
-  /^@specra\/(server|web)(\/|$)/,
-  /^packages\/(server|web)(\/|$)/,
-  /^packages\/(server|web)\/src(\/|$)/,
-];
+const utilsAllowedExceptions: RegExp[] = [];
 
-const serverForbiddenPatterns = [
-  /^@specra\/web(\/|$)/,
-  /^react(\/|$)/,
-  /^react-dom(\/|$)/,
-  /^apps\/web(\/|$)/,
-  /^packages\/[^/]+\/src(\/|$)/,
-];
-
-const serverAllowedExceptions = [/^@specra\/(protocol|agent-core|utils)(\/|$)/, /^apps\/web\/dist(\/|$)/];
-
-const webForbiddenPatterns = [
-  /^@specra\/(agent-core|server)(\/|$)/,
-  /^node:/,
-  /^bun:/,
-  /^apps\/server(\/|$)/,
-  /^packages\/agent-core\/src(\/|$)/,
-  /^packages\/server\/src(\/|$)/,
-];
-
-describe("monorepo package boundaries", () => {
-  describe("source imports", () => {
-    test("protocol has no runtime dependencies", () => {
-      expectNoViolations(findViolations("packages/protocol/src", protocolForbiddenPatterns));
-    });
-
-    test("agent-core has no server/web dependencies", () => {
-      expectNoViolations(findViolations("packages/agent-core/src", agentCoreForbiddenPatterns));
-    });
-
-    test("server has no web/react dependencies", () => {
-      expectNoViolations(findViolations("apps/server/src", serverForbiddenPatterns, serverAllowedExceptions));
-    });
-
-    test("web has no runtime/server dependencies", () => {
-      expectNoViolations(findViolations("apps/web/src", webForbiddenPatterns));
-    });
+describe("@specra/utils package boundaries", () => {
+  test("utils has zero runtime dependencies", () => {
+    expect(readPackageDependencies("packages/utils")).toEqual({});
   });
 
-  describe("package dependency graph", () => {
-    test("protocol package has zero runtime dependencies", () => {
-      expect(readPackageDependencies("packages/protocol")).toEqual({});
-    });
-
-    test("utils package has zero runtime dependencies", () => {
-      expect(readPackageDependencies("packages/utils")).toEqual({});
-    });
-
-    test("agent-core package does not depend on server or web packages", () => {
-      const dependencies = readPackageDependencies("packages/agent-core");
-
-      expect(dependencies).not.toHaveProperty("@specra/server");
-      expect(dependencies).not.toHaveProperty("@specra/web");
-    });
-
-    test("web app does not depend on agent-core or server packages", () => {
-      const dependencies = readPackageDependencies("apps/web");
-
-      expect(dependencies).not.toHaveProperty("@specra/agent-core");
-      expect(dependencies).not.toHaveProperty("@specra/server");
-    });
-
-    test("server app does not depend on web package", () => {
-      expect(readPackageDependencies("apps/server")).not.toHaveProperty("@specra/web");
-    });
+  test("utils source does not import forbidden packages", () => {
+    expectNoViolations(findViolations("packages/utils/src", utilsForbiddenPatterns, utilsAllowedExceptions));
   });
 
-  describe("protocol purity", () => {
-    test("protocol source does not call runtime identity/time APIs", () => {
-      expectNoViolations(
-        findSourceTextViolations("packages/protocol/src", [
-          /\bDate\.now\s*\(/,
-          /\bcrypto\.randomUUID\s*\(/,
-          /\bcrypto\.randomBytes\s*\(/,
-        ]),
-      );
-    });
-
-    test("protocol source does not import node or bun runtimes", () => {
-      expectNoViolations(
-        findSourceTextViolations("packages/protocol/src", [
-          /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']node:/,
-          /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']bun:/,
-          /\brequire\s*\(\s*["']node:/,
-          /\brequire\s*\(\s*["']bun:/,
-        ]),
-      );
-    });
-  });
-
-  test("reduce isomorphism", () => {
-    const reducePath = join(srcRoot, "store/reduce.ts");
-    const imports = extractImports(reducePath).filter(({ importPath }) => importPath.startsWith("node:"));
-    const bunApiMatches = readFileSync(reducePath, "utf8").match(/\bBun\./g) ?? [];
-    const violations = [
-      ...imports.map(formatViolation),
-      ...bunApiMatches.map(() => ({ file: "packages/agent-core/src/store/reduce.ts", importPath: "Bun.*" })),
-    ];
-
+  test("utils source does not call runtime identity/time/crypto APIs", () => {
     expectNoViolations(
-      violations,
+      findSourceTextViolations("packages/utils/src", [
+        /\bDate\.now\s*\(/,
+        /\bnew\s+Date\b/,
+        /\bcrypto\.randomUUID\s*\(/,
+        /\bcrypto\.randomBytes\s*\(/,
+        /\bconsole\.\w+\s*\(/,
+      ]),
+    );
+  });
+
+  test("utils source does not import node or bun runtimes", () => {
+    expectNoViolations(
+      findSourceTextViolations("packages/utils/src", [
+        /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']node:/,
+        /\bimport\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']bun:/,
+        /\brequire\s*\(\s*["']node:/,
+        /\brequire\s*\(\s*["']bun:/,
+      ]),
     );
   });
 });
