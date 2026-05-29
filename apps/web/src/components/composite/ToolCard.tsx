@@ -127,7 +127,7 @@ export function ToolCard({ part }: ToolCardProps) {
           {config.icon}
         </span>
         <span className={`text-xs font-medium font-mono ${nameClass}`}>
-          {summary.icon} {summary.verb}
+          {summary.icon} {part.toolName}
         </span>
         <span className="text-xs text-text-secondary truncate">{summary.primary}</span>
         {summary.secondary && (

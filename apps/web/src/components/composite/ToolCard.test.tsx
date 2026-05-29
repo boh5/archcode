@@ -161,7 +161,7 @@ describe("ToolCard", () => {
     const el = ToolCard({ part });
     const text = textContent(el);
     expect(text).toContain("⏳");
-    expect(text).toContain("Run");
+    expect(text).toContain("bash");
     expect(text).toContain("pending");
   });
 
@@ -180,7 +180,7 @@ describe("ToolCard", () => {
     const el = ToolCard({ part });
     const text = textContent(el);
     expect(text).toContain("⟳");
-    expect(text).toContain("Run");
+    expect(text).toContain("bash");
     expect(text).toContain("Install deps");
     expect(text).toContain("running…");
   });
@@ -194,7 +194,7 @@ describe("ToolCard", () => {
     const el = ToolCard({ part });
     const text = textContent(el);
     expect(text).toContain("✓");
-    expect(text).toContain("Read");
+    expect(text).toContain("file_read");
     expect(text).toContain("done");
   });
 

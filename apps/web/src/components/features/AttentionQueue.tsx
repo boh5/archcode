@@ -71,7 +71,7 @@ export function ConfirmationCard({
           {borderType === "destructive" ? "⚠️" : "🔒"}
         </span>
         <span className={`font-semibold text-[13px] ${borderType === "destructive" ? "text-error" : "text-text-primary"}`}>
-          {summary.icon} {summary.verb}
+          {summary.icon} {permission.toolName}
         </span>
         {permission.reason && (
           <span className="text-[12px] text-text-secondary">— {permission.reason}</span>

@@ -18,7 +18,7 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
   const icon = getToolIcon(category);
 
   const label = summary
-    ? (summary.primary !== "—" ? `${summary.verb} · ${summary.primary}` : summary.verb)
+    ? (summary.primary !== "—" ? `${name} · ${summary.primary}` : name)
     : name;
 
   return (

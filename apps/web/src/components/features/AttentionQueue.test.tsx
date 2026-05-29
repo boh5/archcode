@@ -120,13 +120,12 @@ function makePermission(overrides: Partial<PermissionRequest> = {}): PermissionR
 // ─── Tests ───
 
 describe("ConfirmationCard", () => {
-  test("renders bash tool with icon and verb instead of raw name", () => {
+  test("renders bash tool with icon and tool name", () => {
     const perm = makePermission({ toolName: "bash", input: { description: "List files", command: "ls -la" } });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("💻");
-    expect(text).toContain("Run");
-    expect(text).not.toContain("bash");
+    expect(text).toContain("bash");
   });
 
   test("renders bash with description as primary and command as secondary", () => {
@@ -215,7 +214,7 @@ describe("ConfirmationCard", () => {
     const text = textContent(result);
     expect(text).toContain("TODO");
     expect(text).toContain("🔍");
-    expect(text).toContain("Search");
+    expect(text).toContain("grep");
   });
 
   test("renders agent badge with shared constants", () => {
@@ -244,7 +243,7 @@ describe("ConfirmationCard", () => {
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("💻");
-    expect(text).toContain("Run");
+    expect(text).toContain("bash");
   });
 
   test("handles undefined input gracefully", () => {
@@ -252,7 +251,7 @@ describe("ConfirmationCard", () => {
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("💻");
-    expect(text).toContain("Run");
+    expect(text).toContain("bash");
   });
 
   test("renders depth indicator when currentDepth is set", () => {

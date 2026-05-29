@@ -105,10 +105,10 @@ describe("ToolChip", () => {
     expect(text).toContain("🔍");
   });
 
-  test("renders verb and primary summary for grep with input", () => {
+  test("renders tool name and primary summary for grep with input", () => {
     const result = ToolChip({ name: "grep", status: "success", input: { pattern: "TODO" } });
     const text = textContent(result);
-    expect(text).toContain("Search");
+    expect(text).toContain("grep");
     expect(text).toContain("TODO");
   });
 
@@ -116,7 +116,7 @@ describe("ToolChip", () => {
     const result = ToolChip({ name: "bash", status: "default", input: { description: "List files", command: "ls" } });
     const text = textContent(result);
     expect(text).toContain("💻");
-    expect(text).toContain("Run");
+    expect(text).toContain("bash");
     expect(text).toContain("List files");
   });
 
@@ -132,10 +132,10 @@ describe("ToolChip", () => {
     expect(text).toContain("✗");
   });
 
-  test("renders verb only when primary is dash", () => {
+  test("renders tool name when primary is dash", () => {
     const result = ToolChip({ name: "todo_write", status: "default", input: {} });
     const text = textContent(result);
-    expect(text).toContain("Todo");
+    expect(text).toContain("todo_write");
   });
 
   test("renders MCP tool with plug icon", () => {
