@@ -4,7 +4,9 @@ import { z } from "zod";
 import { createBinaryManager } from "../../../binary/manager";
 import { createProcessRunner } from "../../../process/runner";
 import type { ProcessRunnerResult } from "../../../process/types";
+import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
+import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
 import { resolveAndValidatePath } from "../../security";
 import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
@@ -123,9 +125,16 @@ export const astGrepReplaceTool = defineTool({
         const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
         if (snapshotCheck) return snapshotCheck;
 
-        const applyResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
-        if ("isError" in applyResult) return applyResult;
-        matches = applyResult;
+        return await withApplyTargetQueues(matches, ctx, async () => {
+          const beforeFiles = await captureApplyFileContents(matches, ctx);
+          const applyResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
+          if ("isError" in applyResult) return applyResult;
+          matches = applyResult;
+
+          const output = JSON.stringify(normalizeAstGrepReplaceResult(matches, input.dryRun), null, 2);
+          const diffs = await computeApplyDiffs(beforeFiles);
+          return diffs ? { output, isError: false, meta: { diffs } } : output;
+        });
       } else {
         const previewResult = await runAstGrepReplace(astGrepPath, input, ctx, runner);
         if ("isError" in previewResult) return previewResult;
@@ -203,6 +212,83 @@ function checkApplyReadSnapshots(
   }
 
   return undefined;
+}
+
+type CapturedApplyFile = {
+  path: string;
+  resolved: string;
+  before: string;
+};
+
+async function captureApplyFileContents(
+  matches: AstGrepReplacementMatch[],
+  ctx: ToolExecutionContext,
+): Promise<CapturedApplyFile[]> {
+  const files = getUniqueApplyFiles(matches, ctx);
+  const captured: CapturedApplyFile[] = [];
+
+  for (const file of files) {
+    captured.push({ ...file, before: await Bun.file(file.resolved).text() });
+  }
+
+  return captured;
+}
+
+async function computeApplyDiffs(files: CapturedApplyFile[]) {
+  try {
+    const diffInputs = [];
+    for (const file of files) {
+      const after = await Bun.file(file.resolved).text();
+      if (file.before === after) continue;
+      diffInputs.push({ path: file.path, before: file.before, after, status: "modified" as const });
+    }
+
+    if (diffInputs.length === 0) {
+      return files.length > 0 ? { version: 1 as const, files: [], unsupportedReason: "no_change" as const } : undefined;
+    }
+
+    return computeToolDiffs(diffInputs);
+  } catch (error) {
+    return {
+      version: 1 as const,
+      files: [],
+      unsupportedReason: "diff_error" as const,
+      warning: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function getUniqueApplyFiles(
+  matches: AstGrepReplacementMatch[],
+  ctx: ToolExecutionContext,
+): Array<{ path: string; resolved: string }> {
+  const files = new Map<string, { path: string; resolved: string }>();
+
+  for (const match of matches) {
+    const { resolved } = resolveAndValidatePath(match.file, ctx.workspaceRoot);
+    files.set(resolved, { path: match.file, resolved });
+  }
+
+  return [...files.values()];
+}
+
+async function withApplyTargetQueues<T>(
+  matches: AstGrepReplacementMatch[],
+  ctx: ToolExecutionContext,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const files = getUniqueApplyFiles(matches, ctx)
+    .map((file) => file.resolved)
+    .sort();
+
+  let run = fn;
+  for (let index = files.length - 1; index >= 0; index--) {
+    const file = files[index];
+    const next = run;
+    run = () => sharedMutationQueue.enqueue(file, next);
+  }
+
+  return await run();
 }
 
 export function buildAstGrepReplaceArgs(input: AstGrepReplaceInput): string[] {

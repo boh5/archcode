@@ -1,71 +1,8 @@
 import { useNavigate } from "react-router-dom";
-
-const AGENT_TYPES = [
-  "orchestrator",
-  "product",
-  "spec",
-  "critic",
-  "foreman",
-  "builder",
-  "reviewer",
-  "librarian",
-  "explorer",
-] as const;
-
-type AgentType = (typeof AGENT_TYPES)[number];
-
-const AGENT_ICON_COLORS: Record<AgentType, string> = {
-  orchestrator: "bg-[#8b5cf630] text-[#8b5cf6]",
-  product: "bg-[#6366f120] text-[#6366f1]",
-  spec: "bg-[#3b82f620] text-[#3b82f6]",
-  critic: "bg-[#f59e0b20] text-[#f59e0b]",
-  foreman: "bg-[#10b98120] text-[#10b981]",
-  builder: "bg-[#06b6d420] text-[#06b6d4]",
-  reviewer: "bg-[#ec489920] text-[#ec4899]",
-  librarian: "bg-[#8b5cf620] text-[#8b5cf6]",
-  explorer: "bg-[#64748b20] text-[#64748b]",
-};
-
-const AGENT_INITIALS: Record<AgentType, string> = {
-  orchestrator: "O",
-  product: "P",
-  spec: "S",
-  critic: "C",
-  foreman: "F",
-  builder: "B",
-  reviewer: "R",
-  librarian: "L",
-  explorer: "E",
-};
-
-function isValidAgentType(value: string): value is AgentType {
-  return (AGENT_TYPES as readonly string[]).includes(value);
-}
-
-function formatElapsed(startedAt: number): string {
-  const elapsed = Date.now() - startedAt;
-  const seconds = Math.floor(elapsed / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-
-  if (seconds < 60) return `${seconds}s`;
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${hours}h ${minutes % 60}m`;
-}
-
-type BadgeStatus = "running" | "completed" | "pending";
-
-const BADGE_CLASSES: Record<BadgeStatus, string> = {
-  running: "bg-success-muted text-success",
-  completed: "bg-accent-muted text-accent",
-  pending: "bg-bg-active text-text-muted",
-};
-
-const BADGE_LABELS: Record<BadgeStatus, string> = {
-  running: "Running",
-  completed: "Completed",
-  pending: "Pending",
-};
+import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType, type AgentType, BADGE_CLASSES, BADGE_LABELS, type BadgeStatus } from "../../lib/agent-constants";
+import { formatElapsed } from "../../lib/time-format";
+import { getToolSummary, getToolIcon } from "../../lib/tool-format";
+import { getToolCategory } from "@specra/protocol";
 
 type ToolStatus = "success" | "error" | "default";
 
@@ -75,14 +12,23 @@ const TOOL_CHIP_STATUS_CLASSES: Record<ToolStatus, string> = {
   default: "text-text-tertiary",
 };
 
-function ToolChip({ name, status }: { name: string; status: ToolStatus }) {
+export function ToolChip({ name, status, input }: { name: string; status: ToolStatus; input?: unknown }) {
+  const summary = input !== undefined ? getToolSummary(name, input) : null;
+  const category = getToolCategory(name);
+  const icon = getToolIcon(category);
+
+  const label = summary
+    ? (summary.primary !== "—" ? `${summary.verb} · ${summary.primary}` : summary.verb)
+    : name;
+
   return (
     <span
       className={`flex items-center gap-1 px-[7px] py-[2px] rounded-sm bg-bg-active text-[11px] font-mono ${TOOL_CHIP_STATUS_CLASSES[status]}`}
     >
       {status === "success" && "✓"}
       {status === "error" && "✗"}
-      {name}
+      <span className="text-[10px]">{icon}</span>
+      <span className="truncate max-w-[140px]">{label}</span>
     </span>
   );
 }
@@ -103,7 +49,7 @@ export interface DelegationCardProps {
   /** Short summary of what the sub-agent is doing / has done */
   summary: string;
   /** Tool invocations to display as chips */
-  tools: Array<{ name: string; status: ToolStatus }>;
+  tools: Array<{ name: string; status: ToolStatus; input?: unknown }>;
   /** Current project slug (for building navigation link) */
   projectSlug: string;
   /** Current parent session ID (for building navigation link) */
@@ -188,7 +134,7 @@ export function DelegationCard({
       {tools.length > 0 && (
         <div className="px-3.5 pb-2.5 pt-1.5 flex flex-wrap gap-1.5">
           {tools.map((tool, i) => (
-            <ToolChip key={`${tool.name}-${i}`} name={tool.name} status={tool.status} />
+            <ToolChip key={`${tool.name}-${i}`} name={tool.name} status={tool.status} input={tool.input} />
           ))}
         </div>
       )}

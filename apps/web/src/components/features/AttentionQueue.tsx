@@ -1,36 +1,8 @@
 import { useState, useCallback } from "react";
 import { useAttentionQueue } from "../../hooks/use-attention-queue";
 import type { PermissionRequest, QuestionRequest, PermissionDecision } from "../../api/types";
-
-const AGENT_TYPES = [
-  "orchestrator",
-  "product",
-  "spec",
-  "critic",
-  "foreman",
-  "builder",
-  "reviewer",
-  "librarian",
-  "explorer",
-] as const;
-
-type AgentType = (typeof AGENT_TYPES)[number];
-
-const AGENT_BADGE_COLORS: Record<AgentType, string> = {
-  orchestrator: "bg-[#8b5cf630] text-[#8b5cf6]",
-  product: "bg-[#6366f120] text-[#6366f1]",
-  spec: "bg-[#3b82f620] text-[#3b82f6]",
-  critic: "bg-[#f59e0b20] text-[#f59e0b]",
-  foreman: "bg-[#10b98120] text-[#10b981]",
-  builder: "bg-[#06b6d420] text-[#06b6d4]",
-  reviewer: "bg-[#ec489920] text-[#ec4899]",
-  librarian: "bg-[#8b5cf620] text-[#8b5cf6]",
-  explorer: "bg-[#64748b20] text-[#64748b]",
-};
-
-function isValidAgentType(value: string): value is AgentType {
-  return (AGENT_TYPES as readonly string[]).includes(value);
-}
+import { AGENT_BADGE_COLORS, isValidAgentType, type AgentType } from "../../lib/agent-constants";
+import { getToolSummary, formatToolInputDetails } from "../../lib/tool-format";
 
 type BorderType = "default" | "file_write" | "destructive";
 
@@ -61,27 +33,7 @@ const CMD_BORDER_CLASSES: Record<BorderType, string> = {
   destructive: "border-error/30 text-error",
 };
 
-function formatInputSnippet(input: unknown, toolName: string): string {
-  if (input === null || input === undefined) return "";
-  if (typeof input === "string") return input;
-  if (typeof input === "object") {
-    if (toolName === "bash" && "command" in input) {
-      return String((input as { command: string }).command);
-    }
-    if (("file_path" in input || "filePath" in input || "path" in input)) {
-      const obj = input as Record<string, unknown>;
-      const path = obj.file_path ?? obj.filePath ?? obj.path;
-      if (typeof path === "string") return path;
-    }
-    try {
-      const json = JSON.stringify(input);
-      return json.length > 200 ? json.slice(0, 200) + "…" : json;
-    } catch {
-      return String(input);
-    }
-  }
-  return String(input);
-}
+
 
 interface QuestionData {
   question: string;
@@ -91,7 +43,7 @@ interface QuestionData {
   custom: boolean;
 }
 
-function ConfirmationCard({
+export function ConfirmationCard({
   permission,
   onRespond,
 }: {
@@ -99,9 +51,18 @@ function ConfirmationCard({
   onRespond: (id: string, decision: PermissionDecision) => void;
 }) {
   const borderType = getConfirmationBorderType(permission.toolName, permission.input);
-  const inputSnippet = formatInputSnippet(permission.input, permission.toolName);
+  const summary = getToolSummary(permission.toolName, permission.input);
+  const details = formatToolInputDetails(permission.toolName, permission.input);
   const agentType = permission.agentName ?? "orchestrator";
-  const resolvedAgent = isValidAgentType(agentType) ? agentType : "explorer" as AgentType;
+  const resolvedAgent = isValidAgentType(agentType) ? agentType : ("explorer" as AgentType);
+
+  const isBash = permission.toolName === "bash";
+  const showPrimary = summary.primary && summary.primary !== "—";
+  const showSecondary = !!summary.secondary;
+  // For bash without description, primary IS the command — show it in code block instead of text
+  const showPrimaryAsText = showPrimary && !(isBash && !showSecondary);
+  const showPrimaryAsCode = showPrimary && isBash && !showSecondary;
+  const showDetails = !showSecondary && !showPrimaryAsCode && details && Object.keys(details).length > 0;
 
   return (
     <div className={`bg-bg-elevated border-[1.5px] ${BORDER_CLASSES[borderType]} rounded-md px-3.5 py-2.5 shrink-0`}>
@@ -110,7 +71,7 @@ function ConfirmationCard({
           {borderType === "destructive" ? "⚠️" : "🔒"}
         </span>
         <span className={`font-semibold text-[13px] ${borderType === "destructive" ? "text-error" : "text-text-primary"}`}>
-          {permission.toolName}
+          {summary.icon} {summary.verb}
         </span>
         {permission.reason && (
           <span className="text-[12px] text-text-secondary">— {permission.reason}</span>
@@ -127,9 +88,25 @@ function ConfirmationCard({
         </div>
       )}
 
-      {inputSnippet && (
+      {showPrimaryAsText && (
+        <div className="text-[12.5px] text-text-primary leading-[1.55] mb-1">
+          {summary.primary}
+        </div>
+      )}
+
+      {(showSecondary || showPrimaryAsCode) && (
         <div className={`font-mono text-[12px] bg-bg-base border rounded-sm px-2.5 py-1.5 mb-2 whitespace-pre-wrap break-all max-h-[120px] overflow-y-auto ${CMD_BORDER_CLASSES[borderType]}`}>
-          {inputSnippet}
+          {showSecondary ? summary.secondary : summary.primary}
+        </div>
+      )}
+
+      {showDetails && (
+        <div className={`font-mono text-[12px] bg-bg-base border rounded-sm px-2.5 py-1.5 mb-2 max-h-[120px] overflow-y-auto ${CMD_BORDER_CLASSES[borderType]}`}>
+          {Object.entries(details!).map(([key, value]) => (
+            <div key={key}>
+              <span className="text-text-muted">{key}:</span> {value}
+            </div>
+          ))}
         </div>
       )}
 

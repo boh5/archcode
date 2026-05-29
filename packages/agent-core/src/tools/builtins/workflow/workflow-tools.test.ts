@@ -178,6 +178,10 @@ describe("workflow builtin tools", () => {
       frontmatter: { owner: "pm" },
     });
     expect(written.isError).toBe(false);
+    expect(written.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [{ path: "PRD.md", status: "created" }],
+    });
     expect(JSON.parse(written.output).state).toMatchObject({
       stage: "product_drafting",
       status: "paused",
@@ -197,6 +201,65 @@ describe("workflow builtin tools", () => {
       path: "PRD.md",
       frontmatter: { owner: "pm" },
       body: "# Product\n",
+    });
+  });
+
+  test("artifact_write includes modified diff metadata for existing text artifacts", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    await stateManager.create({ id: "wf-artifact-modified" });
+
+    await execute(registry, projectContext, "artifact_write", {
+      workflowId: "wf-artifact-modified",
+      kind: "SPEC",
+      path: "SPEC.md",
+      content: "# Spec\n\nBefore\n",
+      frontmatter: { kind: "SPEC" },
+    });
+
+    const updated = await execute(registry, projectContext, "artifact_write", {
+      workflowId: "wf-artifact-modified",
+      kind: "SPEC",
+      path: "SPEC.md",
+      content: "# Spec\n\nAfter\n",
+      frontmatter: { kind: "SPEC" },
+    });
+
+    expect(updated.isError).toBe(false);
+    expect(updated.output).toContain('"path": "SPEC.md"');
+    expect(updated.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [{ path: "SPEC.md", status: "modified", additions: 1, deletions: 1 }],
+    });
+  });
+
+  test("artifact_write returns unsupported diff metadata for binary or oversized content", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    await stateManager.create({ id: "wf-artifact-unsupported" });
+
+    const binary = await execute(registry, projectContext, "artifact_write", {
+      workflowId: "wf-artifact-unsupported",
+      kind: "EVIDENCE",
+      path: "evidence/blob.md",
+      content: "\0\0\0binary",
+    });
+    expect(binary.isError).toBe(false);
+    expect(binary.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [],
+      unsupportedReason: "binary",
+    });
+
+    const oversized = await execute(registry, projectContext, "artifact_write", {
+      workflowId: "wf-artifact-unsupported",
+      kind: "EVIDENCE",
+      path: "evidence/large.md",
+      content: "x".repeat(1_000_001),
+    });
+    expect(oversized.isError).toBe(false);
+    expect(oversized.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [],
+      unsupportedReason: "too_large",
     });
   });
 

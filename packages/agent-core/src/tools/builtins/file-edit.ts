@@ -3,6 +3,7 @@ import { z } from "zod";
 import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
+import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createEditErrorRecoveryHook, refreshReadSnapshot } from "../hooks";
 import { createProtectedSpecraPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
@@ -349,7 +350,18 @@ export const fileEditTool = defineTool({
         }
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.workspaceRoot);
-        return `Successfully applied ${matches.length} edit(s) to ${input.path}`;
+        return {
+          output: `Successfully applied ${matches.length} edit(s) to ${input.path}`,
+          isError: false,
+          meta: {
+            diffs: computeToolDiff({
+              path: input.path,
+              before: content,
+              after: modified,
+              status: "modified",
+            }),
+          },
+        };
       });
 
       return result;

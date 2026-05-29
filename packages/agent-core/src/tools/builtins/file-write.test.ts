@@ -74,13 +74,41 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect(output).toBe("File written to sample.txt");
+    expect(typeof output).not.toBe("string");
+    const result = output as ToolExecutionResult;
+    expect(result.output).toBe("File written to sample.txt");
+    expect(result.isError).toBe(false);
+    expect(result.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [
+        {
+          path: "sample.txt",
+          status: "created",
+          additions: 2,
+          deletions: 0,
+        },
+      ],
+    });
     const content = await Bun.file(join(testDir, "sample.txt")).text();
     expect(content).toBe("hello\nworld\n");
   });
 
+  test("successful registry result preserves output and includes created diff metadata", async () => {
+    const result = await executeThroughRegistry({
+      path: "registry-new.txt",
+      content: "line one\nline two\n",
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe("File written to registry-new.txt");
+    expect(result.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [{ path: "registry-new.txt", status: "created" }],
+    });
+  });
+
   test("file-exists permission denies existing files", async () => {
-    const filePath = await writeWorkspaceFile("existing.txt", "old");
+    await writeWorkspaceFile("existing.txt", "old");
     const perm = fileWriteTool.permissions?.[1];
     expect(perm).toBeDefined();
 
@@ -106,6 +134,7 @@ describe("fileWriteTool", () => {
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("file-already-exists");
     expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+    expect(result.meta?.diffs).toBeUndefined();
     expect(result.output).toContain("already exists");
 
     const content = await Bun.file(join(testDir, "execute-existing.txt")).text();
@@ -156,7 +185,7 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect(output).toBe("File written to nested/deep/file.txt");
+    expect((output as ToolExecutionResult).output).toBe("File written to nested/deep/file.txt");
     const content = await Bun.file(join(testDir, "nested/deep/file.txt")).text();
     expect(content).toBe("nested");
   });
@@ -167,7 +196,7 @@ describe("fileWriteTool", () => {
       makeCtx(),
     );
 
-    expect(output).toBe("File written to atomic.txt");
+    expect((output as ToolExecutionResult).output).toBe("File written to atomic.txt");
     expect(existsSync(join(testDir, "atomic.txt"))).toBe(true);
     expect(existsSync(join(testDir, `.tmp-${process.pid}-${Date.now()}`))).toBe(false);
     const parentEntries = await Array.fromAsync(
@@ -185,8 +214,8 @@ describe("fileWriteTool", () => {
     ]);
 
     expect(outputs).toEqual([
-      "File written to parallel-a.txt",
-      "File written to parallel-b.txt",
+      expect.objectContaining({ output: "File written to parallel-a.txt", isError: false }),
+      expect.objectContaining({ output: "File written to parallel-b.txt", isError: false }),
     ]);
     const contentA = await Bun.file(join(testDir, "parallel-a.txt")).text();
     const contentB = await Bun.file(join(testDir, "parallel-b.txt")).text();
@@ -203,7 +232,12 @@ describe("fileWriteTool", () => {
     ]);
 
     const succeeded = results.filter(
-      (r) => r.status === "fulfilled" && r.value === "File written to same.txt",
+      (r) =>
+        r.status === "fulfilled" &&
+        typeof r.value === "object" &&
+        r.value !== null &&
+        "output" in r.value &&
+        r.value.output === "File written to same.txt",
     );
     const failed = results.filter(
       (r) =>
@@ -230,7 +264,7 @@ describe("fileWriteTool", () => {
       ctx,
     );
 
-    expect(output).toBe("File written to snapshot.txt");
+    expect((output as ToolExecutionResult).output).toBe("File written to snapshot.txt");
     const resolved = await realpath(filePath);
     const fileStat = await stat(filePath);
     expect(store.getState().readSnapshots.get(resolved)).toBe(fileStat.mtimeMs);

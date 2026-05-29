@@ -100,7 +100,21 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(output).toBe("Successfully applied 1 edit(s) to single.txt");
+    expect(typeof output).not.toBe("string");
+    const result = output as ToolExecutionResult;
+    expect(result.output).toBe("Successfully applied 1 edit(s) to single.txt");
+    expect(result.isError).toBe(false);
+    expect(result.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [
+        {
+          path: "single.txt",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+    });
     expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello specra\n");
   });
 
@@ -119,7 +133,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(output).toBe("Successfully applied 2 edit(s) to multiple.txt");
+    expect((output as ToolExecutionResult).output).toBe("Successfully applied 2 edit(s) to multiple.txt");
     expect(await Bun.file(join(testDir, "multiple.txt")).text()).toBe(
       "one beta three\n",
     );
@@ -136,6 +150,10 @@ describe("fileEditTool", () => {
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("Successfully applied 1 edit(s) to compat.txt");
+    expect(result.meta?.diffs).toMatchObject({
+      version: 1,
+      files: [{ path: "compat.txt", status: "modified" }],
+    });
     expect(await Bun.file(join(testDir, "compat.txt")).text()).toBe("after\n");
   });
 
@@ -149,6 +167,7 @@ describe("fileEditTool", () => {
     );
 
     expectToolErrorKind(result, "edit-no-match");
+    expect(result.meta?.diffs).toBeUndefined();
     expect(result.output).toContain("TOOL_EDIT_NO_MATCH");
   });
 
@@ -236,7 +255,7 @@ describe("fileEditTool", () => {
       ctx,
     );
 
-    expect(output).toBe("Successfully applied 1 edit(s) to fuzzy.txt");
+    expect((output as ToolExecutionResult).output).toBe("Successfully applied 1 edit(s) to fuzzy.txt");
     expect(await Bun.file(join(testDir, "fuzzy.txt")).text()).toBe(
       "const text = 'updated';\nnext line\r\n",
     );
@@ -333,8 +352,8 @@ describe("fileEditTool", () => {
     ]);
 
     expect(results).toEqual([
-      "Successfully applied 1 edit(s) to queue.txt",
-      "Successfully applied 1 edit(s) to queue.txt",
+      expect.objectContaining({ output: "Successfully applied 1 edit(s) to queue.txt", isError: false }),
+      expect.objectContaining({ output: "Successfully applied 1 edit(s) to queue.txt", isError: false }),
     ]);
     expect(await Bun.file(join(testDir, "queue.txt")).text()).toBe("1 two 3");
   });

@@ -190,22 +190,43 @@ describe("ast_grep_replace tool", () => {
     });
   });
 
+  test("preview mode does not attach applied diff metadata", async () => {
+    const result = await astGrepReplaceTool.execute({ pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: true }, ctx());
+    expect(typeof result).toBe("string");
+    expect((result as ToolExecutionResult).meta).toBeUndefined();
+  });
+
   test("apply mode includes update-all and reports applied", async () => {
     const workspace = tempWorkspace();
     let argv: readonly string[] = [];
     try {
       const file = join(workspace, "src-app.ts");
       writeFileSync(file, "console.log(message)", "utf-8");
-      setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]]) => { argv = cmd; return spawnResult(replacementJsonFor("src-app.ts")); }));
+      setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]]) => {
+        argv = cmd;
+        if (cmd.includes("--update-all")) writeFileSync(file, "logger.info(message)", "utf-8");
+        return spawnResult(replacementJsonFor("src-app.ts"));
+      }));
       const result = await astGrepReplaceTool.execute(
         { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
         ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
       );
 
       expect(argv).toContain("--update-all");
-      expect(typeof result).toBe("string");
-      if (typeof result !== "string") throw new Error("Expected string result");
-      expect(JSON.parse(result)).toMatchObject({ dryRun: false, applied: true, count: 1 });
+      expect(typeof result).toBe("object");
+      if (typeof result === "string") throw new Error("Expected tool execution result");
+      expect(JSON.parse(result.output)).toMatchObject({ dryRun: false, applied: true, count: 1 });
+      expect(result.meta?.diffs).toMatchObject({
+        version: 1,
+        files: [
+          {
+            path: "src-app.ts",
+            status: "modified",
+            additions: 1,
+            deletions: 1,
+          },
+        ],
+      });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -227,6 +248,7 @@ describe("ast_grep_replace tool", () => {
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
       expectToolError(result, { kind: "read-before-write", code: "TOOL_FILE_NOT_READ_FIRST", messageIncludes: "has not been read first" });
+      expect((result as ToolExecutionResult).meta?.diffs).toBeUndefined();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -248,6 +270,31 @@ describe("ast_grep_replace tool", () => {
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
       expectToolError(result, { kind: "write-conflict", code: "TOOL_FILE_WRITE_CONFLICT", messageIncludes: "modified since it was read" });
+      expect((result as ToolExecutionResult).meta?.diffs).toBeUndefined();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode returns file-not-found without diff metadata when target disappears before apply", async () => {
+    const workspace = tempWorkspace();
+    try {
+      const file = join(workspace, "deleted.ts");
+      writeFileSync(file, "console.log(message)", "utf-8");
+      const store = createSnapshotStore(file);
+      rmSync(file);
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor("deleted.ts")); });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
+      expectToolError(result, { kind: "file-not-found", code: "TOOL_FILE_NOT_FOUND", messageIncludes: "no longer exists" });
+      expect((result as ToolExecutionResult).meta?.diffs).toBeUndefined();
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -258,7 +305,10 @@ describe("ast_grep_replace tool", () => {
     try {
       const file = join(workspace, "success.ts");
       writeFileSync(file, "console.log(message)", "utf-8");
-      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor("success.ts")); });
+      const run = mock((cmd: readonly [string, ...string[]]) => {
+        if (cmd.includes("--update-all")) writeFileSync(file, "logger.info(message)", "utf-8");
+        return spawnResult(replacementJsonFor("success.ts"));
+      });
       setProcessRunnerForTest(run);
 
       const result = await astGrepReplaceTool.execute(
@@ -269,9 +319,53 @@ describe("ast_grep_replace tool", () => {
       expect(run).toHaveBeenCalledTimes(2);
       expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
       expect(run.mock.calls[1]?.[0]).toContain("--update-all");
-      expect(typeof result).toBe("string");
-      if (typeof result !== "string") throw new Error("Expected string result");
-      expect(JSON.parse(result)).toMatchObject({ dryRun: false, applied: true, count: 1 });
+      expect(typeof result).toBe("object");
+      if (typeof result === "string") throw new Error("Expected tool execution result");
+      expect(JSON.parse(result.output)).toMatchObject({ dryRun: false, applied: true, count: 1 });
+      const diffs = result.meta?.diffs as { files?: Array<{ path?: string; status?: string; hunks?: unknown[] }> } | undefined;
+      expect(diffs?.files?.[0]).toMatchObject({ path: "success.ts", status: "modified" });
+      expect(diffs?.files?.[0]?.hunks?.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode with no actual file changes returns no-change diff metadata", async () => {
+    const workspace = tempWorkspace();
+    try {
+      const file = join(workspace, "unchanged.ts");
+      writeFileSync(file, "console.log(message)", "utf-8");
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor("unchanged.ts")); });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(file) }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(typeof result).toBe("object");
+      if (typeof result === "string") throw new Error("Expected tool execution result");
+      expect(JSON.parse(result.output)).toMatchObject({ dryRun: false, applied: true, count: 1 });
+      expect(result.meta?.diffs).toEqual({ version: 1, files: [], unsupportedReason: "no_change" });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode with empty matches stays output-only without diff metadata", async () => {
+    const workspace = tempWorkspace();
+    try {
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult("[]"); });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "nope", rewrite: "replacement", dryRun: false },
+        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createMockStore() }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(result).toBe(JSON.stringify({ dryRun: false, applied: true, count: 0, matches: [] }, null, 2));
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

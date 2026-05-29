@@ -1,6 +1,10 @@
+import { existsSync } from "node:fs";
+
 import { defineTool } from "../../define-tool";
+import { computeToolDiff, isProbablyBinaryText, MAX_DIFF_INPUT_CHARS } from "../../diff";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { formatFrontmatter } from "../../../utils/frontmatter";
 import {
   ArtifactPathError,
   WorkflowArtifactWriteInputSchema,
@@ -17,8 +21,19 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const artifactManager = ctx.projectContext.artifacts;
       try {
+        const before = await readArtifactBeforeWrite(artifactManager, input);
         const result = await artifactManager.write(input);
-        return JSON.stringify(result, null, 2);
+        return {
+          output: JSON.stringify(result, null, 2),
+          isError: false,
+          meta: {
+            diffs: computeArtifactDiff({
+              path: input.path,
+              before,
+              after: input.frontmatter ? formatFrontmatter(input.frontmatter, input.content) : input.content,
+            }),
+          },
+        };
       } catch (error) {
         if (error instanceof ArtifactPathError) {
           return createToolErrorResult({
@@ -47,6 +62,49 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
         });
       }
     },
+  });
+}
+
+type ArtifactBeforeWrite =
+  | { existed: false }
+  | { existed: true; content: string };
+
+async function readArtifactBeforeWrite(
+  artifactManager: ToolExecutionContext["projectContext"]["artifacts"],
+  input: WorkflowArtifactWriteInput,
+): Promise<ArtifactBeforeWrite> {
+  try {
+    const existing = await artifactManager.read(input.workflowId, input.path);
+    if (!existsSync(existing.absolutePath)) return { existed: false };
+    return { existed: true, content: existing.content };
+  } catch (error) {
+    if (isNotFoundError(error)) return { existed: false };
+    throw error;
+  }
+}
+
+function computeArtifactDiff({
+  path,
+  before,
+  after,
+}: {
+  path: string;
+  before: ArtifactBeforeWrite;
+  after: string;
+}) {
+  const previousContent = before.existed ? before.content : "";
+  if (isProbablyBinaryText(previousContent) || isProbablyBinaryText(after)) {
+    return { version: 1 as const, files: [], unsupportedReason: "binary" as const };
+  }
+  if (previousContent.length + after.length > MAX_DIFF_INPUT_CHARS) {
+    return { version: 1 as const, files: [], unsupportedReason: "too_large" as const };
+  }
+
+  return computeToolDiff({
+    path,
+    before: previousContent,
+    after,
+    status: before.existed ? "modified" : "created",
   });
 }
 

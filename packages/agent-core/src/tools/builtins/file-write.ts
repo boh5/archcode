@@ -3,6 +3,7 @@ import { z } from "zod";
 import { atomicWrite } from "../../utils/safe-file";
 import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
+import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createFileExistsPermission, createProtectedSpecraPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { refreshReadSnapshot } from "../hooks";
@@ -46,7 +47,18 @@ export const fileWriteTool = defineTool({
         await atomicWrite(resolvedPath, input.content);
 
         refreshReadSnapshot(resolvedPath, ctx.store, ctx.workspaceRoot);
-        return `File written to ${input.path}`;
+        return {
+          output: `File written to ${input.path}`,
+          isError: false,
+          meta: {
+            diffs: computeToolDiff({
+              path: input.path,
+              before: "",
+              after: input.content,
+              status: "created",
+            }),
+          },
+        };
       });
     } catch (error) {
       return createToolErrorResult({
