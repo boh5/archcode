@@ -35,7 +35,6 @@ describe("getToolSummary", () => {
   test("bash returns two-part model with description and command", () => {
     const result = getToolSummary("bash", { description: "Install deps", command: "bun install" });
     expect(result.icon).toBe("💻");
-    expect(result.verb).toBe("Run");
     expect(result.primary).toBe("Install deps");
     expect(result.secondary).toBe("bun install");
   });
@@ -54,7 +53,6 @@ describe("getToolSummary", () => {
   test("file_read returns path", () => {
     const result = getToolSummary("file_read", { filePath: "/src/index.ts" });
     expect(result.icon).toBe("📄");
-    expect(result.verb).toBe("Read");
     expect(result.primary).toBe("/src/index.ts");
   });
 
@@ -69,21 +67,18 @@ describe("getToolSummary", () => {
   test("grep returns pattern", () => {
     const result = getToolSummary("grep", { pattern: "TODO", include: "*.ts" });
     expect(result.icon).toBe("🔍");
-    expect(result.verb).toBe("Search");
     expect(result.primary).toBe("TODO");
   });
 
   test("delegate returns task description", () => {
     const result = getToolSummary("delegate", { task: "Explore the codebase" });
     expect(result.icon).toBe("🤝");
-    expect(result.verb).toBe("Delegate");
     expect(result.primary).toBe("Explore the codebase");
   });
 
   test("MCP tool renders as server/tool with primary value", () => {
     const result = getToolSummary("mcp__context7__resolve_library", { query: "react hooks" });
     expect(result.icon).toBe("🔌");
-    expect(result.verb).toBe("context7/resolve_library");
     expect(result.primary).toBe("react hooks");
   });
 
@@ -100,14 +95,12 @@ describe("getToolSummary", () => {
   test("web_fetch returns url", () => {
     const result = getToolSummary("web_fetch", { url: "https://docs.example.com" });
     expect(result.icon).toBe("🌐");
-    expect(result.verb).toBe("Fetch");
     expect(result.primary).toBe("https://docs.example.com");
   });
 
   test("LSP tools return path", () => {
     const result = getToolSummary("lsp_diagnostics", { filePath: "/src/app.ts" });
     expect(result.icon).toBe("🔧");
-    expect(result.verb).toBe("Diagnose");
     expect(result.primary).toBe("/src/app.ts");
   });
 
@@ -120,7 +113,6 @@ describe("getToolSummary", () => {
   test("unknown tool returns safe fallback", () => {
     const result = getToolSummary("custom_tool", { foo: "bar" });
     expect(result.icon).toBe("❓");
-    expect(result.verb).toBe("custom_tool");
     expect(result.primary).toBe("bar");
   });
 

@@ -67,11 +67,11 @@ export function ConfirmationCard({
   return (
     <div className={`bg-bg-elevated border-[1.5px] ${BORDER_CLASSES[borderType]} rounded-md px-3.5 py-2.5 shrink-0`}>
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-sm shrink-0">
+        <span className="text-sm shrink-0" aria-hidden="true">
           {borderType === "destructive" ? "⚠️" : "🔒"}
         </span>
         <span className={`font-semibold text-[13px] ${borderType === "destructive" ? "text-error" : "text-text-primary"}`}>
-          {summary.icon} {permission.toolName}
+          <span aria-hidden="true">{summary.icon}</span> {permission.toolName}
         </span>
         {permission.reason && (
           <span className="text-[12px] text-text-secondary">— {permission.reason}</span>
@@ -208,7 +208,7 @@ function QuestionCard({
   return (
     <div className="bg-bg-elevated border-[1.5px] border-accent rounded-md overflow-hidden shrink-0">
       <div className="flex items-center gap-2 px-3.5 py-2 bg-accent-subtle border-b border-accent-muted">
-        <span className="text-sm">❓</span>
+        <span className="text-sm" aria-hidden="true">❓</span>
         <span className="font-semibold text-[13px] text-accent">Questions</span>
         {questionRequest.toolName && (
           <span className="text-[11px] text-text-muted">via {questionRequest.toolName}</span>
@@ -434,7 +434,7 @@ export function AttentionQueue({ slug, sessionId }: AttentionQueueProps) {
   return (
     <div className="max-h-[min(500px,50vh)] overflow-y-auto bg-bg-surface shrink-0 border-t border-border-subtle px-5 py-2.5 flex flex-col gap-2">
       <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-warning mb-0.5">
-        <span>🔔</span>
+        <span aria-hidden="true">🔔</span>
         Attention Required
         <span className="bg-warning-muted text-warning px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
           {totalItems}

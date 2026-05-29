@@ -24,10 +24,11 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
   return (
     <span
       className={`flex items-center gap-1 px-[7px] py-[2px] rounded-sm bg-bg-active text-[11px] font-mono ${TOOL_CHIP_STATUS_CLASSES[status]}`}
+      title={name}
     >
-      {status === "success" && "✓"}
-      {status === "error" && "✗"}
-      <span className="text-[10px]">{icon}</span>
+      {status === "success" && <span aria-hidden="true">✓</span>}
+      {status === "error" && <span aria-hidden="true">✗</span>}
+      <span className="text-[10px]" aria-hidden="true">{icon}</span>
       <span className="truncate max-w-[140px]">{label}</span>
     </span>
   );

@@ -71,44 +71,11 @@ export function getToolIcon(category: ToolCategory): string {
 
 export interface ToolSummary {
   icon: string;
-  verb: string;
   primary: string;
   secondary?: string;
 }
 
-const BUILTIN_VERBS: Partial<Record<BuiltinToolName, string>> = {
-  [TOOL_FILE_READ]: "Read",
-  [TOOL_FILE_WRITE]: "Write",
-  [TOOL_FILE_EDIT]: "Edit",
-  [TOOL_GREP]: "Search",
-  [TOOL_GLOB]: "Find",
-  [TOOL_AST_GREP_SEARCH]: "AST Search",
-  [TOOL_AST_GREP_REPLACE]: "AST Replace",
-  [TOOL_BASH]: "Run",
-  [TOOL_GIT_STATUS]: "Status",
-  [TOOL_GIT_DIFF]: "Diff",
-  [TOOL_WEB_FETCH]: "Fetch",
-  [TOOL_LSP_DIAGNOSTICS]: "Diagnose",
-  [TOOL_LSP_GOTO_DEFINITION]: "Go to Def",
-  [TOOL_LSP_FIND_REFERENCES]: "Find Refs",
-  [TOOL_LSP_SYMBOLS]: "Symbols",
-  [TOOL_DELEGATE]: "Delegate",
-  [TOOL_WAIT_FOR_REMINDER]: "Wait",
-  [TOOL_BACKGROUND_OUTPUT]: "Background",
-  [TOOL_VIEW_TOOL_OUTPUT]: "View Output",
-  [TOOL_TODO_WRITE]: "Todo",
-  [TOOL_ASK_USER]: "Ask",
-  [TOOL_MEMORY_READ]: "Memory Read",
-  [TOOL_MEMORY_WRITE]: "Memory Write",
-  [TOOL_WORKFLOW_CREATE]: "Create Workflow",
-  [TOOL_WORKFLOW_READ]: "Read Workflow",
-  [TOOL_WORKFLOW_UPDATE_STAGE]: "Update Stage",
-  [TOOL_WORKFLOW_TASK_CHECK]: "Task Check",
-  [TOOL_ARTIFACT_READ]: "Read Artifact",
-  [TOOL_ARTIFACT_WRITE]: "Write Artifact",
-  [TOOL_SKILL_LIST]: "List Skills",
-  [TOOL_SKILL_READ]: "Read Skill",
-};
+
 
 function extractPath(input: Record<string, unknown>): string | undefined {
   return (
@@ -147,15 +114,15 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
   const icon = getToolIcon(category);
 
   if (input === null || input === undefined) {
-    return { icon, verb: BUILTIN_VERBS[toolName as BuiltinToolName] ?? toolName, primary: "—" };
+    return { icon, primary: "—" };
   }
 
   if (typeof input === "string") {
-    return { icon, verb: BUILTIN_VERBS[toolName as BuiltinToolName] ?? toolName, primary: truncate(input, INLINE_VALUE_MAX_CHARS) };
+    return { icon, primary: truncate(input, INLINE_VALUE_MAX_CHARS) };
   }
 
   if (typeof input !== "object" || Array.isArray(input)) {
-    return { icon, verb: BUILTIN_VERBS[toolName as BuiltinToolName] ?? toolName, primary: String(input) };
+    return { icon, primary: String(input) };
   }
 
   const obj = input as Record<string, unknown>;
@@ -165,7 +132,7 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     const parts = toolName.slice(5).split("__");
     const serverTool = parts.length >= 2 ? `${parts[0]}/${parts.slice(1).join("__")}` : toolName;
     const primary = firstMeaningfulString(obj) ?? serverTool;
-    return { icon, verb: serverTool, primary };
+    return { icon, primary };
   }
 
   // Bash: two-part model (description + command)
@@ -174,7 +141,6 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     const command = typeof obj.command === "string" ? obj.command : undefined;
     return {
       icon,
-      verb: "Run",
       primary: description ?? command ?? "—",
       secondary: description && command ? truncate(command, INLINE_VALUE_MAX_CHARS) : undefined,
     };
@@ -183,108 +149,100 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
   // File tools: path
   if (toolName === TOOL_FILE_READ || toolName === TOOL_FILE_WRITE || toolName === TOOL_FILE_EDIT) {
     const path = extractPath(obj);
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "File";
     if (toolName === TOOL_FILE_WRITE && typeof obj.content === "string") {
-      return { icon, verb, primary: path ?? "—", secondary: summarizeContent(obj.content) };
+      return { icon, primary: path ?? "—", secondary: summarizeContent(obj.content) };
     }
-    return { icon, verb, primary: path ?? "—" };
+    return { icon, primary: path ?? "—" };
   }
 
   // Search tools: pattern
   if (toolName === TOOL_GREP || toolName === TOOL_GLOB || toolName === TOOL_AST_GREP_SEARCH) {
     const pattern = typeof obj.pattern === "string" ? obj.pattern : undefined;
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "Search";
-    return { icon, verb, primary: pattern ?? extractPath(obj) ?? "—" };
+    return { icon, primary: pattern ?? extractPath(obj) ?? "—" };
   }
 
   if (toolName === TOOL_AST_GREP_REPLACE) {
     const pattern = typeof obj.pattern === "string" ? obj.pattern : undefined;
-    return { icon, verb: "AST Replace", primary: pattern ?? extractPath(obj) ?? "—" };
+    return { icon, primary: pattern ?? extractPath(obj) ?? "—" };
   }
 
   // Git tools
   if (toolName === TOOL_GIT_STATUS) {
     const cwd = typeof obj.workdir === "string" ? obj.workdir : undefined;
-    return { icon, verb: "Status", primary: cwd ?? "—" };
+    return { icon, primary: cwd ?? "—" };
   }
   if (toolName === TOOL_GIT_DIFF) {
     const cwd = typeof obj.workdir === "string" ? obj.workdir : undefined;
-    return { icon, verb: "Diff", primary: cwd ?? "—" };
+    return { icon, primary: cwd ?? "—" };
   }
 
   // Delegate: task description
   if (toolName === TOOL_DELEGATE) {
     const task = typeof obj.task === "string" ? obj.task : undefined;
     const description = typeof obj.description === "string" ? obj.description : undefined;
-    return { icon, verb: "Delegate", primary: truncate(task ?? description ?? "—", INLINE_VALUE_MAX_CHARS) };
+    return { icon, primary: truncate(task ?? description ?? "—", INLINE_VALUE_MAX_CHARS) };
   }
 
   // Web fetch: url
   if (toolName === TOOL_WEB_FETCH) {
     const url = typeof obj.url === "string" ? obj.url : undefined;
-    return { icon, verb: "Fetch", primary: url ?? "—" };
+    return { icon, primary: url ?? "—" };
   }
 
   // LSP tools: path
   if (toolName === TOOL_LSP_DIAGNOSTICS || toolName === TOOL_LSP_GOTO_DEFINITION || toolName === TOOL_LSP_FIND_REFERENCES || toolName === TOOL_LSP_SYMBOLS) {
     const path = extractPath(obj);
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "LSP";
-    return { icon, verb, primary: path ?? "—" };
+    return { icon, primary: path ?? "—" };
   }
 
   // Memory tools
   if (toolName === TOOL_MEMORY_READ || toolName === TOOL_MEMORY_WRITE) {
     const topic = typeof obj.topic === "string" ? obj.topic : undefined;
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "Memory";
-    return { icon, verb, primary: topic ?? extractPath(obj) ?? "—" };
+    return { icon, primary: topic ?? extractPath(obj) ?? "—" };
   }
 
   // Workflow tools
   if (toolName === TOOL_WORKFLOW_CREATE || toolName === TOOL_WORKFLOW_READ || toolName === TOOL_WORKFLOW_UPDATE_STAGE || toolName === TOOL_WORKFLOW_TASK_CHECK) {
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "Workflow";
     const name = typeof obj.name === "string" ? obj.name : undefined;
-    return { icon, verb, primary: name ?? "—" };
+    return { icon, primary: name ?? "—" };
   }
 
   // Artifact tools
   if (toolName === TOOL_ARTIFACT_READ || toolName === TOOL_ARTIFACT_WRITE) {
     const name = typeof obj.name === "string" ? obj.name : undefined;
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "Artifact";
     if (toolName === TOOL_ARTIFACT_WRITE && typeof obj.content === "string") {
-      return { icon, verb, primary: name ?? "—", secondary: summarizeContent(obj.content) };
+      return { icon, primary: name ?? "—", secondary: summarizeContent(obj.content) };
     }
-    return { icon, verb, primary: name ?? "—" };
+    return { icon, primary: name ?? "—" };
   }
 
   // Skill tools
   if (toolName === TOOL_SKILL_LIST || toolName === TOOL_SKILL_READ) {
     const skillName = typeof obj.name === "string" ? obj.name : undefined;
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? "Skill";
-    return { icon, verb, primary: skillName ?? "—" };
+    return { icon, primary: skillName ?? "—" };
   }
 
   // Delegation helpers
   if (toolName === TOOL_WAIT_FOR_REMINDER || toolName === TOOL_BACKGROUND_OUTPUT || toolName === TOOL_VIEW_TOOL_OUTPUT) {
-    const verb = BUILTIN_VERBS[toolName as BuiltinToolName] ?? toolName;
-    return { icon, verb, primary: "—" };
+    return { icon, primary: "—" };
   }
 
   // Interaction tools
   if (toolName === TOOL_TODO_WRITE) {
-    return { icon, verb: "Todo", primary: "—" };
+    return { icon, primary: "—" };
   }
   if (toolName === TOOL_ASK_USER) {
     const question = typeof obj.question === "string" ? obj.question : undefined;
-    return { icon, verb: "Ask", primary: question ? truncate(question, INLINE_VALUE_MAX_CHARS) : "—" };
+    return { icon, primary: question ? truncate(question, INLINE_VALUE_MAX_CHARS) : "—" };
   }
 
   // Fallback for known builtins not explicitly handled
   if (isBuiltinToolName(toolName)) {
-    return { icon, verb: BUILTIN_VERBS[toolName] ?? toolName, primary: extractPath(obj) ?? firstMeaningfulString(obj) ?? "—" };
+    return { icon, primary: extractPath(obj) ?? firstMeaningfulString(obj) ?? "—" };
   }
 
   // Unknown tool
-  return { icon, verb: toolName, primary: firstMeaningfulString(obj) ?? "—" };
+  return { icon, primary: firstMeaningfulString(obj) ?? "—" };
 }
 
 // ─── Detail fields allowlist ───

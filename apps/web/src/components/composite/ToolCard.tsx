@@ -123,11 +123,12 @@ export function ToolCard({ part }: ToolCardProps) {
       >
         <span
           className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`}
+          aria-hidden="true"
         >
           {config.icon}
         </span>
         <span className={`text-xs font-medium font-mono ${nameClass}`}>
-          {summary.icon} {part.toolName}
+          <span aria-hidden="true">{summary.icon}</span> {part.toolName}
         </span>
         <span className="text-xs text-text-secondary truncate">{summary.primary}</span>
         {summary.secondary && (
