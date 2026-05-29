@@ -2,7 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bashTool, buildBashEnv, formatBashOutput, runBashCommand } from "./bash";
+import { bashTool, BashInputSchema, buildBashEnv, formatBashOutput, runBashCommand } from "./bash";
 import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -65,25 +65,40 @@ describe("bashTool", () => {
     const ctx = mockCtx(mkdtempSync(join(tmpdir(), "bash-schema-test-")));
     try {
       const empty = await registry.execute(
-        { toolName: "bash", toolCallId: "empty", input: { command: "" } },
+        { toolName: "bash", toolCallId: "empty", input: { description: "Test empty command", command: "" } },
         ctx,
       );
       expect(empty.isError).toBe(true);
 
       const extra = await registry.execute(
-        { toolName: "bash", toolCallId: "extra", input: { command: "pwd", extra: true } },
+        { toolName: "bash", toolCallId: "extra", input: { description: "Test extra field rejection", command: "pwd", extra: true } },
         ctx,
       );
       expect(extra.isError).toBe(true);
 
       const negativeTimeout = await registry.execute(
-        { toolName: "bash", toolCallId: "timeout", input: { command: "pwd", timeoutMs: -1 } },
+        { toolName: "bash", toolCallId: "timeout", input: { description: "Test negative timeout", command: "pwd", timeoutMs: -1 } },
         ctx,
       );
       expect(negativeTimeout.isError).toBe(true);
     } finally {
       rmSync(ctx.workspaceRoot, { recursive: true, force: true });
     }
+  });
+
+  test("schema rejects input without description", () => {
+    const result = BashInputSchema.safeParse({ command: "pwd" });
+    expect(result.success).toBe(false);
+  });
+
+  test("schema rejects empty description", () => {
+    const result = BashInputSchema.safeParse({ description: "", command: "pwd" });
+    expect(result.success).toBe(false);
+  });
+
+  test("schema accepts valid input with description", () => {
+    const result = BashInputSchema.safeParse({ description: "Print working directory", command: "pwd" });
+    expect(result.success).toBe(true);
   });
 
   test("schema/prepareInput rejects cwd outside workspace before spawning", async () => {
@@ -94,7 +109,7 @@ describe("bashTool", () => {
       setProcessRunnerForTest(spawnMock as any);
 
       const result = await registry.execute(
-        { toolName: "bash", toolCallId: "cwd", input: { command: "pwd", cwd: ".." } },
+        { toolName: "bash", toolCallId: "cwd", input: { description: "Test cwd outside workspace", command: "pwd", cwd: ".." } },
         mockCtx(workspaceRoot),
       );
 
@@ -143,7 +158,7 @@ describe("bashTool", () => {
         return mockSpawnResult(realpathSync.native(workspaceRoot) + "\n", "", 0);
       }) as any);
 
-      const result = await runBashCommand({ command: "pwd", cwd: "." }, mockCtx(workspaceRoot));
+      const result = await runBashCommand({ description: "Print working directory", command: "pwd", cwd: "." }, mockCtx(workspaceRoot));
 
       expect(result.isError).toBe(false);
       expect(result.output).toContain("EXIT_CODE: 0");
@@ -160,7 +175,7 @@ describe("bashTool", () => {
   test("nonzero exit returns isError true with exit code", async () => {
     setProcessRunnerForTest(() => mockSpawnResult("", "boom\n", 7) as any);
 
-    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand({ description: "Test nonzero exit", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
     const nonzeroParsed = JSON.parse(result.output);
@@ -180,7 +195,7 @@ describe("bashTool", () => {
       kill,
     }) as any);
 
-    const result = await runBashCommand({ command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand({ description: "Test timeout", command: "pwd", timeoutMs: 1 }, mockCtx(testWorkspaceRoot));
 
     expect(kill).toHaveBeenCalledTimes(1);
     const timeoutParsed = JSON.parse(result.output);
@@ -203,7 +218,7 @@ describe("bashTool", () => {
     }) as any);
 
     const promise = runBashCommand(
-      { command: "pwd" },
+      { description: "Test abort signal", command: "pwd" },
       mockCtx(testWorkspaceRoot, { abort: abortController.signal }),
     );
     abortController.abort();
@@ -226,7 +241,7 @@ describe("bashTool", () => {
       kill: mock(() => {}),
     }) as any);
 
-    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand({ description: "Test signal exit", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
     const abortParsed = JSON.parse(result.output);
@@ -242,7 +257,7 @@ describe("bashTool", () => {
       throw new Error("spawn failed");
     });
 
-    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand({ description: "Test spawn failure", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.output);
@@ -258,7 +273,7 @@ describe("bashTool", () => {
     });
     setProcessRunnerForTest(spawn as any);
 
-    const result = await runBashCommand({ command: "pwd" }, mockCtx(testWorkspaceRoot));
+    const result = await runBashCommand({ description: "Test EAGAIN retry", command: "pwd" }, mockCtx(testWorkspaceRoot));
 
     expect(result.isError).toBe(false);
     expect(result.output).toContain("STDOUT:\ndone\n");
@@ -271,7 +286,7 @@ describe("bashTool", () => {
     setProcessRunnerForTest(spawnMock as any);
 
     const result = await registry.execute(
-      { toolName: "bash", toolCallId: "denied", input: { command: "sudo echo hi" } },
+      { toolName: "bash", toolCallId: "denied", input: { description: "Test denied command", command: "sudo echo hi" } },
       mockCtx(testWorkspaceRoot),
     );
 

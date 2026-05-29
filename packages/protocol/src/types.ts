@@ -473,6 +473,21 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
+export type ToolDiffUnsupportedReason = "binary" | "too_large" | "not_text" | "no_change" | "diff_error";
+
+export interface ToolDiffMetadata {
+  version: 1;
+  files: DiffFile[];
+  truncated?: boolean;
+  unsupportedReason?: ToolDiffUnsupportedReason;
+  warning?: string;
+}
+
+export interface ToolResultMeta {
+  diffs?: ToolDiffMetadata;
+  [key: string]: unknown;
+}
+
 export interface PermissionRequest {
   id: string;
   sessionId: string;

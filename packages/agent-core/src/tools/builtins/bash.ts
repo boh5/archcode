@@ -9,6 +9,7 @@ import type { ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
+    description: z.string().min(1),
     command: z.string().min(1),
     cwd: z.string().optional(),
     timeoutMs: z.number().int().positive().optional(),

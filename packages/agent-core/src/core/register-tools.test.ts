@@ -141,7 +141,7 @@ describe("registerBuiltinTools", () => {
     const cases = [
       {
         name: "bash",
-        input: { command: "pwd" },
+        input: { description: "Print working directory", command: "pwd" },
         ctx: { confirmPermission: async () => "approve" as const },
       },
       {
