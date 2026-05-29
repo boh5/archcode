@@ -57,6 +57,8 @@ export const DEFAULT_LSP_TRANSPORT_TIMEOUTS: LspTransportTimeouts = {
 
 const EXIT_WAIT_MS = 2_000;
 const DEFAULT_STDERR_BUFFER_LIMIT = 16_384;
+const HEADER_SEPARATOR = new Uint8Array([13, 10, 13, 10]);
+const CONTENT_LENGTH_HEADER = /^content-length:\s*(\d+)$/i;
 
 type MessageConnection = ReturnType<typeof createMessageConnection>;
 type BunSubprocess = ReturnType<typeof Bun.spawn>;
@@ -74,6 +76,7 @@ export function createLspTransport(options: StdioLspTransportOptions): LspTransp
 export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logger?: Logger } = {}): RALReadable {
   const reader = stream.getReader();
   const streamLogger = (options.logger ?? silentLogger).child({ module: "lsp.transport" });
+  const emitCompleteFrames = createFrameEmitter();
 
   return {
     onData(listener: (data: Uint8Array) => void): Disposable {
@@ -83,7 +86,7 @@ export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logge
 
         reader.read().then(({ done, value }) => {
           if (cancelled || done) return;
-          if (value) listener(value);
+          if (value) emitCompleteFrames(value, listener);
           pump();
         }).catch((error) => {
           streamLogger.debug("lsp.transport.stream.error", {
@@ -105,6 +108,59 @@ export function adaptReader(stream: ReadableStream<Uint8Array>, options: { logge
     onError: () => ({ dispose: () => {} }),
     onEnd: () => ({ dispose: () => {} }),
   };
+}
+
+function createFrameEmitter(): (chunk: Uint8Array, listener: (data: Uint8Array) => void) => void {
+  let pending: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+
+  return (chunk, listener) => {
+    pending = concatBytes(pending, chunk);
+
+    for (;;) {
+      const headerEnd = indexOfBytes(pending, HEADER_SEPARATOR);
+      if (headerEnd === -1) return;
+
+      const contentLength = parseContentLength(pending.slice(0, headerEnd));
+      if (contentLength === undefined) {
+        listener(pending);
+        pending = new Uint8Array(0);
+        return;
+      }
+
+      const frameLength = headerEnd + HEADER_SEPARATOR.byteLength + contentLength;
+      if (pending.byteLength < frameLength) return;
+
+      listener(pending.slice(0, frameLength));
+      pending = pending.slice(frameLength);
+    }
+  };
+}
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBufferLike> {
+  if (left.byteLength === 0) return right;
+  const result = new Uint8Array(left.byteLength + right.byteLength);
+  result.set(left);
+  result.set(right, left.byteLength);
+  return result;
+}
+
+function indexOfBytes(source: Uint8Array, needle: Uint8Array): number {
+  outer: for (let index = 0; index <= source.byteLength - needle.byteLength; index += 1) {
+    for (let offset = 0; offset < needle.byteLength; offset += 1) {
+      if (source[index + offset] !== needle[offset]) continue outer;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function parseContentLength(headerBytes: Uint8Array): number | undefined {
+  const headers = new TextDecoder("ascii").decode(headerBytes).split("\r\n");
+  for (const header of headers) {
+    const match = CONTENT_LENGTH_HEADER.exec(header.trim());
+    if (match) return Number.parseInt(match[1], 10);
+  }
+  return undefined;
 }
 
 export function adaptWriter(sink: { write(chunk: Uint8Array): void; end(): void }): RALWritable {

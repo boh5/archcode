@@ -133,6 +133,75 @@ describe("resolveServerBinary", () => {
     expect(await Bun.file(serverRoot).exists()).toBe(false);
   });
 
+  it("times out npm install and cleans temporary install root", async () => {
+    setInstallerProcessRunnerForTest((argv) => {
+      const stdout = new ControlledReadableStream();
+      const stderr = new ControlledReadableStream();
+      let timeoutKill: (() => void) | undefined;
+      const exited = argv[0] === "which"
+        ? Promise.resolve().then(() => {
+          stdout.close();
+          stderr.close();
+          return 1;
+        })
+        : new Promise<number>((resolve) => {
+          const exit = () => {
+            stdout.close();
+            stderr.close();
+            resolve(1);
+          };
+          timeoutKill = exit;
+          setTimeout(exit, 20);
+        });
+
+      return {
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        exited,
+        exitCode: null,
+        signalCode: null,
+        kill: () => {
+          timeoutKill?.();
+        },
+      };
+    });
+
+    try {
+      await resolveServerBinary("typescript", { timeoutMs: 5 });
+      throw new Error("Expected resolveServerBinary to time out");
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: "LspInstallerError",
+        serverId: "typescript",
+        command: "npm install -g typescript-language-server",
+      });
+      expect((error as Error).message).toContain("Timed out after 5ms");
+    }
+
+    const serverRoot = join(tmpDir, "specra", "lsp-servers", "typescript");
+    expect(await Bun.file(serverRoot).exists()).toBe(false);
+  });
+
+  it("aborts npm install with actionable error", async () => {
+    const controller = new AbortController();
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
+      if (command[0] === "which") return { stdout: "", stderr: "", exitCode: 1 };
+      controller.abort("cancelled by test");
+      return { stdout: "", stderr: "", exitCode: 1 };
+    }));
+
+    try {
+      await resolveServerBinary("typescript", { signal: controller.signal });
+      throw new Error("Expected resolveServerBinary to fail after abort");
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: "LspInstallerError",
+        serverId: "typescript",
+        command: "npm install -g typescript-language-server",
+      });
+    }
+  });
+
   it("setInstallerProcessRunnerForTest resets mock injection and cached results", async () => {
     const firstCalls: CallRecord[] = [];
     setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
@@ -204,6 +273,24 @@ function createSpawnFromExec(exec: ExecCommand): Parameters<typeof setInstallerP
       kill: () => {},
     };
   };
+}
+
+class ControlledReadableStream {
+  private controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  private closed = false;
+
+  readonly stream = new ReadableStream<Uint8Array>({
+    start: (controller) => {
+      this.controller = controller;
+      if (this.closed) controller.close();
+    },
+  });
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.controller?.close();
+  }
 }
 
 async function writeText(stream: WritableStream<Uint8Array>, text: string): Promise<void> {

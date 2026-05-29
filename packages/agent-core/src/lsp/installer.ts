@@ -17,6 +17,8 @@ export type ExecCommand = (command: string[], options?: ExecCommandOptions) => P
 export interface ExecCommandOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export class LspInstallerError extends Error {
@@ -38,7 +40,11 @@ const resolvedBinaryCache = new Map<string, string>();
 
 export interface LspInstallerOptions {
   logger?: Logger;
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
+
+const DEFAULT_NPM_INSTALL_TIMEOUT_MS = 90_000;
 
 export function setInstallerProcessRunnerForTest(fn: Parameters<typeof setProcessRunnerForTest>[0]): void {
   setProcessRunnerForTest(fn);
@@ -54,7 +60,11 @@ export async function resolveServerBinary(serverId: string, options: LspInstalle
   const existingLock = installLocks.get(serverId);
   if (existingLock) return existingLock;
 
-  const promise = resolveServerBinaryUncached(serverId, { logger });
+  const promise = resolveServerBinaryUncached(serverId, {
+    logger,
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
+  });
   installLocks.set(serverId, promise);
 
   try {
@@ -96,7 +106,7 @@ async function resolveServerBinaryUncached(serverId: string, options: LspInstall
     throw createManualInstallError(definition);
   }
 
-  return installNpmServer(definition, { logger });
+  return installNpmServer(definition, { logger, timeoutMs: options.timeoutMs, signal: options.signal });
 }
 
 async function findOnPath(binary: string, options: LspInstallerOptions = {}): Promise<string | undefined> {
@@ -104,9 +114,7 @@ async function findOnPath(binary: string, options: LspInstallerOptions = {}): Pr
   const command = process.platform === "win32" ? ["where", binary] : ["which", binary];
   const result = await runInstallerCommand(command);
   if (result.exitCode !== 0) {
-    logger.warn("lsp.installer.path.search.failed", {
-      context: { binary, command: command[0], exitCode: result.exitCode },
-    });
+    logger.debug("lsp.installer.path.search.failed", { context: { binary, command: command[0], exitCode: result.exitCode } });
     return undefined;
   }
 
@@ -124,7 +132,8 @@ async function installNpmServer(definition: LspServerDefinition, options: LspIns
   await mkdir(tempRoot, { recursive: true });
 
   const installCommand = ["npm", "install", "-g", "--prefix", tempRoot, definition.npmPackage!];
-  const installResult = await runInstallerCommand(installCommand);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_NPM_INSTALL_TIMEOUT_MS;
+  const installResult = await runInstallerCommand(installCommand, { timeoutMs, signal: options.signal });
 
   if (installResult.exitCode !== 0) {
     await rm(tempRoot, { recursive: true, force: true });
@@ -134,7 +143,9 @@ async function installNpmServer(definition: LspServerDefinition, options: LspIns
     throw new LspInstallerError({
       serverId: definition.id,
       command: `npm install -g ${definition.npmPackage}`,
-      message: `Failed to install ${definition.id} language server. Run manually: npm install -g ${definition.npmPackage}`,
+      message: installResult.stderr.includes("timed out")
+        ? `Timed out after ${timeoutMs}ms while installing ${definition.id} language server. Run manually: npm install -g ${definition.npmPackage}`
+        : `Failed to install ${definition.id} language server. Run manually: npm install -g ${definition.npmPackage}`,
       details: installResult.stderr || installResult.stdout,
     });
   }
@@ -199,6 +210,8 @@ async function runInstallerCommand(command: string[], options: ExecCommandOption
     cwd: options.cwd,
     env: options.env ? { ...Bun.env, ...options.env } : undefined,
     stdin: null,
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
   });
 
   return processRunnerResultToExecResult(result);

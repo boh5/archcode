@@ -8,6 +8,7 @@ import {
   type PoolKey,
   type TimerFns,
 } from "./client-pool";
+import { LspInstallerError, setInstallerProcessRunnerForTest, type ExecCommand } from "./installer";
 import { setLspTransportForTest, type LspTransport, type StdioLspTransportOptions } from "./transport";
 import type { Disposable } from "vscode-jsonrpc";
 
@@ -15,6 +16,7 @@ afterEach(() => {
   setLspClientForTest(undefined);
   setLspTransportForTest(undefined);
   setLspClientPoolForTest(undefined);
+  setInstallerProcessRunnerForTest(undefined);
   setTimerFnsForTest(undefined);
 });
 
@@ -51,6 +53,27 @@ describe("LspClientPool", () => {
     expect(seam.clients[0].initializeOptions).toEqual({
       capabilities: { textDocument: { hover: { dynamicRegistration: false } } },
       initializationOptions: { tsserver: { path: "/tmp/tsserver.js" } },
+    });
+    pool.release(key);
+    await pool.disposeAll();
+  });
+
+  test("resolves server binary before creating transport and preserves args", async () => {
+    const seam = installMockClientSeam();
+    const calls: CallRecord[] = [];
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
+      calls.push({ command });
+      return { stdout: "/fake/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
+    }));
+    const pool = new LspClientPool();
+    const key = poolKey("/workspace", "typescript");
+
+    await pool.acquire(key, { ...serverOptions(), args: ["--stdio"] });
+
+    expect(calls.map((call) => call.command.join(" "))).toEqual(["which typescript-language-server"]);
+    expect(seam.transportOptions[0]).toMatchObject({
+      command: "/fake/bin/typescript-language-server",
+      args: ["--stdio"],
     });
     pool.release(key);
     await pool.disposeAll();
@@ -169,6 +192,32 @@ describe("LspClientPool", () => {
     expect(pool.hasEntryForTest(key)).toBe(false);
   });
 
+  test("binary resolution failure clears entry and allows retry", async () => {
+    installMockClientSeam();
+    let attempt = 0;
+    setInstallerProcessRunnerForTest(createSpawnFromExec(async () => {
+      attempt += 1;
+      if (attempt === 1) return { stdout: "", stderr: "missing", exitCode: 1 };
+      return { stdout: "/fake/bin/typescript-language-server\n", stderr: "", exitCode: 0 };
+    }));
+    const pool = new LspClientPool();
+    const key = poolKey("/workspace", "typescript");
+
+    try {
+      await pool.acquire(key, serverOptions());
+      throw new Error("Expected acquire to fail when binary resolution fails");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LspInstallerError);
+    }
+
+    expect(pool.getRefCountForTest(key)).toBe(0);
+    expect(pool.hasEntryForTest(key)).toBe(false);
+    await pool.acquire(key, serverOptions());
+    expect(pool.hasEntryForTest(key)).toBe(true);
+    pool.release(key);
+    await pool.disposeAll();
+  });
+
   test("disposeAll shuts down all active clients and clears timers", async () => {
     const seam = installMockClientSeam();
     const timers = new FakeTimers();
@@ -206,11 +255,22 @@ function serverOptions(): StdioLspTransportOptions {
   return { command: "mock-lsp", cwd: import.meta.dir };
 }
 
+interface CallRecord {
+  command: string[];
+}
+
 function installMockClientSeam(options: { initializeDelayMs?: number; initializeError?: Error } = {}) {
   const transports: MockTransport[] = [];
+  const transportOptions: StdioLspTransportOptions[] = [];
   const clients: MockClient[] = [];
 
-  setLspTransportForTest(() => {
+  setInstallerProcessRunnerForTest(createSpawnFromExec(async (command) => {
+    if (command[0] === "which") return { stdout: `/fake/bin/${command[1]}\n`, stderr: "", exitCode: 0 };
+    return { stdout: "", stderr: "unexpected", exitCode: 1 };
+  }));
+
+  setLspTransportForTest((transportOption) => {
+    transportOptions.push(transportOption);
     const transport = new MockTransport();
     transports.push(transport);
     return transport;
@@ -222,7 +282,42 @@ function installMockClientSeam(options: { initializeDelayMs?: number; initialize
     return client as unknown as LspClient;
   });
 
-  return { transports, clients };
+  return { transports, transportOptions, clients };
+}
+
+function createSpawnFromExec(exec: ExecCommand): Parameters<typeof setInstallerProcessRunnerForTest>[0] {
+  return (argv) => {
+    const stdout = new TransformStream<Uint8Array>();
+    const stderr = new TransformStream<Uint8Array>();
+    let exitCode: number | null = null;
+    const exited = exec([...argv]).then(async (result) => {
+      exitCode = result.exitCode;
+      await writeText(stdout.writable, result.stdout);
+      await writeText(stderr.writable, result.stderr);
+      return result.exitCode;
+    });
+
+    return {
+      stdout: stdout.readable,
+      stderr: stderr.readable,
+      exited,
+      get exitCode() {
+        return exitCode;
+      },
+      signalCode: null,
+      kill: () => {},
+    };
+  };
+}
+
+async function writeText(stream: WritableStream<Uint8Array>, text: string): Promise<void> {
+  const writer = stream.getWriter();
+  try {
+    if (text) await writer.write(new TextEncoder().encode(text));
+  } finally {
+    await writer.close();
+    writer.releaseLock();
+  }
 }
 
 class MockClient {

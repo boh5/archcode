@@ -1,4 +1,5 @@
 import { createLspClient, LspError, type LspClient, type LspInitializeOptions } from "./client";
+import { resolveServerBinary } from "./installer";
 import { createLspTransport, type StdioLspTransportOptions } from "./transport";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
@@ -18,6 +19,8 @@ export interface LspClientPoolOptions {
 export interface LspClientPoolAcquireOptions extends StdioLspTransportOptions {
   initializationOptions?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  resolveBinaryTimeoutMs?: number;
+  resolveBinarySignal?: AbortSignal;
 }
 
 export interface PoolEntry {
@@ -109,19 +112,27 @@ export class LspClientPool {
     };
     this.entries.set(id, entry);
 
-    const transport = createLspTransport({
-      ...serverOptions,
-      captureStderr: serverOptions.captureStderr ?? true,
-      logger: this.#logger.child({ module: "lsp.transport" }),
-    });
     entry.initializePromise = (async () => {
-      const client = createLspClient({
-        transport,
-        workspaceRoot: key.workspaceRoot,
-        timeouts: serverOptions.timeouts,
-        logger: this.#logger.child({ module: "lsp.client" }),
-      });
+      let transport: ReturnType<typeof createLspTransport> | undefined;
+      let client: LspClient | undefined;
       try {
+        const resolvedCommand = await resolveServerBinary(key.serverId, {
+          logger: this.#logger,
+          timeoutMs: serverOptions.resolveBinaryTimeoutMs,
+          signal: serverOptions.resolveBinarySignal,
+        });
+        transport = createLspTransport({
+          ...serverOptions,
+          command: resolvedCommand,
+          captureStderr: serverOptions.captureStderr ?? true,
+          logger: this.#logger.child({ module: "lsp.transport" }),
+        });
+        client = createLspClient({
+          transport,
+          workspaceRoot: key.workspaceRoot,
+          timeouts: serverOptions.timeouts,
+          logger: this.#logger.child({ module: "lsp.client" }),
+        });
         await client.initialize(key.workspaceRoot, initializeOptionsFromServerOptions(serverOptions));
         entry.client = client;
         this.watchForCrash(id, entry, transport);
@@ -132,7 +143,7 @@ export class LspClientPool {
           error,
           meta: { ...errorFields(error), ...stderrFields(transport) },
         });
-        await ignoreErrors(client.shutdown());
+        if (client) await ignoreErrors(client.shutdown());
         this.entries.delete(id);
         throw error;
       }
