@@ -6,59 +6,9 @@ import type { Project, Session, WorkflowState } from "../../api/types";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
-
-const AGENT_TYPES = [
-  "orchestrator",
-  "product",
-  "spec",
-  "critic",
-  "foreman",
-  "builder",
-  "reviewer",
-  "librarian",
-  "explorer",
-] as const;
-
-type AgentType = (typeof AGENT_TYPES)[number];
-
-const AGENT_INITIALS: Record<AgentType, string> = {
-  orchestrator: "O",
-  product: "P",
-  spec: "S",
-  critic: "C",
-  foreman: "F",
-  builder: "B",
-  reviewer: "R",
-  librarian: "L",
-  explorer: "E",
-};
-
-const AGENT_ICON_COLORS: Record<AgentType, string> = {
-  orchestrator: "bg-[#8b5cf630] text-[#8b5cf6]",
-  product: "bg-[#6366f120] text-[#6366f1]",
-  spec: "bg-[#3b82f620] text-[#3b82f6]",
-  critic: "bg-[#f59e0b20] text-[#f59e0b]",
-  foreman: "bg-[#10b98120] text-[#10b981]",
-  builder: "bg-[#06b6d420] text-[#06b6d4]",
-  reviewer: "bg-[#ec489920] text-[#ec4899]",
-  librarian: "bg-[#8b5cf620] text-[#8b5cf6]",
-  explorer: "bg-[#64748b20] text-[#64748b]",
-};
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (seconds < 60) return "just now";
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  if (days === 1) return "yesterday";
-  return `${days}d ago`;
-}
+import { AGENT_TYPES, AGENT_INITIALS, AGENT_ICON_COLORS } from "../../lib/agent-constants";
+import type { AgentType } from "../../lib/agent-constants";
+import { formatRelativeTime } from "../../lib/time-format";
 
 function isSessionActive(session: Session): boolean {
   const updatedAt = session.updatedAt ?? session.lastUpdatedAt ?? session.createdAt;
