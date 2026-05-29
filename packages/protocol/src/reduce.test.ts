@@ -155,6 +155,37 @@ describe("reduceStreamEvent", () => {
     expect(tool.meta).toEqual({ exitCode: 0 });
   });
 
+  test("preserves nested diff metadata on completed tool parts", () => {
+    const diffs = {
+      version: 1,
+      files: [
+        {
+          path: "src/index.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          hunks: [],
+        },
+      ],
+    };
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-1", toolName: "file_edit", input: { filePath: "src/index.ts" } },
+      {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "file_edit",
+        output: "updated",
+        isError: false,
+        meta: { diffs },
+      },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("completed");
+    if (tool.state !== "completed") throw new Error("Expected completed tool");
+    expect(tool.meta?.diffs).toBe(diffs);
+  });
+
   test("transitions tool call lifecycle from pending to running to error", () => {
     const state = applyEvents(createProjection(), [
       { type: "tool-input-start", toolCallId: "call-1", toolName: "bash" },

@@ -294,6 +294,25 @@ describe("ToolCard", () => {
     expect(text).not.toContain("No changes");
   });
 
+  test("malformed diff metadata is ignored safely", () => {
+    const part = makeCompleted({
+      toolName: "file_edit",
+      input: { filePath: "/src/index.ts" },
+      output: "Edit applied",
+      meta: {
+        diffs: {
+          version: 2,
+          files: "malformed-only.ts",
+        },
+      },
+    });
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    expect(text).toContain("Edit applied");
+    expect(text).not.toContain("malformed-only.ts");
+    expect(text).not.toContain("M");
+  });
+
   test("error tool with diff metadata renders diff section", () => {
     const diffFiles: DiffFile[] = [
       {

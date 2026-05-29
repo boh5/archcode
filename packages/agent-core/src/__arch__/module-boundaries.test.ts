@@ -147,12 +147,15 @@ const rawBuiltinToolNames = [
   "lsp_symbols",
   "memory_read",
   "memory_write",
+  "skill_list",
+  "skill_read",
   "todo_write",
   "view_tool_output",
   "wait_for_reminder",
   "web_fetch",
   "workflow_create",
   "workflow_read",
+  "workflow_update_stage",
   "workflow_task_check",
 ] as const;
 
@@ -219,6 +222,30 @@ function findRawToolArrayViolations(): Violation[] {
       const ownerMatch = [...previousSource.matchAll(/(?:export\s+)?const\s+(\w+)\s*=\s*\[/g)].at(-1);
       const owner = ownerMatch?.[1] ?? "unknown";
       violations.push({ file: relativeFile(file), importPath: `source-pattern:raw built-in tool array ${owner} -> ${rawToolName}` });
+    }
+  }
+
+  return violations;
+}
+
+function findToolNameSourceViolations(): Violation[] {
+  const file = join(srcRoot, "tools/names.ts");
+  const source = readFileSync(file, "utf8");
+  const violations: Violation[] = [];
+
+  if (!/from\s+["']@specra\/protocol["']/.test(source)) {
+    violations.push({
+      file: relativeFile(file),
+      importPath: "source-pattern:tool names must re-export protocol constants",
+    });
+  }
+
+  for (const rawToolName of rawBuiltinToolNames) {
+    if (source.includes(`= "${rawToolName}"`) || source.includes(`= '${rawToolName}'`)) {
+      violations.push({
+        file: relativeFile(file),
+        importPath: `source-pattern:local built-in tool name literal -> ${rawToolName}`,
+      });
     }
   }
 
@@ -301,6 +328,10 @@ describe("module migration boundary contracts", () => {
   describe("tool registry ownership", () => {
     test("agent permission modules import built-in tool names instead of declaring raw string arrays", () => {
       expectNoViolations(findRawToolArrayViolations());
+    });
+
+    test("agent-core tool names re-export protocol constants", () => {
+      expectNoViolations(findToolNameSourceViolations());
     });
   });
 
