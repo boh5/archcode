@@ -13,13 +13,14 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@specra/protocol": "workspace:*",
-    "@specra/utils": "workspace:*",
     "@ai-sdk/openai-compatible": "^2.0.45",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
+    "@specra/protocol": "workspace:*",
+    "@specra/utils": "workspace:*",
     "@truto/turndown-plugin-gfm": "^1.0.2",
     "ai": "^6.0.174",
+    "diff": "^9.0.0",
     "fuzzysort": "^3.1.0",
     "jsdom": "^29.1.1",
     "turndown": "^7.2.4",
