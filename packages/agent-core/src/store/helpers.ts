@@ -219,6 +219,7 @@ const SessionFileSchema = z.strictObject({
     )
     .optional(),
   reminders: z.array(ReminderSchema).default([]),
+  // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
   eventCursor: z.number().optional(),

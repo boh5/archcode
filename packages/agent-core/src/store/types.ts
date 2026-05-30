@@ -10,9 +10,6 @@ import type {
   SessionRun,
 } from "@specra/protocol";
 
-// ---------------------------------------------------------------------------
-// Re-export all protocol types
-// ---------------------------------------------------------------------------
 export type {
   StreamEvent,
   RunStartEvent,
@@ -68,10 +65,6 @@ export type {
 } from "@specra/protocol";
 export { MAX_EVENTS } from "@specra/protocol";
 
-// ---------------------------------------------------------------------------
-// Runtime store state (extends SessionProjection with runtime-only fields)
-// ---------------------------------------------------------------------------
-
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
@@ -86,6 +79,8 @@ export interface SessionStoreState {
   // Session-only state
   todos: SessionTodo[];
   reminders: Reminder[];
+  // Identity is assigned at creation/load and treated as immutable afterwards.
+  // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
 
@@ -121,10 +116,6 @@ export interface SessionStoreState {
   setParentSessionId: (parentSessionId: string | undefined) => void;
   toModelMessages: () => ModelMessage[];
 }
-
-// ---------------------------------------------------------------------------
-// Runtime error classes
-// ---------------------------------------------------------------------------
 
 export class BusyError extends Error {
   constructor(sessionId: string) {

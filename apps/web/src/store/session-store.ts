@@ -256,6 +256,7 @@ export function createWebSessionStore(
     runs: [],
     todos: [],
     reminders: [],
+    // Mirrors persisted identity; tree relationships come from session-tree responses.
     rootSessionId: sessionId,
     parentSessionId: undefined,
     isRunning: false,

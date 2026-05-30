@@ -33,6 +33,7 @@ export class SessionStoreManager {
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
   #hydrating = new Set<string>();
+  // Disposable acceleration for child lookups; source of truth stays on disk.
   #rootIdIndex = new Map<string, string>();
   #scanPromiseByWorkspace = new Map<string, Promise<void>>();
   readonly #logger: Logger;
@@ -107,6 +108,7 @@ export class SessionStoreManager {
       runs: [],
       todos: [],
       reminders: [],
+      // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId: sessionId,
       parentSessionId: undefined,
       isRunning: false,

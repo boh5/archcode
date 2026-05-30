@@ -446,6 +446,7 @@ export interface DirectorySearchResponse {
 
 export interface SessionSummary {
   sessionId: string;
+  // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
   title?: string | null;
