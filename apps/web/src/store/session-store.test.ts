@@ -266,6 +266,83 @@ describe("initializeFromSnapshot", () => {
     expect(store.getState().events.map((item) => item.id)).toEqual([6]);
     expect(store.getState().nextEventId).toBe(7);
   });
+
+  test("does not overwrite reducer-managed state when SSE is ahead of snapshot", () => {
+    const store = createWebSessionStore("stale-guard", "demo");
+
+    // Simulate SSE processing events up to event 5
+    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(2, userMessage("world")), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(3, { type: "run-end", runId: "run-1", status: "completed" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(4, { type: "run-start", runId: "run-2" } as SessionEventPayload), sessionId: "stale-guard" });
+
+    expect(store.getState().nextEventId).toBe(5);
+
+    const messagesBeforeSnapshot = store.getState().messages;
+    const stepsBeforeSnapshot = store.getState().steps;
+    const statsBeforeSnapshot = store.getState().stats;
+
+    // Simulate a stale snapshot from server with eventCursor=2 (behind SSE's nextEventId=5)
+    store.getState().initializeFromSnapshot({
+      messages: [],
+      steps: [],
+      stats: { modelCalls: 0, toolCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalSteps: 0 },
+      eventCursor: 2,
+    });
+
+    // Reducer-managed state should NOT be overwritten by stale snapshot
+    expect(store.getState().messages).toEqual(messagesBeforeSnapshot);
+    expect(store.getState().steps).toEqual(stepsBeforeSnapshot);
+    expect(store.getState().stats).toEqual(statsBeforeSnapshot);
+
+    // nextEventId should stay at 5 (not reset to 3)
+    expect(store.getState().nextEventId).toBe(5);
+  });
+
+  test("overwrites reducer-managed state when snapshot is current or ahead", () => {
+    const store = createWebSessionStore("fresh-snapshot", "demo");
+
+    // Local state has only processed 2 events
+    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "fresh-snapshot" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "fresh-snapshot" });
+    expect(store.getState().nextEventId).toBe(2);
+
+    // Snapshot from server has up-to-date data (eventCursor matches)
+    const snapshotMessages = [{ id: "msg-1", role: "assistant" as const, parts: [], createdAt: 1000 }];
+    store.getState().initializeFromSnapshot({
+      messages: snapshotMessages as any,
+      steps: [],
+      stats: { modelCalls: 5, toolCalls: 3, totalInputTokens: 100, totalOutputTokens: 200, totalSteps: 8 },
+      eventCursor: 2,
+    });
+
+    // Should overwrite because snapshot is not stale (cursor 2 >= local nextEventId-1)
+    expect(store.getState().messages).toEqual(snapshotMessages);
+    expect(store.getState().stats.totalSteps).toBe(8);
+  });
+
+  test("always updates scalar metadata fields even with stale snapshot", () => {
+    const store = createWebSessionStore("stale-metadata", "demo");
+
+    store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-metadata" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "stale-metadata" });
+
+    store.getState().initializeFromSnapshot({
+      title: "New Title",
+      createdAt: 9999,
+      childSessionIds: ["child-1"],
+      parentSessionId: "parent-1",
+      subAgentDescriptions: [["child-1", "Explore agent"]],
+      eventCursor: 0, // stale: snapshot is behind local state (nextEventId=2)
+    });
+
+    // Scalar metadata should still be updated even with stale snapshot
+    expect(store.getState().title).toBe("New Title");
+    expect(store.getState().createdAt).toBe(9999);
+    expect(Array.from(store.getState().childSessionIds)).toEqual(["child-1"]);
+    expect(store.getState().parentSessionId).toBe("parent-1");
+  });
 });
 
 describe("resetTransientState", () => {

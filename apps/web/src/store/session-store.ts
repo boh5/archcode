@@ -350,17 +350,24 @@ export function createWebSessionStore(
     },
     initializeFromSnapshot: (data) => {
       set((state) => {
+        const snapshotNextEventId = data.eventCursor !== undefined ? data.eventCursor + 1 : (data.events && data.events.length > 0 ? data.events[data.events.length - 1]!.id + 1 : 0);
+        // If SSE has already processed events beyond the snapshot, keep local
+        // reducer-managed state (messages, steps, etc.) and only update scalar
+        // metadata fields (title, createdAt, etc.) that don't lose information
+        // from missing SSE events like tool-input-resolved.
+        const stale = snapshotNextEventId > 0 && state.nextEventId > snapshotNextEventId;
+
         const updates: Partial<WebSessionStoreState> = {};
-        if (data.messages !== undefined) {
+        if (data.messages !== undefined && !stale) {
           updates.messages = data.messages as SessionMessage[];
         }
-        if (data.steps !== undefined) {
+        if (data.steps !== undefined && !stale) {
           updates.steps = data.steps as SessionStep[];
         }
         if (data.todos !== undefined) {
           updates.todos = data.todos as SessionTodo[];
         }
-        if (data.reminders !== undefined) {
+        if (data.reminders !== undefined && !stale) {
           updates.reminders = data.reminders as Reminder[];
         }
         if (data.title !== undefined) {
@@ -369,10 +376,10 @@ export function createWebSessionStore(
         if (data.createdAt !== undefined && data.createdAt > 0) {
           updates.createdAt = data.createdAt;
         }
-        if (data.stats !== undefined) {
+        if (data.stats !== undefined && !stale) {
           updates.stats = data.stats;
         }
-        if (data.runs !== undefined) {
+        if (data.runs !== undefined && !stale) {
           updates.runs = data.runs;
         }
         if (data.childSessionIds !== undefined) {
@@ -388,7 +395,7 @@ export function createWebSessionStore(
           updates.events = data.events;
           updates.nextEventId = data.events.length > 0 ? data.events[data.events.length - 1]!.id + 1 : 0;
           updates.eventOffset = data.events.length > 0 ? data.events[0]!.id : 0;
-        } else if (data.eventCursor !== undefined) {
+        } else if (data.eventCursor !== undefined && !stale) {
           const nextEventId = data.eventCursor + 1;
           updates.events = [];
           updates.nextEventId = nextEventId;
