@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@specra/protocol";
 import { SessionStoreManager } from "./session-store-manager";
+import { NotRootSessionError } from "./errors";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
 
@@ -19,6 +20,30 @@ afterEach(async () => {
 describe("SessionStoreManager", () => {
   function sessionId(): string {
     return crypto.randomUUID();
+  }
+
+  async function writeSessionFile(input: {
+    sessionId: string;
+    rootSessionId?: string;
+    parentSessionId?: string;
+    title?: string | null;
+    createdAt?: number;
+  }): Promise<void> {
+    await sessionFileInternals.saveSessionTranscript(
+      {
+        sessionId: input.sessionId,
+        createdAt: input.createdAt ?? 1000,
+        title: input.title ?? null,
+        messages: [],
+        steps: [],
+        stats: createEmptySessionStats(),
+        runs: [],
+        todos: [],
+        rootSessionId: input.rootSessionId ?? input.sessionId,
+        ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
+      },
+      TMP_DIR,
+    );
   }
 
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
@@ -289,5 +314,153 @@ describe("SessionStoreManager", () => {
     // re-check in #loadFromDisk prevents overwriting.
     expect(loaded).toBe(liveStore);
     expect(loaded.getState().title).toBe("live-title");
+  });
+
+  test("buildSessionTree() returns empty tree for root without children", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.diagnostics).toEqual([]);
+    expect(tree.root.session.sessionId).toBe(rootSessionId);
+    expect(tree.root.session.title).toBe("root");
+    expect(tree.root.children).toEqual([]);
+  });
+
+  test("buildSessionTree() nests root, child, and grandchild", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const grandchildSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", createdAt: 1 });
+    await writeSessionFile({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId, title: "child", createdAt: 2 });
+    await writeSessionFile({ sessionId: grandchildSessionId, rootSessionId, parentSessionId: childSessionId, title: "grandchild", createdAt: 3 });
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.diagnostics).toEqual([]);
+    expect(tree.root.session.sessionId).toBe(rootSessionId);
+    expect(tree.root.children).toHaveLength(1);
+    expect(tree.root.children[0].session.sessionId).toBe(childSessionId);
+    expect(tree.root.children[0].children).toHaveLength(1);
+    expect(tree.root.children[0].children[0].session.sessionId).toBe(grandchildSessionId);
+    expect("childSessionIds" in tree.root.session).toBe(false);
+    expect("subAgentDescriptions" in tree.root.session).toBe(false);
+    expect("childSessionIds" in tree.root.children[0].session).toBe(false);
+    expect("subAgentDescriptions" in tree.root.children[0].session).toBe(false);
+  });
+
+  test("buildSessionTree() diagnoses invalid descendants and excludes them", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const validChildId = sessionId();
+    const missingParentId = sessionId();
+    const absentParentId = sessionId();
+    const rootMismatchId = sessionId();
+    const otherRootId = sessionId();
+    const mismatchFileId = sessionId();
+    const mismatchJsonId = sessionId();
+    const invalidJsonId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
+    await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
+
+    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    await Bun.write(join(rootDir, `${rootMismatchId}.json`), JSON.stringify({
+      sessionId: rootMismatchId,
+      createdAt: 1000,
+      title: "bad-root",
+      messages: [],
+      steps: [],
+      stats: createEmptySessionStats(),
+      runs: [],
+      todos: [],
+      reminders: [],
+      rootSessionId: otherRootId,
+      parentSessionId: rootSessionId,
+    }));
+    await Bun.write(join(rootDir, `${mismatchFileId}.json`), JSON.stringify({
+      sessionId: mismatchJsonId,
+      createdAt: 1000,
+      title: "mismatch",
+      messages: [],
+      steps: [],
+      stats: createEmptySessionStats(),
+      runs: [],
+      todos: [],
+      reminders: [],
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    }));
+    await Bun.write(join(rootDir, `${invalidJsonId}.json`), "not json");
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.root.children.map((child) => child.session.sessionId)).toEqual([validChildId]);
+    expect(tree.diagnostics.map((diagnostic) => diagnostic.type).sort()).toEqual([
+      "invalid_json",
+      "missing_parent",
+      "root_mismatch",
+      "session_id_mismatch",
+    ]);
+  });
+
+  test("buildSessionTree() diagnoses duplicate session IDs", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    await Bun.write(join(rootDir, `${rootSessionId}.json`), JSON.stringify({
+      sessionId: rootSessionId,
+      createdAt: 1000,
+      title: "duplicate-root",
+      messages: [],
+      steps: [],
+      stats: createEmptySessionStats(),
+      runs: [],
+      todos: [],
+      reminders: [],
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    }));
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.root.children).toEqual([]);
+    expect(tree.diagnostics.map((diagnostic) => diagnostic.type)).toContain("duplicate_session");
+  });
+
+  test("buildSessionTree() diagnoses cycles and excludes invalid cycle nodes", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const firstId = sessionId();
+    const secondId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    await writeSessionFile({ sessionId: firstId, rootSessionId, parentSessionId: secondId, title: "first" });
+    await writeSessionFile({ sessionId: secondId, rootSessionId, parentSessionId: firstId, title: "second" });
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.root.children).toEqual([]);
+    expect(tree.diagnostics.map((diagnostic) => diagnostic.type)).toContain("cycle");
+  });
+
+  test("buildSessionTree() throws NotRootSessionError when called on a child", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const childSessionId = sessionId();
+    const parentSessionId = sessionId();
+    await writeSessionFile({ sessionId: childSessionId, rootSessionId: childSessionId, parentSessionId, title: "child-as-root-file" });
+
+    await expect(manager.buildSessionTree(TMP_DIR, childSessionId)).rejects.toThrow(NotRootSessionError);
+    try {
+      await manager.buildSessionTree(TMP_DIR, childSessionId);
+    } catch (error) {
+      expect(error).toBeInstanceOf(NotRootSessionError);
+      expect((error as NotRootSessionError).name).toBe("NotRootSessionError");
+      expect((error as NotRootSessionError).sessionId).toBe(childSessionId);
+      expect((error as NotRootSessionError).parentSessionId).toBe(parentSessionId);
+    }
   });
 });

@@ -295,7 +295,7 @@ describe("AgentFactory.delegate", () => {
     expect(btm.drainCalls).toBe(0);
   });
 
-  test("links parent and child metadata", async () => {
+  test("propagates rootSessionId through delegation", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
     const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
@@ -306,14 +306,73 @@ describe("AgentFactory.delegate", () => {
       targetAgentName: "explore",
       prompt: "inspect",
       skills: [],
-      description: "Inspect docs",
     });
 
     const childStore = testStoreManager.get(handle.sessionId, tmpRoot);
     expect(childStore?.getState().parentSessionId).toBe(parentStore.getState().sessionId);
-    expect(parentStore.getState().childSessionIds.has(handle.sessionId)).toBe(true);
-    expect(parentStore.getState().subAgentDescriptions.get(handle.sessionId)).toBe("Inspect docs");
+    expect(childStore?.getState().rootSessionId).toBe(parentStore.getState().rootSessionId);
     await handle.result;
+  });
+
+  test("propagates rootSessionId through nested delegation (grandchild)", async () => {
+    setupResolvingStreamText();
+
+    const middleDef: AgentDefinition = {
+      name: "middle",
+      promptAgentId: "explorer",
+      rolePrompt: "Middleware agent that can delegate further.",
+      tools: {
+        tools: [...EXPLORER_READ_ONLY_TOOLS, "delegate", "todo_write"],
+        delegateTargets: ["explore"],
+      },
+      hooks: {
+        autoCompact: true,
+        autoInjectReminder: true,
+        todoContinuation: true,
+        transcriptSave: true,
+        memoryExtraction: false,
+        memoryConsolidation: false,
+        titleGeneration: "disabled",
+      },
+      childPolicy: {
+        maxDepth: 3,
+        maxConcurrent: 5,
+        timeoutMs: 0,
+        abortCascade: false,
+        terminalReminders: false,
+      },
+      includeMemoryInPrompt: false,
+      skills: [],
+    };
+
+    const factory = makeFactory([parentDefinition({ tools: { ...orchestratorAgentDefinition.tools, delegateTargets: [...orchestratorAgentDefinition.tools.delegateTargets, "middle"] } }), middleDef, targetDefinition()]);
+    const rootStore = testStoreManager.create(`factory-root-${crypto.randomUUID()}`);
+
+    const childHandle = await factory.delegate({
+      parentStore: rootStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "middle",
+      prompt: "first level",
+      skills: [],
+    });
+
+    const childStore = testStoreManager.get(childHandle.sessionId, tmpRoot)!;
+    expect(childStore.getState().rootSessionId).toBe(rootStore.getState().rootSessionId);
+
+    const grandchildHandle = await factory.delegate({
+      parentStore: childStore,
+      parentAgentName: "middle",
+      targetAgentName: "explore",
+      prompt: "second level",
+      skills: [],
+      currentDepth: 1,
+    });
+
+    const grandchildStore = testStoreManager.get(grandchildHandle.sessionId, tmpRoot)!;
+    expect(grandchildStore.getState().rootSessionId).toBe(rootStore.getState().rootSessionId);
+    expect(grandchildStore.getState().rootSessionId).not.toBe(childStore.getState().sessionId);
+
+    await Promise.all([childHandle.result, grandchildHandle.result]);
   });
 
   test("propagates delegated title or description into the child store title", async () => {

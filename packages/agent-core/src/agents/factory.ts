@@ -139,9 +139,8 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       const childStore = config.storeManager.create(childSessionId, config.workspaceRoot);
       const childTitle = options.title ?? options.description;
       childStore.getState().setParentSessionId(parentSessionId);
+      childStore.setState({ rootSessionId: options.parentStore.getState().rootSessionId });
       if (childTitle !== undefined) childStore.getState().setTitle(childTitle);
-
-      options.parentStore.getState().linkChildSession(childSessionId, options.description);
 
       const childAbortController = new AbortController();
       const timeout = childPolicy.timeoutMs > 0

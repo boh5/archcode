@@ -2,11 +2,20 @@ import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@specra/protocol";
+import type {
+  SessionTreeDiagnostic,
+  SessionTreeDiagnosticType,
+  SessionTreeNode,
+  SessionTreeResponse,
+} from "@specra/protocol";
+import { readdir } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { Logger } from "../logger";
+import { NotRootSessionError } from "./errors";
 import { sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { __hasSessionsDirOverrideForTest, getSessionsDir } from "./sessions-dir";
+import { __hasSessionsDirOverrideForTest, getRootSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type SessionEventEnvelope,
   type SessionEventPayload,
@@ -213,6 +222,76 @@ export class SessionStoreManager {
     return await sessionFileInternals.listSessionSummaries(workspaceRoot);
   }
 
+  async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
+    const rootFile = await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId);
+    if (rootFile.parentSessionId !== undefined) {
+      throw new NotRootSessionError(rootSessionId, rootFile.parentSessionId);
+    }
+
+    const diagnostics: SessionTreeDiagnostic[] = [];
+    const rootNode: SessionTreeNode = { session: toSessionSummary(rootFile), children: [] };
+    const sessions = new Map<string, SessionSummary>([[rootSessionId, rootNode.session]]);
+    const childrenByParent = new Map<string, SessionSummary[]>();
+
+    await sessionFileInternals.scanDescendants(workspaceRoot, rootSessionId);
+
+    for (const entry of await readDescendantSessionEntries(workspaceRoot, rootSessionId)) {
+      const parsed = await readSessionFileForTree(entry.sessionId, workspaceRoot, rootSessionId, entry.filePath, diagnostics);
+      if (parsed === undefined) continue;
+
+      if (parsed.sessionId !== entry.sessionId) {
+        pushDiagnostic(diagnostics, "session_id_mismatch", parsed.sessionId, entry.filePath,
+          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`);
+        continue;
+      }
+      if (parsed.rootSessionId !== rootSessionId) {
+        pushDiagnostic(diagnostics, "root_mismatch", parsed.sessionId, entry.filePath,
+          `Root session ID mismatch: expected "${rootSessionId}", found "${parsed.rootSessionId}" in file`);
+        continue;
+      }
+      if (parsed.parentSessionId === undefined) {
+        pushDiagnostic(diagnostics, "not_root", parsed.sessionId, entry.filePath,
+          `Descendant session "${parsed.sessionId}" does not declare a parent session`);
+        continue;
+      }
+      if (sessions.has(parsed.sessionId)) {
+        pushDiagnostic(diagnostics, "duplicate_session", parsed.sessionId, entry.filePath,
+          `Duplicate session ID "${parsed.sessionId}" found while building tree`);
+        continue;
+      }
+
+      const summary = toSessionSummary(parsed);
+      sessions.set(summary.sessionId, summary);
+      const parentSessionId = parsed.parentSessionId;
+      const siblings = childrenByParent.get(parentSessionId) ?? [];
+      siblings.push(summary);
+      childrenByParent.set(parentSessionId, siblings);
+    }
+
+    const invalidIds = new Set<string>();
+    for (const summary of sessions.values()) {
+      if (summary.sessionId === rootSessionId) continue;
+      const parentSessionId = summary.parentSessionId;
+      if (parentSessionId === undefined || !sessions.has(parentSessionId)) {
+        invalidIds.add(summary.sessionId);
+        pushDiagnostic(diagnostics, "missing_parent", summary.sessionId, getSessionPath(workspaceRoot, rootSessionId, summary.sessionId),
+          `Parent session "${parentSessionId ?? "<missing>"}" for "${summary.sessionId}" was not found`);
+      }
+    }
+
+    for (const summary of sessions.values()) {
+      if (summary.sessionId === rootSessionId || invalidIds.has(summary.sessionId)) continue;
+      const cycle = findParentCycle(summary.sessionId, rootSessionId, sessions);
+      if (cycle.length === 0) continue;
+      for (const cycleSessionId of cycle) invalidIds.add(cycleSessionId);
+      pushDiagnostic(diagnostics, "cycle", summary.sessionId, getSessionPath(workspaceRoot, rootSessionId, summary.sessionId),
+        `Cycle detected in session tree: ${cycle.join(" -> ")}`);
+    }
+
+    attachChildren(rootNode, childrenByParent, invalidIds);
+    return { root: rootNode, diagnostics };
+  }
+
   async #loadFromDisk(
     sessionId: string,
     workspaceRoot: string,
@@ -330,4 +409,131 @@ export class SessionStoreManager {
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function readDescendantSessionEntries(
+  workspaceRoot: string,
+  rootSessionId: string,
+): Promise<Array<{ sessionId: string; filePath: string }>> {
+  const dir = getRootSessionDir(workspaceRoot, rootSessionId);
+  try {
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => ({
+        sessionId: basename(entry.name, ".json"),
+        filePath: join(dir, entry.name),
+      }));
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  }
+}
+
+async function readSessionFileForTree(
+  sessionId: string,
+  workspaceRoot: string,
+  rootSessionId: string,
+  filePath: string,
+  diagnostics: SessionTreeDiagnostic[],
+): Promise<SessionFile | undefined> {
+  if (sessionId === rootSessionId) {
+    return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
+  }
+
+  try {
+    return await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+  } catch (error) {
+    if (!isLikelySessionIdMismatch(error)) {
+      pushDiagnostic(diagnostics, "invalid_json", sessionId, filePath,
+        `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+  }
+
+  return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
+}
+
+async function readRawSessionFileForTree(
+  sessionId: string,
+  filePath: string,
+  diagnostics: SessionTreeDiagnostic[],
+): Promise<SessionFile | undefined> {
+  try {
+    return JSON.parse(await Bun.file(filePath).text()) as SessionFile;
+  } catch (error) {
+    pushDiagnostic(diagnostics, "invalid_json", sessionId, filePath,
+      `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
+function isLikelySessionIdMismatch(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("Session ID mismatch:");
+}
+
+function toSessionSummary(file: SessionFile): SessionSummary {
+  const lastUpdatedAt = readLastUpdatedAt(file);
+  return {
+    sessionId: file.sessionId,
+    rootSessionId: file.rootSessionId,
+    ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
+    title: file.title ?? null,
+    createdAt: file.createdAt,
+    ...(lastUpdatedAt === undefined ? {} : { lastUpdatedAt }),
+  };
+}
+
+function readLastUpdatedAt(file: SessionFile): number | undefined {
+  const record = file as SessionFile & { lastUpdatedAt?: unknown; updatedAt?: unknown };
+  if (typeof record.lastUpdatedAt === "number") return record.lastUpdatedAt;
+  if (typeof record.updatedAt === "number") return record.updatedAt;
+  return undefined;
+}
+
+function pushDiagnostic(
+  diagnostics: SessionTreeDiagnostic[],
+  type: SessionTreeDiagnosticType,
+  sessionId: string | undefined,
+  filePath: string | undefined,
+  message: string,
+): void {
+  diagnostics.push({
+    type,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(filePath === undefined ? {} : { filePath }),
+    message,
+  });
+}
+
+function findParentCycle(
+  startSessionId: string,
+  rootSessionId: string,
+  sessions: Map<string, SessionSummary>,
+): string[] {
+  const path: string[] = [];
+  const seenAt = new Map<string, number>();
+  let cursor: string | undefined = startSessionId;
+
+  while (cursor !== undefined && cursor !== rootSessionId) {
+    const previous = seenAt.get(cursor);
+    if (previous !== undefined) return path.slice(previous).concat(cursor);
+    seenAt.set(cursor, path.length);
+    path.push(cursor);
+    cursor = sessions.get(cursor)?.parentSessionId;
+  }
+
+  return [];
+}
+
+function attachChildren(
+  node: SessionTreeNode,
+  childrenByParent: Map<string, SessionSummary[]>,
+  invalidIds: Set<string>,
+): void {
+  const children = childrenByParent.get(node.session.sessionId) ?? [];
+  node.children = children
+    .filter((child) => !invalidIds.has(child.sessionId))
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .map((session) => ({ session, children: [] }));
+  for (const child of node.children) attachChildren(child, childrenByParent, invalidIds);
 }
