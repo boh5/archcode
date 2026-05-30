@@ -1,11 +1,11 @@
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope } from "@specra/protocol";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, SessionTreeNode } from "@specra/protocol";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { AgentRunningError } from "../agents/errors";
 import type { CommandResult } from "../commands/types";
 import type { AskUserResponse } from "../deferred";
-import { getSessionsDir } from "../store/sessions-dir";
+import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
+import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionEventEnvelope, SessionStoreState } from "../store/types";
@@ -169,16 +169,58 @@ export class AgentJobRunner {
   }
 
   async deleteSession(workspaceRoot: string, sessionId: string): Promise<void> {
-    await this.abortAndWait(workspaceRoot, sessionId);
-    this.#config.cleanupDeferredSession(workspaceRoot, sessionId);
-    this.#config.sessionAgentManager.dispose(workspaceRoot, sessionId);
-    this.#config.untrackSession(workspaceRoot, sessionId);
-    this.#unsubscribeSession(workspaceRoot, sessionId);
+    const rootSessionId = await this.#config.storeManager.resolveRootSessionId(sessionId, workspaceRoot);
+    const tree = await this.#config.storeManager.buildSessionTree(workspaceRoot, rootSessionId);
+    const sessionIds = sessionId === rootSessionId
+      ? flattenSessionTree(tree.root)
+      : collectSubtreeSessionIds(tree.root, sessionId);
 
-    const path = join(getSessionsDir(workspaceRoot), `${sessionId}.json`);
-    if (await Bun.file(path).exists()) {
-      await rm(path);
+    if (sessionIds.length === 0) {
+      throw new Error(`Session "${sessionId}" was not found in tree rooted at "${rootSessionId}"`);
     }
+
+    const stuckSessionIds = await this.#abortAndWaitForSessions(workspaceRoot, sessionIds);
+    if (stuckSessionIds.length > 0) {
+      throw new SessionDeleteConflictError(stuckSessionIds);
+    }
+
+    for (const id of sessionIds) {
+      this.#config.cleanupDeferredSession(workspaceRoot, id);
+      this.#config.sessionAgentManager.dispose(workspaceRoot, id);
+      this.#config.untrackSession(workspaceRoot, id);
+      this.#unsubscribeSession(workspaceRoot, id);
+    }
+
+    if (sessionId === rootSessionId) {
+      await removeIfExists(getRootSessionPath(workspaceRoot, rootSessionId));
+      await rm(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true, force: true });
+    } else {
+      for (const id of sessionIds) {
+        await removeIfExists(getSessionPath(workspaceRoot, rootSessionId, id));
+      }
+    }
+  }
+
+  async #abortAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
+    const runningJobs = sessionIds
+      .map((sessionId) => this.#jobs.get(scopedKey(workspaceRoot, sessionId)))
+      .filter((job): job is RunningJob => job !== undefined);
+
+    for (const job of runningJobs) {
+      job.abortController.abort();
+      this.#jobs.delete(scopedKey(job.workspaceRoot, job.sessionId));
+    }
+
+    const settled = await Promise.all(runningJobs.map(async (job) => {
+      try {
+        await waitForJobToStop(job);
+        return undefined;
+      } catch {
+        return job.sessionId;
+      }
+    }));
+
+    return settled.filter((id): id is string => id !== undefined);
   }
 
   async #runJob(input: SubmitAgentJobInput, abortController: AbortController): Promise<void> {
@@ -265,4 +307,28 @@ export class AgentJobRunner {
     }
     this.#subscriptions.delete(key);
   }
+}
+
+async function waitForJobToStop(job: RunningJob): Promise<void> {
+  const timeout = new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new Error(`Timed out waiting for session "${job.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
+  });
+  await Promise.race([job.promise, timeout]);
+}
+
+async function removeIfExists(path: string): Promise<void> {
+  if (await Bun.file(path).exists()) await rm(path);
+}
+
+function flattenSessionTree(node: SessionTreeNode): string[] {
+  return [node.session.sessionId, ...node.children.flatMap((child) => flattenSessionTree(child))];
+}
+
+function collectSubtreeSessionIds(node: SessionTreeNode, targetSessionId: string): string[] {
+  if (node.session.sessionId === targetSessionId) return flattenSessionTree(node);
+  for (const child of node.children) {
+    const found = collectSubtreeSessionIds(child, targetSessionId);
+    if (found.length > 0) return found;
+  }
+  return [];
 }

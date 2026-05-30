@@ -60,6 +60,10 @@ export class SessionStoreManager {
     }
   }
 
+  #forgetSessionIndex(sessionId: string, workspaceRoot: string): void {
+    this.#rootIdIndex.delete(this.indexKey(sessionId, workspaceRoot));
+  }
+
   create(sessionId: string, workspaceRoot?: string): StoreApi<SessionStoreState> {
     const key = this.key(sessionId, workspaceRoot);
     const existing = this.#registry.get(key);
@@ -339,9 +343,12 @@ export class SessionStoreManager {
     }
   }
 
-  delete(sessionId: string, workspaceRoot?: string): boolean {
+  delete(sessionId: string, workspaceRoot?: string, options: { forgetWorkspaceIndex?: boolean } = {}): boolean {
     const removed = this.#registry.delete(this.key(sessionId, workspaceRoot));
-    if (workspaceRoot !== undefined) this.#forgetWorkspaceIndex(workspaceRoot);
+    if (workspaceRoot !== undefined) {
+      if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);
+      else this.#forgetSessionIndex(sessionId, workspaceRoot);
+    }
     return removed;
   }
 

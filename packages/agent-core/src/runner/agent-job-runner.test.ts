@@ -1,12 +1,16 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createEmptySessionStats } from "@specra/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import { AgentRunningError, ConcurrentSessionLimitError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { CommandResult } from "../commands/types";
 import type { AskUserResponse } from "../deferred";
+import { SessionDeleteConflictError } from "../store/errors";
+import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
+import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import { AgentJobRunner } from "./agent-job-runner";
 import { silentLogger } from "../logger";
@@ -99,20 +103,51 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
 }
 
 function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
+  const sessionAgentManager = createFakeManager(agents, options);
   const cleanupDeferredSession = mock(() => undefined);
   const requestPermission = mock(async (_root: string, _sessionId: string, _request: ToolConfirmationRequest): Promise<ToolConfirmationResult> => "approve_once");
   const requestQuestion = mock(async (_root: string, _sessionId: string, _request: AskUserRequest): Promise<AskUserResponse> => ({ answers: [] }));
+  const trackSession = mock(() => undefined);
+  const untrackSession = mock(() => undefined);
   const runner = new AgentJobRunner({
-    sessionAgentManager: createFakeManager(agents, options),
+    sessionAgentManager,
     storeManager,
     requestPermission,
     requestQuestion,
     cleanupDeferredSession,
-    trackSession: mock(() => undefined),
-    untrackSession: mock(() => undefined),
+    trackSession,
+    untrackSession,
     logger: silentLogger,
   });
-  return { runner, cleanupDeferredSession, requestPermission, requestQuestion };
+  return { runner, sessionAgentManager, cleanupDeferredSession, requestPermission, requestQuestion, trackSession, untrackSession };
+}
+
+async function writeSessionFile(input: {
+  sessionId: string;
+  rootSessionId?: string;
+  parentSessionId?: string;
+  title?: string;
+}): Promise<void> {
+  const rootSessionId = input.rootSessionId ?? input.sessionId;
+  const file: SessionFile = {
+    sessionId: input.sessionId,
+    createdAt: Date.now(),
+    title: input.title ?? null,
+    messages: [],
+    steps: [],
+    stats: createEmptySessionStats(),
+    runs: [],
+    todos: [],
+    reminders: [],
+    rootSessionId,
+    ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
+  };
+  if (input.sessionId !== rootSessionId) {
+    await mkdir(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true });
+  } else {
+    await mkdir(join(workspaceRoot, ".specra", "sessions"), { recursive: true });
+  }
+  await Bun.write(getSessionPath(workspaceRoot, rootSessionId, input.sessionId), JSON.stringify(file, null, 2));
 }
 
 describe("AgentJobRunner", () => {
@@ -201,5 +236,126 @@ describe("AgentJobRunner", () => {
     unsubscribe();
     run.resolve({ text: "done", steps: 1 });
     await job.promise;
+  });
+
+  test("root delete removes root file and descendant directory", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
+    const { runner, sessionAgentManager, untrackSession } = createRunner({});
+
+    await runner.deleteSession(workspaceRoot, rootId);
+
+    expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(false);
+    expect(await Bun.file(getRootSessionDir(workspaceRoot, rootId)).exists()).toBe(false);
+    expect(sessionAgentManager.dispose).toHaveBeenCalledTimes(3);
+    expect(untrackSession).toHaveBeenCalledTimes(3);
+  });
+
+  test("child subtree delete removes descendants and preserves siblings", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const siblingId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
+    await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
+    const { runner } = createRunner({});
+
+    await runner.deleteSession(workspaceRoot, childId);
+
+    expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, grandchildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, siblingId)).exists()).toBe(true);
+  });
+
+  test("running subtree delete aborts every running subtree session before removal", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const siblingId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
+    await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
+    const childAgent = new MockAgent(childId, new Promise(() => undefined));
+    const grandchildAgent = new MockAgent(grandchildId, new Promise(() => undefined));
+    const siblingAgent = new MockAgent(siblingId, new Promise(() => undefined));
+    const { runner } = createRunner({ [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
+    const childJob = runner.submit({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const grandchildJob = runner.submit({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild" });
+    const siblingJob = runner.submit({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling" });
+
+    await runner.deleteSession(workspaceRoot, childId);
+    await Promise.all([childJob.promise, grandchildJob.promise]);
+
+    expect(childJob.abortController.signal.aborted).toBe(true);
+    expect(grandchildJob.abortController.signal.aborted).toBe(true);
+    expect(siblingJob.abortController.signal.aborted).toBe(false);
+    expect(runner.isRunning(workspaceRoot, childId)).toBe(false);
+    expect(runner.isRunning(workspaceRoot, grandchildId)).toBe(false);
+    expect(runner.isRunning(workspaceRoot, siblingId)).toBe(true);
+    runner.abort(workspaceRoot, siblingId);
+    await siblingJob.promise;
+  });
+
+  test("abort timeout throws SessionDeleteConflictError and preserves target files", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    const childAgent = {
+      store: storeManager.create(childId),
+      run: mock(async (): Promise<AgentResult> => await new Promise(() => undefined)),
+      dispose: mock(() => undefined),
+    } as unknown as MockAgent;
+    const { runner, sessionAgentManager } = createRunner({ [childId]: childAgent });
+    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
+      if (timeout === 10000 && typeof handler === "function") {
+        queueMicrotask(() => (handler as (...values: unknown[]) => void)(...args));
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return originalSetTimeout(handler, timeout, ...(args as []));
+    }) as typeof setTimeout;
+
+    try {
+      let caught: unknown;
+      try {
+        await runner.deleteSession(workspaceRoot, childId);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(SessionDeleteConflictError);
+      expect(caught).toMatchObject({ name: "SessionDeleteConflictError", sessionIds: [childId] });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+
+    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(true);
+    expect(sessionAgentManager.dispose).not.toHaveBeenCalled();
+    expect(job.abortController.signal.aborted).toBe(true);
+  });
+
+  test("SessionStoreManager.delete removes only the deleted session from workspace root index", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const siblingId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
+    await storeManager.resolveRootSessionId(childId, workspaceRoot);
+    await storeManager.resolveRootSessionId(siblingId, workspaceRoot);
+
+    storeManager.delete(childId, workspaceRoot);
+    await rm(getSessionPath(workspaceRoot, rootId, siblingId));
+
+    expect(await storeManager.resolveRootSessionId(siblingId, workspaceRoot)).toBe(rootId);
   });
 });
