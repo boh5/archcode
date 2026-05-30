@@ -18,9 +18,9 @@ export const BackgroundOutputInputSchema = z
   .object({
     session_id: z.string(),
     block: z.boolean().default(false),
-    timeout_ms: z.number().max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS),
+    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS),
     full_session: z.boolean().default(false),
-    message_limit: z.number().max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT),
+    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT),
     since_message_id: z.string().optional(),
     include_tool_results: z.boolean().default(false),
     include_reasoning: z.boolean().default(false),
@@ -41,7 +41,16 @@ export async function executeBackgroundOutput(
     });
   }
 
-  const childStore = await getChildStore(input, ctx);
+  let childStore: StoreApi<SessionStoreState> | undefined;
+  try {
+    childStore = await getChildStore(input, ctx);
+  } catch (err) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_CHILD_SESSION_LOAD_FAILED",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
   if (childStore === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -70,8 +79,9 @@ async function getChildStore(
 
   try {
     return await ctx.storeManager.getOrLoad(input.session_id, ctx.workspaceRoot);
-  } catch {
-    return undefined;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to load child session ${input.session_id}: ${msg}`);
   }
 }
 

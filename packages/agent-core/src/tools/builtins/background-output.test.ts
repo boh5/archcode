@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@specra/protocol";
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { sessionFileInternals } from "../../store/helpers";
-import { __setSessionsDirForTest } from "../../store/sessions-dir";
+import { __setSessionsDirForTest, getSessionsDir } from "../../store/sessions-dir";
 import type { ToolExecutionContext } from "../types";
 import { BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
 import { createTestProjectContext } from "../test-project-context";
@@ -93,6 +93,26 @@ describe("BackgroundOutputInputSchema", () => {
 
     expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 600_001 }).success).toBe(false);
     expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 101 }).success).toBe(false);
+  });
+
+  it("rejects negative timeout_ms", () => {
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: -1 }).success).toBe(false);
+  });
+
+  it("rejects float timeout_ms", () => {
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", timeout_ms: 1.5 }).success).toBe(false);
+  });
+
+  it("rejects zero message_limit", () => {
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 0 }).success).toBe(false);
+  });
+
+  it("rejects negative message_limit", () => {
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: -1 }).success).toBe(false);
+  });
+
+  it("rejects float message_limit", () => {
+    expect(BackgroundOutputInputSchema.safeParse({ session_id: "child-1", message_limit: 1.5 }).success).toBe(false);
   });
 });
 
@@ -383,5 +403,30 @@ describe("background_output tool", () => {
     expect(loaded).toBeDefined();
     expect(loaded!.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
     expect(loaded!.getState().runCount).toBe(1);
+  });
+
+  it("returns descriptive error when getOrLoad fails with corrupt session file", async () => {
+    const ctx = makeContext();
+    const childId = `corrupt-child-${crypto.randomUUID()}`;
+    ctx.store.getState().linkChildSession(childId);
+
+    const sessionsDir = getSessionsDir(workspaceRoot);
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(join(sessionsDir, `${childId}.json`), "{invalid json}", "utf-8");
+
+    const result = await executeBackgroundOutput({
+      session_id: childId,
+      block: false,
+      timeout_ms: 60_000,
+      full_session: false,
+      message_limit: 20,
+      include_tool_results: false,
+      include_reasoning: false,
+    }, ctx);
+
+    expect(typeof result).toBe("object");
+    expect((result as { isError: boolean }).isError).toBe(true);
+    expect((result as { output: string }).output).toContain("Failed to load child session");
+    expect((result as { output: string }).output).toContain(childId);
   });
 });
