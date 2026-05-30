@@ -287,7 +287,7 @@ describe("initializeFromSnapshot", () => {
     store.getState().initializeFromSnapshot({
       messages: [],
       steps: [],
-      stats: { modelCalls: 0, toolCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalSteps: 0 },
+      stats: { messages: { user: 0, assistant: 0, total: 0 }, tools: { calls: 0, completed: 0, failed: 0 }, steps: { started: 0, completed: 0 }, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0 } },
       eventCursor: 2,
     });
 
@@ -313,13 +313,13 @@ describe("initializeFromSnapshot", () => {
     store.getState().initializeFromSnapshot({
       messages: snapshotMessages as any,
       steps: [],
-      stats: { modelCalls: 5, toolCalls: 3, totalInputTokens: 100, totalOutputTokens: 200, totalSteps: 8 },
+      stats: { messages: { user: 3, assistant: 2, total: 5 }, tools: { calls: 3, completed: 2, failed: 0 }, steps: { started: 8, completed: 7 }, usage: { inputTokens: 100, outputTokens: 200, totalTokens: 300, reasoningTokens: 0, cachedInputTokens: 0 } },
       eventCursor: 2,
     });
 
     // Should overwrite because snapshot is not stale (cursor 2 >= local nextEventId-1)
     expect(store.getState().messages).toEqual(snapshotMessages);
-    expect(store.getState().stats.totalSteps).toBe(8);
+    expect(store.getState().stats.tools.calls).toBe(3);
   });
 
   test("always updates scalar metadata fields even with stale snapshot", () => {

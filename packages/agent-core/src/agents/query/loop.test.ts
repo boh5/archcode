@@ -2305,3 +2305,113 @@ describe("runQueryLoop abort handling", () => {
     expect(runEnd?.status).toBe("aborted");
   });
 });
+
+describe("runQueryLoop tool-input-resolved event", () => {
+  beforeEach(() => {
+    __setStreamTextForTest(undefined as unknown as typeof aiStreamText);
+  });
+
+  const defaultsToolSchema = z.object({
+    name: z.string(),
+    enabled: z.boolean().default(false),
+    count: z.number().int().default(10),
+  }).strict();
+
+  function createDefaultToolRegistry(): ToolRegistry {
+    return createRegistry([
+      defineTool({
+        name: "with_defaults",
+        description: "Tool with defaults",
+        inputSchema: defaultsToolSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: true },
+        execute: async () => "ok",
+      }),
+    ]);
+  }
+
+  test("emits tool-input-resolved event with Zod defaults filled in", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "with_defaults", input: { name: "test" } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: createDefaultToolRegistry(), allowedTools: ["with_defaults"] }),
+      "Hi",
+    );
+
+    const resolvedEvent = events.find(
+      (e): e is Extract<SessionEventPayload, { type: "tool-input-resolved" }> => e.type === "tool-input-resolved",
+    );
+    expect(resolvedEvent).toBeDefined();
+    expect(resolvedEvent!.toolCallId).toBe("tc-1");
+    expect(resolvedEvent!.toolName).toBe("with_defaults");
+    const input = resolvedEvent!.input as Record<string, unknown>;
+    expect(input.name).toBe("test");
+    expect(input.enabled).toBe(false);
+    expect(input.count).toBe(10);
+  });
+
+  test("tool part input is updated with resolved defaults after tool-input-resolved", async () => {
+    const store = createStore();
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-input-start", id: "tc-1", toolName: "with_defaults" },
+          { type: "tool-call", toolCallId: "tc-1", toolName: "with_defaults", input: { name: "test" } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: createDefaultToolRegistry(), allowedTools: ["with_defaults"] }),
+      "Hi",
+    );
+
+    const msg = assistantMessages(store)[0];
+    const toolPart = msg.parts.find((p): p is Extract<typeof p, { type: "tool"; state: "running" }> => p.type === "tool" && "input" in p);
+    expect(toolPart).toBeDefined();
+    expect((toolPart!.input as Record<string, unknown>)).toMatchObject({
+      name: "test",
+      enabled: false,
+      count: 10,
+    });
+  });
+
+  test("tool-input-resolved is emitted even when LLM sends all fields explicitly", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [
+          { type: "tool-call", toolCallId: "tc-1", toolName: "with_defaults", input: { name: "explicit", enabled: true, count: 42 } },
+        ],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: createDefaultToolRegistry(), allowedTools: ["with_defaults"] }),
+      "Hi",
+    );
+
+    const resolvedEvent = events.find(
+      (e): e is Extract<SessionEventPayload, { type: "tool-input-resolved" }> => e.type === "tool-input-resolved",
+    );
+    expect(resolvedEvent).toBeDefined();
+    const input = resolvedEvent!.input as Record<string, unknown>;
+    expect(input.name).toBe("explicit");
+    expect(input.enabled).toBe(true);
+    expect(input.count).toBe(42);
+  });
+});
