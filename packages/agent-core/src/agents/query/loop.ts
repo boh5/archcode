@@ -424,6 +424,14 @@ async function executeToolCalls(
             ...(agentFactory ? { agentFactory } : {}),
             ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
+            onInputResolved(redactedInput) {
+              store.getState().append({
+                type: "tool-input-resolved",
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                input: redactedInput,
+              });
+            },
           });
           const result = await registry.execute(toolCall, ctx);
           appendToolResult(store, toolCall, result.output, result.isError, result.meta);
@@ -461,6 +469,14 @@ async function executeToolCalls(
         ...(agentFactory ? { agentFactory } : {}),
         ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
+        onInputResolved(redactedInput) {
+          store.getState().append({
+            type: "tool-input-resolved",
+            toolCallId: toolCall.toolCallId,
+            toolName: toolCall.toolName,
+            input: redactedInput,
+          });
+        },
       });
       const result = await registry.execute(toolCall, ctx);
       appendToolResult(store, toolCall, result.output, result.isError, result.meta);

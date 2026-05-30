@@ -27,6 +27,7 @@ export type {
   ReasoningEndEvent,
   ToolInputStartEvent,
   ToolCallEvent,
+  ToolInputResolvedEvent,
   ToolResultEvent,
   CompactEvent,
   TodoWriteEvent,

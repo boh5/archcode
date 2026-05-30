@@ -131,6 +131,14 @@ export interface ToolCallEvent {
   input: unknown;
 }
 
+export interface ToolInputResolvedEvent {
+  type: "tool-input-resolved";
+  toolCallId: string;
+  toolName: string;
+  /** The full input after Zod safeParse — includes defaults filled in. Already redacted. */
+  input: unknown;
+}
+
 export interface ToolResultEvent {
   type: "tool-result";
   toolCallId: string;
@@ -192,6 +200,7 @@ export type StreamEvent =
   | ReasoningEndEvent
   | ToolInputStartEvent
   | ToolCallEvent
+  | ToolInputResolvedEvent
   | ToolResultEvent
   | TodoWriteEvent
   | ReminderEvent

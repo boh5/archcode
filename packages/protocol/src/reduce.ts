@@ -12,6 +12,7 @@ import type {
   StreamEvent,
   SystemNoticePart,
   TextPart,
+  ToolInputResolvedEvent,
   ToolPart,
   RunEndEvent,
 } from "./types";
@@ -327,6 +328,28 @@ export function reduceStreamEvent(
         ),
         currentAssistantMessageId: assistant.currentAssistantMessageId,
         stats: incrementToolCalls(assistant.stats ?? state.stats),
+      };
+    }
+
+    case "tool-input-resolved": {
+      const location = findToolPartByCallId(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.toolCallId,
+      );
+
+      if (!location) return {};
+
+      const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
+      if (!existing || existing.state === "pending") return {};
+
+      return {
+        messages: updateMessagePart(
+          state.messages,
+          location.messageId,
+          location.partId,
+          (part) => (part.type === "tool" ? { ...part, input: event.input } : part),
+        ),
       };
     }
 

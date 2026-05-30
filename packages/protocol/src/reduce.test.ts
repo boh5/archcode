@@ -587,4 +587,52 @@ describe("reduceStreamEvent", () => {
     expect(step.runId).toBe("run-error");
     expect(step.error).toBe("missing step");
   });
+
+  test("tool-input-resolved updates running tool part input with defaults", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
+      { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false, timeout_ms: 60000 } },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("running");
+    if (tool.state !== "running") throw new Error("Expected running tool");
+    expect(tool.input).toEqual({ session_id: "ses_abc", block: false, timeout_ms: 60000 });
+  });
+
+  test("tool-input-resolved updates completed tool part input", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc" } },
+      { type: "tool-result", toolCallId: "call-1", toolName: "background_output", output: "done", isError: false },
+      { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("completed");
+    if (tool.state !== "completed") throw new Error("Expected completed tool");
+    expect(tool.input).toEqual({ session_id: "ses_abc", block: false });
+  });
+
+  test("tool-input-resolved is ignored for pending tool part", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-input-start", toolCallId: "call-1", toolName: "background_output" },
+      { type: "tool-input-resolved", toolCallId: "call-1", toolName: "background_output", input: { session_id: "ses_abc", block: false } },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("pending");
+    if (tool.state !== "pending") throw new Error("Expected pending tool");
+    expect("input" in tool).toBe(false);
+  });
+
+  test("tool-input-resolved is ignored when toolCallId not found", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a.ts" } },
+      { type: "tool-input-resolved", toolCallId: "call-unknown", toolName: "read", input: { path: "a.ts" } },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    if (tool.state === "pending") throw new Error("Expected running or settled tool");
+    expect(tool.input).toEqual({ path: "a.ts" });
+  });
 });

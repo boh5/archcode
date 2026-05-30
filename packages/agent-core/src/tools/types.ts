@@ -48,6 +48,8 @@ export interface ToolExecutionContext {
   askUser?: AskUserCallback;
   agentFactory?: AgentFactoryLike;
   currentDepth?: number;
+  /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
+  onInputResolved?: (redactedInput: unknown) => void;
 }
 
 type ToolExecutionContextInput = Omit<ToolExecutionContext, "workspaceRoot">;

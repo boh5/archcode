@@ -129,6 +129,17 @@ export class ToolRegistry {
     let currentInput = parsed.data;
     ctx.redactedInput = redactValue(currentInput);
 
+    if (ctx.onInputResolved) {
+      try {
+        ctx.onInputResolved(ctx.redactedInput);
+      } catch (err) {
+        this._logger.warn("tool.onInputResolved.error", {
+          context: { tool: descriptor.name },
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     if (!isAllowedTool(ctx, toolCall.toolName)) {
       result = createPermissionErrorResult(
         "TOOL_NOT_ALLOWED",
