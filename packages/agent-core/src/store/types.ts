@@ -86,9 +86,8 @@ export interface SessionStoreState {
   // Session-only state
   todos: SessionTodo[];
   reminders: Reminder[];
-  childSessionIds: Set<string>;
+  rootSessionId: string;
   parentSessionId?: string;
-  subAgentDescriptions: Map<string, string>;
 
   // Running state
   runCount: number;
@@ -120,7 +119,6 @@ export interface SessionStoreState {
   append: (event: SessionEventPayload) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
-  linkChildSession: (childSessionId: string, description?: string) => void;
   toModelMessages: () => ModelMessage[];
 }
 

@@ -219,9 +219,8 @@ const SessionFileSchema = z.strictObject({
     )
     .optional(),
   reminders: z.array(ReminderSchema).default([]),
-  childSessionIds: z.array(z.string()).default([]),
+  rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
-  subAgentDescriptions: z.array(z.tuple([z.string(), z.string()])).default([]),
   eventCursor: z.number().optional(),
 });
 
@@ -236,10 +235,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "runs" | "todos"
+  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "runs" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "reminders" | "childSessionIds" | "parentSessionId" | "subAgentDescriptions"
+  "reminders" | "parentSessionId"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -280,8 +279,7 @@ async function saveSessionTranscript(
     runs: state.runs,
     todos: state.todos,
     reminders: state.reminders ?? [],
-    childSessionIds: Array.from(state.childSessionIds ?? []),
-    subAgentDescriptions: Array.from(state.subAgentDescriptions ?? []),
+    rootSessionId: state.rootSessionId,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
   };
 
@@ -331,8 +329,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     runs: state.runs,
     todos: state.todos,
     reminders: state.reminders ?? [],
-    childSessionIds: Array.from(state.childSessionIds ?? []),
-    subAgentDescriptions: Array.from(state.subAgentDescriptions ?? []),
+    rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
   };

@@ -77,9 +77,8 @@ export class SessionStoreManager {
       runs: [],
       todos: [],
       reminders: [],
-      childSessionIds: new Set(),
+      rootSessionId: sessionId,
       parentSessionId: undefined,
-      subAgentDescriptions: new Map(),
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -126,18 +125,6 @@ export class SessionStoreManager {
       },
       setParentSessionId: (parentSessionId: string | undefined) => {
         set({ parentSessionId });
-        persist();
-      },
-      linkChildSession: (childSessionId: string, description?: string) => {
-        set((state) => {
-          const childSessionIds = new Set(state.childSessionIds);
-          childSessionIds.add(childSessionId);
-
-          const subAgentDescriptions = new Map(state.subAgentDescriptions);
-          if (description !== undefined) subAgentDescriptions.set(childSessionId, description);
-
-          return { childSessionIds, subAgentDescriptions };
-        });
         persist();
       },
       toModelMessages: (): ModelMessage[] =>
@@ -215,9 +202,8 @@ export class SessionStoreManager {
         runCount: parsed.runs.length,
         todos: parsed.todos ?? [],
         reminders: parsed.reminders,
-        childSessionIds: new Set(parsed.childSessionIds),
+        rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
-        subAgentDescriptions: new Map(parsed.subAgentDescriptions),
         isRunning: false,
         isStreamingModel: false,
         currentRunId: undefined,

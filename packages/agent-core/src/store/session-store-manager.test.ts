@@ -96,6 +96,7 @@ describe("SessionStoreManager", () => {
         stats: createEmptySessionStats(),
         runs: [],
         todos: [],
+        rootSessionId: sessionId,
       },
       TMP_DIR,
     );
@@ -124,6 +125,7 @@ describe("SessionStoreManager", () => {
         stats: createEmptySessionStats(),
         runs: [],
         todos: [],
+        rootSessionId: sessionId,
       },
       TMP_DIR,
     );
@@ -155,12 +157,13 @@ describe("SessionStoreManager", () => {
       {
         sessionId,
         createdAt: 1000,
-        title: "dedup-title",
+        title: "disk-title",
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
         runs: [],
         todos: [],
+        rootSessionId: sessionId,
       },
       TMP_DIR,
     );
@@ -187,6 +190,7 @@ describe("SessionStoreManager", () => {
         stats: createEmptySessionStats(),
         runs: [],
         todos: [],
+        rootSessionId: sessionId,
       },
       TMP_DIR,
     );

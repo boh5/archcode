@@ -446,14 +446,43 @@ export interface DirectorySearchResponse {
 
 export interface SessionSummary {
   sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
   title?: string | null;
   createdAt: number;
   lastUpdatedAt?: number;
 }
 
+export interface SessionTreeNode {
+  session: SessionSummary;
+  children: SessionTreeNode[];
+}
+
+export type SessionTreeDiagnosticType =
+  | "invalid_json"
+  | "session_id_mismatch"
+  | "root_mismatch"
+  | "missing_parent"
+  | "cycle"
+  | "duplicate_session"
+  | "not_root";
+
+export interface SessionTreeDiagnostic {
+  type: SessionTreeDiagnosticType;
+  sessionId?: string;
+  filePath?: string;
+  message: string;
+}
+
+export interface SessionTreeResponse {
+  root: SessionTreeNode;
+  diagnostics: SessionTreeDiagnostic[];
+}
+
 export interface Session {
   id: string;
   sessionId?: string;
+  rootSessionId: string;
   title?: string | null;
   createdAt: number;
   updatedAt?: number;
@@ -464,9 +493,7 @@ export interface Session {
   reminders?: unknown[];
   stats?: SessionStats;
   runs?: SessionRun[];
-  childSessionIds?: string[];
   parentSessionId?: string;
-  subAgentDescriptions?: [string, string][];
   eventCursor?: number;
 }
 
@@ -478,7 +505,7 @@ export interface WorkflowState {
   currentStep?: string;
   stage?: string;
   artifacts?: Record<string, string | string[] | undefined>;
-  agentIds?: Record<string, string>;
+  roleSessionIds?: Record<string, string>;
   createdAt?: string;
   updatedAt?: string;
   retryCount?: number;

@@ -156,9 +156,8 @@ type PersistedSessionState = Pick<
   | "runs"
   | "todos"
   | "reminders"
-  | "childSessionIds"
+  | "rootSessionId"
   | "parentSessionId"
-  | "subAgentDescriptions"
 >;
 
 function persistedState(
@@ -169,9 +168,8 @@ function persistedState(
   stats: SessionStats = createEmptySessionStats(),
   runs: SessionRun[] = [],
   reminders: Reminder[] = [],
-  childSessionIds = new Set<string>(),
+  rootSessionId?: string,
   parentSessionId: string | undefined = undefined,
-  subAgentDescriptions = new Map<string, string>(),
 ): PersistedSessionState {
   return {
     sessionId,
@@ -183,9 +181,8 @@ function persistedState(
     runs,
     todos,
     reminders,
-    childSessionIds,
+    rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
-    subAgentDescriptions,
   };
 }
 
@@ -258,33 +255,43 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().reminders).toEqual(reminders);
   });
 
-  test("load defaults optional reminder relationship persistence fields", async () => {
-    const sessionId = uniqueSessionId("missing-reminder-fields");
-    const {
-      reminders: _reminders,
-      childSessionIds: _childSessionIds,
-      parentSessionId: _parentSessionId,
-      subAgentDescriptions: _subAgentDescriptions,
-      ...legacyState
-    } = persistedState(sessionId);
-    await writeSessionFile(sessionId, legacyState);
+  test("load defaults optional fields (reminders, parentSessionId)", async () => {
+    const sessionId = uniqueSessionId("optional-fields");
+    const state = persistedState(sessionId);
+    const { reminders: _reminders, parentSessionId: _parentSessionId, ...noRemindersState } = state;
+    await writeSessionFile(sessionId, noRemindersState);
 
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    const state = loaded.getState();
+    const loadedState = loaded.getState();
 
-    expect(state.reminders).toEqual([]);
-    expect(state.childSessionIds).toEqual(new Set());
-    expect(state.parentSessionId).toBeUndefined();
-    expect(state.subAgentDescriptions).toEqual(new Map());
+    expect(loadedState.reminders).toEqual([]);
+    expect(loadedState.parentSessionId).toBeUndefined();
   });
 
-  test("save/load serializes child session Set and sub-agent description Map", async () => {
-    const sessionId = uniqueSessionId("set-map-roundtrip");
-    const childSessionIds = new Set(["child-1", "child-2"]);
-    const subAgentDescriptions = new Map([
-      ["child-1", "QA agent"],
-      ["child-2", "Reviewer agent"],
-    ]);
+  test("load rejects file without rootSessionId", async () => {
+    const sessionId = uniqueSessionId("no-root-id");
+    const state = persistedState(sessionId);
+    const { rootSessionId: _rootSessionId, ...noRootState } = state;
+    await writeSessionFile(sessionId, noRootState);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
+  test("listSessionSummaries skips files without rootSessionId gracefully", async () => {
+    const sessionId = uniqueSessionId("skip-invalid");
+    const state = persistedState(sessionId);
+    const { rootSessionId: _rootSessionId, ...noRootState } = state;
+    await writeSessionFile(sessionId, noRootState);
+
+    // Should not crash, should simply skip the invalid file
+    const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
+    expect(summaries).toEqual([]);
+  });
+
+  test("save/load serializes rootSessionId and parentSessionId", async () => {
+    const sessionId = uniqueSessionId("hierarchy-roundtrip");
+    const rootSessionId = "root-session-1";
+    const parentSessionId = "parent-session-1";
     const state = persistedState(
       sessionId,
       sampleMessages(),
@@ -293,9 +300,8 @@ describe("session transcript serialization", () => {
       createEmptySessionStats(),
       [],
       sampleReminders(),
-      childSessionIds,
-      "parent-1",
-      subAgentDescriptions,
+      rootSessionId,
+      parentSessionId,
     );
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
@@ -303,14 +309,10 @@ describe("session transcript serialization", () => {
     const parsed: Record<string, unknown> = JSON.parse(raw);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
-    expect(parsed.childSessionIds).toEqual(["child-1", "child-2"]);
-    expect(parsed.subAgentDescriptions).toEqual([
-      ["child-1", "QA agent"],
-      ["child-2", "Reviewer agent"],
-    ]);
-    expect(loaded.getState().childSessionIds).toEqual(childSessionIds);
-    expect(loaded.getState().subAgentDescriptions).toEqual(subAgentDescriptions);
-    expect(loaded.getState().parentSessionId).toBe("parent-1");
+    expect(parsed.rootSessionId).toBe("root-session-1");
+    expect(parsed.parentSessionId).toBe("parent-session-1");
+    expect(loaded.getState().rootSessionId).toBe("root-session-1");
+    expect(loaded.getState().parentSessionId).toBe("parent-session-1");
   });
 
   test("loaded store preserves methods and can continue appending", async () => {
@@ -508,15 +510,14 @@ describe("session transcript serialization", () => {
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
     expect(Object.keys(parsed).sort()).toEqual([
-      "childSessionIds",
       "createdAt",
       "messages",
       "reminders",
+      "rootSessionId",
       "runs",
       "sessionId",
       "stats",
       "steps",
-      "subAgentDescriptions",
       "title",
       "todos",
     ]);
@@ -526,8 +527,7 @@ describe("session transcript serialization", () => {
     expect(parsed.runs).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
     expect(parsed.reminders).toEqual([]);
-    expect(parsed.childSessionIds).toEqual([]);
-    expect(parsed.subAgentDescriptions).toEqual([]);
+    expect(parsed.rootSessionId).toBe(sessionId);
   });
 
   test("getOrLoad resets all runtime-only fields", async () => {

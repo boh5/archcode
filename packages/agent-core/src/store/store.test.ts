@@ -118,11 +118,8 @@ describe("SessionStoreManager", () => {
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
     expect(state.reminders).toEqual([]);
-    expect(state.childSessionIds).toBeInstanceOf(Set);
-    expect(state.childSessionIds.size).toBe(0);
+    expect(state.rootSessionId).toBe(sessionId);
     expect(state.parentSessionId).toBeUndefined();
-    expect(state.subAgentDescriptions).toBeInstanceOf(Map);
-    expect(state.subAgentDescriptions.size).toBe(0);
     expect(state.events).toEqual([]);
     expect(state.eventOffset).toBe(0);
     expect(state.nextEventId).toBe(0);
@@ -161,18 +158,16 @@ describe("SessionStoreManager", () => {
     expect(persisted.messages).toEqual(store.getState().messages);
   });
 
-  test("linkChildSession flushes persistence immediately", async () => {
+  test("rootSessionId persists as sessionId for root sessions", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-link-child");
-    const store = createSessionStore(sessionId);
-
-    store.getState().linkChildSession("child-1", "Explore child");
+    const sessionId = uniqueSessionId("persist-root-id");
+    createSessionStore(sessionId);
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
-      return Array.isArray(session.childSessionIds) && session.childSessionIds.includes("child-1");
+      return session.rootSessionId === sessionId;
     });
-    expect(persisted.childSessionIds).toEqual(["child-1"]);
-    expect(persisted.subAgentDescriptions).toEqual([["child-1", "Explore child"]]);
+    expect(persisted.rootSessionId).toBe(sessionId);
+    expect(persisted.parentSessionId).toBeUndefined();
   });
 
   test("user-message append persists before run-end", async () => {

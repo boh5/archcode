@@ -15,8 +15,7 @@ export function createMockStore(
     runs: [],
     todos: [],
     reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
+    rootSessionId: "test",
     isRunning: false,
     isStreamingModel: false,
     readSnapshots: new Map(),
@@ -58,10 +57,6 @@ export function createMockStore(
     },
     setParentSessionId: (parentSessionId) => {
       state.parentSessionId = parentSessionId;
-    },
-    linkChildSession: (childSessionId, description) => {
-      state.childSessionIds.add(childSessionId);
-      if (description !== undefined) state.subAgentDescriptions.set(childSessionId, description);
     },
     toModelMessages: () => [],
   };
