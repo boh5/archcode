@@ -25,9 +25,8 @@ const MAX_PENDING_REMOTE_EVENTS = 1000;
 export interface WebSessionStoreState extends SessionProjection {
   [key: string]: unknown;
   createdAt: number;
-  childSessionIds: Set<string>;
+  rootSessionId: string;
   parentSessionId: string | undefined;
-  subAgentDescriptions: Map<string, string>;
   lastTodoWriteStepIndex: number | null;
   lastTodoReminderStepIndex: number | null;
   todoStepReminderCount: number;
@@ -55,9 +54,8 @@ export interface WebSessionStoreState extends SessionProjection {
     reminders?: Reminder[];
     title?: string | null;
     createdAt?: number;
-    childSessionIds?: string[];
+    rootSessionId?: string;
     parentSessionId?: string;
-    subAgentDescriptions?: [string, string][];
     stats?: SessionStats;
     runs?: SessionRun[];
     eventCursor?: number;
@@ -258,9 +256,8 @@ export function createWebSessionStore(
     runs: [],
     todos: [],
     reminders: [],
-    childSessionIds: new Set(),
+    rootSessionId: sessionId,
     parentSessionId: undefined,
-    subAgentDescriptions: new Map(),
     isRunning: false,
     isStreamingModel: false,
     readSnapshots: new Map(),
@@ -382,14 +379,11 @@ export function createWebSessionStore(
         if (data.runs !== undefined && !stale) {
           updates.runs = data.runs;
         }
-        if (data.childSessionIds !== undefined) {
-          updates.childSessionIds = new Set(data.childSessionIds);
+        if (data.rootSessionId !== undefined) {
+          updates.rootSessionId = data.rootSessionId;
         }
         if (data.parentSessionId !== undefined) {
           updates.parentSessionId = data.parentSessionId;
-        }
-        if (data.subAgentDescriptions !== undefined) {
-          updates.subAgentDescriptions = new Map(data.subAgentDescriptions);
         }
         if (data.events !== undefined) {
           updates.events = data.events;

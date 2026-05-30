@@ -27,6 +27,7 @@ import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
+import type { SessionTreeResponse } from "@specra/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
@@ -65,6 +66,7 @@ export interface SpecraRuntime {
   getAgentJob(workspaceRoot: string, sessionId: string): RunningJob | undefined;
   subscribeSessionEvents(input: SubscribeSessionEventsInput): () => void;
   deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
+  listSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse>;
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
@@ -257,6 +259,7 @@ export async function createSpecraRuntime(
       getAgentJob: (workspaceRoot, sessionId) => jobRunner.getJob(workspaceRoot, sessionId),
       subscribeSessionEvents: (input) => jobRunner.subscribe(input),
       deleteSession: (workspaceRoot, sessionId) => jobRunner.deleteSession(workspaceRoot, sessionId),
+      listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),
       isSessionTombstoned: (workspaceRoot, sessionId) => sessionAgentManager.isTombstoned(workspaceRoot, sessionId),

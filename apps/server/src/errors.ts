@@ -9,7 +9,8 @@ export type ServerErrorCode =
   | "UNAUTHORIZED"
   | "INTERNAL_ERROR"
   | "WORKFLOW_NOT_FOUND"
-  | "ARTIFACT_NOT_FOUND";
+  | "ARTIFACT_NOT_FOUND"
+  | "DELETE_CONFLICT";
 
 export class ServerError extends Error {
   constructor(
@@ -97,5 +98,17 @@ export class ArtifactNotFoundError extends ServerError {
       : `Artifact not found: ${name}`;
     super("ARTIFACT_NOT_FOUND", message, 404);
     this.name = "ArtifactNotFoundError";
+  }
+}
+
+export class ConflictError extends ServerError {
+  constructor(sessionIds: string[], message?: string) {
+    super(
+      "DELETE_CONFLICT",
+      message ?? `Unable to delete session subtree; running sessions did not stop: ${sessionIds.join(", ")}`,
+      409,
+      { sessionIds },
+    );
+    this.name = "ConflictError";
   }
 }

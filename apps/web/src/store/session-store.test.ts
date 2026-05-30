@@ -225,8 +225,7 @@ describe("initializeFromSnapshot", () => {
     store.getState().initializeFromSnapshot({
       title: "Existing",
       todos: [{ id: "todo-1", content: "todo", status: "pending" }],
-      childSessionIds: ["child"],
-      subAgentDescriptions: [["child", "Explore"]],
+      rootSessionId: "root-session-id",
       eventCursor: 0,
     });
 
@@ -236,9 +235,8 @@ describe("initializeFromSnapshot", () => {
       todos: [],
       reminders: [],
       title: null,
-      childSessionIds: [],
+      rootSessionId: "root-session-id",
       parentSessionId: undefined,
-      subAgentDescriptions: [],
       eventCursor: 5,
     });
 
@@ -248,9 +246,8 @@ describe("initializeFromSnapshot", () => {
     expect(state.todos).toEqual([]);
     expect(state.reminders).toEqual([]);
     expect(state.title).toBeNull();
-    expect(Array.from(state.childSessionIds)).toEqual([]);
+    expect(state.rootSessionId).toBe("root-session-id");
     expect(state.parentSessionId).toBeUndefined();
-    expect(Array.from(state.subAgentDescriptions)).toEqual([]);
     expect(state.nextEventId).toBe(6);
     expect(state.eventOffset).toBe(6);
     expect(state.events).toEqual([]);
@@ -331,16 +328,15 @@ describe("initializeFromSnapshot", () => {
     store.getState().initializeFromSnapshot({
       title: "New Title",
       createdAt: 9999,
-      childSessionIds: ["child-1"],
+      rootSessionId: "root-session-id",
       parentSessionId: "parent-1",
-      subAgentDescriptions: [["child-1", "Explore agent"]],
       eventCursor: 0, // stale: snapshot is behind local state (nextEventId=2)
     });
 
     // Scalar metadata should still be updated even with stale snapshot
     expect(store.getState().title).toBe("New Title");
     expect(store.getState().createdAt).toBe(9999);
-    expect(Array.from(store.getState().childSessionIds)).toEqual(["child-1"]);
+    expect(store.getState().rootSessionId).toBe("root-session-id");
     expect(store.getState().parentSessionId).toBe("parent-1");
   });
 });

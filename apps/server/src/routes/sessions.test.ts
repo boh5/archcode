@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry, silentLogger } from "@specra/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, silentLogger } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -29,13 +29,14 @@ type StoredSessionBody = SessionFileBody & {
   title: string | null;
   todos: unknown[];
   reminders: unknown[];
+  parentSessionId?: string;
 };
 
 class MissingSessionFileError extends Error {
   code = "ENOENT";
 }
 
-function createStoredSession(sessionId: string = crypto.randomUUID(), createdAt = Date.now(), title: string | null = null): StoredSessionBody {
+function createStoredSession(sessionId: string = crypto.randomUUID(), createdAt = Date.now(), title: string | null = null, parentSessionId?: string): StoredSessionBody {
   return {
     sessionId,
     createdAt,
@@ -44,6 +45,7 @@ function createStoredSession(sessionId: string = crypto.randomUUID(), createdAt 
     steps: [],
     todos: [],
     reminders: [],
+    ...(parentSessionId !== undefined ? { parentSessionId } : {}),
   };
 }
 
@@ -87,6 +89,26 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
         }))
         .sort((a, b) => b.createdAt - a.createdAt);
     },
+    listSessionTree: async (workspaceRoot: string, rootSessionId: string) => {
+      const key = `${workspaceRoot}\0${rootSessionId}`;
+      const session = sessions.get(key);
+      if (!session) throw new MissingSessionFileError();
+      if (session.parentSessionId !== undefined) {
+        throw new NotRootSessionError(rootSessionId, session.parentSessionId);
+      }
+      return {
+        root: {
+          session: {
+            sessionId: rootSessionId,
+            rootSessionId,
+            title: session.title ?? null,
+            createdAt: session.createdAt,
+          },
+          children: [],
+        },
+        diagnostics: [],
+      };
+    },
     submitAgentJob: () => {
       throw new Error("not implemented");
     },
@@ -98,7 +120,12 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async (workspaceRoot: string, sessionId: string) => {
       calls.deleteSession.push({ workspaceRoot, sessionId });
-      sessions.delete(`${workspaceRoot}\0${sessionId}`);
+      if (sessionId === "conflict-session") {
+        throw new SessionDeleteConflictError([sessionId]);
+      }
+      const key = `${workspaceRoot}\0${sessionId}`;
+      if (!sessions.has(key)) throw new MissingSessionFileError();
+      sessions.delete(key);
     },
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
@@ -257,15 +284,17 @@ describe("sessions routes", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  test("DELETE /api/projects/:slug/sessions/:sessionId for non-existent session returns ok", async () => {
+  test("DELETE /api/projects/:slug/sessions/:sessionId for non-existent session returns 404", async () => {
     const { app, project } = await createTestApp("delete-missing-session");
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/missing-session`, {
       method: "DELETE",
     });
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: "SESSION_NOT_FOUND", message: "Session not found: missing-session" },
+    });
   });
 
   test("GET /api/projects/:slug/sessions for non-existent project slug returns 404", async () => {
@@ -303,5 +332,65 @@ describe("sessions routes", () => {
     });
 
     expect(calls.deleteSession).toEqual([{ workspaceRoot: project.workspaceRoot, sessionId: session.sessionId }]);
+  });
+
+  test("GET /api/projects/:slug/sessions/:sessionId/tree returns root tree for root session", async () => {
+    const { app, project, workspaceRoot, sessions } = await createTestApp("tree-root");
+    const rootSession = createStoredSession("root-session-1", 1000, "Root");
+    sessions.set(`${workspaceRoot}\0root-session-1`, rootSession);
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/root-session-1/tree`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      root: {
+        session: {
+          sessionId: "root-session-1",
+          rootSessionId: "root-session-1",
+          title: "Root",
+          createdAt: 1000,
+        },
+        children: [],
+      },
+      diagnostics: [],
+    });
+  });
+
+  test("GET /api/projects/:slug/sessions/:sessionId/tree returns 400 for child session", async () => {
+    const { app, project, workspaceRoot, sessions } = await createTestApp("tree-child");
+    const childSession = createStoredSession("child-session", 1000, "Child", "root-session");
+    sessions.set(`${workspaceRoot}\0child-session`, childSession);
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/tree`);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: 'Session "child-session" is not a root session' },
+    });
+  });
+
+  test("GET /api/projects/:slug/sessions/:sessionId/tree returns 404 for missing session", async () => {
+    const { app, project } = await createTestApp("tree-missing");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/missing-session/tree`);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: "SESSION_NOT_FOUND", message: "Session not found: missing-session" },
+    });
+  });
+
+  test("DELETE /api/projects/:slug/sessions/:sessionId returns 409 for running session conflict", async () => {
+    const { app, project } = await createTestApp("delete-conflict");
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/conflict-session`, {
+      method: "DELETE",
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error.code).toBe("DELETE_CONFLICT");
+    expect(body.error.details).toEqual({ sessionIds: ["conflict-session"] });
   });
 });

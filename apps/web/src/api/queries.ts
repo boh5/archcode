@@ -7,6 +7,7 @@ import type {
   Project,
   Session,
   SessionSummary,
+  SessionTreeResponse,
   WorkflowState,
 } from "./types";
 
@@ -15,6 +16,7 @@ export const queryKeys = {
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   workflow: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "workflow"] as const,
+  tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
   diff: (slug: string) => ["projects", slug, "diff"] as const,
   directories: {
     list: (path: string, limit?: number) => ["directories", "list", path, limit] as const,
@@ -98,6 +100,23 @@ export function useSession(slug: string, sessionId: string) {
   return useQuery(sessionQueryOptions(slug, sessionId));
 }
 
+export function sessionTreeQueryOptions(slug: string, rootSessionId: string) {
+  return queryOptions({
+    queryKey: queryKeys.tree(slug, rootSessionId),
+    queryFn: async () => {
+      const response = await apiFetch<SessionTreeResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(rootSessionId)}/tree`,
+      );
+      return response;
+    },
+    enabled: slug.length > 0 && rootSessionId.length > 0,
+  });
+}
+
+export function useSessionTree(slug: string, rootSessionId: string) {
+  return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
+}
+
 export function useWorkflow(slug: string, sessionId: string) {
   return useQuery(workflowQueryOptions(slug, sessionId));
 }
@@ -150,6 +169,8 @@ function normalizeSessionSummary(session: SessionSummary): Session {
   return {
     id: session.sessionId,
     sessionId: session.sessionId,
+    rootSessionId: session.rootSessionId,
+    parentSessionId: session.parentSessionId,
     title: session.title,
     createdAt: session.createdAt,
     updatedAt: session.lastUpdatedAt,

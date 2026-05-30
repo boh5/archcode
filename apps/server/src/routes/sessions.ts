@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { NotRootSessionError, SessionDeleteConflictError } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { BadRequestError, SessionNotFoundError } from "../errors";
+import { BadRequestError, ConflictError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
 
 export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
@@ -32,13 +33,39 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
     }
   });
 
+  app.get("/:sessionId/tree", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
+
+    try {
+      return c.json(await runtime.listSessionTree(project.workspaceRoot, sessionId));
+    } catch (error) {
+      if (error instanceof NotRootSessionError) {
+        throw new BadRequestError(`Session "${sessionId}" is not a root session`);
+      }
+      if (isMissingFileError(error)) {
+        throw new SessionNotFoundError(sessionId);
+      }
+      throw error;
+    }
+  });
+
   app.delete("/:sessionId", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
 
-    await runtime.deleteSession(project.workspaceRoot, sessionId);
-
-    return c.json({ ok: true });
+    try {
+      await runtime.deleteSession(project.workspaceRoot, sessionId);
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof SessionDeleteConflictError) {
+        throw new ConflictError(error.sessionIds);
+      }
+      if (isMissingFileError(error)) {
+        throw new SessionNotFoundError(sessionId);
+      }
+      throw error;
+    }
   });
 
   return app;
