@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@specra/protocol";
 import { SessionStoreManager } from "./session-store-manager";
@@ -462,5 +462,66 @@ describe("SessionStoreManager", () => {
       expect((error as NotRootSessionError).sessionId).toBe(childSessionId);
       expect((error as NotRootSessionError).parentSessionId).toBe(parentSessionId);
     }
+  });
+
+  test("restart regression: lazy child lookup, root-only list, and tree contracts use persisted identity", async () => {
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    const grandchildSessionId = sessionId();
+    const siblingSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root", createdAt: 1 });
+    await writeSessionFile({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId, title: "child", createdAt: 2 });
+    await writeSessionFile({ sessionId: grandchildSessionId, rootSessionId, parentSessionId: childSessionId, title: "grandchild", createdAt: 3 });
+    await writeSessionFile({ sessionId: siblingSessionId, rootSessionId, parentSessionId: rootSessionId, title: "sibling", createdAt: 4 });
+
+    // Recreate the manager so the child -> root index must be rebuilt from disk.
+    const restartedManager = new SessionStoreManager({ logger: silentLogger });
+    const childFile = await restartedManager.getSessionFile(TMP_DIR, childSessionId);
+    const childStore = await restartedManager.getOrLoad(childSessionId, TMP_DIR);
+    const summaries = await restartedManager.listSessionSummaries(TMP_DIR);
+    const tree = await restartedManager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(childFile).toMatchObject({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child",
+    });
+    expect(childStore.getState()).toMatchObject({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child",
+    });
+    expect(summaries.map((session) => session.sessionId)).toEqual([rootSessionId]);
+    expect(summaries[0]).toMatchObject({
+      sessionId: rootSessionId,
+      rootSessionId,
+    });
+    expect(summaries[0]).not.toHaveProperty("parentSessionId");
+    expect(tree.diagnostics).toEqual([]);
+    expect(tree.root.session).toMatchObject({ sessionId: rootSessionId, rootSessionId });
+    expect(tree.root.children.map((node) => node.session.sessionId)).toEqual([childSessionId, siblingSessionId]);
+    expect(tree.root.children[0].session).toMatchObject({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    });
+    expect(tree.root.children[0].children[0].session).toMatchObject({
+      sessionId: grandchildSessionId,
+      rootSessionId,
+      parentSessionId: childSessionId,
+    });
+    const sessionsDirEntries = await readdir(join(TMP_DIR, ".specra", "sessions"), { withFileTypes: true });
+    expect(sessionsDirEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([`${rootSessionId}.json`]);
+    expect(sessionsDirEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)).toEqual([rootSessionId]);
+
+    const childAsRootManager = new SessionStoreManager({ logger: silentLogger });
+    await Bun.write(join(TMP_DIR, ".specra", "sessions", `${childSessionId}.json`), JSON.stringify({
+      ...childFile,
+      rootSessionId: childSessionId,
+      parentSessionId: rootSessionId,
+    }));
+    await expect(childAsRootManager.buildSessionTree(TMP_DIR, childSessionId)).rejects.toThrow(NotRootSessionError);
   });
 });

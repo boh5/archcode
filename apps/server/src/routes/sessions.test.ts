@@ -10,6 +10,8 @@ const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
 interface SessionSummaryBody {
   sessions: Array<{
     sessionId: string;
+    rootSessionId: string;
+    parentSessionId?: string;
     title?: string | null;
     createdAt: number;
     lastUpdatedAt?: number;
@@ -18,6 +20,8 @@ interface SessionSummaryBody {
 
 interface SessionFileBody {
   sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
   createdAt: number;
   title?: string | null;
   messages: unknown[];
@@ -29,6 +33,7 @@ type StoredSessionBody = SessionFileBody & {
   title: string | null;
   todos: unknown[];
   reminders: unknown[];
+  rootSessionId: string;
   parentSessionId?: string;
 };
 
@@ -36,16 +41,24 @@ class MissingSessionFileError extends Error {
   code = "ENOENT";
 }
 
-function createStoredSession(sessionId: string = crypto.randomUUID(), createdAt = Date.now(), title: string | null = null, parentSessionId?: string): StoredSessionBody {
+function createStoredSession(input: {
+  sessionId?: string;
+  createdAt?: number;
+  title?: string | null;
+  rootSessionId?: string;
+  parentSessionId?: string;
+} = {}): StoredSessionBody {
+  const sessionId = input.sessionId ?? crypto.randomUUID();
   return {
     sessionId,
-    createdAt,
-    title,
+    createdAt: input.createdAt ?? Date.now(),
+    title: input.title ?? null,
     messages: [],
     steps: [],
     todos: [],
     reminders: [],
-    ...(parentSessionId !== undefined ? { parentSessionId } : {}),
+    rootSessionId: input.rootSessionId ?? sessionId,
+    ...(input.parentSessionId !== undefined ? { parentSessionId: input.parentSessionId } : {}),
   };
 }
 
@@ -82,8 +95,11 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       calls.listSessions += 1;
       return [...sessions.entries()]
         .filter(([key]) => key.startsWith(`${workspaceRoot}\0`))
+        .filter(([, session]) => session.parentSessionId === undefined)
         .map(([, session]) => ({
           sessionId: session.sessionId,
+          rootSessionId: session.rootSessionId,
+          ...(session.parentSessionId === undefined ? {} : { parentSessionId: session.parentSessionId }),
           title: session.title,
           createdAt: session.createdAt,
         }))
@@ -96,16 +112,25 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       if (session.parentSessionId !== undefined) {
         throw new NotRootSessionError(rootSessionId, session.parentSessionId);
       }
-      return {
-        root: {
-          session: {
-            sessionId: rootSessionId,
-            rootSessionId,
-            title: session.title ?? null,
-            createdAt: session.createdAt,
-          },
-          children: [],
+      type RuntimeTreeNode = {
+        session: { sessionId: string; rootSessionId: string; parentSessionId?: string; title: string | null; createdAt: number };
+        children: RuntimeTreeNode[];
+      };
+      const toNode = (nodeSession: StoredSessionBody): RuntimeTreeNode => ({
+        session: {
+          sessionId: nodeSession.sessionId,
+          rootSessionId: nodeSession.rootSessionId,
+          ...(nodeSession.parentSessionId === undefined ? {} : { parentSessionId: nodeSession.parentSessionId }),
+          title: nodeSession.title ?? null,
+          createdAt: nodeSession.createdAt,
         },
+        children: [...sessions.entries()]
+          .filter(([entryKey, candidate]) => entryKey.startsWith(`${workspaceRoot}\0`) && candidate.parentSessionId === nodeSession.sessionId)
+          .map(([, candidate]) => toNode(candidate)),
+      });
+
+      return {
+        root: toNode(session),
         diagnostics: [],
       };
     },
@@ -171,7 +196,7 @@ function saveEmptySession(
   createdAt: number,
   title: string | null = null,
 ): void {
-  sessions.set(`${workspaceRoot}\0${sessionId}`, createStoredSession(sessionId, createdAt, title));
+  sessions.set(`${workspaceRoot}\0${sessionId}`, createStoredSession({ sessionId, createdAt, title }));
 }
 
 describe("sessions routes", () => {
@@ -221,6 +246,7 @@ describe("sessions routes", () => {
     expect(body.sessions).toEqual([
       {
         sessionId: session.sessionId,
+        rootSessionId: session.sessionId,
         title: null,
         createdAt: session.createdAt,
       },
@@ -320,6 +346,25 @@ describe("sessions routes", () => {
     expect(body.sessions.map((session) => session.sessionId)).toEqual(["newer", "older"]);
   });
 
+  test("GET /api/projects/:slug/sessions returns only root sessions with identity fields", async () => {
+    const { app, project, workspaceRoot, sessions } = await createTestApp("root-only-sessions");
+    sessions.set(`${workspaceRoot}\0root-session`, createStoredSession({ sessionId: "root-session", createdAt: 1_000, title: "Root" }));
+    sessions.set(`${workspaceRoot}\0child-session`, createStoredSession({ sessionId: "child-session", rootSessionId: "root-session", parentSessionId: "root-session", createdAt: 2_000, title: "Child" }));
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions`);
+    const body = (await res.json()) as SessionSummaryBody;
+
+    expect(res.status).toBe(200);
+    expect(body.sessions).toEqual([
+      {
+        sessionId: "root-session",
+        rootSessionId: "root-session",
+        title: "Root",
+        createdAt: 1_000,
+      },
+    ]);
+  });
+
   test("DELETE /api/projects/:slug/sessions/:sessionId delegates cleanup to runtime", async () => {
     const { app, project, calls } = await createTestApp("delete-session-runtime");
     const created = await app.request(`/api/projects/${project.slug}/sessions`, {
@@ -336,7 +381,7 @@ describe("sessions routes", () => {
 
   test("GET /api/projects/:slug/sessions/:sessionId/tree returns root tree for root session", async () => {
     const { app, project, workspaceRoot, sessions } = await createTestApp("tree-root");
-    const rootSession = createStoredSession("root-session-1", 1000, "Root");
+    const rootSession = createStoredSession({ sessionId: "root-session-1", createdAt: 1000, title: "Root" });
     sessions.set(`${workspaceRoot}\0root-session-1`, rootSession);
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/root-session-1/tree`);
@@ -359,7 +404,7 @@ describe("sessions routes", () => {
 
   test("GET /api/projects/:slug/sessions/:sessionId/tree returns 400 for child session", async () => {
     const { app, project, workspaceRoot, sessions } = await createTestApp("tree-child");
-    const childSession = createStoredSession("child-session", 1000, "Child", "root-session");
+    const childSession = createStoredSession({ sessionId: "child-session", rootSessionId: "root-session", parentSessionId: "root-session", createdAt: 1000, title: "Child" });
     sessions.set(`${workspaceRoot}\0child-session`, childSession);
 
     const res = await app.request(`/api/projects/${project.slug}/sessions/child-session/tree`);
@@ -392,5 +437,25 @@ describe("sessions routes", () => {
     const body = await res.json();
     expect(body.error.code).toBe("DELETE_CONFLICT");
     expect(body.error.details).toEqual({ sessionIds: ["conflict-session"] });
+  });
+
+  test("session routes expose tree contracts and delete conflict across persisted hierarchy", async () => {
+    const { app, project, workspaceRoot, sessions } = await createTestApp("hierarchy-contracts");
+    sessions.set(`${workspaceRoot}\0root`, createStoredSession({ sessionId: "root", createdAt: 1_000, title: "Root" }));
+    sessions.set(`${workspaceRoot}\0child`, createStoredSession({ sessionId: "child", rootSessionId: "root", parentSessionId: "root", createdAt: 2_000, title: "Child" }));
+    sessions.set(`${workspaceRoot}\0grandchild`, createStoredSession({ sessionId: "grandchild", rootSessionId: "root", parentSessionId: "child", createdAt: 3_000, title: "Grandchild" }));
+
+    const treeRes = await app.request(`/api/projects/${project.slug}/sessions/root/tree`);
+    const treeBody = await treeRes.json();
+    const childTreeRes = await app.request(`/api/projects/${project.slug}/sessions/child/tree`);
+    const conflictRes = await app.request(`/api/projects/${project.slug}/sessions/conflict-session`, { method: "DELETE" });
+
+    expect(treeRes.status).toBe(200);
+    expect(treeBody.root.children[0]).toMatchObject({
+      session: { sessionId: "child", rootSessionId: "root", parentSessionId: "root" },
+      children: [{ session: { sessionId: "grandchild", rootSessionId: "root", parentSessionId: "child" } }],
+    });
+    expect(childTreeRes.status).toBe(400);
+    expect(conflictRes.status).toBe(409);
   });
 });

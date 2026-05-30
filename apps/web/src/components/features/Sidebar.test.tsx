@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Project } from "../../api/types";
+import type { Project, Session, SessionTreeResponse } from "../../api/types";
 
 interface ElementLike {
   type?: unknown;
@@ -78,10 +78,12 @@ const useCreateSession = mock(() => ({
   isPending: false,
 }));
 let projects: Project[] = [];
+let sessions: Session[] = [];
+let sessionTree: SessionTreeResponse | null = null;
 let createSessionPending = false;
 const useProjects = mock(() => ({ data: projects }));
-const useSessions = mock((_slug: string) => ({ data: [] }));
-const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: null }));
+const useSessions = mock((_slug: string) => ({ data: sessions }));
+const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: sessionTree }));
 const useWorkflow = mock((_slug: string, _sessionId: string) => ({ data: null }));
 
 let Sidebar: SidebarComponent;
@@ -169,6 +171,8 @@ function render(): unknown {
 describe("Sidebar", () => {
   beforeEach(() => {
     projects = [];
+    sessions = [];
+    sessionTree = null;
     createSessionPending = false;
     useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "" }));
     for (const fn of [
@@ -216,5 +220,58 @@ describe("Sidebar", () => {
     )[0];
 
     expect(button?.props?.disabled).toBe(true);
+  });
+
+  test("filters sidebar list to roots and fetches active child's root tree", () => {
+    projects = [project];
+    sessions = [
+      {
+        id: "root-session",
+        sessionId: "root-session",
+        rootSessionId: "root-session",
+        title: "Root Session",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "child-session",
+        sessionId: "child-session",
+        rootSessionId: "root-session",
+        parentSessionId: "root-session",
+        title: "Child Session",
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    sessionTree = {
+      root: {
+        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        children: [
+          {
+            session: {
+              sessionId: "child-session",
+              rootSessionId: "root-session",
+              parentSessionId: "root-session",
+              title: "Child Session",
+              createdAt: 2,
+            },
+            children: [],
+          },
+        ],
+      },
+      diagnostics: [],
+    };
+    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "child-session" }));
+
+    const tree = render();
+    const sessionItems = findAll(tree, (element) => typeName(element) === "SessionItem");
+    const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
+
+    expect(useSessionTree).toHaveBeenCalledWith("specra", "root-session");
+    expect(textContent(tree)).toContain("Agent Tree");
+    expect(sessionItems).toHaveLength(1);
+    expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
+    expect(agentNodes).toHaveLength(2);
+    expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
   });
 });

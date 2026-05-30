@@ -74,6 +74,7 @@ class MockAgent implements Agent {
 
 interface FakeManagerOptions {
   maxConcurrentSessions?: number;
+  storeManager?: SessionStoreManager;
 }
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
@@ -104,6 +105,7 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
 
 function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
   const sessionAgentManager = createFakeManager(agents, options);
+  const runnerStoreManager = options.storeManager ?? storeManager;
   const cleanupDeferredSession = mock(() => undefined);
   const requestPermission = mock(async (_root: string, _sessionId: string, _request: ToolConfirmationRequest): Promise<ToolConfirmationResult> => "approve_once");
   const requestQuestion = mock(async (_root: string, _sessionId: string, _request: AskUserRequest): Promise<AskUserResponse> => ({ answers: [] }));
@@ -111,7 +113,7 @@ function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOpt
   const untrackSession = mock(() => undefined);
   const runner = new AgentJobRunner({
     sessionAgentManager,
-    storeManager,
+    storeManager: runnerStoreManager,
     requestPermission,
     requestQuestion,
     cleanupDeferredSession,
@@ -272,6 +274,44 @@ describe("AgentJobRunner", () => {
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(false);
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, grandchildId)).exists()).toBe(false);
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, siblingId)).exists()).toBe(true);
+  });
+
+  test("restart regression: child subtree and root cascade deletes resolve persisted tree from cold manager", async () => {
+    const firstRootId = crypto.randomUUID();
+    const firstChildId = crypto.randomUUID();
+    const firstGrandchildId = crypto.randomUUID();
+    const firstSiblingId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: firstRootId, title: "first-root" });
+    await writeSessionFile({ sessionId: firstChildId, rootSessionId: firstRootId, parentSessionId: firstRootId, title: "first-child" });
+    await writeSessionFile({ sessionId: firstGrandchildId, rootSessionId: firstRootId, parentSessionId: firstChildId, title: "first-grandchild" });
+    await writeSessionFile({ sessionId: firstSiblingId, rootSessionId: firstRootId, parentSessionId: firstRootId, title: "first-sibling" });
+    const coldChildStoreManager = new SessionStoreManager({ logger: silentLogger });
+    const { runner: childDeleteRunner, sessionAgentManager: childAgentManager, untrackSession: untrackChildSession } = createRunner({}, { storeManager: coldChildStoreManager });
+
+    await childDeleteRunner.deleteSession(workspaceRoot, firstChildId);
+
+    expect(await Bun.file(getRootSessionPath(workspaceRoot, firstRootId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstChildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstGrandchildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstSiblingId)).exists()).toBe(true);
+    expect(childAgentManager.dispose).toHaveBeenCalledTimes(2);
+    expect(untrackChildSession).toHaveBeenCalledTimes(2);
+
+    const secondRootId = crypto.randomUUID();
+    const secondChildId = crypto.randomUUID();
+    const secondGrandchildId = crypto.randomUUID();
+    await writeSessionFile({ sessionId: secondRootId, title: "second-root" });
+    await writeSessionFile({ sessionId: secondChildId, rootSessionId: secondRootId, parentSessionId: secondRootId, title: "second-child" });
+    await writeSessionFile({ sessionId: secondGrandchildId, rootSessionId: secondRootId, parentSessionId: secondChildId, title: "second-grandchild" });
+    const coldRootStoreManager = new SessionStoreManager({ logger: silentLogger });
+    const { runner: rootDeleteRunner, sessionAgentManager: rootAgentManager, untrackSession: untrackRootSession } = createRunner({}, { storeManager: coldRootStoreManager });
+
+    await rootDeleteRunner.deleteSession(workspaceRoot, secondRootId);
+
+    expect(await Bun.file(getRootSessionPath(workspaceRoot, secondRootId)).exists()).toBe(false);
+    expect(await Bun.file(getRootSessionDir(workspaceRoot, secondRootId)).exists()).toBe(false);
+    expect(rootAgentManager.dispose).toHaveBeenCalledTimes(3);
+    expect(untrackRootSession).toHaveBeenCalledTimes(3);
   });
 
   test("running subtree delete aborts every running subtree session before removal", async () => {

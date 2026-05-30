@@ -60,6 +60,25 @@ describe("web session store registry", () => {
     expect(findWebSessionStore("registry-session", "other-slug")).toBeUndefined();
   });
 
+  test("new session stores carry root identity without removed child metadata", () => {
+    const rootStore = createWebSessionStore("root-session", "identity");
+    const childStore = createWebSessionStore("child-session", "identity");
+
+    childStore.getState().initializeFromSnapshot({
+      rootSessionId: "root-session",
+      parentSessionId: "root-session",
+      eventCursor: -1,
+    });
+
+    expect(rootStore.getState().rootSessionId).toBe("root-session");
+    expect(childStore.getState().rootSessionId).toBe("root-session");
+    expect(childStore.getState().parentSessionId).toBe("root-session");
+    expect(rootStore.getState()).not.toHaveProperty("childSessionIds");
+    expect(rootStore.getState()).not.toHaveProperty("subAgentDescriptions");
+    expect(childStore.getState()).not.toHaveProperty("childSessionIds");
+    expect(childStore.getState()).not.toHaveProperty("subAgentDescriptions");
+  });
+
   test("evicts least-recent idle stores down to twenty", () => {
     for (let index = 0; index < 22; index += 1) {
       createWebSessionStore(`idle-${index}`, "lru");
