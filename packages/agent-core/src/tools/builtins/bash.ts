@@ -9,7 +9,7 @@ import type { ProcessRunnerResult } from "../../process/types";
 
 export const BashInputSchema = z
   .object({
-    description: z.string().min(1),
+    description: z.string().min(1).describe("Brief summary of what the command does"),
     command: z.string().min(1),
     cwd: z.string().optional(),
     timeoutMs: z.number().int().positive().optional(),
@@ -114,7 +114,7 @@ function formatProcessRunnerResult(
 export const bashTool = defineTool({
   name: "bash",
   description:
-    "Runs a non-persistent bash command inside the workspace with guarded permissions, minimal environment, closed stdin, and optional timeout.",
+    "Executes a non-persistent bash command inside the workspace with guarded permissions, minimal environment, closed stdin, and optional timeout.",
   inputSchema: BashInputSchema,
   traits: { readOnly: false, destructive: true, concurrencySafe: false },
   prepareInput: (raw, ctx) => {
