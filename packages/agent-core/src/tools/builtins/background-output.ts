@@ -1,21 +1,38 @@
 import { z } from "zod";
+import type { StoreApi } from "zustand";
+import type { SessionStoreState, StoredMessage, StoredPart, ToolPart } from "../../store/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { getLastAssistantText } from "./delegate";
 
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 600_000;
+const DEFAULT_MESSAGE_LIMIT = 20;
+const MAX_MESSAGE_LIMIT = 100;
+const TOOL_RESULT_PART_CAP = 2_000;
+const REASONING_PART_CAP = 1_000;
+const GLOBAL_OUTPUT_CAP = 8_000;
+
 export const BackgroundOutputInputSchema = z
   .object({
     session_id: z.string(),
+    block: z.boolean().default(false),
+    timeout_ms: z.number().max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS),
+    full_session: z.boolean().default(false),
+    message_limit: z.number().max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT),
+    since_message_id: z.string().optional(),
+    include_tool_results: z.boolean().default(false),
+    include_reasoning: z.boolean().default(false),
   })
   .strict();
 
 export type BackgroundOutputInput = z.infer<typeof BackgroundOutputInputSchema>;
 
-export function executeBackgroundOutput(
+export async function executeBackgroundOutput(
   input: BackgroundOutputInput,
   ctx: ToolExecutionContext,
-): string | ToolExecutionResult {
+): Promise<string | ToolExecutionResult> {
   if (!ctx.store.getState().childSessionIds.has(input.session_id)) {
     return createToolErrorResult({
       kind: "execution",
@@ -24,7 +41,7 @@ export function executeBackgroundOutput(
     });
   }
 
-  const childStore = ctx.storeManager.get(input.session_id, ctx.workspaceRoot);
+  const childStore = await getChildStore(input, ctx);
   if (childStore === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -33,17 +50,199 @@ export function executeBackgroundOutput(
     });
   }
 
-  const text = getLastAssistantText(childStore.getState().messages);
-  if (text.length === 0) {
-    return "Sub-agent is still running. Use wait_for_reminder to wait for completion.";
+  const waitResult = input.block && childStore.getState().isRunning
+    ? await waitForChildToStop(childStore, input.timeout_ms, ctx.abort)
+    : "not_waited";
+
+  const output = input.full_session
+    ? renderFullSession(input, childStore.getState(), waitResult)
+    : renderLatest(input.session_id, childStore.getState(), waitResult);
+
+  return truncateOutput(output);
+}
+
+async function getChildStore(
+  input: BackgroundOutputInput,
+  ctx: ToolExecutionContext,
+): Promise<StoreApi<SessionStoreState> | undefined> {
+  const liveStore = ctx.storeManager.get(input.session_id, ctx.workspaceRoot);
+  if (liveStore !== undefined) return liveStore;
+
+  try {
+    return await ctx.storeManager.getOrLoad(input.session_id, ctx.workspaceRoot);
+  } catch {
+    return undefined;
+  }
+}
+
+type WaitResult = "not_waited" | "stopped" | "timed_out" | "aborted";
+
+function waitForChildToStop(
+  childStore: StoreApi<SessionStoreState>,
+  timeoutMs: number,
+  abortSignal: AbortSignal,
+): Promise<WaitResult> {
+  if (!childStore.getState().isRunning) return Promise.resolve("stopped");
+  if (abortSignal.aborted) return Promise.resolve("aborted");
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timeout !== undefined) clearTimeout(timeout);
+      unsubscribe();
+      abortSignal.removeEventListener("abort", onAbort);
+    };
+
+    const settle = (result: WaitResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const onAbort = () => settle("aborted");
+    const unsubscribe = childStore.subscribe((state) => {
+      if (!state.isRunning) settle("stopped");
+    });
+
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => settle("timed_out"), timeoutMs);
+
+    if (!childStore.getState().isRunning) settle("stopped");
+  });
+}
+
+function renderLatest(sessionId: string, state: SessionStoreState, waitResult: WaitResult): string {
+  const lines = [
+    `# Background session ${sessionId}`,
+    "",
+    `Status: ${sessionStatus(state)}`,
+    "",
+    "## Latest assistant output",
+  ];
+
+  const text = getLastAssistantText(state.messages);
+  lines.push(text.length > 0 ? text : "_No assistant output yet._");
+
+  const note = statusNote(state, waitResult);
+  if (note.length > 0) {
+    lines.push("", note);
   }
 
-  return text;
+  return lines.join("\n");
+}
+
+function renderFullSession(
+  input: BackgroundOutputInput,
+  state: SessionStoreState,
+  waitResult: WaitResult,
+): string {
+  const messages = selectMessages(state.messages, input.since_message_id, input.message_limit);
+  const lines = [
+    `# Background session ${state.sessionId}`,
+    "",
+    `Status: ${sessionStatus(state)}`,
+    `Messages: ${messages.length}`,
+  ];
+
+  const note = statusNote(state, waitResult);
+  if (note.length > 0) lines.push("", note);
+
+  if (messages.length === 0) {
+    lines.push("", "_No messages matched the requested cursor/limit._");
+    return lines.join("\n");
+  }
+
+  for (const message of messages) {
+    lines.push("", `## ${message.role} ${message.id}`);
+    const renderedParts = message.parts
+      .map((part) => renderPart(part, input))
+      .filter((part) => part.length > 0);
+    lines.push(renderedParts.length > 0 ? renderedParts.join("\n\n") : "_No visible parts._");
+  }
+
+  return lines.join("\n");
+}
+
+function selectMessages(
+  messages: readonly StoredMessage[],
+  sinceMessageId: string | undefined,
+  limit: number,
+): readonly StoredMessage[] {
+  const startIndex = sinceMessageId === undefined
+    ? 0
+    : Math.max(messages.findIndex((message) => message.id === sinceMessageId) + 1, 0);
+
+  return messages.slice(startIndex, startIndex + limit);
+}
+
+function renderPart(part: StoredPart, input: BackgroundOutputInput): string {
+  switch (part.type) {
+    case "text":
+      return part.text;
+    case "reasoning":
+      return input.include_reasoning
+        ? `### Reasoning\n${truncatePart(part.text, REASONING_PART_CAP)}`
+        : "";
+    case "tool":
+      return renderToolPart(part, input.include_tool_results);
+    case "compaction":
+      return `### Compaction\n${part.summary}`;
+    case "system-notice":
+      return `### System notice\n${part.notice}`;
+  }
+}
+
+function renderToolPart(part: ToolPart, includeToolResults: boolean): string {
+  const lines = [`- Tool call: ${part.toolName} [${part.state}]`];
+
+  if (!includeToolResults) return lines.join("\n");
+
+  if (part.state === "completed") {
+    lines.push("", "```text", truncatePart(part.output, TOOL_RESULT_PART_CAP), "```");
+  } else if (part.state === "error") {
+    lines.push("", "```text", truncatePart(part.errorMessage, TOOL_RESULT_PART_CAP), "```");
+  }
+
+  return lines.join("\n");
+}
+
+function sessionStatus(state: SessionStoreState): string {
+  if (state.isRunning) return "running";
+  return state.runs.at(-1)?.status ?? "idle";
+}
+
+function statusNote(state: SessionStoreState, waitResult: WaitResult): string {
+  if (waitResult === "timed_out") {
+    return "Timed out waiting for the sub-agent. Current output is shown above.";
+  }
+
+  if (waitResult === "aborted") {
+    return "Stopped waiting because the parent run was aborted. Current output is shown above.";
+  }
+
+  if (state.isRunning) {
+    return "Sub-agent is still running. Use block=true to wait, or wait_for_reminder for completion notification.";
+  }
+
+  return "";
+}
+
+function truncatePart(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}\n[part truncated]`;
+}
+
+function truncateOutput(value: string): string {
+  if (value.length <= GLOBAL_OUTPUT_CAP) return value;
+  return `${value.slice(0, GLOBAL_OUTPUT_CAP)}\n\n[output truncated]`;
 }
 
 export const backgroundOutputTool = defineTool({
   name: "background_output",
-  description: "Read the latest assistant output from a delegated background sub-agent session.",
+  description: "Read latest or full transcript output from a direct child background sub-agent session.",
   inputSchema: BackgroundOutputInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: executeBackgroundOutput,

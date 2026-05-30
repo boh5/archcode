@@ -11,6 +11,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (s) => s.title, slug);
+  const stats = useSessionStore(sessionId, (s) => s.stats, slug);
   const { data: workflow } = useWorkflow(slug, sessionId);
   const postCommand = usePostCommand();
 
@@ -20,13 +21,19 @@ export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps)
 
   const wf = workflow as WorkflowState | null | undefined;
   const pipelineStage = wf ? (wf.currentStep ?? wf.stage ?? null) : null;
+  const hasStats = stats && (stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0);
 
   return (
     <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
-      <div className="flex items-center gap-2.5">
-        <span className="font-semibold text-sm text-text-primary">{title ?? "Untitled"}</span>
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span className="font-semibold text-sm text-text-primary truncate">{title ?? "Untitled"}</span>
         {pipelineStage && (
-          <span className="text-xs text-text-muted">· Pipeline: {pipelineStage}</span>
+          <span className="text-xs text-text-muted whitespace-nowrap">· Pipeline: {pipelineStage}</span>
+        )}
+        {hasStats && (
+          <span className="text-xs text-text-tertiary whitespace-nowrap">
+            · Messages: {stats.messages.total} · Tools: {stats.tools.calls} · Tokens: {stats.usage.totalTokens.toLocaleString()}
+          </span>
         )}
       </div>
       <div className="flex items-center gap-1.5">

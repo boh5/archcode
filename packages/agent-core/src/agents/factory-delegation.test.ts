@@ -477,6 +477,7 @@ describe("AgentFactory.delegate", () => {
     expect(reminder?.source).toEqual({ type: "subagent_timed_out", sessionId: handle.sessionId });
     expect(reminder?.delivery).toBe("on_demand");
     expect(reminder?.terminalState).toBe("timed_out");
+    expect(reminder?.content).toContain(`background_output(session_id="${handle.sessionId}")`);
     expect(reminder?.targetSessionId).toBe(parentStore.getState().sessionId);
   });
 
@@ -527,6 +528,7 @@ describe("AgentFactory.delegate", () => {
     await success.result;
     expect(successParent.getState().reminders.at(-1)?.source).toEqual({ type: "subagent_completed", sessionId: success.sessionId });
     expect(successParent.getState().reminders.at(-1)?.terminalState).toBe("completed");
+    expect(successParent.getState().reminders.at(-1)?.content).toContain(`background_output(session_id="${success.sessionId}")`);
 
     const failureFactory = makeFactory();
     const originalCreateAgent = failureFactory.createAgent.bind(failureFactory);
@@ -547,6 +549,7 @@ describe("AgentFactory.delegate", () => {
     await expectResultRejects(failure.result, "boom");
     expect(failureParent.getState().reminders.at(-1)?.source).toEqual({ type: "subagent_failed", sessionId: failure.sessionId });
     expect(failureParent.getState().reminders.at(-1)?.terminalState).toBe("failed");
+    expect(failureParent.getState().reminders.at(-1)?.content).toContain(`background_output(session_id="${failure.sessionId}")`);
     await expect(failure.result).rejects.toThrow(SubAgentError);
   });
 

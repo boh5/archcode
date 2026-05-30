@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
-import { MAX_EVENTS, reduceStreamEvent } from "@specra/protocol";
+import { MAX_EVENTS, createEmptySessionStats, reduceStreamEvent } from "@specra/protocol";
 import type {
   GlobalSessionEventEnvelope,
   PermissionTerminalEvent,
@@ -11,6 +11,8 @@ import type {
   SessionEventPayload,
   SessionMessage,
   SessionProjection,
+  SessionRun,
+  SessionStats,
   SessionStep,
   SessionTodo,
   StreamEvent,
@@ -56,6 +58,8 @@ export interface WebSessionStoreState extends SessionProjection {
     childSessionIds?: string[];
     parentSessionId?: string;
     subAgentDescriptions?: [string, string][];
+    stats?: SessionStats;
+    runs?: SessionRun[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
   }) => void;
@@ -250,6 +254,8 @@ export function createWebSessionStore(
     title: null,
     messages: [],
     steps: [],
+    stats: createEmptySessionStats(),
+    runs: [],
     todos: [],
     reminders: [],
     childSessionIds: new Set(),
@@ -362,6 +368,12 @@ export function createWebSessionStore(
         }
         if (data.createdAt !== undefined && data.createdAt > 0) {
           updates.createdAt = data.createdAt;
+        }
+        if (data.stats !== undefined) {
+          updates.stats = data.stats;
+        }
+        if (data.runs !== undefined) {
+          updates.runs = data.runs;
         }
         if (data.childSessionIds !== undefined) {
           updates.childSessionIds = new Set(data.childSessionIds);

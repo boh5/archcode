@@ -35,6 +35,8 @@ export function SessionRoute() {
         childSessionIds,
         parentSessionId,
         subAgentDescriptions,
+        stats,
+        runs,
         eventCursor,
       } = session;
       store.getState().initializeFromSnapshot({
@@ -46,6 +48,8 @@ export function SessionRoute() {
         childSessionIds,
         parentSessionId,
         subAgentDescriptions,
+        stats,
+        runs,
         eventCursor,
       });
     }

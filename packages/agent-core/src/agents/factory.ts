@@ -226,7 +226,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
   return factory;
 }
 
-type SubAgentTerminalStatus = "completed" | "failed" | "timed_out" | "cancelled";
+type SubAgentTerminalStatus = "completed" | "failed" | "timed_out" | "cancelled" | "max_steps" | "aborted";
 
 function runWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortReasonToError(signal.reason));
@@ -275,7 +275,7 @@ function appendTerminalReminder(
     delivery: "on_demand",
     sessionId,
     terminalState: status,
-    content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output with this session_id to read the result.`,
+    content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
     createdAt: Date.now(),
     consumedAt: null,
     targetSessionId: parentStore.getState().sessionId,
@@ -287,9 +287,13 @@ function classifyTerminalStatus(error: unknown, signal: AbortSignal): SubAgentTe
   if (signal.aborted) {
     const reason = signal.reason;
     if (reason instanceof Error && /timed out/i.test(reason.message)) return "timed_out";
+    if (reason instanceof Error && /max steps/i.test(reason.message)) return "max_steps";
     return "cancelled";
   }
   if (error instanceof Error && /timed out/i.test(error.message)) return "timed_out";
+  if (error instanceof Error && /max steps/i.test(error.message)) return "max_steps";
+  if (error instanceof Error && /aborted/i.test(error.message)) return "aborted";
+  if (error instanceof Error && /cancelled|canceled/i.test(error.message)) return "cancelled";
   return "failed";
 }
 
@@ -302,6 +306,7 @@ function terminalSource(status: SubAgentTerminalStatus, sessionId: string): Remi
 
 function formatStatus(status: SubAgentTerminalStatus): string {
   if (status === "timed_out") return "timed out";
+  if (status === "max_steps") return "reached max steps";
   return status;
 }
 
