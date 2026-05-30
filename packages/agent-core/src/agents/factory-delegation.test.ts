@@ -260,6 +260,14 @@ describe("AgentFactory.delegate", () => {
     await rm(tmpRoot, { recursive: true, force: true });
   });
 
+  async function waitForFile(path: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (await Bun.file(path).exists()) return;
+      await Bun.sleep(1);
+    }
+    throw new Error(`Timed out waiting for file: ${path}`);
+  }
+
   test("creates child sessions and returns a run handle", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
@@ -311,6 +319,32 @@ describe("AgentFactory.delegate", () => {
     const childStore = testStoreManager.get(handle.sessionId, tmpRoot);
     expect(childStore?.getState().parentSessionId).toBe(parentStore.getState().sessionId);
     expect(childStore?.getState().rootSessionId).toBe(parentStore.getState().rootSessionId);
+    await handle.result;
+  });
+
+  test("delegation first persists child under root without top-level transient file", async () => {
+    setupResolvingStreamText();
+    const factory = makeFactory();
+    const parentStore = testStoreManager.create(crypto.randomUUID(), tmpRoot);
+
+    const handle = await factory.delegate({
+      parentStore,
+      parentAgentName: "orchestrator",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      description: "Inspect files",
+    });
+    const childPath = join(tmpRoot, "sessions", parentStore.getState().rootSessionId, `${handle.sessionId}.json`);
+    await waitForFile(childPath);
+    const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
+
+    expect(await Bun.file(join(tmpRoot, "sessions", `${handle.sessionId}.json`)).exists()).toBe(false);
+    expect(childFile).toMatchObject({
+      sessionId: handle.sessionId,
+      rootSessionId: parentStore.getState().rootSessionId,
+      parentSessionId: parentStore.getState().sessionId,
+    });
     await handle.result;
   });
 

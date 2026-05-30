@@ -194,10 +194,13 @@ export class AgentJobRunner {
     if (sessionId === rootSessionId) {
       await removeIfExists(getRootSessionPath(workspaceRoot, rootSessionId));
       await rm(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true, force: true });
+      for (const id of sessionIds) this.#config.storeManager.delete(id, workspaceRoot);
+      this.#config.storeManager.delete(rootSessionId, workspaceRoot, { forgetWorkspaceIndex: true });
     } else {
       for (const id of sessionIds) {
         await removeIfExists(getSessionPath(workspaceRoot, rootSessionId, id));
       }
+      for (const id of sessionIds) this.#config.storeManager.delete(id, workspaceRoot);
     }
   }
 

@@ -276,6 +276,23 @@ describe("AgentJobRunner", () => {
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, siblingId)).exists()).toBe(true);
   });
 
+  test("child subtree delete removes descendant IDs from the root index", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    await writeSessionFile({ sessionId: rootId });
+    await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
+    await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
+    await manager.resolveRootSessionId(grandchildId, workspaceRoot);
+    const { runner } = createRunner({}, { storeManager: manager });
+
+    await runner.deleteSession(workspaceRoot, childId);
+
+    await expect(manager.resolveRootSessionId(childId, workspaceRoot)).rejects.toThrow(`Session file not found for "${childId}"`);
+    await expect(manager.resolveRootSessionId(grandchildId, workspaceRoot)).rejects.toThrow(`Session file not found for "${grandchildId}"`);
+  });
+
   test("restart regression: child subtree and root cascade deletes resolve persisted tree from cold manager", async () => {
     const firstRootId = crypto.randomUUID();
     const firstChildId = crypto.randomUUID();

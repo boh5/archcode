@@ -407,6 +407,8 @@ export interface SessionStep {
 
 export interface SessionProjection {
   sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
   title: string | null;
   messages: SessionMessage[];
   steps: SessionStep[];

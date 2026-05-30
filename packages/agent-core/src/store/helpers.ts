@@ -204,7 +204,7 @@ const StepInfoSchema = z.strictObject({
   error: z.string().optional(),
 });
 
-const SessionFileSchema = z.strictObject({
+export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
   title: z.string().nullable().optional(),

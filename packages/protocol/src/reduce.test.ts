@@ -15,6 +15,7 @@ import type {
 function createProjection(overrides: Partial<SessionProjection> = {}): SessionProjection {
   return {
     sessionId: "session-test",
+    rootSessionId: "session-test",
     title: null,
     messages: [],
     steps: [],

@@ -46,6 +46,14 @@ describe("SessionStoreManager", () => {
     );
   }
 
+  async function waitForFile(path: string): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (await Bun.file(path).exists()) return;
+      await Bun.sleep(1);
+    }
+    throw new Error(`Timed out waiting for file: ${path}`);
+  }
+
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -168,6 +176,32 @@ describe("SessionStoreManager", () => {
     expect(file.sessionId).toBe(childSessionId);
     expect(file.rootSessionId).toBe(rootSessionId);
     expect(file.title).toBe("child-title");
+  });
+
+  test("create() persists child sessions directly under root without top-level transient file", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const childSessionId = sessionId();
+    manager.create(rootSessionId, TMP_DIR);
+
+    const childStore = manager.create(childSessionId, TMP_DIR, {
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child-title",
+    });
+    await manager.getSessionFile(TMP_DIR, childSessionId);
+
+    expect(childStore.getState()).toMatchObject({
+      sessionId: childSessionId,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+      title: "child-title",
+    });
+    expect(await Bun.file(join(TMP_DIR, ".specra", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
+    const childPath = join(TMP_DIR, ".specra", "sessions", rootSessionId, `${childSessionId}.json`);
+    await waitForFile(childPath);
+    const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
+    expect(childFile).toMatchObject({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId });
   });
 
   test("getSessionFile() reuses the lazy index after the first scan", async () => {
@@ -405,6 +439,37 @@ describe("SessionStoreManager", () => {
       "root_mismatch",
       "session_id_mismatch",
     ]);
+  });
+
+  test("buildSessionTree() validates malformed mismatch files and only uses raw JSON for diagnostics", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const rootSessionId = sessionId();
+    const fileSessionId = sessionId();
+    const jsonSessionId = sessionId();
+    await writeSessionFile({ sessionId: rootSessionId, title: "root" });
+    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    await Bun.write(join(rootDir, `${fileSessionId}.json`), JSON.stringify({
+      sessionId: jsonSessionId,
+      createdAt: 1000,
+      title: "invalid-node",
+      messages: [],
+      steps: [],
+      stats: createEmptySessionStats(),
+      runs: [],
+      todos: [{ id: "a", content: "first", status: "in_progress" }, { id: "b", content: "second", status: "in_progress" }],
+      reminders: [],
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    }));
+
+    const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
+
+    expect(tree.root.children).toEqual([]);
+    expect(tree.diagnostics).toHaveLength(1);
+    expect(tree.diagnostics[0]).toMatchObject({
+      type: "invalid_json",
+      sessionId: jsonSessionId,
+    });
   });
 
   test("buildSessionTree() diagnoses duplicate session IDs", async () => {

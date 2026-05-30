@@ -136,11 +136,12 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       );
 
       const childSessionId = crypto.randomUUID();
-      const childStore = config.storeManager.create(childSessionId, config.workspaceRoot);
       const childTitle = options.title ?? options.description;
-      childStore.getState().setParentSessionId(parentSessionId);
-      childStore.setState({ rootSessionId: options.parentStore.getState().rootSessionId });
-      if (childTitle !== undefined) childStore.getState().setTitle(childTitle);
+      const childStore = config.storeManager.create(childSessionId, config.workspaceRoot, {
+        rootSessionId: options.parentStore.getState().rootSessionId,
+        parentSessionId,
+        ...(childTitle === undefined ? {} : { title: childTitle }),
+      });
 
       const childAbortController = new AbortController();
       const timeout = childPolicy.timeoutMs > 0

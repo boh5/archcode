@@ -12,7 +12,7 @@ import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "../logger";
 import { NotRootSessionError } from "./errors";
-import { sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
+import { SessionFileSchema, sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
 import { __hasSessionsDirOverrideForTest, getRootSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
@@ -26,6 +26,12 @@ import {
 
 export interface SessionStoreManagerOptions {
   readonly logger: Logger;
+}
+
+export interface CreateSessionOptions {
+  readonly rootSessionId?: string;
+  readonly parentSessionId?: string;
+  readonly title?: string;
 }
 
 export class SessionStoreManager {
@@ -65,13 +71,15 @@ export class SessionStoreManager {
     this.#rootIdIndex.delete(this.indexKey(sessionId, workspaceRoot));
   }
 
-  create(sessionId: string, workspaceRoot?: string): StoreApi<SessionStoreState> {
+  create(sessionId: string, workspaceRoot?: string, options: CreateSessionOptions = {}): StoreApi<SessionStoreState> {
     const key = this.key(sessionId, workspaceRoot);
     const existing = this.#registry.get(key);
     if (existing) return existing;
 
     const shouldPersist = workspaceRoot !== undefined || __hasSessionsDirOverrideForTest();
     const persistWorkspaceRoot = workspaceRoot ?? "__test__";
+    const rootSessionId = options.rootSessionId ?? sessionId;
+    const parentSessionId = options.parentSessionId;
     let store: StoreApi<SessionStoreState>;
 
     const persist = () => {
@@ -101,7 +109,7 @@ export class SessionStoreManager {
     store = createStore<SessionStoreState>((set, get) => ({
       sessionId,
       createdAt: Date.now(),
-      title: null,
+      title: options.title ?? null,
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
@@ -109,8 +117,8 @@ export class SessionStoreManager {
       todos: [],
       reminders: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
-      rootSessionId: sessionId,
-      parentSessionId: undefined,
+      rootSessionId,
+      parentSessionId,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -156,6 +164,7 @@ export class SessionStoreManager {
         persist();
       },
       setParentSessionId: (parentSessionId: string | undefined) => {
+        if (get().parentSessionId === parentSessionId) return;
         set({ parentSessionId });
         persist();
       },
@@ -164,7 +173,7 @@ export class SessionStoreManager {
     }));
 
     this.#registry.set(key, store);
-    if (shouldPersist) this.#registerRootSessionId(sessionId, persistWorkspaceRoot, sessionId);
+    if (shouldPersist) this.#registerRootSessionId(sessionId, persistWorkspaceRoot, rootSessionId);
     if (!this.#hydrating.has(key)) persist();
     return store;
   }
@@ -314,7 +323,11 @@ export class SessionStoreManager {
 
     this.#hydrating.add(key);
     try {
-      const store = this.create(sessionId, workspaceRoot);
+      const store = this.create(sessionId, workspaceRoot, {
+        rootSessionId: parsed.rootSessionId,
+        parentSessionId: parsed.parentSessionId,
+        ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
+      });
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
@@ -440,25 +453,11 @@ async function readDescendantSessionEntries(
 
 async function readSessionFileForTree(
   sessionId: string,
-  workspaceRoot: string,
-  rootSessionId: string,
+  _workspaceRoot: string,
+  _rootSessionId: string,
   filePath: string,
   diagnostics: SessionTreeDiagnostic[],
 ): Promise<SessionFile | undefined> {
-  if (sessionId === rootSessionId) {
-    return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
-  }
-
-  try {
-    return await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
-  } catch (error) {
-    if (!isLikelySessionIdMismatch(error)) {
-      pushDiagnostic(diagnostics, "invalid_json", sessionId, filePath,
-        `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
-      return undefined;
-    }
-  }
-
   return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
 }
 
@@ -467,17 +466,27 @@ async function readRawSessionFileForTree(
   filePath: string,
   diagnostics: SessionTreeDiagnostic[],
 ): Promise<SessionFile | undefined> {
+  let raw: unknown;
   try {
-    return JSON.parse(await Bun.file(filePath).text()) as SessionFile;
+    raw = JSON.parse(await Bun.file(filePath).text());
   } catch (error) {
     pushDiagnostic(diagnostics, "invalid_json", sessionId, filePath,
       `Invalid session JSON in "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
+
+  const parsed = SessionFileSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+
+  pushDiagnostic(diagnostics, "invalid_json", readDiagnosticSessionId(raw) ?? sessionId, filePath,
+    `Invalid session JSON in "${filePath}": ${parsed.error.message}`);
+  return undefined;
 }
 
-function isLikelySessionIdMismatch(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith("Session ID mismatch:");
+function readDiagnosticSessionId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const sessionId = (value as Record<string, unknown>).sessionId;
+  return typeof sessionId === "string" ? sessionId : undefined;
 }
 
 function toSessionSummary(file: SessionFile): SessionSummary {
