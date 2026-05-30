@@ -70,10 +70,16 @@ describe("getToolSummary", () => {
     expect(result.primary).toBe("TODO");
   });
 
-  test("delegate returns task description", () => {
-    const result = getToolSummary("delegate", { task: "Explore the codebase" });
+  test("delegate shows agent_type: prompt summary", () => {
+    const result = getToolSummary("delegate", { agent_type: "explore", prompt: "Explore the codebase" });
     expect(result.icon).toBe("🤝");
-    expect(result.primary).toBe("Explore the codebase");
+    expect(result.primary).toBe("explore: Explore the codebase");
+  });
+
+  test("background_output shows session_id", () => {
+    const result = getToolSummary("background_output", { session_id: "ses_abc123" });
+    expect(result.icon).toBe("🤝");
+    expect(result.primary).toBe("ses_abc123");
   });
 
   test("MCP tool renders as server/tool with primary value", () => {
@@ -329,9 +335,14 @@ describe("getToolInvalidInputMessage", () => {
     expect(result).toBe("Invalid file_read input: missing required file path");
   });
 
-  test("delegate missing task returns message", () => {
-    const result = getToolInvalidInputMessage("delegate", {});
-    expect(result).toBe("Invalid delegate input: missing required task");
+  test("delegate missing agent_type returns message", () => {
+    const result = getToolInvalidInputMessage("delegate", { prompt: "Explore" });
+    expect(result).toBe("Invalid delegate input: missing required agent_type");
+  });
+
+  test("delegate missing prompt returns message", () => {
+    const result = getToolInvalidInputMessage("delegate", { agent_type: "explore" });
+    expect(result).toBe("Invalid delegate input: missing required prompt");
   });
 
   test("null input returns message", () => {
