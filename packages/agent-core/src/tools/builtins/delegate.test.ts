@@ -160,6 +160,26 @@ describe("delegate tool", () => {
     expect(metadataBlock(result as string)).toContain("background: false");
   });
 
+  it("keeps delegate metadata limited to stable v1 fields", async () => {
+    const factory = new ToolStubFactory();
+    const result = await executeDelegate(
+      { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
+      makeContext({ agentFactory: factory }),
+    );
+    const metadata = metadataBlock(result as string);
+
+    expect(metadata).toContain("session_id: ");
+    expect(metadata).toContain("parent_session_id: ");
+    expect(metadata).toContain("agent_type: explore");
+    expect(metadata).toContain("status: completed");
+    expect(metadata).not.toContain("task_id");
+    expect(metadata).not.toContain("background_task_id");
+    expect(metadata).not.toContain("stats");
+    expect(metadata).not.toContain("usage");
+    expect(metadata).not.toContain("tool_counts");
+    expect(metadata).not.toContain("result_text");
+  });
+
   it("returns structured error when factory context is missing", async () => {
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], background: false },

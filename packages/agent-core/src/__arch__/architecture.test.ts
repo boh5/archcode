@@ -160,6 +160,32 @@ function findSourceTextViolations(scopeDir: string, patterns: RegExp[]): Violati
   return violations;
 }
 
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
+
+function findProductionTextViolations(files: string[], patterns: RegExp[]): Violation[] {
+  const violations: Violation[] = [];
+
+  for (const file of files) {
+    const source = stripComments(readFileSync(file, "utf8"));
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(source)) {
+        violations.push({ file: normalize(relative(projectRoot, file)), importPath: pattern.source });
+      }
+    }
+  }
+
+  return violations;
+}
+
+function findProductionFiles(scopeDir: string): string[] {
+  return findTsFiles(join(projectRoot, scopeDir));
+}
+
 // Boundary rules are enforced across static imports, re-exports, and dynamic imports.
 const protocolForbiddenPatterns = [
   /^ai$/,
@@ -286,5 +312,52 @@ describe("monorepo package boundaries", () => {
     expectNoViolations(
       violations,
     );
+  });
+
+  describe("session stats and sub-agent guardrails", () => {
+    test("child store operations do not import the global test-only storeManager", () => {
+      const files = [
+        ...findProductionFiles("packages/agent-core/src/agents"),
+        join(projectRoot, "packages/agent-core/src/tools/builtins/background-output.ts"),
+      ];
+
+      expectNoViolations(
+        findProductionTextViolations(files, [
+          /import\s*\{[^}]*\bstoreManager\b[^}]*\}\s*from\s*["'][^"']*(?:\.\.\/store\/store|\.\.\/\.\.\/store\/store)["']/,
+          /import\s+\{[^}]*\bstoreManager\b[^}]*\}\s+from\s+["'][^"']*\/store\/store["']/,
+        ]),
+      );
+    });
+
+    test("delegate metadata and protocol stats avoid legacy sub-agent fields", () => {
+      const files = [
+        join(projectRoot, "packages/protocol/src/types.ts"),
+        join(projectRoot, "packages/agent-core/src/tools/builtins/delegate.ts"),
+      ];
+
+      expectNoViolations(
+        findProductionTextViolations(files, [
+          /\bsubAgentStats\b/,
+          /\btask_id\b/,
+          /\bbackground_task_id\b/,
+        ]),
+      );
+    });
+
+    test("protocol and web stats defaults keep strict package boundaries", () => {
+      const violations = [
+        ...findViolations("packages/protocol/src", [
+          /^@specra\/(agent-core|server|web)(\/|$)/,
+          /^packages\/(agent-core|server|web)\/src(\/|$)/,
+          /^apps\/(server|web)(\/|$)/,
+        ]),
+        ...findViolations("apps/web/src", [
+          /^@specra\/agent-core(\/|$)/,
+          /^packages\/agent-core\/src(\/|$)/,
+        ]),
+      ];
+
+      expectNoViolations(violations);
+    });
   });
 });

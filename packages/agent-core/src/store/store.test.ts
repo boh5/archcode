@@ -221,6 +221,40 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().title).toBe("Persisted Title");
   });
 
+  test("reload from disk preserves stats and runs exactly while deriving runCount", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-stats-runs");
+    const store = createSessionStore(sessionId);
+    const state = store.getState();
+
+    state.append({ type: "run-start", runId: "run-one" });
+    state.append({ type: "user-message", content: "collect stats" });
+    state.append({ type: "step-start", step: 0 });
+    state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
+    state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", output: "ok", isError: false });
+    state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
+    state.append({ type: "run-end", status: "completed" });
+    state.append({ type: "run-start", runId: "run-two" });
+    state.append({ type: "step-start", step: 0 });
+    state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
+    state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", output: "failed", isError: true });
+    state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
+    state.append({ type: "run-end", status: "failed", error: "child failed" });
+
+    await waitForPersistedSession(sessionId, (session) => Array.isArray(session.runs) && session.runs.length === 2);
+    const expectedStats = store.getState().stats;
+    const expectedRuns = store.getState().runs;
+
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");
+    const loadedState = loaded.getState();
+
+    expect(loadedState.stats).toEqual(expectedStats);
+    expect(loadedState.runs).toEqual(expectedRuns);
+    expect(loadedState.runCount).toBe(expectedRuns.length);
+    expect(loadedState.runCount).toBe(loadedState.runs.length);
+  });
+
   test("create returns the same store for the same session id", () => {
     const sessionId = uniqueSessionId("same-store");
     expect(storeManager.create(sessionId)).toBe(storeManager.create(sessionId));

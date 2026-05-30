@@ -86,6 +86,9 @@ describe("reduceStreamEvent", () => {
     const state = createProjection();
 
     expect(state.stats).toEqual(createEmptySessionStats());
+    expect(state.stats.tools.calls).toBe(0);
+    expect(state.stats.tools.completed).toBe(0);
+    expect(state.stats.tools.failed).toBe(0);
     expect(state.runs).toEqual([]);
     expect(state.runCount).toBe(state.runs.length);
   });
@@ -381,12 +384,23 @@ describe("reduceStreamEvent", () => {
 
   test("N concurrent tool-call events produce N tool call stats", () => {
     const state = applyEvents(createProjection(), [
+      { type: "step-start", step: 0 },
       { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
       { type: "tool-call", toolCallId: "call-2", toolName: "read", input: {} },
       { type: "tool-call", toolCallId: "call-3", toolName: "read", input: {} },
     ]);
 
-    expect(state.stats.tools.calls).toBe(3);
+    expect(state.stats.tools).toEqual({ calls: 3, completed: 0, failed: 0 });
+  });
+
+  test("failed tool-result counts as called and failed but not completed", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "step-start", step: 0 },
+      { type: "tool-call", toolCallId: "call-1", toolName: "bash", input: "exit 1" },
+      { type: "tool-result", toolCallId: "call-1", toolName: "bash", output: "boom", isError: true },
+    ]);
+
+    expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
   });
 
   test("tool-input-start followed by duplicate calls and results counts one call and one terminal", () => {
@@ -490,6 +504,48 @@ describe("reduceStreamEvent", () => {
 
     const ended = applyEvents(started, [{ type: "run-end", status: "completed" }]);
     expect(ended.runCount).toBe(ended.runs.length);
+  });
+
+  test("cancelled, aborted, and timed_out run-end statuses populate latest run", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "run-start", runId: "run-cancelled" },
+      { type: "run-end", status: "cancelled", error: "cancelled by user" },
+      { type: "run-start", runId: "run-aborted" },
+      { type: "run-end", status: "aborted", error: "abort signal" },
+      { type: "run-start", runId: "run-timed-out" },
+      { type: "run-end", status: "timed_out", error: "deadline" },
+    ]);
+
+    expect(state.runs.map((run) => run.status)).toEqual(["cancelled", "aborted", "timed_out"]);
+    expect(state.runs.at(-1)).toMatchObject({
+      id: "run-timed-out",
+      status: "timed_out",
+      error: "deadline",
+    });
+    expect(state.runCount).toBe(state.runs.length);
+  });
+
+  test("compaction summary updates do not mutate existing stats", () => {
+    const before = applyEvents(createProjection(), [
+      { type: "user-message", content: "old" },
+      { type: "step-start", step: 0 },
+      { type: "tool-call", toolCallId: "call-1", toolName: "read", input: {} },
+      { type: "tool-result", toolCallId: "call-1", toolName: "read", output: "ok", isError: false },
+      { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 3, outputTokens: 4 } },
+    ]);
+    const stats = before.stats;
+
+    const afterFirstCompact = applyEvents(before, [
+      { type: "compact", summary: "first summary", tailStartId: "missing" },
+    ]);
+    const afterCircuitBreakerSummary = applyEvents(afterFirstCompact, [
+      { type: "compact", summary: "compaction failed: circuit breaker open", tailStartId: "missing" },
+    ]);
+
+    expect(afterFirstCompact.stats).toBe(stats);
+    expect(afterFirstCompact.stats).toEqual(stats);
+    expect(afterCircuitBreakerSummary.stats).toBe(stats);
+    expect(afterCircuitBreakerSummary.stats).toEqual(stats);
   });
 
   test("adds and consumes reminders", () => {

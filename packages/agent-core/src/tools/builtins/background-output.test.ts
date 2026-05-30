@@ -166,6 +166,49 @@ describe("background_output tool", () => {
     }
   });
 
+  it("keeps nested delegation stats isolated and only permits direct child reads", async () => {
+    const ctx = makeContext();
+    const childStore = linkChild(ctx);
+    const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot);
+    childStore.getState().linkChildSession(grandchild.getState().sessionId);
+
+    childStore.getState().append({ type: "run-start", runId: "child-run" });
+    childStore.getState().append({ type: "tool-call", toolCallId: "child-tool", toolName: "read", input: {} });
+    childStore.getState().append({ type: "tool-result", toolCallId: "child-tool", toolName: "read", output: "ok", isError: false });
+    childStore.getState().append({ type: "run-end", status: "completed" });
+    grandchild.getState().append({ type: "run-start", runId: "grandchild-run" });
+    grandchild.getState().append({ type: "tool-call", toolCallId: "grandchild-tool", toolName: "bash", input: "false" });
+    grandchild.getState().append({ type: "tool-result", toolCallId: "grandchild-tool", toolName: "bash", output: "failed", isError: true });
+    grandchild.getState().append({ type: "run-end", status: "failed" });
+
+    expect(childStore.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
+    expect(grandchild.getState().stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
+
+    const childResult = await executeBackgroundOutput({
+      session_id: childStore.getState().sessionId,
+      block: false,
+      timeout_ms: 60_000,
+      full_session: false,
+      message_limit: 20,
+      include_tool_results: false,
+      include_reasoning: false,
+    }, ctx);
+    expect(childResult).toContain(`# Background session ${childStore.getState().sessionId}`);
+
+    const grandchildResult = await executeBackgroundOutput({
+      session_id: grandchild.getState().sessionId,
+      block: false,
+      timeout_ms: 60_000,
+      full_session: false,
+      message_limit: 20,
+      include_tool_results: false,
+      include_reasoning: false,
+    }, ctx);
+    expect(typeof grandchildResult).toBe("object");
+    expect((grandchildResult as { isError: boolean }).isError).toBe(true);
+    expect((grandchildResult as { output: string }).output).toContain(`Unknown child session_id: ${grandchild.getState().sessionId}`);
+  });
+
   it("waits with block=true until the child stops", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
@@ -314,7 +357,10 @@ describe("background_output tool", () => {
         },
       ],
       steps: [],
-      stats: createEmptySessionStats(),
+      stats: {
+        ...createEmptySessionStats(),
+        tools: { calls: 1, completed: 1, failed: 0 },
+      },
       runs: [{ id: "run-1", startedAt: Date.now(), status: "completed", endedAt: Date.now() }],
       todos: [],
       reminders: [],
@@ -333,6 +379,9 @@ describe("background_output tool", () => {
     }, ctx);
 
     expect(result).toContain("loaded from disk");
-    expect(ctx.storeManager.get(childId, workspaceRoot)).toBeDefined();
+    const loaded = ctx.storeManager.get(childId, workspaceRoot);
+    expect(loaded).toBeDefined();
+    expect(loaded!.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
+    expect(loaded!.getState().runCount).toBe(1);
   });
 });
