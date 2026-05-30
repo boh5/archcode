@@ -48,8 +48,7 @@ describe("SessionRoute store-level behavior", () => {
       todos: [],
       reminders: [],
       title: "Test Session",
-      childSessionIds: [],
-      subAgentDescriptions: [] as [string, string][],
+      rootSessionId: "root-1",
       eventCursor: 5,
     };
 

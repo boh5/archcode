@@ -138,7 +138,6 @@ interface ChatMessagesProps {
 
 export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
-  const subAgentDescriptions = useSessionStore(sessionId, (s) => s.subAgentDescriptions, slug);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);

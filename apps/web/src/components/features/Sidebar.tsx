@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useCreateSession } from "../../api/mutations";
-import { useProjects, useSessions, useWorkflow } from "../../api/queries";
-import type { Project, Session, WorkflowState } from "../../api/types";
+import { useProjects, useSessions, useSessionTree } from "../../api/queries";
+import type { Project, Session, SessionTreeNode } from "../../api/types";
 import { ProjectActionDropdown } from "./ProjectActionMenu";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { CloseProjectDialog } from "./CloseProjectDialog";
-import { AGENT_TYPES, AGENT_INITIALS, AGENT_ICON_COLORS } from "../../lib/agent-constants";
+import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType } from "../../lib/agent-constants";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 
@@ -14,16 +14,6 @@ function isSessionActive(session: Session): boolean {
   const updatedAt = session.updatedAt ?? session.lastUpdatedAt ?? session.createdAt;
   const hourAgo = Date.now() - 60 * 60 * 1000;
   return updatedAt > hourAgo;
-}
-
-function getPipelineTag(session: Session): string | null {
-  const descs = session.subAgentDescriptions;
-  if (!descs || descs.length === 0) return null;
-  const firstDesc = descs[0];
-  if (firstDesc && AGENT_TYPES.includes(firstDesc[0] as AgentType)) {
-    return firstDesc[0];
-  }
-  return null;
 }
 
 const STATUS_DOT_COLORS: Record<string, string> = {
@@ -47,7 +37,6 @@ function SessionItem({
   onClick: () => void;
 }) {
   const updatedAt = session.updatedAt ?? session.lastUpdatedAt ?? session.createdAt;
-  const pipelineTag = getPipelineTag(session);
   const isRunning = isSessionActive(session);
 
   return (
@@ -71,11 +60,6 @@ function SessionItem({
           {session.title || "Untitled"}
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
-          {pipelineTag && (
-            <span className="text-[10px] px-[5px] py-px rounded-[3px] bg-accent-muted text-accent font-medium">
-              {pipelineTag}
-            </span>
-          )}
           <span>
             {isRunning ? "active" : ""} · {formatRelativeTime(updatedAt)}
           </span>
@@ -91,12 +75,14 @@ function AgentNode({
   status,
   depth,
   isActive,
+  onClick,
 }: {
   name: string;
   agentType: AgentType;
   status: "running" | "idle" | "pending" | "completed";
   depth: number;
   isActive: boolean;
+  onClick?: () => void;
 }) {
   const paddingLeft = depth === 0 ? "pl-3.5" : depth === 1 ? "pl-[38px]" : depth === 2 ? "pl-[48px]" : "pl-[58px]";
 
@@ -105,6 +91,12 @@ function AgentNode({
       className={`flex items-center gap-1.5 py-[5px] ${paddingLeft} cursor-pointer transition-colors duration-150 text-xs ${
         isActive ? "bg-accent-subtle text-accent" : "hover:bg-bg-hover"
       }`}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
+      }}
     >
       <div className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${AGENT_ICON_COLORS[agentType]}`}>
         {AGENT_INITIALS[agentType]}
@@ -136,7 +128,16 @@ export function Sidebar() {
   const { data: projects } = useProjects();
   const activeProject = projects?.find(p => p.slug === slug) ?? null;
   const { data: sessions } = useSessions(slug);
-  const { data: workflow } = useWorkflow(slug, sessionId);
+
+  const rootSessionId = useMemo(() => {
+    if (!sessionId) return "";
+    const currentSession = sessions?.find(s => s.sessionId === sessionId || s.id === sessionId);
+    if (currentSession?.rootSessionId) return currentSession.rootSessionId;
+    if (currentSession && !currentSession.parentSessionId) return sessionId;
+    return sessionId;
+  }, [sessionId, sessions]);
+
+  const { data: sessionTree } = useSessionTree(slug, rootSessionId);
 
   const handleNewSession = () => {
     createSession.mutate({ slug }, {
@@ -148,9 +149,10 @@ export function Sidebar() {
 
   const filteredSessions = useMemo(() => {
     if (!sessions) return [];
-    if (!searchQuery.trim()) return sessions;
+    const rootSessions = sessions.filter(s => !s.parentSessionId);
+    if (!searchQuery.trim()) return rootSessions;
     const q = searchQuery.toLowerCase();
-    return sessions.filter((s) =>
+    return rootSessions.filter((s) =>
       (s.title || "Untitled").toLowerCase().includes(q),
     );
   }, [sessions, searchQuery]);
@@ -169,9 +171,7 @@ export function Sidebar() {
   }, [filteredSessions]);
 
   const agentTree = useMemo(() => {
-    if (!workflow) return null;
-
-    const wf = workflow as WorkflowState;
+    if (!sessionTree?.root) return null;
 
     const agents: Array<{
       name: string;
@@ -179,50 +179,32 @@ export function Sidebar() {
       status: "running" | "idle" | "pending" | "completed";
       depth: number;
       isActive: boolean;
+      sessionId: string;
     }> = [];
 
-    agents.push({
-      name: "Orchestrator",
-      type: "orchestrator",
-      status: wf.currentStep ? "idle" : "completed",
-      depth: 0,
-      isActive: true,
-    });
-
-    const stages = Object.entries(wf.sessionIds || {});
-    const taskStages = Object.entries(wf.taskSessionIds || {});
-
-    for (const [stageName, stageSessionId] of stages) {
-      const agentType = stageName as AgentType;
-      if (!AGENT_TYPES.includes(agentType)) continue;
-
-      const isCurrentStep = wf.currentStep === stageName;
-      const isCompleted = wf.status === "completed" || (!isCurrentStep && wf.currentStep && AGENT_TYPES.indexOf(agentType as AgentType) < AGENT_TYPES.indexOf(wf.currentStep as AgentType));
+    function walkNode(node: SessionTreeNode, depth: number): void {
+      const s = node.session;
+      const agentType = isValidAgentType(s.title ?? "") ? (s.title as AgentType) : "explorer";
+      const isRunning = isSessionActive({ ...s, id: s.sessionId } as Session);
+      const isActive = s.sessionId === sessionId;
 
       agents.push({
-        name: agentType.charAt(0).toUpperCase() + agentType.slice(1),
+        name: s.title || "Untitled",
         type: agentType,
-        status: isCurrentStep ? "running" : isCompleted ? "completed" : "pending",
-        depth: 1,
-        isActive: isCurrentStep,
+        status: isRunning ? "running" : "completed",
+        depth,
+        isActive,
+        sessionId: s.sessionId,
       });
+
+      for (const child of node.children) {
+        walkNode(child, depth + 1);
+      }
     }
 
-    for (const [taskName, taskSessionId] of taskStages) {
-      const agentType = taskName as AgentType;
-      if (!AGENT_TYPES.includes(agentType)) continue;
-
-      agents.push({
-        name: agentType.charAt(0).toUpperCase() + agentType.slice(1),
-        type: agentType,
-        status: "pending",
-        depth: 2,
-        isActive: false,
-      });
-    }
-
+    walkNode(sessionTree.root, 0);
     return agents;
-  }, [workflow]);
+  }, [sessionTree, sessionId]);
 
   const handleSessionClick = (clickedSessionId: string) => {
     navigate(`/projects/${slug}/sessions/${clickedSessionId}`);
@@ -344,6 +326,7 @@ export function Sidebar() {
                 status={agent.status}
                 depth={agent.depth}
                 isActive={agent.isActive}
+                onClick={() => handleSessionClick(agent.sessionId)}
               />
             ))}
           </div>

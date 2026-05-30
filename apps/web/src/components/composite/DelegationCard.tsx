@@ -35,8 +35,8 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
 }
 
 export interface DelegationCardProps {
-  /** Unique identifier for the sub-agent session */
-  agentId: string;
+  /** Child session ID used to navigate directly to the sub-agent conversation */
+  sessionId: string;
   /** Agent type for color mapping (falls back to "explorer" if unknown) */
   agentType: string;
   /** Display name shown in the header */
@@ -53,12 +53,10 @@ export interface DelegationCardProps {
   tools: Array<{ name: string; status: ToolStatus; input?: unknown }>;
   /** Current project slug (for building navigation link) */
   projectSlug: string;
-  /** Current parent session ID (for building navigation link) */
-  parentSessionId: string;
 }
 
 export function DelegationCard({
-  agentId,
+  sessionId,
   agentType,
   agentName,
   status,
@@ -67,7 +65,6 @@ export function DelegationCard({
   summary,
   tools,
   projectSlug,
-  parentSessionId,
 }: DelegationCardProps) {
   const navigate = useNavigate();
   const resolvedType = isValidAgentType(agentType) ? agentType : "explorer" as AgentType;
@@ -75,7 +72,7 @@ export function DelegationCard({
   const initials = AGENT_INITIALS[resolvedType];
 
   const handleViewConversation = () => {
-    navigate(`/projects/${projectSlug}/sessions/${parentSessionId}?focusAgent=${agentId}`);
+    navigate(`/projects/${projectSlug}/sessions/${sessionId}`);
   };
 
   return (

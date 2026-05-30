@@ -81,6 +81,7 @@ let projects: Project[] = [];
 let createSessionPending = false;
 const useProjects = mock(() => ({ data: projects }));
 const useSessions = mock((_slug: string) => ({ data: [] }));
+const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: null }));
 const useWorkflow = mock((_slug: string, _sessionId: string) => ({ data: null }));
 
 let Sidebar: SidebarComponent;
@@ -129,6 +130,7 @@ mock.module("../../api/queries", () => ({
   useProjects,
   useSessions,
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
+  useSessionTree,
   useWorkflow,
   useDiff: (_slug: string) => ({ data: [] }),
   useDirectoryList: (_path: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
@@ -180,6 +182,7 @@ describe("Sidebar", () => {
       useCreateSession,
       useProjects,
       useSessions,
+      useSessionTree,
       useWorkflow,
     ]) {
       fn.mockClear();

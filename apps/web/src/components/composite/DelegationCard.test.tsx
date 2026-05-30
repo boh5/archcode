@@ -147,7 +147,7 @@ describe("ToolChip", () => {
 
 describe("DelegationCard", () => {
   const baseProps = {
-    agentId: "agent-1",
+    sessionId: "session-child-1",
     agentType: "explorer",
     agentName: "Explorer Agent",
     status: "running" as const,
@@ -159,7 +159,6 @@ describe("DelegationCard", () => {
       { name: "file_read", status: "default" as const, input: { filePath: "/src/index.ts" } },
     ],
     projectSlug: "my-project",
-    parentSessionId: "session-1",
   };
 
   test("renders agent name and summary", () => {
