@@ -71,6 +71,7 @@ describe("workflow regression hardening", () => {
     providerRegistry,
     toolRegistry: registry,
     skillService: new SkillService({ builtinSkills: {} }),
+    storeManager,
     workspaceRoot: import.meta.dir,
       config, logger: silentLogger });
 

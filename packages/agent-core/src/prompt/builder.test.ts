@@ -3,19 +3,16 @@ import { buildSystemPrompt } from "./builder";
 import type { PromptContext } from "./types";
 
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
-  return {
-    allowedTools: ["file_read", "file_write"],
-    workspaceRoot: "/home/user/project",
-    agentId: "default",
-    env: {
-      platform: "darwin",
-      timezone: "America/Los_Angeles",
-      locale: "en-US",
-      cwd: "/home/user/project",
-      date: "2025-01-15",
-    },
-    ...overrides,
-  };
+  return { allowedTools: ["file_read", "file_write"],
+  workspaceRoot: "/home/user/project",
+  agentId: "default",
+  env: {
+    platform: "darwin",
+    timezone: "America/Los_Angeles",
+    locale: "en-US",
+    cwd: "/home/user/project",
+    date: "2025-01-15",
+  }, ...overrides,  };
 }
 
 describe("buildSystemPrompt", () => {

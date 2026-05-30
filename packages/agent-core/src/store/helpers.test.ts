@@ -6,6 +6,7 @@ import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { __setSessionsDirForTest } from "./sessions-dir";
+import { createEmptySessionStats, type SessionRun, type SessionStats } from "@specra/protocol";
 import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
@@ -151,6 +152,8 @@ type PersistedSessionState = Pick<
   | "title"
   | "messages"
   | "steps"
+  | "stats"
+  | "runs"
   | "todos"
   | "reminders"
   | "childSessionIds"
@@ -163,6 +166,8 @@ function persistedState(
   messages = sampleMessages(),
   steps = sampleSteps(),
   todos = sampleTodos(),
+  stats: SessionStats = createEmptySessionStats(),
+  runs: SessionRun[] = [],
   reminders: Reminder[] = [],
   childSessionIds = new Set<string>(),
   parentSessionId: string | undefined = undefined,
@@ -174,6 +179,8 @@ function persistedState(
     title: null,
     messages,
     steps,
+    stats,
+    runs,
     todos,
     reminders,
     childSessionIds,
@@ -183,9 +190,11 @@ function persistedState(
 }
 
 describe("session transcript serialization", () => {
-  test("save/load roundtrips sessionId, createdAt, messages, steps, and todos", async () => {
+  test("save/load roundtrips sessionId, createdAt, messages, steps, stats, runs, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
-    const state = persistedState(sessionId);
+    const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
+    const runs: SessionRun[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2 }];
+    const state = persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), stats, runs);
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
@@ -194,6 +203,9 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().createdAt).toBe(state.createdAt);
     expect(loaded.getState().messages).toEqual(state.messages);
     expect(loaded.getState().steps).toEqual(state.steps);
+    expect(loaded.getState().stats).toEqual(state.stats);
+    expect(loaded.getState().runs).toEqual(state.runs);
+    expect(loaded.getState().runCount).toBe(state.runs.length);
     expect(loaded.getState().todos).toEqual(state.todos);
   });
 
@@ -220,27 +232,33 @@ describe("session transcript serialization", () => {
     expect(state.currentAssistantMessageId).toBeUndefined();
   });
 
-  test("load defaults missing todos to an empty list", async () => {
-    const sessionId = uniqueSessionId("missing-todos");
-    const { todos: _todos, ...legacyState } = persistedState(sessionId);
+  test("load rejects missing required stats", async () => {
+    const sessionId = uniqueSessionId("missing-stats");
+    const { stats: _stats, ...legacyState } = persistedState(sessionId);
     await writeSessionFile(sessionId, legacyState);
 
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
 
-    expect(loaded.getState().todos).toEqual([]);
+  test("load rejects missing required runs", async () => {
+    const sessionId = uniqueSessionId("missing-runs");
+    const { runs: _runs, ...legacyState } = persistedState(sessionId);
+    await writeSessionFile(sessionId, legacyState);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("save/load roundtrips reminders", async () => {
     const sessionId = uniqueSessionId("reminders-roundtrip");
     const reminders = sampleReminders();
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), reminders), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), createEmptySessionStats(), [], reminders), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().reminders).toEqual(reminders);
   });
 
-  test("load defaults missing reminder persistence fields", async () => {
+  test("load defaults optional reminder relationship persistence fields", async () => {
     const sessionId = uniqueSessionId("missing-reminder-fields");
     const {
       reminders: _reminders,
@@ -272,6 +290,8 @@ describe("session transcript serialization", () => {
       sampleMessages(),
       sampleSteps(),
       sampleTodos(),
+      createEmptySessionStats(),
+      [],
       sampleReminders(),
       childSessionIds,
       "parent-1",
@@ -492,13 +512,18 @@ describe("session transcript serialization", () => {
       "createdAt",
       "messages",
       "reminders",
+      "runs",
       "sessionId",
+      "stats",
       "steps",
       "subAgentDescriptions",
       "title",
       "todos",
     ]);
     expect("events" in parsed).toBe(false);
+    expect("runCount" in parsed).toBe(false);
+    expect(parsed.stats).toEqual(createEmptySessionStats());
+    expect(parsed.runs).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionIds).toEqual([]);
@@ -532,6 +557,9 @@ describe("session transcript serialization", () => {
     expect(loadedState.createdAt).toBe(99);
     expect(loadedState.messages).toEqual(originalMessages);
     expect(loadedState.steps).toEqual(originalSteps);
+    expect(loadedState.stats).toEqual(createEmptySessionStats());
+    expect(loadedState.runs).toEqual([]);
+    expect(loadedState.runCount).toBe(0);
     expect(loadedState.todos).toEqual(originalTodos);
   });
 

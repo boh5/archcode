@@ -48,13 +48,10 @@ function makeModelInfo(): ModelInfo {
 }
 
 function makeTaskContext(overrides: Partial<BackgroundTaskContext> = {}): BackgroundTaskContext {
-  return {
-    store: storeManager.create(crypto.randomUUID()),
-    modelInfo: makeModelInfo(),
-    logger: silentLogger,
-    workspaceRoot: "/tmp",
-    ...overrides,
-  };
+  return { store: storeManager.create(crypto.randomUUID()),
+  modelInfo: makeModelInfo(),
+  logger: silentLogger,
+  workspaceRoot: "/tmp", ...overrides,  };
 }
 
 const tmpDir = resolve(import.meta.dir, "__test_tmp__");

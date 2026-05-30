@@ -9,6 +9,30 @@ export interface RunEndEvent {
   error?: string;
 }
 
+export interface NormalizedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+  cachedInputTokens: number;
+}
+
+export interface SessionStats {
+  messages: { user: number; assistant: number; total: number };
+  tools: { calls: number; completed: number; failed: number };
+  steps: { started: number; completed: number };
+  usage: NormalizedUsage;
+}
+
+export interface SessionRun {
+  id: string;
+  startedAt: number;
+  status: "running" | RunEndEvent["status"];
+  endedAt?: number;
+  durationMs?: number;
+  error?: string;
+}
+
 export type SessionTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface SessionTodo {
@@ -379,6 +403,8 @@ export interface SessionProjection {
   steps: SessionStep[];
   todos: SessionTodo[];
   reminders: Reminder[];
+  stats: SessionStats;
+  runs: SessionRun[];
   runCount: number;
   isRunning: boolean;
   isStreamingModel: boolean;
@@ -427,6 +453,8 @@ export interface Session {
   steps?: SessionStep[];
   todos?: SessionTodo[];
   reminders?: unknown[];
+  stats?: SessionStats;
+  runs?: SessionRun[];
   childSessionIds?: string[];
   parentSessionId?: string;
   subAgentDescriptions?: [string, string][];

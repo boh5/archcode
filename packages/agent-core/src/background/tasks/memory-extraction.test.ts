@@ -48,13 +48,10 @@ function makeTaskContext(
   store: ReturnType<typeof storeManager.create>,
   overrides: Partial<BackgroundTaskContext> = {},
 ): BackgroundTaskContext {
-  return {
-    store,
-    modelInfo: makeModelInfo(),
-    logger: silentLogger,
-    workspaceRoot: "/tmp",
-    ...overrides,
-  };
+  return { store,
+  modelInfo: makeModelInfo(),
+  logger: silentLogger,
+  workspaceRoot: "/tmp", ...overrides,  };
 }
 
 function makeUserMessage(text: string, now: number): StoredMessage {

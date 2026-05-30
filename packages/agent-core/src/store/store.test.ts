@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createEmptySessionStats } from "@specra/protocol";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
@@ -62,15 +63,12 @@ async function waitForPersistedSession(
 }
 
 function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
-  return {
-    id: crypto.randomUUID(),
-    source: { type: "todo_step_reminder", pendingTodos: [] },
-    delivery: "auto_inject",
-    content: "remember this",
-    createdAt: Date.now(),
-    consumedAt: null,
-    ...overrides,
-  };
+  return { id: crypto.randomUUID(),
+  source: { type: "todo_step_reminder", pendingTodos: [] },
+  delivery: "auto_inject",
+  content: "remember this",
+  createdAt: Date.now(),
+  consumedAt: null, ...overrides,  };
 }
 
 function onlyMessage(messages: StoredMessage[]): StoredMessage {
@@ -113,6 +111,8 @@ describe("SessionStoreManager", () => {
     expect(state.sessionId).toBe(sessionId);
     expect(state.messages).toEqual([]);
     expect(state.steps).toEqual([]);
+    expect(state.stats).toEqual(createEmptySessionStats());
+    expect(state.runs).toEqual([]);
     expect(state.todos).toEqual([]);
     expect(state.createdAt).toBeGreaterThan(0);
     expect(state.isRunning).toBe(false);
@@ -136,6 +136,42 @@ describe("SessionStoreManager", () => {
     const persisted = await readPersistedSession(sessionId);
     expect(persisted.sessionId).toBe(sessionId);
     expect(persisted.messages).toEqual([]);
+    expect(persisted.stats).toEqual(createEmptySessionStats());
+    expect(persisted.runs).toEqual([]);
+    expect("runCount" in persisted).toBe(false);
+  });
+
+  test("append persistence is coalesced and serialized for durable high-frequency events", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-coalesced");
+    const store = createSessionStore(sessionId);
+
+    const state = store.getState();
+    state.append({ type: "run-start", runId: "run-1" });
+    state.append({ type: "text-start" });
+    state.append({ type: "text-delta", text: "hel" });
+    state.append({ type: "text-delta", text: "lo" });
+    state.append({ type: "text-end" });
+
+    const persisted = await waitForPersistedSession(sessionId, (session) => {
+      const messages = session.messages;
+      return Array.isArray(messages) && JSON.stringify(messages).includes("hello");
+    });
+    expect(persisted.messages).toEqual(store.getState().messages);
+  });
+
+  test("linkChildSession flushes persistence immediately", async () => {
+    __setSessionsDirForTest(() => TMP_DIR);
+    const sessionId = uniqueSessionId("persist-link-child");
+    const store = createSessionStore(sessionId);
+
+    store.getState().linkChildSession("child-1", "Explore child");
+
+    const persisted = await waitForPersistedSession(sessionId, (session) => {
+      return Array.isArray(session.childSessionIds) && session.childSessionIds.includes("child-1");
+    });
+    expect(persisted.childSessionIds).toEqual(["child-1"]);
+    expect(persisted.subAgentDescriptions).toEqual([["child-1", "Explore child"]]);
   });
 
   test("user-message append persists before run-end", async () => {
@@ -167,6 +203,9 @@ describe("SessionStoreManager", () => {
       return Array.isArray(messages) && JSON.stringify(messages).includes("final answer");
     });
     expect(persisted.messages).toEqual(store.getState().messages);
+    expect(persisted.stats).toEqual(store.getState().stats);
+    expect(persisted.runs).toEqual(store.getState().runs);
+    expect("runCount" in persisted).toBe(false);
   });
 
   test("title metadata action persists and survives reload", async () => {
@@ -307,6 +346,7 @@ describe("runCount", () => {
     const store = createFreshStore("runCount-after-start");
     store.getState().append({ type: "run-start" });
     expect(store.getState().runCount).toBe(1);
+    expect(store.getState().runs).toHaveLength(1);
   });
 
   test("after two run-start events (with run-end between), runCount is 2", () => {
@@ -315,6 +355,7 @@ describe("runCount", () => {
     store.getState().append({ type: "run-end", status: "completed" });
     store.getState().append({ type: "run-start" });
     expect(store.getState().runCount).toBe(2);
+    expect(store.getState().runCount).toBe(store.getState().runs.length);
   });
 });
 
@@ -531,6 +572,7 @@ describe("run lifecycle", () => {
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(onlyMessage(state.messages).completedAt).toBeGreaterThan(0);
+    expect(state.runs[0]?.status).toBe("completed");
   });
 
   test("run-end failed performs the same cleanup and preserves messages", () => {
@@ -546,6 +588,32 @@ describe("run lifecycle", () => {
     expect(state.currentRunId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(state.messages).toEqual(messages);
+    expect(state.runs[0]?.status).toBe("failed");
+    expect(state.runs[0]?.error).toBe("boom");
+  });
+
+  test("run-end records cancelled, aborted, and timed_out statuses", () => {
+    const store = createFreshStore("run-terminal-statuses");
+
+    for (const status of ["cancelled", "aborted", "timed_out"] as const) {
+      store.getState().append({ type: "run-start", runId: `run-${status}` });
+      store.getState().append({ type: "run-end", status, error: `${status} error` });
+    }
+
+    expect(store.getState().runs.map((run) => run.status)).toEqual(["cancelled", "aborted", "timed_out"]);
+    expect(store.getState().runCount).toBe(3);
+  });
+
+  test("command-handled completed run records a run without messages", () => {
+    const store = createFreshStore("command-handled-run");
+
+    store.getState().append({ type: "run-start", runId: "command-run" });
+    store.getState().append({ type: "run-end", status: "completed" });
+
+    expect(store.getState().messages).toEqual([]);
+    expect(store.getState().runs).toHaveLength(1);
+    expect(store.getState().runs[0]?.id).toBe("command-run");
+    expect(store.getState().runCount).toBe(1);
   });
 });
 

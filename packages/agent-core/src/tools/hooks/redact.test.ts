@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { REDACTION_MARKER } from "../security";
 import { createRedactionHook } from "./redact";
@@ -7,19 +8,17 @@ import { createTestProjectContext } from "../test-project-context";
 const RAW_SECRET = "sk_test_1234567890abcdef";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: {} as ToolExecutionContext["store"],
-    toolName: "bash",
-    toolCallId: "call-1",
-    input: { command: `curl -H Authorization=${RAW_SECRET}` },
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set<string>(),
-    workspaceRoot: "/tmp",
-    projectContext: createTestProjectContext("/tmp"),
-    ...overrides,
-  };
+  return { store: {} as ToolExecutionContext["store"],
+  toolName: "bash",
+  toolCallId: "call-1",
+  input: { command: `curl -H Authorization=${RAW_SECRET}` },
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set<string>(),
+  workspaceRoot: "/tmp",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
 describe("redaction hook", () => {

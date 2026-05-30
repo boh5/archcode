@@ -27,6 +27,7 @@ function makeContext(): ToolExecutionContext {
   const store = storeManager.create(`view-test-run-${randomUUID()}`);
   return {
     store,
+    storeManager,
     toolName: "view_tool_output",
     toolCallId: "view-call",
     input: { callId: "test-call" },
@@ -42,37 +43,31 @@ function makeContext(): ToolExecutionContext {
 function completeToolPart(
   overrides?: Partial<CompletedToolPart>,
 ): StoredPart & { state: "completed" } {
-  return {
-    type: "tool",
-    id: "tool-1",
-    state: "completed",
-    toolCallId: "test-call",
-    toolName: "file_read",
-    input: {},
-    output: "test output content",
-    createdAt: 100,
-    startedAt: 101,
-    endedAt: 102,
-    ...overrides,
-  };
+  return { type: "tool",
+  id: "tool-1",
+  state: "completed",
+  toolCallId: "test-call",
+  toolName: "file_read",
+  input: {},
+  output: "test output content",
+  createdAt: 100,
+  startedAt: 101,
+  endedAt: 102, ...overrides,  };
 }
 
 function errorToolPart(
   overrides?: Partial<ErrorToolPart>,
 ): StoredPart & { state: "error" } {
-  return {
-    type: "tool",
-    id: "tool-err-1",
-    state: "error",
-    toolCallId: "error-call",
-    toolName: "file_read",
-    input: {},
-    errorMessage: "error message content",
-    createdAt: 100,
-    startedAt: 101,
-    endedAt: 102,
-    ...overrides,
-  };
+  return { type: "tool",
+  id: "tool-err-1",
+  state: "error",
+  toolCallId: "error-call",
+  toolName: "file_read",
+  input: {},
+  errorMessage: "error message content",
+  createdAt: 100,
+  startedAt: 101,
+  endedAt: 102, ...overrides,  };
 }
 
 function setMessages(ctx: ToolExecutionContext, parts: StoredPart[]): void {

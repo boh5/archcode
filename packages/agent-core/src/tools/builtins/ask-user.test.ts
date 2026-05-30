@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
 import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
@@ -42,21 +43,19 @@ const MULTI_QUESTIONS: AskUserQuestion[] = [
 ];
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: {} as any,
-    toolName: "ask_user",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["ask_user"]),
-    agentSkills: [],
-    skillService: new SkillService({ builtinSkills: {} }),
-    workspaceRoot: "/tmp/test",
-    projectContext: createTestProjectContext("/tmp/test"),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "ask_user",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["ask_user"]),
+  agentSkills: [],
+  skillService: new SkillService({ builtinSkills: {} }),
+  workspaceRoot: "/tmp/test",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp/test"), ...overrides,  };
 }
 
 describe("AskUserInputSchema", () => {

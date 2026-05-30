@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import { createEmptySessionStats } from "@specra/protocol";
 import type { SessionStoreState } from "./types";
 
 export function createMockStore(
@@ -10,6 +11,8 @@ export function createMockStore(
     createdAt: Date.now(),
     messages: [],
     steps: [],
+    stats: createEmptySessionStats(),
+    runs: [],
     todos: [],
     reminders: [],
     childSessionIds: new Set(),

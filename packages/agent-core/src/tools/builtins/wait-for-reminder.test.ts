@@ -18,6 +18,7 @@ function makeStore(childSessionIds: string[] = ["child-1"]): StoreApi<SessionSto
 function makeCtx(store: StoreApi<SessionStoreState>, abort = new AbortController()): ToolExecutionContext {
   return {
     store,
+    storeManager,
     toolName: "wait_for_reminder",
     toolCallId: "call-1",
     input: {},

@@ -6,6 +6,7 @@ import { WorkflowStateManager } from "../../agents/workflow/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
+import { storeManager } from "../../store/store";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
@@ -31,19 +32,16 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
     approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(TMP_DIR, workflowState),
   };
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName: "memory_write" as const,
-    toolCallId,
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set<string>() as ReadonlySet<string>,
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_write" as const,
+  toolCallId,
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set<string>() as ReadonlySet<string>,
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext, });
 }
 
 function parseErrorResult(result: string | ToolExecutionResult): ToolExecutionResult {

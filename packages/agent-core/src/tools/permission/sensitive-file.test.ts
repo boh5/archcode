@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { storeManager } from "../../store/store";
 import type { ToolExecutionContext } from "../types";
 import { createSensitiveFilePermission, isSensitiveFile, SENSITIVE_PATTERNS } from "./sensitive-file";
 import { createTestProjectContext } from "../test-project-context";
@@ -6,19 +7,17 @@ import { createTestProjectContext } from "../test-project-context";
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
-  return {
-    store: {} as ToolExecutionContext["store"],
-    toolName: "file_read",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-    workspaceRoot: "/workspace",
-    projectContext: createTestProjectContext("/workspace"),
-    ...overrides,
-  };
+  return { store: {} as ToolExecutionContext["store"],
+  toolName: "file_read",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["file_read", "file_edit", "file_write"]),
+  workspaceRoot: "/workspace",
+  storeManager,
+    projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
 
 describe("isSensitiveFile", () => {

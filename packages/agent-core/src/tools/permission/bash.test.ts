@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import type { ToolExecutionContext } from "../types";
 import { createBashPermission } from "./bash";
@@ -25,6 +26,7 @@ afterAll(() => {
 function makeCtx(workspaceRoot = workspaceDir): ToolExecutionContext {
   return {
     store: createMockStore(),
+    storeManager,
     toolName: "bash",
     toolCallId: "call-1",
     input: {},

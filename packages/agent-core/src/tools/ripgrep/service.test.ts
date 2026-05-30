@@ -10,14 +10,11 @@ import type { DiscoverySeam } from "./service";
 // ---------------------------------------------------------------------------
 
 function createMockSeam(overrides?: Partial<DiscoverySeam>): DiscoverySeam {
-  return {
-    which: () => undefined,
-    exists: () => false,
-    isExecutable: () => false,
-    platform: "darwin",
-    arch: "arm64",
-    ...overrides,
-  };
+  return { which: () => undefined,
+  exists: () => false,
+  isExecutable: () => false,
+  platform: "darwin",
+  arch: "arm64", ...overrides,  };
 }
 
 // ---------------------------------------------------------------------------

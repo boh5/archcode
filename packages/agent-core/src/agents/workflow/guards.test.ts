@@ -15,16 +15,13 @@ const ALL_STAGES = Object.keys(LEGAL_STAGE_TRANSITIONS) as WorkflowStage[];
 
 function input(overrides: Partial<TransitionInput>): TransitionInput {
   const artifacts = new Set<ArtifactKind>(["PRD", "SPEC", "TASKS"]);
-  return {
-    workflowId: "wf-guards",
-    currentStage: "idle",
-    targetStage: "product_drafting",
-    retryCount: 0,
-    maxRetries: 3,
-    hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
-    hasUserApproval: true,
-    ...overrides,
-  };
+  return { workflowId: "wf-guards",
+  currentStage: "idle",
+  targetStage: "product_drafting",
+  retryCount: 0,
+  maxRetries: 3,
+  hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
+  hasUserApproval: true, ...overrides,  };
 }
 
 describe("workflow transition guards", () => {

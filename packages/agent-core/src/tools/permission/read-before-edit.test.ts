@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { storeManager } from "../../store/store";
 import {
   mkdtempSync,
   mkdirSync,
@@ -30,19 +31,17 @@ afterAll(() => {
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "file_edit",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["file_read", "file_edit", "file_write"]),
-    workspaceRoot: workspaceDir,
-    projectContext: createTestProjectContext(workspaceDir),
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  toolName: "file_edit",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["file_read", "file_edit", "file_write"]),
+  workspaceRoot: workspaceDir,
+  storeManager,
+    projectContext: createTestProjectContext(workspaceDir), ...overrides,  };
 }
 
 function workspaceFile(name: string): string {

@@ -8,6 +8,7 @@ import { MemoryFileManager } from "../../../memory/file-manager";
 import { ProjectApprovalManager } from "../../permission";
 import type { ProjectContext } from "../../../projects/types";
 import { SkillService } from "../../../skills";
+import { storeManager } from "../../../store/store";
 import { createMockStore } from "../../../store/test-helpers";
 import { registerBuiltinTools } from "../../../core/register-tools";
 import { silentLogger } from "../../../logger";
@@ -88,26 +89,23 @@ function makeProjectContext(stateManager: WorkflowStateManager, artifactManager:
 }
 
 function makeCtx(toolName: string, input: unknown, projectContext: ProjectContext): ToolExecutionContext {
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName,
-    toolCallId: `${toolName}-call`,
-    input,
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set([
-      "workflow_create",
-      "workflow_read",
-      "workflow_update_stage",
-      "artifact_read",
-      "artifact_write",
-      "workflow_task_check",
-    ]),
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName,
+  toolCallId: `${toolName}-call`,
+  input,
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set([
+    "workflow_create",
+    "workflow_read",
+    "workflow_update_stage",
+    "artifact_read",
+    "artifact_write",
+    "workflow_task_check",
+  ]),
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext, });
 }
 
 async function execute(registry: ToolRegistry, projectContext: ProjectContext, toolName: string, input: unknown) {

@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 
 import { z } from "zod";
 import { SkillService } from "../skills";
+import { storeManager } from "../store/store";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
@@ -243,31 +244,25 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
   ): ToolExecutionContext {
     const ac = new AbortController();
     const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
-    return createToolExecutionContext({
-      store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
-      toolName: "echo",
-      toolCallId: "call-1",
-      input: { msg: "hello" },
-      step: 0,
-      abort: ac.signal,
-      startedAt: 0,
-      allowedTools: new Set(["echo"]),
-      agentSkills: [],
-      skillService: new SkillService({ builtinSkills: {} }),
-      projectContext: makeProjectContext(workspaceRoot),
-      ...overrides,
-    });
+    return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
+    toolCallId: "call-1",
+    input: { msg: "hello" },
+    step: 0,
+    abort: ac.signal,
+    startedAt: 0,
+    allowedTools: new Set(["echo"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
+    projectContext: makeProjectContext(workspaceRoot),
+    ...overrides, });
   }
 
   function makeToolCall(
     overrides?: Partial<ToolCallLike>,
   ): ToolCallLike {
-    return {
-      toolCallId: "call-1",
-      toolName: "echo",
-      input: { msg: "hello" },
-      ...overrides,
-    };
+    return { toolCallId: "call-1",
+    toolName: "echo",
+    input: { msg: "hello" }, ...overrides,  };
   }
 
   describe("execute()", () => {
@@ -1618,31 +1613,25 @@ describe("hook integration with registry", () => {
   ): ToolExecutionContext {
     const ac = new AbortController();
     const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
-    return createToolExecutionContext({
-      store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
-      toolName: "echo",
-      toolCallId: "call-1",
-      input: { msg: "hello" },
-      step: 0,
-      abort: ac.signal,
-      startedAt: 0,
-      allowedTools: new Set(["echo"]),
-      agentSkills: [],
-      skillService: new SkillService({ builtinSkills: {} }),
-      projectContext: makeProjectContext(workspaceRoot),
-      ...overrides,
-    });
+    return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
+    toolCallId: "call-1",
+    input: { msg: "hello" },
+    step: 0,
+    abort: ac.signal,
+    startedAt: 0,
+    allowedTools: new Set(["echo"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
+    projectContext: makeProjectContext(workspaceRoot),
+    ...overrides, });
   }
 
   function makeToolCall(
     overrides?: Partial<ToolCallLike>,
   ): ToolCallLike {
-    return {
-      toolCallId: "call-1",
-      toolName: "echo",
-      input: { msg: "hello" },
-      ...overrides,
-    };
+    return { toolCallId: "call-1",
+    toolName: "echo",
+    input: { msg: "hello" }, ...overrides,  };
   }
 
   // 1. Duration flows into execution logger via global after hook
@@ -1918,31 +1907,25 @@ describe("Permission API contract — registry", () => {
     ): ToolExecutionContext {
       const ac = new AbortController();
       const workspaceRoot = overrides?.projectContext?.project.workspaceRoot ?? overrides?.workspaceRoot ?? "/tmp";
-      return createToolExecutionContext({
-        store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"],
-        toolName: "echo",
-        toolCallId: "call-1",
-        input: { msg: "hello" },
-        step: 0,
-        abort: ac.signal,
-        startedAt: 0,
-        allowedTools: new Set(["echo"]),
-        agentSkills: [],
-        skillService: new SkillService({ builtinSkills: {} }),
-        projectContext: makeProjectContext(workspaceRoot),
-        ...overrides,
-      });
+      return createToolExecutionContext({ store: { getState: () => ({ sessionId: "test-session" }) } as ToolExecutionContext["store"], storeManager, toolName: "echo",
+      toolCallId: "call-1",
+      input: { msg: "hello" },
+      step: 0,
+      abort: ac.signal,
+      startedAt: 0,
+      allowedTools: new Set(["echo"]),
+      agentSkills: [],
+      skillService: new SkillService({ builtinSkills: {} }),
+      projectContext: makeProjectContext(workspaceRoot),
+      ...overrides, });
     }
 
     function makeToolCall(
       overrides?: Partial<ToolCallLike>,
     ): ToolCallLike {
-      return {
-        toolCallId: "call-1",
-        toolName: "echo",
-        input: { msg: "hello" },
-        ...overrides,
-      };
+      return { toolCallId: "call-1",
+      toolName: "echo",
+      input: { msg: "hello" }, ...overrides,  };
     }
 
     test("permissionOutcome is set to 'allow' when all permissions allow", async () => {

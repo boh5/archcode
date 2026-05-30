@@ -153,14 +153,10 @@ function setupToolCallStreamText(toolName: string, input: Record<string, unknown
 }
 
 function definitionWith(overrides: Partial<AgentDefinition>): AgentDefinition {
-  return {
-    ...exploreAgentDefinition,
-    ...overrides,
-    hooks: {
-      ...exploreAgentDefinition.hooks,
-      ...overrides.hooks,
-    },
-  };
+  return { ...exploreAgentDefinition, ...overrides, hooks: {
+    ...exploreAgentDefinition.hooks,
+    ...overrides.hooks,
+  }, };
 }
 
 function createAgent(options: {
@@ -187,7 +183,8 @@ function createAgent(options: {
     toolRegistry,
     skillService: options.skillService ?? createTestSkillService(),
     activeSkills: options.activeSkills,
-    store: options.store,
+    store: options.store ?? storeManager.create(`configured-agent-${crypto.randomUUID()}`),
+    storeManager,
     workspaceRoot: options.workspaceRoot ?? tmpRoot,
     depth: options.depth,
     backgroundTaskManager: options.btm as never,
@@ -272,6 +269,8 @@ describe("ConfiguredAgent", () => {
       modelInfo: providerRegistry.getModel("test:configured"),
       toolRegistry: makeToolRegistry(),
       skillService: createTestSkillService(),
+      store: storeManager.create(`configured-missing-context-${crypto.randomUUID()}`),
+      storeManager,
       logger: silentLogger,
       resolveAllowedTools: () => [],
     })).toThrow(MissingProjectContextError);

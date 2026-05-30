@@ -7,6 +7,7 @@ import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
+import { storeManager } from "../store/store";
 import { createMockStore } from "../store/test-helpers";
 import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "./permission";
@@ -54,19 +55,16 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
 }
 
 function createContext(projectContext: ProjectContext): ToolExecutionContext {
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName: "ctx_sensitive_tool",
-    toolCallId: "ctx-sensitive-call",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["ctx_sensitive_tool"]),
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "ctx_sensitive_tool",
+  toolCallId: "ctx-sensitive-call",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["ctx_sensitive_tool"]),
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext, });
 }
 
 function createSensitiveDescriptor(): ToolDescriptor {

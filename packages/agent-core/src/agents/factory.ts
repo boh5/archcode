@@ -4,7 +4,7 @@ import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../backgr
 import type { SpecraConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
-import { storeManager } from "../store/store";
+import type { SessionStoreManager } from "../store/session-store-manager";
 import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import { SkillNotFoundError, type SkillService } from "../skills";
@@ -34,6 +34,7 @@ export interface AgentFactoryConfig {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
+  readonly storeManager: SessionStoreManager;
   readonly workspaceRoot: string;
   readonly config?: SpecraConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
@@ -135,7 +136,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       );
 
       const childSessionId = crypto.randomUUID();
-      const childStore = storeManager.create(childSessionId);
+      const childStore = config.storeManager.create(childSessionId, config.workspaceRoot);
       const childTitle = options.title ?? options.description;
       childStore.getState().setParentSessionId(parentSessionId);
       if (childTitle !== undefined) childStore.getState().setTitle(childTitle);
@@ -341,7 +342,7 @@ function createConfiguredAgent(
   definition: AgentDefinition,
   options: CreateAgentOptions,
 ): Agent {
-  const store = prepareStore(options);
+  const store = prepareStore(config, options);
   if (config.providerRegistry.modelIds.length === 0) {
     throw new NoModelsConfiguredError();
   }
@@ -356,6 +357,7 @@ function createConfiguredAgent(
     modelOptions,
     toolRegistry: config.toolRegistry,
     skillService: config.skillService,
+    storeManager: config.storeManager,
     workspaceRoot: config.workspaceRoot,
     store,
     depth: options.depth,
@@ -383,8 +385,8 @@ function factoryResolveAllowedTools(
   return resolved;
 }
 
-function prepareStore(options: CreateAgentOptions): StoreApi<SessionStoreState> {
-  const store = options.store ?? storeManager.create(crypto.randomUUID());
+function prepareStore(config: AgentFactoryConfig, options: CreateAgentOptions): StoreApi<SessionStoreState> {
+  const store = options.store ?? config.storeManager.create(crypto.randomUUID(), config.workspaceRoot);
 
   const state: Partial<SessionStoreState> = {};
   if (options.parentSessionId !== undefined) {

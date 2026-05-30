@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,19 +39,17 @@ function mockCtx(
   workspaceRoot: string,
   overrides?: Partial<ToolExecutionContext>,
 ): ToolExecutionContext {
-  return {
-    store: {} as any,
-    toolName: "bash",
-    toolCallId: "call_1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["bash"]),
-    workspaceRoot,
-    projectContext: createTestProjectContext(workspaceRoot),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "bash",
+  toolCallId: "call_1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["bash"]),
+  workspaceRoot,
+  storeManager,
+    projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
 }
 
 describe("bashTool", () => {

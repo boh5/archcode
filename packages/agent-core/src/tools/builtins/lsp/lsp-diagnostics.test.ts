@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { storeManager } from "../../../store/store";
 import path from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import { FakeLspServer } from "../../../lsp/test-utils";
@@ -358,19 +359,17 @@ async function writeWorkspaceFile(relativePath: string, content: string): Promis
 }
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "lsp_diagnostics",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["lsp_diagnostics"]),
-    workspaceRoot: testDir,
-    projectContext: createTestProjectContext(testDir),
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  toolName: "lsp_diagnostics",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["lsp_diagnostics"]),
+  workspaceRoot: testDir,
+  storeManager,
+    projectContext: createTestProjectContext(testDir), ...overrides,  };
 }
 
 class RecordingPool {

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolExecutionContext } from "../types";
@@ -14,19 +15,17 @@ const permission = createProtectedSpecraPermission();
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
-  return {
-    store: {} as ToolExecutionContext["store"],
-    toolName: "file_write",
-    toolCallId: "call-1",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set<string>(),
-    workspaceRoot: WORKSPACE,
-    projectContext: createTestProjectContext(WORKSPACE),
-    ...overrides,
-  };
+  return { store: {} as ToolExecutionContext["store"],
+  toolName: "file_write",
+  toolCallId: "call-1",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set<string>(),
+  workspaceRoot: WORKSPACE,
+  storeManager,
+    projectContext: createTestProjectContext(WORKSPACE), ...overrides,  };
 }
 
 beforeAll(() => {

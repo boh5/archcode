@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { storeManager } from "../store/store";
 import { z } from "zod";
 import { TOOL_ERROR_META_KEY, type FormattedToolError } from "../tools/errors";
 import { REDACTION_MARKER } from "../tools/security";
@@ -24,19 +25,17 @@ function makeThrowingMcpClient(error: unknown): McpClient {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: {} as ToolExecutionContext["store"],
-    toolName: "mcp__context7__resolve-library-id",
-    toolCallId: "call-1",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["mcp__context7__resolve-library-id"]),
-    workspaceRoot: "/tmp",
-    projectContext: createTestProjectContext("/tmp"),
-    ...overrides,
-  };
+  return { store: {} as ToolExecutionContext["store"],
+  toolName: "mcp__context7__resolve-library-id",
+  toolCallId: "call-1",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(["mcp__context7__resolve-library-id"]),
+  workspaceRoot: "/tmp",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
 function toolError(result: { meta?: Record<string, unknown> }): FormattedToolError {

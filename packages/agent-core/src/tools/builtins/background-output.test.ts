@@ -1,12 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { storeManager } from "../../store/store";
+import { silentLogger } from "../../logger";
+import { SessionStoreManager } from "../../store/session-store-manager";
 import type { ToolExecutionContext } from "../types";
 import { executeBackgroundOutput } from "./background-output";
 import { createTestProjectContext } from "../test-project-context";
 
+const workspaceRoot = import.meta.dir;
+
 function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): ToolExecutionContext {
+  const localManager = new SessionStoreManager({ logger: silentLogger });
   return {
-    store: storeManager.create(parentId),
+    store: localManager.create(parentId, workspaceRoot),
+    storeManager: localManager,
     toolName: "background_output",
     toolCallId: "background-output-call",
     input: {},
@@ -14,15 +19,15 @@ function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): Too
     abort: new AbortController().signal,
     startedAt: 0,
     allowedTools: new Set(["background_output"]),
-    workspaceRoot: import.meta.dir,
-    projectContext: createTestProjectContext(import.meta.dir),
+    workspaceRoot,
+    projectContext: createTestProjectContext(workspaceRoot),
   };
 }
 
 describe("background_output tool", () => {
   it("returns last assistant text from a known child store", () => {
     const ctx = makeContext();
-    const childStore = storeManager.create(`background-child-${crypto.randomUUID()}`);
+    const childStore = ctx.storeManager.create(`background-child-${crypto.randomUUID()}`, workspaceRoot);
     ctx.store.setState({ childSessionIds: new Set([childStore.getState().sessionId]) });
     childStore.getState().append({ type: "text-start" });
     childStore.getState().append({ type: "text-delta", text: "first" });
@@ -39,7 +44,7 @@ describe("background_output tool", () => {
 
   it("returns running guidance when child has no assistant output", () => {
     const ctx = makeContext();
-    const childStore = storeManager.create(`background-child-${crypto.randomUUID()}`);
+    const childStore = ctx.storeManager.create(`background-child-${crypto.randomUUID()}`, workspaceRoot);
     ctx.store.setState({ childSessionIds: new Set([childStore.getState().sessionId]) });
 
     const result = executeBackgroundOutput({ session_id: childStore.getState().sessionId }, ctx);

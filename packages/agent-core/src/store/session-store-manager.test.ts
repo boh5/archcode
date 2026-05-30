@@ -1,6 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { createEmptySessionStats } from "@specra/protocol";
 import { SessionStoreManager } from "./session-store-manager";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
@@ -92,6 +93,8 @@ describe("SessionStoreManager", () => {
         title: "disk-title",
         messages: [],
         steps: [],
+        stats: createEmptySessionStats(),
+        runs: [],
         todos: [],
       },
       TMP_DIR,
@@ -118,6 +121,8 @@ describe("SessionStoreManager", () => {
         title: "disk-title",
         messages: [],
         steps: [],
+        stats: createEmptySessionStats(),
+        runs: [],
         todos: [],
       },
       TMP_DIR,
@@ -153,6 +158,8 @@ describe("SessionStoreManager", () => {
         title: "dedup-title",
         messages: [],
         steps: [],
+        stats: createEmptySessionStats(),
+        runs: [],
         todos: [],
       },
       TMP_DIR,
@@ -177,6 +184,8 @@ describe("SessionStoreManager", () => {
         title: "disk-title",
         messages: [],
         steps: [],
+        stats: createEmptySessionStats(),
+        runs: [],
         todos: [],
       },
       TMP_DIR,

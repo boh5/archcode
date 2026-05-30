@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, beforeAll } from "bun:test";
+import { storeManager } from "../../store/store";
 import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { RipgrepNotFoundError } from "../ripgrep/service";
 import type { FormattedToolError, ToolErrorKind } from "../errors";
@@ -27,27 +28,22 @@ function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
 }
 
 function createMockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
-  return {
-    store: {} as any,
-    toolName: "grep",
-    toolCallId: "test-call-id",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    agentName: "orchestrator-agent",
-    startedAt: Date.now(),
-    allowedTools: new Set(["grep"]),
-    workspaceRoot: "/workspace",
-    projectContext: createTestProjectContext("/workspace"),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "grep",
+  toolCallId: "test-call-id",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  agentName: "orchestrator-agent",
+  startedAt: Date.now(),
+  allowedTools: new Set(["grep"]),
+  workspaceRoot: "/workspace",
+  storeManager,
+    projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
 
 function createMockRgService(overrides?: Partial<RipgrepService>): RipgrepService {
-  return {
-    ensure: mock(() => Promise.resolve("/usr/local/bin/rg")),
-    ...overrides,
-  };
+  return { ensure: mock(() => Promise.resolve("/usr/local/bin/rg")), ...overrides,  };
 }
 
 function expectToolError(

@@ -1,6 +1,7 @@
 import type { Schema as AiSchema } from "ai";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
+import type { SessionStoreManager } from "../store/session-store-manager";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
 import type { AgentFactoryLike } from "../delegation/types";
@@ -24,6 +25,7 @@ export interface ToolExecutionResult {
 
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
+  storeManager: SessionStoreManager;
   toolName: string;
   toolCallId: string;
   input: unknown;

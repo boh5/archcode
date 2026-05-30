@@ -19,6 +19,7 @@ function makeStore(): StoreApi<SessionStoreState> {
 function makeCtx(store: StoreApi<SessionStoreState>): ToolExecutionContext {
   return {
     store,
+    storeManager,
     toolName: "todo_write",
     toolCallId: "call-1",
     input: {},

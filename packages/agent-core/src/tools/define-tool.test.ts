@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { defineTool } from "./define-tool";
 import { SkillService } from "../skills";
+import { storeManager } from "../store/store";
 import { createTestProjectContext } from "./test-project-context";
 import type {
   ToolDescriptor,
@@ -14,6 +15,7 @@ import type {
 function mockCtx(): ToolExecutionContext {
   return {
     store: {} as any,
+    storeManager,
     toolName: "test",
     toolCallId: "call_1",
     input: {},

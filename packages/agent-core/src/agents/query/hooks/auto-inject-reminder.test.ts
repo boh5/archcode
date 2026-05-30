@@ -9,15 +9,12 @@ import { createAutoInjectReminderHook } from "./auto-inject-reminder";
 function createReminder(overrides: Partial<Reminder> = {}): Reminder {
   const id = overrides.id ?? crypto.randomUUID();
 
-  return {
-    id,
-    source: { type: "todo_step_reminder", pendingTodos: [] },
-    delivery: "auto_inject",
-    content: `Reminder ${id}`,
-    createdAt: Date.now(),
-    consumedAt: null,
-    ...overrides,
-  };
+  return { id,
+  source: { type: "todo_step_reminder", pendingTodos: [] },
+  delivery: "auto_inject",
+  content: `Reminder ${id}`,
+  createdAt: Date.now(),
+  consumedAt: null, ...overrides,  };
 }
 
 function createContext(messages: ModelMessage[] = []): BeforeModelCallContext {

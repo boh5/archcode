@@ -125,7 +125,7 @@ describe("parseStepUsage", () => {
     expect(parseStepUsage(undefined)).toBeNull();
   });
 
-  test("returns null for empty object", () => {
+  test("returns null when shared normalization yields zero usage", () => {
     expect(parseStepUsage({})).toBeNull();
   });
 
@@ -167,7 +167,7 @@ describe("parseStepUsage", () => {
     });
   });
 
-  test("parses AI SDK standard format: promptTokens, completionTokens, totalTokens", () => {
+  test("parses AI SDK standard format through shared normalization", () => {
     const result = parseStepUsage({
       promptTokens: 800,
       completionTokens: 150,
@@ -196,25 +196,38 @@ describe("parseStepUsage", () => {
     expect(parseStepUsage({ foo: 1, bar: 2 })).toBeNull();
   });
 
-  test("handles partial OpenAI format (only prompt_tokens)", () => {
+  test("handles partial OpenAI format with shared zero defaults", () => {
     const result = parseStepUsage({
       prompt_tokens: 1000,
     });
     expect(result).toEqual({
       promptTokens: 1000,
-      completionTokens: undefined,
-      totalTokens: undefined,
+      completionTokens: 0,
+      totalTokens: 1000,
     });
   });
 
-  test("handles partial Anthropic format (only input_tokens)", () => {
+  test("handles partial Anthropic format with shared zero defaults", () => {
     const result = parseStepUsage({
       input_tokens: 500,
     });
     expect(result).toEqual({
       promptTokens: 500,
-      completionTokens: undefined,
-      totalTokens: undefined,
+      completionTokens: 0,
+      totalTokens: 500,
+    });
+  });
+
+  test("maps shared normalized usage names back to compact token names", () => {
+    expect(parseStepUsage({
+      inputTokens: 10,
+      outputTokens: 4,
+      reasoningTokens: 2,
+      cachedInputTokens: 3,
+    })).toEqual({
+      promptTokens: 10,
+      completionTokens: 4,
+      totalTokens: 14,
     });
   });
 });

@@ -5,6 +5,7 @@ import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
 import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../../agents/workflow/state";
+import { storeManager } from "../../store/store";
 import type { ProjectContext } from "../../projects/types";
 import { silentLogger } from "../../logger";
 import { ProjectApprovalManager } from "../permission";
@@ -84,20 +85,17 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName: "memory_read",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["memory_read"]),
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-    ...overrides,
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_read",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["memory_read"]),
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext,
+  ...overrides, });
 }
 
 // ---------------------------------------------------------------------------

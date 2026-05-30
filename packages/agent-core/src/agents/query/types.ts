@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
 import type { ModelInfo } from "../../provider/model";
 import type { CommandRegistry } from "../../commands/registry";
+import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
@@ -21,6 +22,7 @@ export interface QueryLoopOptions {
   allowedTools: readonly string[];
   agentSkills: readonly string[];
   skillService: SkillService;
+  storeManager: SessionStoreManager;
   workspaceRoot?: string;
   projectContext: ProjectContext;
   confirmPermission?: ToolConfirmationCallback;

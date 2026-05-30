@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { storeManager } from "../../store/store";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -25,7 +24,7 @@ export function executeBackgroundOutput(
     });
   }
 
-  const childStore = storeManager.get(input.session_id);
+  const childStore = ctx.storeManager.get(input.session_id, ctx.workspaceRoot);
   if (childStore === undefined) {
     return createToolErrorResult({
       kind: "execution",

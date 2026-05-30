@@ -5,6 +5,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { storeManager } from "../../store/store";
 import { realpathSync, statSync } from "node:fs";
 import {
   mkdir,
@@ -26,19 +27,17 @@ import { createTestProjectContext } from "../test-project-context";
 const testDir = join(import.meta.dir, "__test_tmp__", "file-edit");
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "file_edit",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["file_edit"]),
-    workspaceRoot: testDir,
-    projectContext: createTestProjectContext(testDir),
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  toolName: "file_edit",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["file_edit"]),
+  workspaceRoot: testDir,
+  storeManager,
+    projectContext: createTestProjectContext(testDir), ...overrides,  };
 }
 
 async function writeWorkspaceFile(relativePath: string, content: string): Promise<string> {

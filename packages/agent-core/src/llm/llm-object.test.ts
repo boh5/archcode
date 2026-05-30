@@ -37,11 +37,8 @@ const dummyModel = {} as LlmObjectInput<unknown>["model"];
 function makeInput<T>(
   overrides: Partial<LlmObjectInput<T>> & { schema: LlmObjectInput<T>["schema"] },
 ): LlmObjectInput<T> {
-  return {
-    model: dummyModel,
-    prompt: "test prompt",
-    ...overrides,
-  };
+  return { model: dummyModel,
+  prompt: "test prompt", ...overrides,  };
 }
 
 function getCallArg(index: number): Record<string, unknown> {

@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll, afterEach } from "bun:test";
+import { storeManager } from "../../store/store";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -30,19 +31,17 @@ function mockCtx(
   tmpDir: string,
   overrides?: Partial<ToolExecutionContext>,
 ): ToolExecutionContext {
-  return {
-    store: {} as any,
-    toolName: "git_status",
-    toolCallId: "call_1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["git_status"]),
-    workspaceRoot: tmpDir,
-    projectContext: createTestProjectContext(tmpDir),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "git_status",
+  toolCallId: "call_1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["git_status"]),
+  workspaceRoot: tmpDir,
+  storeManager,
+    projectContext: createTestProjectContext(tmpDir), ...overrides,  };
 }
 
 describe("parseGitStatusOutput", () => {

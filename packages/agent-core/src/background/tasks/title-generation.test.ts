@@ -36,13 +36,10 @@ function makeTaskContext(
   store: BackgroundTaskContext["store"],
   overrides: Partial<BackgroundTaskContext> = {},
 ): BackgroundTaskContext {
-  return {
-    store,
-    modelInfo: makeModelInfo(),
-    logger: silentLogger,
-    workspaceRoot: "/tmp",
-    ...overrides,
-  };
+  return { store,
+  modelInfo: makeModelInfo(),
+  logger: silentLogger,
+  workspaceRoot: "/tmp", ...overrides,  };
 }
 
 async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {

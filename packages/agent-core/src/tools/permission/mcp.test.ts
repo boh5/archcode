@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import { createMcpDestructivePermission } from "./mcp";
 import type { ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
@@ -6,6 +7,7 @@ import { createTestProjectContext } from "../test-project-context";
 function mockCtx(): ToolExecutionContext {
   return {
     store: {} as any,
+    storeManager,
     toolName: "test",
     toolCallId: "call_1",
     input: {},

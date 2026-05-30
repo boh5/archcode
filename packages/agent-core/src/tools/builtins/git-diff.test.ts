@@ -4,6 +4,7 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { setProcessRunnerForTest } from "../../process/runner";
+import { storeManager } from "../../store/store";
 
 // ─── Helpers ───
 
@@ -30,6 +31,7 @@ function mockSpawnResult(stdout: string, stderr = "", exitCode = 0) {
 function mockCtx(): ToolExecutionContext {
   return {
     store: {} as any,
+    storeManager,
     toolName: "git_diff",
     toolCallId: "call_1",
     input: {},

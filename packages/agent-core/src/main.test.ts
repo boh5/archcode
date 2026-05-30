@@ -91,6 +91,7 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
   return {
     store: storeManager.create(`main-test-${crypto.randomUUID()}`),
+    storeManager,
     toolName,
     toolCallId: `${toolName}-call`,
     input,

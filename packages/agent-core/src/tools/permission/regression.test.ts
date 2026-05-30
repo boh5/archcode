@@ -86,19 +86,17 @@ function resetWorkspace(): void {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: storeManager.create(crypto.randomUUID()),
-    toolName: "regression_tool",
-    toolCallId: "call-1",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["regression_tool"]),
-    workspaceRoot: WORKSPACE,
-    projectContext: createTestProjectContext(WORKSPACE),
-    ...overrides,
-  };
+  return { store: storeManager.create(crypto.randomUUID()),
+  toolName: "regression_tool",
+  toolCallId: "call-1",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(["regression_tool"]),
+  workspaceRoot: WORKSPACE,
+  storeManager,
+    projectContext: createTestProjectContext(WORKSPACE), ...overrides,  };
 }
 
 function makeCall(input: unknown = {}): ToolCallLike {

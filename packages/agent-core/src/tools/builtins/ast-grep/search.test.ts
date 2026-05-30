@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { storeManager } from "../../../store/store";
 
 import { BinaryManager, setBinaryManagerForTest } from "../../../binary/manager";
 import { setProcessRunnerForTest } from "../../../process/runner";
@@ -18,22 +19,20 @@ function spawnResult(stdout: string, stderr = "", exitCode = 0, signalCode?: str
 }
 
 function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
-  return {
-    store: {} as any,
-    toolName: "ast_grep_search",
-    toolCallId: "call-id",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    agentName: "orchestrator-agent",
-    startedAt: Date.now(),
-    allowedTools: new Set(["ast_grep_search"]),
-    agentSkills: [],
-    skillService: new SkillService({ builtinSkills: {} }),
-    workspaceRoot: "/workspace",
-    projectContext: createTestProjectContext("/workspace"),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "ast_grep_search",
+  toolCallId: "call-id",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  agentName: "orchestrator-agent",
+  startedAt: Date.now(),
+  allowedTools: new Set(["ast_grep_search"]),
+  agentSkills: [],
+  skillService: new SkillService({ builtinSkills: {} }),
+  workspaceRoot: "/workspace",
+  storeManager,
+    projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
 
 function manager(binaryPath = "/managed/bin/ast-grep"): BinaryManager {

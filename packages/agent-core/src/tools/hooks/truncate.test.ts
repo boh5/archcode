@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { storeManager } from "../../store/store";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -15,22 +16,20 @@ const OUTPUT_DIR = join(TMP_DIR, "tool-output");
 const TEST_SESSION_ID = "test-session";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: {
-      getState: () => ({ sessionId: TEST_SESSION_ID }),
-    } as ToolExecutionContext["store"],
-    toolName: overrides.toolName ?? "bash",
-    toolCallId: overrides.toolCallId ?? "call-abc-123",
-    input: overrides.input ?? { command: "echo hello" },
-    step: overrides.step ?? 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    durationMs: overrides.durationMs ?? 42,
-    allowedTools: new Set<string>(),
-    workspaceRoot: "/tmp",
-    projectContext: createTestProjectContext("/tmp"),
-    ...overrides,
-  };
+  return { store: {
+    getState: () => ({ sessionId: TEST_SESSION_ID }),
+  } as ToolExecutionContext["store"],
+  toolName: overrides.toolName ?? "bash",
+  toolCallId: overrides.toolCallId ?? "call-abc-123",
+  input: overrides.input ?? { command: "echo hello" },
+  step: overrides.step ?? 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  durationMs: overrides.durationMs ?? 42,
+  allowedTools: new Set<string>(),
+  workspaceRoot: "/tmp",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
 function makeResult(overrides: Partial<ToolExecutionResult> = {}): ToolExecutionResult {

@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { TOOL_ERROR_META_KEY } from "../errors";
 import { SkillService } from "../../skills";
+import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
@@ -15,19 +16,16 @@ const projectSkillsRoot = join(projectRoot, ".specra", "skills");
 const userSkillsRoot = join(tmpRoot, "user", ".specra", "skills");
 
 function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName: "skill_read",
-    toolCallId: "skill-read-call",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["skill_read"]),
-    agentSkills,
-    skillService: new SkillService({ userSkillsRoot }),
-    projectContext: createTestProjectContext(projectRoot),
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_read",
+  toolCallId: "skill-read-call",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(["skill_read"]),
+  agentSkills,
+  skillService: new SkillService({ userSkillsRoot }),
+  projectContext: createTestProjectContext(projectRoot), });
 }
 
 async function writeProjectSkill(name: string, content: string): Promise<void> {

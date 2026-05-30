@@ -2,6 +2,7 @@ import { describe, expect, mock, test, beforeEach } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { BeforeModelBuildContext } from "../loop-hooks";
 import { silentLogger } from "../../../logger";
+import { createEmptySessionStats } from "@specra/protocol";
 import type { SessionStoreState, StoredMessage, StepInfo } from "../../../store/types";
 import { createAutoCompactHook } from "./auto-compact";
 import { COMPACT_MIN_NEW_MESSAGES } from "../../../compact/token-estimation";
@@ -53,6 +54,8 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     title: null,
     messages,
     steps,
+    stats: createEmptySessionStats(),
+    runs: [],
     todos: [],
     reminders: [],
     childSessionIds: new Set(),
@@ -105,12 +108,9 @@ function createMockModelInfo(contextLimit: number = CONTEXT_LIMIT) {
 }
 
 function createContext(overrides: Partial<BeforeModelBuildContext> = {}): BeforeModelBuildContext {
-  return {
-    store: createMockStore(),
-    modelInfo: createMockModelInfo() as never,
-    logger: silentLogger,
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  modelInfo: createMockModelInfo() as never,
+  logger: silentLogger, ...overrides,  };
 }
 
 function makeStoredMessage(parts: StoredMessage["parts"] = []): StoredMessage {

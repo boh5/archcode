@@ -6,6 +6,8 @@ import type {
   Reminder,
   SessionEventEnvelope,
   SessionEventPayload,
+  SessionStats,
+  SessionRun,
 } from "@specra/protocol";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,8 @@ export interface SessionStoreState {
   title: string | null;
   messages: SessionMessage[];
   steps: SessionStep[];
+  stats: SessionStats;
+  runs: SessionRun[];
 
   // Session-only state
   todos: SessionTodo[];

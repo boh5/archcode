@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createEmptySessionStats } from "@specra/protocol";
 import type { Reminder, SessionStoreState, StoredMessage, StoredPart } from "../../store/types";
 import {
   getStepsSinceLastTodoWrite,
@@ -288,38 +289,37 @@ function stepsForCount(count: number): SessionStoreState["steps"] {
 }
 
 function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
-  return {
-    sessionId: "session-1",
-    createdAt: 1,
-    title: null,
-    messages: [],
-    steps: [],
-    todos: [],
-    reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
-    isRunning: false,
-    isStreamingModel: false,
-    readSnapshots: new Map(),
-    runCount: 0,
-    lastTodoWriteStepIndex: null,
-    lastTodoReminderStepIndex: null,
-    todoStepReminderCount: 0,
-    todoLoopContinuationCount: 0,
-    todoContinuationStagnationCount: 0,
-    lastTodoContinuationPendingCount: null,
-    lastExtractionIndex: 0,
-    lastExtractionTime: 0,
-    events: [],
-    eventOffset: 0,
-    nextEventId: 0,
-    append: () => {},
-    setTitle: () => {},
-    setParentSessionId: () => {},
-    linkChildSession: () => {},
-    toModelMessages: () => [],
-    ...overrides,
-  };
+  return { sessionId: "session-1",
+  createdAt: 1,
+  title: null,
+  messages: [],
+  steps: [],
+  stats: createEmptySessionStats(),
+  runs: [],
+  todos: [],
+  reminders: [],
+  childSessionIds: new Set(),
+  subAgentDescriptions: new Map(),
+  isRunning: false,
+  isStreamingModel: false,
+  readSnapshots: new Map(),
+  runCount: 0,
+  lastTodoWriteStepIndex: null,
+  lastTodoReminderStepIndex: null,
+  todoStepReminderCount: 0,
+  todoLoopContinuationCount: 0,
+  todoContinuationStagnationCount: 0,
+  lastTodoContinuationPendingCount: null,
+  lastExtractionIndex: 0,
+  lastExtractionTime: 0,
+  events: [],
+  eventOffset: 0,
+  nextEventId: 0,
+  append: () => {},
+  setTitle: () => {},
+  setParentSessionId: () => {},
+  linkChildSession: () => {},
+  toModelMessages: () => [], ...overrides,  };
 }
 
 function todoReminder(createdAt: number): Reminder {

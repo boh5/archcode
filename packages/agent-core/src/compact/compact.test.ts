@@ -172,14 +172,11 @@ function makeCompactionMessage(id: string, summary: string, tailStartId: string)
 const mockModel = { modelId: "test-model" } as unknown as LanguageModelV3;
 
 function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>): CompactInput {
-  return {
-    messages,
-    contextLimit: 100000,
-    model: mockModel,
-    sessionId: "test-session",
-    logger: silentLogger,
-    ...overrides,
-  };
+  return { messages,
+  contextLimit: 100000,
+  model: mockModel,
+  sessionId: "test-session",
+  logger: silentLogger, ...overrides,  };
 }
 
 // ---------------------------------------------------------------------------

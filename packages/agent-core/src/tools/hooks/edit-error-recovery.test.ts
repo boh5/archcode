@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
   createToolErrorResult,
@@ -12,29 +13,24 @@ import { createTestProjectContext } from "../test-project-context";
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
-  return {
-    store: {} as ToolExecutionContext["store"],
-    toolName: "file_edit",
-    toolCallId: "call-edit-001",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set<string>(),
-    workspaceRoot: "/tmp",
-    projectContext: createTestProjectContext("/tmp"),
-    ...overrides,
-  };
+  return { store: {} as ToolExecutionContext["store"],
+  toolName: "file_edit",
+  toolCallId: "call-edit-001",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set<string>(),
+  workspaceRoot: "/tmp",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
 function makeResult(
   overrides: Partial<ToolExecutionResult> = {},
 ): ToolExecutionResult {
-  return {
-    output: "",
-    isError: false,
-    ...overrides,
-  };
+  return { output: "",
+  isError: false, ...overrides,  };
 }
 
 describe("createEditErrorRecoveryHook", () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { storeManager } from "../../store/store";
 import { WebFetchInputSchema, validateUrl, runWebFetch, webFetchTool } from "./web-fetch";
 import { createRegistry } from "../registry";
 import type { ToolExecutionContext } from "../types";
@@ -8,19 +9,17 @@ import { createTestProjectContext } from "../test-project-context";
 
 function mockCtx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
   const workspaceRoot = import.meta.dir;
-  return {
-    store: {} as any,
-    toolName: "web_fetch",
-    toolCallId: "call_test",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["web_fetch"]),
-    workspaceRoot,
-    projectContext: createTestProjectContext(workspaceRoot),
-    ...overrides,
-  };
+  return { store: {} as any,
+  toolName: "web_fetch",
+  toolCallId: "call_test",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["web_fetch"]),
+  workspaceRoot,
+  storeManager,
+    projectContext: createTestProjectContext(workspaceRoot), ...overrides,  };
 }
 
 const HTML_PAGE = `<!DOCTYPE html>

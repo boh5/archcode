@@ -44,20 +44,17 @@ function makeContext(
 ): ToolExecutionContext {
   const input = overrides.input ?? {};
   const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
-  return createToolExecutionContext({
-    store: storeManager.create(`register-tools-${crypto.randomUUID()}`),
-    toolName,
-    toolCallId: `${toolName}-call`,
-    input,
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(allowedTools),
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-    ...overrides,
-  });
+  return createToolExecutionContext({ store: storeManager.create(`register-tools-${crypto.randomUUID()}`), storeManager, toolName,
+  toolCallId: `${toolName}-call`,
+  input,
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(allowedTools),
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext,
+  ...overrides, });
 }
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {

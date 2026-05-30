@@ -156,6 +156,7 @@ export async function runQueryLoop(
         options.agentName,
         options.agentSkills,
         options.skillService,
+        options.storeManager,
         currentDepth,
         doomTracker,
       );
@@ -367,6 +368,7 @@ async function executeToolCalls(
   agentName: string | undefined,
   agentSkills: QueryLoopOptions["agentSkills"],
   skillService: QueryLoopOptions["skillService"],
+  storeManager: QueryLoopOptions["storeManager"],
   currentDepth?: number,
   doomTracker?: DoomTracker,
 ): Promise<void> {
@@ -416,6 +418,7 @@ async function executeToolCalls(
             projectContext,
             agentSkills,
             skillService,
+            storeManager,
             ...(confirmPermission ? { confirmPermission } : {}),
             ...(askUser ? { askUser } : {}),
             ...(agentFactory ? { agentFactory } : {}),
@@ -452,6 +455,7 @@ async function executeToolCalls(
         projectContext,
         agentSkills,
         skillService,
+        storeManager,
         ...(confirmPermission ? { confirmPermission } : {}),
         ...(askUser ? { askUser } : {}),
         ...(agentFactory ? { agentFactory } : {}),

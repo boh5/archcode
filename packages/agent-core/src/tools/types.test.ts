@@ -20,6 +20,7 @@ import { WorkflowStateManager } from "../agents/workflow/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { silentLogger } from "../logger";
+import { storeManager } from "../store/store";
 import { ProjectApprovalManager } from "./permission";
 import { SkillService } from "../skills";
 
@@ -232,21 +233,18 @@ describe("PermissionErrorCode", () => {
 // ─── Extended ToolExecutionContext ───
 
 test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
-  const ctx = createToolExecutionContext({
-    store: {} as any,
-    toolName: "test",
-    toolCallId: "call_1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    agentName: "agent",
-    startedAt: Date.now(),
-    durationMs: 10,
-    allowedTools: new Set(["echo"]),
-    agentSkills: ["git-master"],
-    skillService: testSkillService,
-    projectContext: makeProjectContext("/tmp/workspace"),
-  });
+  const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
+  toolCallId: "call_1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  agentName: "agent",
+  startedAt: Date.now(),
+  durationMs: 10,
+  allowedTools: new Set(["echo"]),
+  agentSkills: ["git-master"],
+  skillService: testSkillService,
+  projectContext: makeProjectContext("/tmp/workspace"), });
   expect(ctx.allowedTools.has("echo")).toBe(true);
   expect(ctx.agentSkills).toEqual(["git-master"]);
   expect(ctx.skillService).toBe(testSkillService);
@@ -254,19 +252,16 @@ test("ToolExecutionContext accepts allowedTools and workspaceRoot", () => {
 });
 
 test("ToolExecutionContext confirmPermission is optional", () => {
-  const ctx = createToolExecutionContext({
-    store: {} as any,
-    toolName: "test",
-    toolCallId: "call_1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(),
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext: makeProjectContext("/tmp"),
-  });
+  const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
+  toolCallId: "call_1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(),
+  agentSkills: [],
+  skillService: testSkillService,
+  projectContext: makeProjectContext("/tmp"), });
   expect(ctx.confirmPermission).toBeUndefined();
 });
 
@@ -387,20 +382,17 @@ describe("ToolDescriptor — permissions field", () => {
 
 describe("ToolExecutionContext — permissionOutcome preserved", () => {
   test("permissionOutcome receives allow/deny/ask from permission decisions", () => {
-    const ctx = createToolExecutionContext({
-      store: {} as any,
-      toolName: "test",
-      toolCallId: "call_1",
-      input: {},
-      step: 1,
-      abort: new AbortController().signal,
-      startedAt: Date.now(),
-      allowedTools: new Set(),
-      agentSkills: [],
-      skillService: testSkillService,
-      projectContext: makeProjectContext("/tmp"),
-      permissionOutcome: "allow",
-    });
+    const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
+    toolCallId: "call_1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set(),
+    agentSkills: [],
+    skillService: testSkillService,
+    projectContext: makeProjectContext("/tmp"),
+    permissionOutcome: "allow", });
     expect(ctx.permissionOutcome).toBe("allow");
 
     const ctx2: ToolExecutionContext = {
@@ -417,19 +409,16 @@ describe("ToolExecutionContext — permissionOutcome preserved", () => {
   });
 
   test("permissionOutcome is optional", () => {
-    const ctx = createToolExecutionContext({
-      store: {} as any,
-      toolName: "test",
-      toolCallId: "call_1",
-      input: {},
-      step: 1,
-      abort: new AbortController().signal,
-      startedAt: Date.now(),
-      allowedTools: new Set(),
-      agentSkills: [],
-      skillService: testSkillService,
-      projectContext: makeProjectContext("/tmp"),
-    });
+    const ctx = createToolExecutionContext({ store: {} as any, storeManager, toolName: "test",
+    toolCallId: "call_1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set(),
+    agentSkills: [],
+    skillService: testSkillService,
+    projectContext: makeProjectContext("/tmp"), });
     expect(ctx.permissionOutcome).toBeUndefined();
   });
 });

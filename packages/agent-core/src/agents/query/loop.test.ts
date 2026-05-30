@@ -149,18 +149,16 @@ function autoInjectReminder(id = "reminder-1", createdAt = Date.now()): Reminder
 
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   const workspaceRoot = import.meta.dir;
-  return {
-    modelInfo: dummyModelInfo,
-    logger: silentLogger,
-    toolRegistry: createRegistry(),
-    store: createStore(),
-    allowedTools: [],
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext: createTestProjectContext(workspaceRoot),
-    workspaceRoot,
-    ...overrides,
-  };
+  return { modelInfo: dummyModelInfo,
+  logger: silentLogger,
+  toolRegistry: createRegistry(),
+  store: createStore(),
+  allowedTools: [],
+  agentSkills: [],
+  skillService: testSkillService,
+  storeManager,
+  projectContext: createTestProjectContext(workspaceRoot),
+  workspaceRoot, ...overrides,  };
 }
 
 function createMockStreamText(rounds: MockRound[]) {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { storeManager } from "../../store/store";
 import type { Logger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { createMockStore } from "../../store/test-helpers";
@@ -7,20 +8,18 @@ import { createExecutionLogger } from "./logger";
 import { createTestProjectContext } from "../test-project-context";
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: overrides.store ?? createMockStore({ sessionId: "session-123" }),
-    toolName: overrides.toolName ?? "bash",
-    toolCallId: overrides.toolCallId ?? "call-abc-123",
-    input: overrides.input ?? { command: "echo hello" },
-    step: overrides.step ?? 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    durationMs: overrides.durationMs ?? 42,
-    allowedTools: new Set<string>(),
-    workspaceRoot: "/tmp",
-    projectContext: createTestProjectContext("/tmp"),
-    ...overrides,
-  };
+  return { store: overrides.store ?? createMockStore({ sessionId: "session-123" }),
+  toolName: overrides.toolName ?? "bash",
+  toolCallId: overrides.toolCallId ?? "call-abc-123",
+  input: overrides.input ?? { command: "echo hello" },
+  step: overrides.step ?? 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  durationMs: overrides.durationMs ?? 42,
+  allowedTools: new Set<string>(),
+  workspaceRoot: "/tmp",
+  storeManager,
+    projectContext: createTestProjectContext("/tmp"), ...overrides,  };
 }
 
 function makeResult(overrides: Partial<ToolExecutionResult> = {}): ToolExecutionResult {

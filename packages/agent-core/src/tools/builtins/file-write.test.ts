@@ -5,6 +5,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import { storeManager } from "../../store/store";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -23,19 +24,17 @@ import { createTestProjectContext } from "../test-project-context";
 const testDir = join(import.meta.dir, "__test_tmp__", "file-write");
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "file_write",
-    toolCallId: "call-1",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(["file_write"]),
-    workspaceRoot: testDir,
-    projectContext: createTestProjectContext(testDir),
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  toolName: "file_write",
+  toolCallId: "call-1",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  startedAt: Date.now(),
+  allowedTools: new Set(["file_write"]),
+  workspaceRoot: testDir,
+  storeManager,
+    projectContext: createTestProjectContext(testDir), ...overrides,  };
 }
 
 async function writeWorkspaceFile(relativePath: string, content: string): Promise<string> {

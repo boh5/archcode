@@ -26,20 +26,18 @@ class ToolStubFactory implements AgentFactoryLike {
 }
 
 function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return {
-    store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`),
-    toolName: "delegate",
-    toolCallId: "delegate-call",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["delegate"]),
-    workspaceRoot: import.meta.dir,
+  return { store: storeManager.create(`delegate-parent-${crypto.randomUUID()}`),
+  toolName: "delegate",
+  toolCallId: "delegate-call",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(["delegate"]),
+  workspaceRoot: import.meta.dir,
+  storeManager,
     projectContext: createTestProjectContext(import.meta.dir),
-    agentName: "orchestrator",
-    ...overrides,
-  };
+  agentName: "orchestrator", ...overrides,  };
 }
 
 describe("delegate tool", () => {

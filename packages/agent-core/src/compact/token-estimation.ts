@@ -1,4 +1,5 @@
 import type { ModelMessage } from "ai";
+import { normalizeUsage, type NormalizedUsage } from "@specra/protocol";
 
 export const TOKEN_CHARS_RATIO = 4;
 export const COMPACT_THRESHOLD = 0.75;
@@ -38,72 +39,22 @@ interface ParsedUsage {
 
 export function parseStepUsage(usage: unknown): ParsedUsage | null {
   if (usage == null || typeof usage !== "object") return null;
+  const normalized = normalizeUsage(usage);
+  if (isEmptyUsage(normalized)) return null;
 
-  const u = usage as Record<string, unknown>;
+  return {
+    promptTokens: normalized.inputTokens,
+    completionTokens: normalized.outputTokens,
+    totalTokens: normalized.totalTokens,
+  };
+}
 
-  // AI SDK standard: promptTokens, completionTokens, totalTokens
-  if ("promptTokens" in u && typeof u.promptTokens === "number") {
-    const promptTokens = u.promptTokens as number;
-    const completionTokens =
-      "completionTokens" in u && typeof u.completionTokens === "number"
-        ? (u.completionTokens as number)
-        : undefined;
-    const totalTokens =
-      "totalTokens" in u && typeof u.totalTokens === "number"
-        ? (u.totalTokens as number)
-        : promptTokens !== undefined && completionTokens !== undefined
-          ? promptTokens + completionTokens
-          : undefined;
-    return { promptTokens, completionTokens, totalTokens };
-  }
-
-  // OpenAI: prompt_tokens, completion_tokens, total_tokens
-  if ("prompt_tokens" in u && typeof u.prompt_tokens === "number") {
-    const promptTokens = u.prompt_tokens as number;
-    const completionTokens =
-      "completion_tokens" in u && typeof u.completion_tokens === "number"
-        ? (u.completion_tokens as number)
-        : undefined;
-    const totalTokens =
-      "total_tokens" in u && typeof u.total_tokens === "number"
-        ? (u.total_tokens as number)
-        : promptTokens !== undefined && completionTokens !== undefined
-          ? promptTokens + completionTokens
-          : undefined;
-    return { promptTokens, completionTokens, totalTokens };
-  }
-
-  // Anthropic: input_tokens, output_tokens
-  if ("input_tokens" in u && typeof u.input_tokens === "number") {
-    const promptTokens = u.input_tokens as number;
-    const completionTokens =
-      "output_tokens" in u && typeof u.output_tokens === "number"
-        ? (u.output_tokens as number)
-        : undefined;
-    const totalTokens =
-      promptTokens !== undefined && completionTokens !== undefined
-        ? promptTokens + completionTokens
-        : undefined;
-    return { promptTokens, completionTokens, totalTokens };
-  }
-
-  // Google: prompt_token_count, candidates_token_count, total_token_count
-  if ("prompt_token_count" in u && typeof u.prompt_token_count === "number") {
-    const promptTokens = u.prompt_token_count as number;
-    const completionTokens =
-      "candidates_token_count" in u && typeof u.candidates_token_count === "number"
-        ? (u.candidates_token_count as number)
-        : undefined;
-    const totalTokens =
-      "total_token_count" in u && typeof u.total_token_count === "number"
-        ? (u.total_token_count as number)
-        : promptTokens !== undefined && completionTokens !== undefined
-          ? promptTokens + completionTokens
-          : undefined;
-    return { promptTokens, completionTokens, totalTokens };
-  }
-
-  return null;
+function isEmptyUsage(usage: NormalizedUsage): boolean {
+  return usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.totalTokens === 0 &&
+    usage.reasoningTokens === 0 &&
+    usage.cachedInputTokens === 0;
 }
 
 export function shouldAutoCompact(currentTokens: number, contextLimit: number): boolean {

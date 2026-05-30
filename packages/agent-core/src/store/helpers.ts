@@ -5,6 +5,41 @@ import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
 import { getSessionsDir } from "./sessions-dir";
 
+const NormalizedUsageSchema = z.strictObject({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  totalTokens: z.number(),
+  reasoningTokens: z.number(),
+  cachedInputTokens: z.number(),
+});
+
+const SessionStatsSchema = z.strictObject({
+  messages: z.strictObject({
+    user: z.number(),
+    assistant: z.number(),
+    total: z.number(),
+  }),
+  tools: z.strictObject({
+    calls: z.number(),
+    completed: z.number(),
+    failed: z.number(),
+  }),
+  steps: z.strictObject({
+    started: z.number(),
+    completed: z.number(),
+  }),
+  usage: NormalizedUsageSchema,
+});
+
+const SessionRunSchema = z.strictObject({
+  id: z.string(),
+  startedAt: z.number(),
+  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out"]),
+  endedAt: z.number().optional(),
+  durationMs: z.number().optional(),
+  error: z.string().optional(),
+});
+
 const StoredTodoSchema = z.strictObject({
   id: z.string(),
   content: z.string(),
@@ -174,7 +209,9 @@ const SessionFileSchema = z.strictObject({
   createdAt: z.number(),
   title: z.string().nullable().optional(),
   messages: z.array(StoredMessageSchema),
-  steps: z.array(StepInfoSchema).optional(),
+  steps: z.array(StepInfoSchema),
+  stats: SessionStatsSchema,
+  runs: z.array(SessionRunSchema),
   todos: z.array(StoredTodoSchema)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
@@ -199,7 +236,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "todos"
+  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "runs" | "todos"
 > & Partial<Pick<
   SessionStoreState,
   "reminders" | "childSessionIds" | "parentSessionId" | "subAgentDescriptions"
@@ -239,6 +276,8 @@ async function saveSessionTranscript(
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
+    stats: state.stats,
+    runs: state.runs,
     todos: state.todos,
     reminders: state.reminders ?? [],
     childSessionIds: Array.from(state.childSessionIds ?? []),
@@ -288,6 +327,8 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
+    stats: state.stats,
+    runs: state.runs,
     todos: state.todos,
     reminders: state.reminders ?? [],
     childSessionIds: Array.from(state.childSessionIds ?? []),
@@ -315,8 +356,10 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
         },
         sortKey: timestamps.lastUpdatedAt ?? timestamps.updatedAt ?? parsed.createdAt,
       });
-    } catch {
-      // Skip invalid/corrupt session files during listing.
+    } catch (err) {
+      console.warn(
+        `Skipping invalid session file "${name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

@@ -7,12 +7,15 @@ import type {
   SessionMessage,
   SessionPart,
   SessionProjection,
+  SessionStats,
   SessionTodo,
   StreamEvent,
   SystemNoticePart,
   TextPart,
   ToolPart,
+  RunEndEvent,
 } from "./types";
+import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",
@@ -24,6 +27,7 @@ const TODO_STATUSES = new Set<SessionTodo["status"]>([
 interface AssistantMessageResult {
   messages: SessionMessage[];
   currentAssistantMessageId: string;
+  stats?: SessionStats;
 }
 
 interface PartLocation {
@@ -45,18 +49,32 @@ export function reduceStreamEvent(
 
   switch (event.type) {
     case "run-start": {
+      const runId = event.runId ?? ctx.generateId();
+      const runs = [
+        ...(state.runs ?? []),
+        { id: runId, startedAt: timestamp, status: "running" as const },
+      ];
+
       return {
         isRunning: true,
-        currentRunId: event.runId ?? ctx.generateId(),
+        currentRunId: runId,
         currentAssistantMessageId: undefined,
         isStreamingModel: false,
-        runCount: state.runCount + 1,
+        runs,
+        runCount: runs.length,
       };
     }
 
     case "run-end": {
+      const settledToolFailures = countRunningTools(state.messages, state.currentAssistantMessageId);
+      const stats = incrementToolFailures(state.stats, settledToolFailures);
+      const runs = settleCurrentRun(state.runs ?? [], state.currentRunId, event, timestamp);
+
       return {
         messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp),
+        stats,
+        runs,
+        runCount: runs.length,
         isRunning: false,
         isStreamingModel: false,
         currentRunId: undefined,
@@ -81,7 +99,7 @@ export function reduceStreamEvent(
         runId: state.currentRunId,
       };
 
-      return { messages: [...state.messages, message] };
+      return { messages: [...state.messages, message], stats: incrementUserMessages(state.stats) };
     }
 
     case "system-notice": {
@@ -113,7 +131,7 @@ export function reduceStreamEvent(
         timestamp,
       );
 
-      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx);
+      return appendTextPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx, assistant.stats);
     }
 
     case "text-delta": {
@@ -136,6 +154,7 @@ export function reduceStreamEvent(
                 : part,
           ),
           currentAssistantMessageId: assistant.currentAssistantMessageId,
+          ...(assistant.stats ? { stats: assistant.stats } : {}),
         };
       }
 
@@ -145,6 +164,7 @@ export function reduceStreamEvent(
         timestamp,
         event.text,
         ctx,
+        assistant.stats,
       );
     }
 
@@ -176,7 +196,7 @@ export function reduceStreamEvent(
         timestamp,
       );
 
-      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx);
+      return appendReasoningPart(messages, assistant.currentAssistantMessageId, timestamp, "", ctx, assistant.stats);
     }
 
     case "reasoning-delta": {
@@ -199,6 +219,7 @@ export function reduceStreamEvent(
                 : part,
           ),
           currentAssistantMessageId: assistant.currentAssistantMessageId,
+          ...(assistant.stats ? { stats: assistant.stats } : {}),
         };
       }
 
@@ -208,6 +229,7 @@ export function reduceStreamEvent(
         timestamp,
         event.text,
         ctx,
+        assistant.stats,
       );
     }
 
@@ -256,6 +278,7 @@ export function reduceStreamEvent(
           part,
         ),
         currentAssistantMessageId: assistant.currentAssistantMessageId,
+        ...(assistant.stats ? { stats: assistant.stats } : {}),
       };
     }
 
@@ -272,6 +295,7 @@ export function reduceStreamEvent(
           return {};
         }
 
+        const countsCall = existing.state === "pending";
         return {
           messages: updateMessagePart(
             state.messages,
@@ -279,6 +303,7 @@ export function reduceStreamEvent(
             location.partId,
             (part) => (part.type === "tool" ? toRunningToolPart(part, event.input, timestamp) : part),
           ),
+          ...(countsCall ? { stats: incrementToolCalls(state.stats) } : {}),
         };
       }
 
@@ -301,6 +326,7 @@ export function reduceStreamEvent(
           part,
         ),
         currentAssistantMessageId: assistant.currentAssistantMessageId,
+        stats: incrementToolCalls(assistant.stats ?? state.stats),
       };
     }
 
@@ -313,6 +339,9 @@ export function reduceStreamEvent(
 
       if (!location) return {};
 
+      const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
+      if (!existing || existing.state === "completed" || existing.state === "error") return {};
+
       return {
         messages: updateMessagePart(
           state.messages,
@@ -323,6 +352,7 @@ export function reduceStreamEvent(
               ? toSettledToolPart(part, event.output, event.isError, timestamp, event.meta)
               : part,
         ),
+        stats: event.isError ? incrementToolFailures(state.stats, 1) : incrementToolCompleted(state.stats),
       };
     }
 
@@ -382,10 +412,15 @@ export function reduceStreamEvent(
             startedAt: timestamp,
           },
         ],
+        stats: incrementStepStarted(state.stats),
       };
     }
 
     case "step-end": {
+      const usage = normalizeUsage(event.usage);
+      const hasOpenStep = state.steps.some(
+        (step) => step.step === event.step && step.runId === state.currentRunId && !step.completedAt,
+      );
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
@@ -398,6 +433,7 @@ export function reduceStreamEvent(
               }
             : step,
         ),
+        ...(hasOpenStep ? { stats: incrementStepCompleted(state.stats, usage) } : {}),
       };
     }
 
@@ -511,6 +547,89 @@ function isSubAgentReminder(reminder: { source: { type: string } }): boolean {
   return reminder.source.type.startsWith("subagent_");
 }
 
+function incrementUserMessages(stats: SessionStats): SessionStats {
+  return {
+    ...stats,
+    messages: {
+      user: stats.messages.user + 1,
+      assistant: stats.messages.assistant,
+      total: stats.messages.total + 1,
+    },
+  };
+}
+
+function incrementAssistantMessages(stats: SessionStats): SessionStats {
+  return {
+    ...stats,
+    messages: {
+      user: stats.messages.user,
+      assistant: stats.messages.assistant + 1,
+      total: stats.messages.total + 1,
+    },
+  };
+}
+
+function incrementToolCalls(stats: SessionStats): SessionStats {
+  return { ...stats, tools: { ...stats.tools, calls: stats.tools.calls + 1 } };
+}
+
+function incrementToolCompleted(stats: SessionStats): SessionStats {
+  return { ...stats, tools: { ...stats.tools, completed: stats.tools.completed + 1 } };
+}
+
+function incrementToolFailures(stats: SessionStats, count: number): SessionStats {
+  if (count <= 0) return stats;
+  return { ...stats, tools: { ...stats.tools, failed: stats.tools.failed + count } };
+}
+
+function incrementStepStarted(stats: SessionStats): SessionStats {
+  return { ...stats, steps: { ...stats.steps, started: stats.steps.started + 1 } };
+}
+
+function incrementStepCompleted(stats: SessionStats, usage: ReturnType<typeof normalizeUsage>): SessionStats {
+  return {
+    ...stats,
+    steps: { ...stats.steps, completed: stats.steps.completed + 1 },
+    usage: addUsage(stats.usage, usage),
+  };
+}
+
+function settleCurrentRun(
+  runs: SessionProjection["runs"],
+  currentRunId: string | undefined,
+  event: RunEndEvent,
+  timestamp: number,
+): SessionProjection["runs"] {
+  if (!currentRunId) return runs;
+
+  let changed = false;
+  const updated = runs.map((run) => {
+    if (run.id !== currentRunId || run.status !== "running") return run;
+    changed = true;
+    return {
+      ...run,
+      status: event.status,
+      endedAt: timestamp,
+      durationMs: timestamp - run.startedAt,
+      ...(event.error ? { error: event.error } : {}),
+    };
+  });
+
+  return changed ? updated : runs;
+}
+
+function countRunningTools(
+  messages: SessionMessage[],
+  currentAssistantMessageId: string | undefined,
+): number {
+  if (!currentAssistantMessageId) return 0;
+
+  const message = messages.find((item) => item.id === currentAssistantMessageId);
+  if (!message) return 0;
+
+  return message.parts.filter((part) => part.type === "tool" && part.state === "running").length;
+}
+
 function settleIncompleteState(
   messages: SessionMessage[],
   currentAssistantMessageId: string | undefined,
@@ -592,6 +711,7 @@ function ensureCurrentAssistantMessage(
   return {
     messages: [...state.messages, message],
     currentAssistantMessageId: message.id,
+    stats: incrementAssistantMessages(state.stats ?? createEmptySessionStats()),
   };
 }
 
@@ -684,6 +804,7 @@ function appendTextPart(
   timestamp: number,
   text: string,
   ctx: ReduceContext,
+  stats?: SessionStats,
 ): Partial<SessionProjection> {
   const part: TextPart = {
     type: "text",
@@ -695,6 +816,7 @@ function appendTextPart(
   return {
     messages: appendPartToMessage(messages, messageId, part),
     currentAssistantMessageId: messageId,
+    ...(stats ? { stats } : {}),
   };
 }
 
@@ -704,6 +826,7 @@ function appendReasoningPart(
   timestamp: number,
   text: string,
   ctx: ReduceContext,
+  stats?: SessionStats,
 ): Partial<SessionProjection> {
   const part: ReasoningPart = {
     type: "reasoning",
@@ -715,6 +838,7 @@ function appendReasoningPart(
   return {
     messages: appendPartToMessage(messages, messageId, part),
     currentAssistantMessageId: messageId,
+    ...(stats ? { stats } : {}),
   };
 }
 

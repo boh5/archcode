@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { storeManager } from "../../../store/store";
 import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,22 +23,20 @@ function spawnResult(stdout: string, stderr = "", exitCode = 0, signalCode?: str
 }
 
 function ctx(overrides?: Partial<ToolExecutionContext>): ToolExecutionContext {
-  return {
-    store: createMockStore(),
-    toolName: "ast_grep_replace",
-    toolCallId: "call-id",
-    input: {},
-    step: 1,
-    abort: new AbortController().signal,
-    agentName: "orchestrator-agent",
-    startedAt: Date.now(),
-    allowedTools: new Set(["ast_grep_replace"]),
-    agentSkills: [],
-    skillService: new SkillService({ builtinSkills: {} }),
-    workspaceRoot: "/workspace",
-    projectContext: createTestProjectContext("/workspace"),
-    ...overrides,
-  };
+  return { store: createMockStore(),
+  toolName: "ast_grep_replace",
+  toolCallId: "call-id",
+  input: {},
+  step: 1,
+  abort: new AbortController().signal,
+  agentName: "orchestrator-agent",
+  startedAt: Date.now(),
+  allowedTools: new Set(["ast_grep_replace"]),
+  agentSkills: [],
+  skillService: new SkillService({ builtinSkills: {} }),
+  workspaceRoot: "/workspace",
+  storeManager,
+    projectContext: createTestProjectContext("/workspace"), ...overrides,  };
 }
 
 function manager(binaryPath = "/managed/bin/ast-grep"): BinaryManager {

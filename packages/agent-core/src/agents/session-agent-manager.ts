@@ -175,6 +175,7 @@ export class SessionAgentManager {
         providerRegistry: this.#config.providerRegistry,
         toolRegistry: this.#config.toolRegistry,
         skillService: this.#config.skillService,
+        storeManager: this.#storeManager,
         workspaceRoot,
         config: this.#config.config,
         projectContextResolver: this.#config.projectContextResolver,

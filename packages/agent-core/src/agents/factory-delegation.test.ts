@@ -1,15 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { SpecraConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
-import { storeManager } from "../store/store";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
+import type { SessionStoreState } from "../store/types";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS } from "./constants";
 import {
   agentDefinitions,
@@ -36,6 +38,7 @@ import type { Agent, AgentResult } from "./types";
 import { silentLogger } from "../logger";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "factory-delegation");
+const testStoreManager = new SessionStoreManager({ logger: silentLogger });
 
 function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
@@ -105,39 +108,31 @@ function makeToolRegistry(toolNames: readonly string[] = FACTORY_TEST_TOOL_NAMES
 }
 
 function parentDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return {
-    ...orchestratorAgentDefinition,
-    ...overrides,
-    tools: {
-      ...orchestratorAgentDefinition.tools,
-      ...overrides.tools,
-    },
-    hooks: {
-      ...orchestratorAgentDefinition.hooks,
-      ...overrides.hooks,
-    },
-    childPolicy: {
-      ...orchestratorAgentDefinition.childPolicy,
-      timeoutMs: 100,
-      ...overrides.childPolicy,
-    },
-  };
+  return { ...orchestratorAgentDefinition, ...overrides, tools: {
+    ...orchestratorAgentDefinition.tools,
+    ...overrides.tools,
+  },
+  hooks: {
+    ...orchestratorAgentDefinition.hooks,
+    ...overrides.hooks,
+  },
+  childPolicy: {
+    ...orchestratorAgentDefinition.childPolicy,
+    timeoutMs: 100,
+    ...overrides.childPolicy,
+  }, };
 }
 
 function targetDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return {
-    ...exploreAgentDefinition,
-    ...overrides,
-    tools: {
-      ...exploreAgentDefinition.tools,
-      ...overrides.tools,
-    },
-    hooks: {
-      ...exploreAgentDefinition.hooks,
-      titleGeneration: "disabled",
-      ...overrides.hooks,
-    },
-  };
+  return { ...exploreAgentDefinition, ...overrides, tools: {
+    ...exploreAgentDefinition.tools,
+    ...overrides.tools,
+  },
+  hooks: {
+    ...exploreAgentDefinition.hooks,
+    titleGeneration: "disabled",
+    ...overrides.hooks,
+  }, };
 }
 
 function makeFactory(definitions: readonly AgentDefinition[] | undefined = undefined, skillService = createTestSkillService()) {
@@ -147,6 +142,7 @@ function makeFactory(definitions: readonly AgentDefinition[] | undefined = undef
   providerRegistry,
   toolRegistry: makeToolRegistry(),
   skillService,
+  storeManager: testStoreManager,
   workspaceRoot: tmpRoot,
     config: configForDefinitions(providerRegistry, agentDefinitionsForFactory), logger: silentLogger });
 }
@@ -160,6 +156,7 @@ function makeFactoryWithBackgroundTaskManager(
   providerRegistry,
   toolRegistry: makeToolRegistry(),
   skillService: createTestSkillService(),
+  storeManager: testStoreManager,
   workspaceRoot: tmpRoot,
   config: configForDefinitions(providerRegistry, definitions),
     backgroundTaskManager: backgroundTaskManager as never, logger: silentLogger });
@@ -232,7 +229,7 @@ async function expectResultRejects(promise: Promise<AgentResult>, message: strin
 }
 
 class RejectingAgent implements Agent {
-  constructor(readonly store: ReturnType<typeof storeManager.create>) {}
+  constructor(readonly store: StoreApi<SessionStoreState>) {}
 
   async run(): Promise<AgentResult> {
     throw new Error("boom");
@@ -266,7 +263,7 @@ describe("AgentFactory.delegate", () => {
   test("creates child sessions and returns a run handle", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -280,7 +277,7 @@ describe("AgentFactory.delegate", () => {
     expect(handle.sessionId).toBeString();
     expect(handle.result).toBeInstanceOf(Promise);
     expect(handle.abort).toBeFunction();
-    expect(storeManager.get(handle.sessionId)?.getState().sessionId).toBe(handle.sessionId);
+    expect(testStoreManager.get(handle.sessionId, tmpRoot)?.getState().sessionId).toBe(handle.sessionId);
     await expect(handle.result).resolves.toEqual({ text: "child result", steps: 0 });
   });
 
@@ -290,7 +287,7 @@ describe("AgentFactory.delegate", () => {
     const factory = makeFactoryWithBackgroundTaskManager(btm);
 
     const rootAgent = factory.createRootAgent("orchestrator", {
-      store: storeManager.create(`factory-root-${crypto.randomUUID()}`),
+      store: testStoreManager.create(`factory-root-${crypto.randomUUID()}`),
     });
     await rootAgent.run("root run");
 
@@ -301,7 +298,7 @@ describe("AgentFactory.delegate", () => {
   test("links parent and child metadata", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -312,7 +309,7 @@ describe("AgentFactory.delegate", () => {
       description: "Inspect docs",
     });
 
-    const childStore = storeManager.get(handle.sessionId);
+    const childStore = testStoreManager.get(handle.sessionId, tmpRoot);
     expect(childStore?.getState().parentSessionId).toBe(parentStore.getState().sessionId);
     expect(parentStore.getState().childSessionIds.has(handle.sessionId)).toBe(true);
     expect(parentStore.getState().subAgentDescriptions.get(handle.sessionId)).toBe("Inspect docs");
@@ -322,7 +319,7 @@ describe("AgentFactory.delegate", () => {
   test("propagates delegated title or description into the child store title", async () => {
     setupResolvingStreamText();
     const factory = makeFactory();
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const titled = await factory.delegate({
       parentStore,
@@ -342,8 +339,8 @@ describe("AgentFactory.delegate", () => {
       description: "Description Title",
     });
 
-    expect(storeManager.get(titled.sessionId)?.getState().title).toBe("Delegated Title");
-    expect(storeManager.get(described.sessionId)?.getState().title).toBe("Description Title");
+    expect(testStoreManager.get(titled.sessionId, tmpRoot)?.getState().title).toBe("Delegated Title");
+    expect(testStoreManager.get(described.sessionId, tmpRoot)?.getState().title).toBe("Description Title");
     await Promise.all([titled.result, described.result]);
   });
 
@@ -356,10 +353,11 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
     config: configForDefinitions(providerRegistry, definitions),
       backgroundTaskManager: btm as never, logger: silentLogger });
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -372,14 +370,14 @@ describe("AgentFactory.delegate", () => {
 
     await handle.result;
 
-    expect(storeManager.get(handle.sessionId)?.getState().title).toBe("Delegated Title");
+    expect(testStoreManager.get(handle.sessionId, tmpRoot)?.getState().title).toBe("Delegated Title");
     expect(btm.dispatched).not.toContain("title-generation");
   });
 
   test("throws DepthLimitError when current depth reaches the parent child policy", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 1 } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -397,7 +395,7 @@ describe("AgentFactory.delegate", () => {
       parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
       targetDefinition(),
     ]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -416,7 +414,7 @@ describe("AgentFactory.delegate", () => {
       parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxDepth: 3 } }),
       targetDefinition(),
     ]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     // At depth 3, resolveAllowedTools strips "delegate" first (depth >= MAX_SUB_AGENT_DEPTH),
     // so DelegationToolNotAllowedError fires before DepthLimitError.
@@ -433,7 +431,7 @@ describe("AgentFactory.delegate", () => {
   test("throws ConcurrentLimitError when active children reach the parent child policy", async () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1, timeoutMs: 0 } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "hang", skills: [] });
     first.result.catch(() => {});
 
@@ -451,7 +449,7 @@ describe("AgentFactory.delegate", () => {
   test("cleans active child tracking after completion", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, maxConcurrent: 1 } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const first = await factory.delegate({ parentStore, parentAgentName: "orchestrator", targetAgentName: "explore", prompt: "first", skills: [] });
     await first.result;
@@ -463,7 +461,7 @@ describe("AgentFactory.delegate", () => {
   test("times out children and emits timed_out reminders", async () => {
     setupHangingStreamText();
     const factory = makeFactory([parentDefinition({ childPolicy: { ...orchestratorAgentDefinition.childPolicy, timeoutMs: 10 } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     const handle = await factory.delegate({
       parentStore,
@@ -491,12 +489,12 @@ describe("AgentFactory.delegate", () => {
       if (name !== "explore") return originalCreateAgent(name, options);
       childAbort = options.abortSignal;
       return {
-        store: options.store ?? storeManager.create(`abort-${crypto.randomUUID()}`),
+        store: options.store ?? testStoreManager.create(`abort-${crypto.randomUUID()}`),
         run: async () => new Promise<AgentResult>(() => {}),
         dispose: () => undefined,
       };
     };
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     const parentAbort = new AbortController();
 
     const handle = await factory.delegate({
@@ -516,7 +514,7 @@ describe("AgentFactory.delegate", () => {
   test("emits background completion and failure reminders", async () => {
     setupResolvingStreamText();
     const successFactory = makeFactory();
-    const successParent = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const successParent = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     const success = await successFactory.delegate({
       parentStore: successParent,
       parentAgentName: "orchestrator",
@@ -533,10 +531,10 @@ describe("AgentFactory.delegate", () => {
     const failureFactory = makeFactory();
     const originalCreateAgent = failureFactory.createAgent.bind(failureFactory);
     failureFactory.createAgent = (name, options = {}) => {
-      if (name === "explore") return new RejectingAgent(options.store ?? storeManager.create(`reject-${crypto.randomUUID()}`));
+      if (name === "explore") return new RejectingAgent(options.store ?? testStoreManager.create(`reject-${crypto.randomUUID()}`));
       return originalCreateAgent(name, options);
     };
-    const failureParent = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const failureParent = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     const failure = await failureFactory.delegate({
       parentStore: failureParent,
       parentAgentName: "orchestrator",
@@ -555,7 +553,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when caller resolved tools do not include delegate", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: ["grep"], delegateTargets: ["explore"] } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -569,7 +567,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when target is not in caller delegate targets", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: [] } }), targetDefinition()]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -583,7 +581,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects delegation when target definition is missing", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([parentDefinition({ tools: { tools: orchestratorAgentDefinition.tools.tools, delegateTargets: ["missing"] } })]);
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -597,7 +595,7 @@ describe("AgentFactory.delegate", () => {
   test("passes no active skills when skills is empty", async () => {
     setupResolvingStreamText();
     const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -620,7 +618,7 @@ describe("AgentFactory.delegate", () => {
   test("validates requested skills against the child allow-list, not the parent", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -643,7 +641,7 @@ describe("AgentFactory.delegate", () => {
   test("rejects skills absent from the child allow-list even when the parent allows them", async () => {
     setupResolvingStreamText();
     const factory = makeFactory(undefined, createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
 
     await expect(factory.delegate({
       parentStore,
@@ -657,7 +655,7 @@ describe("AgentFactory.delegate", () => {
   test("passes requested active skill bodies to the child agent", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -684,7 +682,7 @@ describe("AgentFactory.delegate", () => {
   test("does not leak active skills between later children", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     const captured: Array<readonly unknown[]> = [];
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -718,7 +716,7 @@ describe("AgentFactory.delegate", () => {
   test("de-duplicates duplicate skill names in first-seen order", async () => {
     setupResolvingStreamText();
     const factory = makeFactory([foremanAgentDefinition, builderAgentDefinition], createSkillServiceWithBuiltins());
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     let activeSkills: readonly unknown[] | undefined;
     const originalCreateAgent = factory.createAgent.bind(factory);
     factory.createAgent = (name, options = {}) => {
@@ -745,6 +743,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, [productAgentDefinition]), logger: silentLogger })).toThrow("Duplicate agent definition: product");
   });
@@ -755,6 +754,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
@@ -777,6 +777,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
@@ -793,6 +794,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
@@ -811,6 +813,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
@@ -831,6 +834,7 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
 
@@ -859,9 +863,10 @@ describe("AgentFactory.delegate", () => {
     providerRegistry,
     toolRegistry: makeToolRegistry(),
     skillService: createTestSkillService(),
+    storeManager: testStoreManager,
     workspaceRoot: tmpRoot,
       config: configForDefinitions(providerRegistry, agentDefinitions), logger: silentLogger });
-    const parentStore = storeManager.create(`factory-parent-${crypto.randomUUID()}`);
+    const parentStore = testStoreManager.create(`factory-parent-${crypto.randomUUID()}`);
     setupResolvingStreamText();
 
     const handle = await factory.delegate({

@@ -74,23 +74,20 @@ function makeProviderRegistry(): ProviderRegistry {
 }
 
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
-  return {
-    name: "orchestrator",
-    promptAgentId: "default",
-    tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
-    hooks: {
-      autoCompact: true,
-      autoInjectReminder: true,
-      todoContinuation: true,
-      transcriptSave: true,
-      memoryExtraction: true,
-      memoryConsolidation: true,
-      titleGeneration: "enabled",
-    },
-    includeMemoryInPrompt: true,
-    skills: [],
-    ...overrides,
-  };
+  return { name: "orchestrator",
+  promptAgentId: "default",
+  tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
+  hooks: {
+    autoCompact: true,
+    autoInjectReminder: true,
+    todoContinuation: true,
+    transcriptSave: true,
+    memoryExtraction: true,
+    memoryConsolidation: true,
+    titleGeneration: "enabled",
+  },
+  includeMemoryInPrompt: true,
+  skills: [], ...overrides,  };
 }
 
 function makeFactory(
@@ -116,6 +113,7 @@ function makeFactory(
     ...DELEGATION_TOOLS.map(makeTool),
   ]),
   skillService: createTestSkillService(),
+  storeManager,
   workspaceRoot: import.meta.dir,
   config, logger: silentLogger });
 }
@@ -181,6 +179,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService,
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -206,6 +205,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -230,6 +230,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -261,6 +262,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -299,6 +301,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},
@@ -320,6 +323,7 @@ describe("createAgentFactory", () => {
       ...DELEGATION_TOOLS.map(makeTool),
     ]),
     skillService: createTestSkillService(),
+    storeManager,
     workspaceRoot: import.meta.dir,
     config: {
       provider: {},

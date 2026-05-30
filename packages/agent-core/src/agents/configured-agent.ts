@@ -15,7 +15,7 @@ import type { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
-import { storeManager } from "../store/store";
+import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -43,8 +43,9 @@ export interface ConfiguredAgentOptions {
   readonly modelOptions?: ModelCallOptions;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
+  readonly storeManager: SessionStoreManager;
   readonly activeSkills?: readonly ResolvedSkill[];
-  readonly store?: StoreApi<SessionStoreState>;
+  readonly store: StoreApi<SessionStoreState>;
   readonly confirmPermission?: ToolConfirmationCallback;
   readonly askUser?: AskUserCallback;
   readonly workspaceRoot?: string;
@@ -74,6 +75,7 @@ export class ConfiguredAgent implements Agent {
   private readonly definition: AgentDefinition;
   private readonly toolRegistry: ToolRegistry;
   private readonly skillService: SkillService;
+  private readonly storeManager: SessionStoreManager;
   private readonly modelInfo: ModelInfo;
   private readonly modelOptions: ModelCallOptions | undefined;
   private readonly confirmPermission: ToolConfirmationCallback | undefined;
@@ -105,12 +107,14 @@ export class ConfiguredAgent implements Agent {
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
+    this.storeManager = options.storeManager;
     this.activeSkills = options.activeSkills ?? [];
     this.modelInfo = options.modelInfo;
     this.modelOptions = options.modelOptions;
     this.confirmPermission = options.confirmPermission;
     this.askUserDefault = options.askUser;
-    this.store = options.store ?? storeManager.create(crypto.randomUUID());
+    if (!options.store) throw new Error("ConfiguredAgent requires an explicit store");
+    this.store = options.store;
     if (options.workspaceRoot === undefined) {
       throw new MissingProjectContextError("ConfiguredAgent requires options.workspaceRoot");
     }
@@ -204,6 +208,7 @@ export class ConfiguredAgent implements Agent {
             allowedTools,
             agentSkills,
             skillService: this.skillService,
+            storeManager: this.storeManager,
             projectContext,
             workspaceRoot: this.workspaceRoot,
             confirmPermission: confirm,

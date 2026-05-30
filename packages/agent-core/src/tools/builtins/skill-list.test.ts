@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SkillService, type SkillIndexEntry } from "../../skills";
+import { storeManager } from "../../store/store";
 import { createMockStore } from "../../store/test-helpers";
 import { createTestProjectContext } from "../test-project-context";
 import { createToolExecutionContext, type ToolExecutionContext } from "../types";
@@ -16,19 +17,16 @@ const orchestratorSkills = ["git-master", "safe-refactor", "codemap", "review-wo
 const exploreSkills = ["codemap", "research-docs"] as const;
 
 function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
-  return createToolExecutionContext({
-    store: createMockStore(),
-    toolName: "skill_list",
-    toolCallId: "skill-list-call",
-    input: {},
-    step: 0,
-    abort: new AbortController().signal,
-    startedAt: 0,
-    allowedTools: new Set(["skill_list"]),
-    agentSkills,
-    skillService: new SkillService({ userSkillsRoot }),
-    projectContext: createTestProjectContext(projectRoot),
-  });
+  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_list",
+  toolCallId: "skill-list-call",
+  input: {},
+  step: 0,
+  abort: new AbortController().signal,
+  startedAt: 0,
+  allowedTools: new Set(["skill_list"]),
+  agentSkills,
+  skillService: new SkillService({ userSkillsRoot }),
+  projectContext: createTestProjectContext(projectRoot), });
 }
 
 describe("skill_list tool", () => {

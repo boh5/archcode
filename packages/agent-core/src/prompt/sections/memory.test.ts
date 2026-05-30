@@ -12,19 +12,16 @@ import crypto from "node:crypto";
 const TEST_TMP = join(import.meta.dir, "__test_tmp__");
 
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
-  return {
-    allowedTools: ["file_read", "file_write"],
-    workspaceRoot: "/home/user/project",
-    agentId: "default",
-    env: {
-      platform: "darwin",
-      timezone: "America/Los_Angeles",
-      locale: "en-US",
-      cwd: "/home/user/project",
-      date: "2025-01-15",
-    },
-    ...overrides,
-  };
+  return { allowedTools: ["file_read", "file_write"],
+  workspaceRoot: "/home/user/project",
+  agentId: "default",
+  env: {
+    platform: "darwin",
+    timezone: "America/Los_Angeles",
+    locale: "en-US",
+    cwd: "/home/user/project",
+    date: "2025-01-15",
+  }, ...overrides,  };
 }
 
 async function createMemoryDirs(): Promise<MemoryRoots> {
