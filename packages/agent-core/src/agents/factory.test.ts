@@ -357,15 +357,17 @@ describe("createAgentFactory", () => {
     expect(child.store.getState().title).toBe("Child Title");
   });
 
-  test("assigns parent session id to child stores", () => {
+  test("assigns parent session id via CreateSessionOptions at store creation time", () => {
     const factory = makeFactory([
       definition(),
       definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const child = factory.createAgent("explore", { parentSessionId: "parent-session" });
+    const parentSessionId = "parent-session";
+    const store = storeManager.create(crypto.randomUUID(), "/test", { parentSessionId });
+    const child = factory.createAgent("explore", { store });
 
-    expect(child.store.getState().parentSessionId).toBe("parent-session");
+    expect(child.store.getState().parentSessionId).toBe(parentSessionId);
   });
 
   test("resolves explicit tool lists and strips delegation tools at depth three", () => {

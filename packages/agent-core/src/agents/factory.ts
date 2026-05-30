@@ -394,9 +394,6 @@ function prepareStore(config: AgentFactoryConfig, options: CreateAgentOptions): 
   const store = options.store ?? config.storeManager.create(crypto.randomUUID(), config.workspaceRoot);
 
   const state: Partial<SessionStoreState> = {};
-  if (options.parentSessionId !== undefined) {
-    state.parentSessionId = options.parentSessionId;
-  }
   if (options.title !== undefined) {
     state.title = options.title;
   }

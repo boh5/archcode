@@ -164,7 +164,8 @@ export class SessionStoreManager {
         persist();
       },
       setParentSessionId: (parentSessionId: string | undefined) => {
-        if (get().parentSessionId === parentSessionId) return;
+        const current = get().parentSessionId;
+        if (current !== undefined) return; // Identity is immutable after creation
         set({ parentSessionId });
         persist();
       },
