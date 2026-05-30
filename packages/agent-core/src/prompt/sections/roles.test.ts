@@ -11,7 +11,7 @@ function makeCtx(rolePrompt?: string): PromptContext {
   return {
     allowedTools: [],
     workspaceRoot: "/workspace",
-    agentId: "test",
+    promptProfileId: "test",
     rolePrompt,
     env: {
       platform: "darwin",

@@ -58,8 +58,7 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     runs: [],
     todos: [],
     reminders: [],
-    childSessionIds: new Set(),
-    subAgentDescriptions: new Map(),
+    rootSessionId: "test-session",
     runCount: 0,
     lastTodoWriteStepIndex: null,
     lastTodoReminderStepIndex: null,
@@ -78,7 +77,6 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     append: mock(() => {}),
     setTitle: mock(() => {}),
     setParentSessionId: mock(() => {}),
-    linkChildSession: mock(() => {}),
     toModelMessages: mock(() => []),
     ...overrides,
   };

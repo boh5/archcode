@@ -128,18 +128,6 @@ describe("shouldInjectReminder", () => {
     });
   });
 
-  test("running sub-agents block reminder", () => {
-    const state = stateWithPendingTodo({
-      lastTodoWriteStepIndex: 0,
-      steps: stepsForCount(11),
-      childSessionIds: new Set(["child-1"]),
-    });
-    expect(shouldInjectReminder(state, 10_000)).toEqual({
-      should: false,
-      reason: "running_sub_agents",
-    });
-  });
-
   test("todo continuation count 10 blocks reminder", () => {
     const state = stateWithPendingTodo({
       lastTodoWriteStepIndex: 0,
@@ -204,14 +192,6 @@ describe("shouldContinueAfterLoop", () => {
     expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
       should: false,
       reason: "pending_question",
-    });
-  });
-
-  test("running sub-agents block continuation", () => {
-    const state = stateWithPendingTodo({ childSessionIds: new Set(["child-1"]) });
-    expect(shouldContinueAfterLoop(state, "completed", 10_000)).toEqual({
-      should: false,
-      reason: "running_sub_agents",
     });
   });
 
@@ -290,6 +270,7 @@ function stepsForCount(count: number): SessionStoreState["steps"] {
 
 function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   return { sessionId: "session-1",
+  rootSessionId: "session-1",
   createdAt: 1,
   title: null,
   messages: [],
@@ -298,8 +279,6 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   runs: [],
   todos: [],
   reminders: [],
-  childSessionIds: new Set(),
-  subAgentDescriptions: new Map(),
   isRunning: false,
   isStreamingModel: false,
   readSnapshots: new Map(),
@@ -318,7 +297,6 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   append: () => {},
   setTitle: () => {},
   setParentSessionId: () => {},
-  linkChildSession: () => {},
   toModelMessages: () => [], ...overrides,  };
 }
 

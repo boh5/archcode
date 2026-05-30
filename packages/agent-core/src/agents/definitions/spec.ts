@@ -3,7 +3,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const specAgentDefinition = {
   name: "spec",
-  promptAgentId: "spec",
+  promptProfileId: "spec",
   rolePrompt: `## Workflow Role: Spec
 
 You write SPEC and TASKS artifacts for active workflows.

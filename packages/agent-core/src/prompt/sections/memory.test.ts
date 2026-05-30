@@ -14,7 +14,7 @@ const TEST_TMP = join(import.meta.dir, "__test_tmp__");
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
   return { allowedTools: ["file_read", "file_write"],
   workspaceRoot: "/home/user/project",
-  agentId: "default",
+  promptProfileId: "default",
   env: {
     platform: "darwin",
     timezone: "America/Los_Angeles",

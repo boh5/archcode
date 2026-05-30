@@ -186,7 +186,7 @@ export class ConfiguredAgent implements Agent {
       const promptContext: PromptContext = {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
-        agentId: this.definition.promptAgentId,
+        promptProfileId: this.definition.promptProfileId,
         rolePrompt: this.definition.rolePrompt,
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),

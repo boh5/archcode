@@ -3,7 +3,7 @@ import { EXPLORER_READ_ONLY_TOOLS, SKILL_TOOLS } from "../constants";
 
 export const exploreAgentDefinition = {
   name: "explore",
-  promptAgentId: "explorer",
+  promptProfileId: "explorer",
   rolePrompt: `## Workflow Role: Explorer
 
 You search and inspect the codebase to answer targeted questions.

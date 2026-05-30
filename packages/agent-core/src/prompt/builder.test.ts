@@ -5,7 +5,7 @@ import type { PromptContext } from "./types";
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
   return { allowedTools: ["file_read", "file_write"],
   workspaceRoot: "/home/user/project",
-  agentId: "default",
+  promptProfileId: "default",
   env: {
     platform: "darwin",
     timezone: "America/Los_Angeles",
@@ -59,7 +59,7 @@ describe("buildSystemPrompt", () => {
 
   test("sections appear in correct order with skills section between guidelines and tools", async () => {
     const result = await buildSystemPrompt(makeCtx({
-      agentId: "builder",
+      promptProfileId: "builder",
       rolePrompt: "## Workflow Role: Builder\nTest content.",
       agentsMd: "AGENTSCONTENT",
       availableSkills: [{ name: "git-master", description: "Git expertise", when_to_use: "Use for git ops.", source: "builtin" }],

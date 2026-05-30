@@ -3,7 +3,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const productAgentDefinition = {
   name: "product",
-  promptAgentId: "product",
+  promptProfileId: "product",
   rolePrompt: `## Workflow Role: Product
 
 You write PRD artifacts for active workflows.

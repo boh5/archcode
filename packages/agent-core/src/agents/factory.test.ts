@@ -75,7 +75,7 @@ function makeProviderRegistry(): ProviderRegistry {
 
 function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return { name: "orchestrator",
-  promptAgentId: "default",
+  promptProfileId: "default",
   tools: { tools: ["unknown_tool", ...explorerTools], delegateTargets: ["explore"] },
   hooks: {
     autoCompact: true,
@@ -253,7 +253,7 @@ describe("createAgentFactory", () => {
     const providerRegistry = makeProviderRegistry();
     const factory = createAgentFactory({ definitions: [
       definition(),
-      definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ],
     providerRegistry,
     toolRegistry: createRegistry([
@@ -347,7 +347,7 @@ describe("createAgentFactory", () => {
   test("assigns title to root and child stores", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const root = factory.createRootAgent("orchestrator", { title: "Root Title" });
@@ -360,7 +360,7 @@ describe("createAgentFactory", () => {
   test("assigns parent session id to child stores", () => {
     const factory = makeFactory([
       definition(),
-      definition({ name: "explore", promptAgentId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
+      definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
     const child = factory.createAgent("explore", { parentSessionId: "parent-session" });

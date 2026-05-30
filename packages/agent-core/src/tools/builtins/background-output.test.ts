@@ -29,7 +29,7 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true });
 });
 
-function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): ToolExecutionContext {
+function makeContext(parentId = crypto.randomUUID()): ToolExecutionContext {
   const localManager = new SessionStoreManager({ logger: silentLogger });
   return {
     store: localManager.create(parentId, workspaceRoot),
@@ -48,7 +48,8 @@ function makeContext(parentId = `background-parent-${crypto.randomUUID()}`): Too
 
 function linkChild(ctx: ToolExecutionContext, childId = `background-child-${crypto.randomUUID()}`) {
   const childStore = ctx.storeManager.create(childId, workspaceRoot);
-  ctx.store.getState().linkChildSession(childStore.getState().sessionId);
+  childStore.getState().setParentSessionId(ctx.store.getState().sessionId);
+  childStore.setState({ rootSessionId: ctx.store.getState().rootSessionId });
   return childStore;
 }
 
@@ -162,12 +163,13 @@ describe("background_output tool", () => {
     expect(result).toContain("Sub-agent is still running.");
   });
 
-  it("rejects unrelated sessions and grandchildren", async () => {
+  it("returns unrelated sessions and grandchildren by session ID", async () => {
     const ctx = makeContext();
     const unrelated = ctx.storeManager.create(`unrelated-${crypto.randomUUID()}`, workspaceRoot);
     const childStore = linkChild(ctx);
     const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot);
-    childStore.getState().linkChildSession(grandchild.getState().sessionId);
+    grandchild.getState().setParentSessionId(childStore.getState().sessionId);
+    grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
 
     for (const sessionId of [unrelated.getState().sessionId, grandchild.getState().sessionId]) {
       const result = await executeBackgroundOutput({
@@ -180,17 +182,16 @@ describe("background_output tool", () => {
         include_reasoning: false,
       }, ctx);
 
-      expect(typeof result).toBe("object");
-      expect((result as { isError: boolean }).isError).toBe(true);
-      expect((result as { output: string }).output).toContain(`Unknown child session_id: ${sessionId}`);
+      expect(result).toContain(`# Background session ${sessionId}`);
     }
   });
 
-  it("keeps nested delegation stats isolated and only permits direct child reads", async () => {
+  it("keeps nested delegation stats isolated and reads by session ID", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
     const grandchild = ctx.storeManager.create(`grandchild-${crypto.randomUUID()}`, workspaceRoot);
-    childStore.getState().linkChildSession(grandchild.getState().sessionId);
+    grandchild.getState().setParentSessionId(childStore.getState().sessionId);
+    grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
 
     childStore.getState().append({ type: "run-start", runId: "child-run" });
     childStore.getState().append({ type: "tool-call", toolCallId: "child-tool", toolName: "read", input: {} });
@@ -224,9 +225,7 @@ describe("background_output tool", () => {
       include_tool_results: false,
       include_reasoning: false,
     }, ctx);
-    expect(typeof grandchildResult).toBe("object");
-    expect((grandchildResult as { isError: boolean }).isError).toBe(true);
-    expect((grandchildResult as { output: string }).output).toContain(`Unknown child session_id: ${grandchild.getState().sessionId}`);
+    expect(grandchildResult).toContain(`# Background session ${grandchild.getState().sessionId}`);
   });
 
   it("waits with block=true until the child stops", async () => {
@@ -360,11 +359,12 @@ describe("background_output tool", () => {
 
   it("loads a direct child session from disk when it is not in memory", async () => {
     const ctx = makeContext();
-    const childId = `disk-child-${crypto.randomUUID()}`;
-    ctx.store.getState().linkChildSession(childId);
+    const childId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript({
       sessionId: childId,
+      rootSessionId: ctx.store.getState().rootSessionId,
+      parentSessionId: ctx.store.getState().sessionId,
       createdAt: Date.now(),
       title: null,
       messages: [
@@ -408,7 +408,6 @@ describe("background_output tool", () => {
   it("returns descriptive error when getOrLoad fails with corrupt session file", async () => {
     const ctx = makeContext();
     const childId = `corrupt-child-${crypto.randomUUID()}`;
-    ctx.store.getState().linkChildSession(childId);
 
     const sessionsDir = getSessionsDir(workspaceRoot);
     await mkdir(sessionsDir, { recursive: true });

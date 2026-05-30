@@ -3,7 +3,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const librarianAgentDefinition = {
   name: "librarian",
-  promptAgentId: "librarian",
+  promptProfileId: "librarian",
   rolePrompt: `## Workflow Role: Librarian
 
 You search and retrieve information from the codebase and documentation.

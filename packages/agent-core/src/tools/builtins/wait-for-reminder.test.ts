@@ -9,9 +9,9 @@ import { createTestProjectContext } from "../test-project-context";
 
 const testDir = join(import.meta.dir, "__test_tmp__", "wait-for-reminder");
 
-function makeStore(childSessionIds: string[] = ["child-1"]): StoreApi<SessionStoreState> {
+function makeStore(): StoreApi<SessionStoreState> {
   const store = storeManager.create(`wait-reminder-test-${crypto.randomUUID()}`);
-  store.setState({ childSessionIds: new Set(childSessionIds) });
+  store.setState({ rootSessionId: store.getState().sessionId });
   return store;
 }
 
@@ -89,22 +89,8 @@ describe("waitForReminderTool", () => {
     expect(parseResult(output)).toEqual({ status: "error", message: "session_ids must not be empty" });
   });
 
-  test("returns error for unknown child session IDs", async () => {
-    const store = makeStore(["child-1"]);
-    const output = await waitForReminderTool.execute(
-      { session_ids: ["child-1", "missing"], condition: "any", timeout_ms: 1000 },
-      makeCtx(store),
-    );
-
-    expect(parseResult(output)).toEqual({
-      status: "error",
-      message: "Unknown session_id: missing",
-      unknown_ids: ["missing"],
-    });
-  });
-
   test("consumes an already-present matching on-demand reminder for any condition", async () => {
-    const store = makeStore(["child-1"]);
+    const store = makeStore();
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-1", sessionId: "child-1" }) });
 
     const output = await waitForReminderTool.execute(
@@ -120,7 +106,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("ignores consumed, auto-inject, and non-target reminders", async () => {
-    const store = makeStore(["child-1", "child-2"]);
+    const store = makeStore();
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "consumed", sessionId: "child-1" }) });
     store.getState().append({ type: "reminder-consumed", reminderIds: ["consumed"] });
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "auto", sessionId: "child-1", delivery: "auto_inject" }) });
@@ -136,7 +122,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("waits until all requested sessions have reminders", async () => {
-    const store = makeStore(["child-1", "child-2"]);
+    const store = makeStore();
     const promise = waitForReminderTool.execute(
       { session_ids: ["child-1", "child-2"], condition: "all", timeout_ms: 1000 },
       makeCtx(store),
@@ -155,7 +141,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("waits until count condition is met", async () => {
-    const store = makeStore(["child-1", "child-2", "child-3"]);
+    const store = makeStore();
     const promise = waitForReminderTool.execute(
       { session_ids: ["child-1", "child-2", "child-3"], condition: { count: 2 }, timeout_ms: 1000 },
       makeCtx(store),
@@ -170,7 +156,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("returns timeout with pending session IDs", async () => {
-    const store = makeStore(["child-1", "child-2"]);
+    const store = makeStore();
     store.getState().append({ type: "reminder", reminder: makeReminder({ id: "rem-1", sessionId: "child-1" }) });
 
     const output = await waitForReminderTool.execute(
@@ -183,7 +169,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("returns aborted and unsubscribes when abort signal fires", async () => {
-    const store = makeStore(["child-1"]);
+    const store = makeStore();
     const abort = new AbortController();
     const promise = waitForReminderTool.execute(
       { session_ids: ["child-1"], condition: "any", timeout_ms: 1000 },
@@ -198,7 +184,7 @@ describe("waitForReminderTool", () => {
   });
 
   test("returns aborted immediately if signal is already aborted", async () => {
-    const store = makeStore(["child-1"]);
+    const store = makeStore();
     const abort = new AbortController();
     abort.abort();
 

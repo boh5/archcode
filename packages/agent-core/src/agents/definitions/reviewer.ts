@@ -3,7 +3,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const reviewerAgentDefinition = {
   name: "reviewer",
-  promptAgentId: "reviewer",
+  promptProfileId: "reviewer",
   rolePrompt: `## Workflow Role: Reviewer
 
 You review code changes and write evidence/reports.

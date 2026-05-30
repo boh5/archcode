@@ -39,7 +39,7 @@ export const WorkflowStateSchema = z.strictObject({
   stage: WorkflowStageSchema,
   status: WorkflowStatusSchema,
   artifacts: z.partialRecord(WorkflowArtifactKindSchema, z.union([z.string(), z.array(z.string())])).default({}),
-  agentIds: z.record(z.string(), z.string()).default({}),
+  roleSessionIds: z.record(z.string(), z.string()).default({}),
   sessionIds: z.record(z.string(), z.string()).default({}),
   taskSessionIds: z.record(z.string(), z.string()).default({}),
   createdAt: z.string(),
@@ -73,7 +73,7 @@ export class WorkflowStateError extends Error {
 export interface CreateWorkflowStateInput {
   id: string;
   artifacts?: WorkflowState["artifacts"];
-  agentIds?: Record<string, string>;
+  roleSessionIds?: Record<string, string>;
   sessionIds?: Record<string, string>;
   taskSessionIds?: Record<string, string>;
   maxRetries?: number;
@@ -101,7 +101,7 @@ export class WorkflowStateManager {
       stage: "idle",
       status: "active",
       artifacts: input.artifacts ?? {},
-      agentIds: input.agentIds ?? {},
+      roleSessionIds: input.roleSessionIds ?? {},
       sessionIds: input.sessionIds ?? {},
       taskSessionIds: input.taskSessionIds ?? {},
       createdAt: now,

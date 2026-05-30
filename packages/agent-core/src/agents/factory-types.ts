@@ -4,7 +4,7 @@ export type AgentName = "orchestrator" | "explore" | (string & {});
 
 export interface AgentDefinition {
   readonly name: AgentName;
-  readonly promptAgentId: string;
+  readonly promptProfileId: string;
   readonly rolePrompt?: string;
   readonly tools: AgentToolPolicy;
   readonly hooks: AgentHookPolicy;

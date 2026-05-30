@@ -33,11 +33,11 @@ export async function executeBackgroundOutput(
   input: BackgroundOutputInput,
   ctx: ToolExecutionContext,
 ): Promise<string | ToolExecutionResult> {
-  if (!ctx.store.getState().childSessionIds.has(input.session_id)) {
+  if (input.session_id === ctx.store.getState().sessionId) {
     return createToolErrorResult({
       kind: "execution",
-      code: "TOOL_UNKNOWN_CHILD_SESSION",
-      message: `Unknown child session_id: ${input.session_id}`,
+      code: "TOOL_INVALID_BACKGROUND_SESSION",
+      message: "background_output cannot read the current session; provide a delegated session_id.",
     });
   }
 

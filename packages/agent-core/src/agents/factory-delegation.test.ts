@@ -319,7 +319,7 @@ describe("AgentFactory.delegate", () => {
 
     const middleDef: AgentDefinition = {
       name: "middle",
-      promptAgentId: "explorer",
+      promptProfileId: "explorer",
       rolePrompt: "Middleware agent that can delegate further.",
       tools: {
         tools: [...EXPLORER_READ_ONLY_TOOLS, "delegate", "todo_write"],

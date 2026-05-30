@@ -8,7 +8,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const builderAgentDefinition = {
   name: "builder",
-  promptAgentId: "builder",
+  promptProfileId: "builder",
   rolePrompt: `## Workflow Role: Builder
 
 You implement code changes for delegated workflow tasks.

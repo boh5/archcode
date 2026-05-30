@@ -89,10 +89,6 @@ export function shouldInjectReminder(
     return { should: false, reason: "pending_question" };
   }
 
-  if (state.childSessionIds.size > 0) {
-    return { should: false, reason: "running_sub_agents" };
-  }
-
   if (state.todoStepReminderCount >= TODO_REMINDER_MAX_COUNT) {
     return { should: false, reason: "max_reminders" };
   }
@@ -125,10 +121,6 @@ export function shouldContinueAfterLoop(
 
   if (hasPendingQuestion(state)) {
     return { should: false, reason: "pending_question" };
-  }
-
-  if (state.childSessionIds.size > 0) {
-    return { should: false, reason: "running_sub_agents" };
   }
 
   if (state.todoLoopContinuationCount >= TODO_CONTINUATION_MAX_COUNT) {

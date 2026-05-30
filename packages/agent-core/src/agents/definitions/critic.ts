@@ -3,7 +3,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const criticAgentDefinition = {
   name: "critic",
-  promptAgentId: "critic",
+  promptProfileId: "critic",
   rolePrompt: `## Workflow Role: Critic
 
 You review PRD, SPEC, and TASKS artifacts and write critic reports.

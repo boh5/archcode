@@ -8,7 +8,7 @@ function makeCtx(
 ): PromptContext {
   return { allowedTools: [],
   workspaceRoot: "/workspace",
-  agentId: "test",
+  promptProfileId: "test",
   env: {
     platform: "darwin",
     timezone: "America/Los_Angeles",

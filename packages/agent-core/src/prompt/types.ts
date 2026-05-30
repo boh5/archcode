@@ -12,8 +12,8 @@ export interface PromptContext {
   /** Absolute path to workspace root (used for project context section) */
   readonly workspaceRoot: string;
 
-  /** Identifier for the current agent (e.g. "default", "test") */
-  readonly agentId: string;
+  /** Identifier for the prompt profile used by the current role (e.g. "default", "test") */
+  readonly promptProfileId: string;
 
   /** Role-specific prompt content from the agent definition; absent when definition has no rolePrompt */
   readonly rolePrompt?: string;

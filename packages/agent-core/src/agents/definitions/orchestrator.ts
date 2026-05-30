@@ -8,7 +8,7 @@ import type { AgentDefinition } from "../factory-types";
 
 export const orchestratorAgentDefinition = {
   name: "orchestrator",
-  promptAgentId: "default",
+  promptProfileId: "default",
   rolePrompt: `## Workflow Role: Orchestrator
 
 You own workflow state, stage transitions, delegation sequencing, user approval gates, and final reporting.

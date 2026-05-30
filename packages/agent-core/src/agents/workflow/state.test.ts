@@ -59,7 +59,7 @@ describe("workflow schemas", () => {
       stage: "idle",
       status: "active",
       artifacts: { PRD: "PRD.md", EVIDENCE: ["evidence/run.md"] },
-      agentIds: { product: "agent-1" },
+      roleSessionIds: { product: "session-product" },
       sessionIds: { orchestrator: "session-1" },
       taskSessionIds: { T1: "session-task-1" },
       createdAt: now,
@@ -107,7 +107,7 @@ describe("WorkflowStateManager", () => {
     const created = await manager.create({
       id: "wf-3",
       artifacts: { PRD: "artifacts/PRD.md", EVIDENCE: ["evidence/a.md"] },
-      agentIds: { product: "agent-product" },
+      roleSessionIds: { product: "session-product-role" },
       sessionIds: { product: "session-product" },
       taskSessionIds: { T1: "session-t1" },
       lastError: "critic rejected SPEC",

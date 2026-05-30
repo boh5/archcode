@@ -8,7 +8,7 @@ import { workflowRoleToolPermissions } from "../workflow/permissions";
 
 export const foremanAgentDefinition = {
   name: "foreman",
-  promptAgentId: "foreman",
+  promptProfileId: "foreman",
   rolePrompt: `## Workflow Role: Foreman
 
 You execute TASKS.md as Markdown-only dependency waves for active workflows.

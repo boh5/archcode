@@ -26,7 +26,6 @@ type WaitForReminderResult =
   | {
       status: "error";
       message: string;
-      unknown_ids?: string[];
     }
   | {
       status: "timeout";
@@ -113,16 +112,6 @@ export async function executeWaitForReminder(
 ): Promise<string> {
   if (input.session_ids.length === 0) {
     return JSON.stringify({ status: "error", message: "session_ids must not be empty" } satisfies WaitForReminderResult);
-  }
-
-  const childSessionIds = ctx.store.getState().childSessionIds;
-  const unknownIds = input.session_ids.filter((sessionId) => !childSessionIds.has(sessionId));
-  if (unknownIds.length > 0) {
-    return JSON.stringify({
-      status: "error",
-      message: `Unknown session_id: ${unknownIds[0]}`,
-      unknown_ids: unknownIds,
-    } satisfies WaitForReminderResult);
   }
 
   if (ctx.abort.aborted) {

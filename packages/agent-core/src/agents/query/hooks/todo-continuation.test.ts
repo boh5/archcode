@@ -71,19 +71,6 @@ describe("createTodoContinuationHook - afterStepEnd (10-step reminder)", () => {
     expect(store.getState().reminders).toHaveLength(0);
   });
 
-  test("does not inject when sub-agents are running", async () => {
-    const store = createHookStore();
-    seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);
-    store.setState({ lastTodoWriteStepIndex: null, childSessionIds: new Set(["child-1"]) });
-    const { afterStepEnd } = createTodoContinuationHook();
-
-    for (let i = 0; i < 12; i++) {
-      await runStep(afterStepEnd, store);
-    }
-
-    expect(store.getState().reminders).toHaveLength(0);
-  });
-
   test("respects cooldown between injections", async () => {
     const store = createHookStore();
     seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);
