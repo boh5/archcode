@@ -28,11 +28,16 @@ beforeEach(async () => {
 });
 
 function uniqueSessionId(label: string): string {
-  return `${label}-${crypto.randomUUID()}`;
+  void label;
+  return crypto.randomUUID();
 }
 
 function sessionFilePath(sessionId: string): string {
   return join(TMP_DIR, `${sessionId}.json`);
+}
+
+function childSessionFilePath(rootSessionId: string, sessionId: string): string {
+  return join(TMP_DIR, rootSessionId, `${sessionId}.json`);
 }
 
 async function writeSessionFile(sessionId: string, data: unknown): Promise<void> {
@@ -206,6 +211,67 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().todos).toEqual(state.todos);
   });
 
+  test("root save writes only the top-level session file", async () => {
+    const sessionId = uniqueSessionId("root-layout");
+
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+
+    expect(await Bun.file(sessionFilePath(sessionId)).exists()).toBe(true);
+    expect(await Bun.file(join(TMP_DIR, sessionId, `${sessionId}.json`)).exists()).toBe(false);
+  });
+
+  test("child save writes under root session directory", async () => {
+    const rootSessionId = uniqueSessionId("root-layout");
+    const childSessionId = uniqueSessionId("child-layout");
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childSessionId, sampleMessages(), sampleSteps(), sampleTodos(), createEmptySessionStats(), [], [], rootSessionId, rootSessionId),
+      TMP_DIR,
+    );
+
+    expect(await Bun.file(sessionFilePath(childSessionId)).exists()).toBe(false);
+    expect(await Bun.file(childSessionFilePath(rootSessionId, childSessionId)).exists()).toBe(true);
+  });
+
+  test("listSessionSummaries returns only top-level root sessions", async () => {
+    const rootSessionId = uniqueSessionId("root-summary");
+    const childSessionId = uniqueSessionId("child-summary");
+
+    await sessionFileInternals.saveSessionTranscript(persistedState(rootSessionId), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId),
+      TMP_DIR,
+    );
+
+    const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
+
+    expect(summaries.map((summary) => summary.sessionId)).toEqual([rootSessionId]);
+    expect(summaries[0]?.rootSessionId).toBe(rootSessionId);
+    expect(summaries[0]?.parentSessionId).toBeUndefined();
+  });
+
+  test("scanDescendants returns child session to root session mappings", async () => {
+    const rootSessionId = uniqueSessionId("root-scan");
+    const childA = uniqueSessionId("child-a");
+    const childB = uniqueSessionId("child-b");
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childA, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId),
+      TMP_DIR,
+    );
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childB, [], [], [], createEmptySessionStats(), [], [], rootSessionId, childA),
+      TMP_DIR,
+    );
+
+    const descendants = await sessionFileInternals.scanDescendants(TMP_DIR, rootSessionId);
+
+    expect(descendants).toEqual(new Map([
+      [childA, rootSessionId],
+      [childB, rootSessionId],
+    ]));
+  });
+
   test("roundtrips completed text, incomplete text, reasoning, and all tool part variants", async () => {
     const sessionId = uniqueSessionId("part-variants");
     const messages = [allPartVariantsMessage()];
@@ -290,8 +356,8 @@ describe("session transcript serialization", () => {
 
   test("save/load serializes rootSessionId and parentSessionId", async () => {
     const sessionId = uniqueSessionId("hierarchy-roundtrip");
-    const rootSessionId = "root-session-1";
-    const parentSessionId = "parent-session-1";
+    const rootSessionId = crypto.randomUUID();
+    const parentSessionId = crypto.randomUUID();
     const state = persistedState(
       sessionId,
       sampleMessages(),
@@ -305,14 +371,14 @@ describe("session transcript serialization", () => {
     );
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
-    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const raw = await Bun.file(childSessionFilePath(rootSessionId, sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
-    expect(parsed.rootSessionId).toBe("root-session-1");
-    expect(parsed.parentSessionId).toBe("parent-session-1");
-    expect(loaded.getState().rootSessionId).toBe("root-session-1");
-    expect(loaded.getState().parentSessionId).toBe("parent-session-1");
+    expect(parsed.rootSessionId).toBe(rootSessionId);
+    expect(parsed.parentSessionId).toBe(parentSessionId);
+    expect(loaded.getState().rootSessionId).toBe(rootSessionId);
+    expect(loaded.getState().parentSessionId).toBe(parentSessionId);
   });
 
   test("loaded store preserves methods and can continue appending", async () => {
@@ -445,7 +511,7 @@ describe("session transcript serialization", () => {
 
   test("load rejects sessionId mismatch", async () => {
     const requestedSessionId = uniqueSessionId("requested");
-    await writeSessionFile(requestedSessionId, persistedState("different-session"));
+    await writeSessionFile(requestedSessionId, persistedState(crypto.randomUUID()));
 
     await expect(storeManager.getOrLoad(requestedSessionId, TMP_DIR)).rejects.toThrow("Session ID mismatch");
   });

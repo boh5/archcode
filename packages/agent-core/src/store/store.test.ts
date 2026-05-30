@@ -26,7 +26,8 @@ afterAll(async () => {
 });
 
 function uniqueSessionId(label: string): string {
-  return `${label}-${crypto.randomUUID()}`;
+  void label;
+  return crypto.randomUUID();
 }
 
 function createFreshStore(label: string) {

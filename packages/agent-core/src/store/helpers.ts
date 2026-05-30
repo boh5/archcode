@@ -3,7 +3,7 @@ import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionStoreState, StoredMessage } from "./types";
-import { getSessionsDir } from "./sessions-dir";
+import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
 
 const NormalizedUsageSchema = z.strictObject({
   inputTokens: z.number(),
@@ -228,6 +228,8 @@ export type SessionFile = z.infer<typeof SessionFileSchema>;
 
 export interface SessionSummary {
   sessionId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
   title?: string | null;
   createdAt: number;
   lastUpdatedAt?: number;
@@ -261,7 +263,10 @@ async function saveSessionTranscript(
   state: PersistableSessionState,
   workspaceRoot: string,
 ): Promise<void> {
-  const dir = getSessionsDir(workspaceRoot);
+  const finalPath = getSessionPath(workspaceRoot, state.rootSessionId, state.sessionId);
+  const dir = state.rootSessionId === state.sessionId
+    ? getSessionsDir(workspaceRoot)
+    : getRootSessionDir(workspaceRoot, state.rootSessionId);
 
   try {
     await mkdir(dir, { recursive: true });
@@ -284,7 +289,6 @@ async function saveSessionTranscript(
   };
 
   const json = JSON.stringify(data, null, 2);
-  const finalPath = join(dir, `${state.sessionId}.json`);
   const tmpPath = join(dir, `${state.sessionId}.${randomUUID()}.json.tmp`);
 
   try {
@@ -303,11 +307,12 @@ async function saveSessionTranscript(
 async function readSessionFile(
   sessionId: string,
   workspaceRoot: string,
+  rootSessionId?: string,
 ): Promise<SessionFile> {
-  const dir = getSessionsDir(workspaceRoot);
-  const filePath = join(dir, `${sessionId}.json`);
-  const raw = await Bun.file(filePath).text();
-  const parsed = SessionFileSchema.parse(JSON.parse(raw));
+  const filePath = rootSessionId === undefined
+    ? getRootSessionPath(workspaceRoot, sessionId)
+    : getSessionPath(workspaceRoot, rootSessionId, sessionId);
+  const parsed = await readValidatedSessionFile(filePath);
 
   if (parsed.sessionId !== sessionId) {
     throw new Error(
@@ -337,7 +342,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
 
 async function listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
   const dir = getSessionsDir(workspaceRoot);
-  const names = await readSessionFileNames(dir);
+  const names = await readTopLevelSessionFileNames(dir);
   const sessions: Array<{ summary: SessionSummary; sortKey: number }> = [];
 
   for (const name of names) {
@@ -347,6 +352,8 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
       sessions.push({
         summary: {
           sessionId: parsed.sessionId,
+          rootSessionId: parsed.rootSessionId,
+          ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
           title: parsed.title ?? null,
           createdAt: parsed.createdAt,
           ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
@@ -365,13 +372,57 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
     .map((session) => session.summary);
 }
 
-async function readSessionFileNames(dir: string): Promise<string[]> {
+async function scanDescendants(workspaceRoot: string, rootSessionId: string): Promise<Map<string, string>> {
+  const dir = getRootSessionDir(workspaceRoot, rootSessionId);
+  const names = await readTopLevelSessionFileNames(dir);
+  const descendants = new Map<string, string>();
+
+  for (const name of names) {
+    const filePath = join(dir, name);
+    try {
+      const parsed = await readValidatedSessionFile(filePath);
+      if (parsed.rootSessionId !== rootSessionId) {
+        throw new Error(
+          `Root session ID mismatch: expected "${rootSessionId}", found "${parsed.rootSessionId}" in file`,
+        );
+      }
+      if (parsed.sessionId === rootSessionId) continue;
+      descendants.set(parsed.sessionId, parsed.rootSessionId);
+    } catch (err) {
+      console.warn(
+        `Skipping invalid descendant session file "${filePath}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  return descendants;
+}
+
+async function readTopLevelSessionFileNames(dir: string): Promise<string[]> {
   try {
-    return (await readdir(dir)).filter((name) => name.endsWith(".json"));
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name);
   } catch (error) {
     if (isMissingFileError(error)) return [];
     throw error;
   }
+}
+
+async function readTopLevelSessionDirNames(dir: string): Promise<string[]> {
+  try {
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  }
+}
+
+async function readValidatedSessionFile(filePath: string): Promise<SessionFile> {
+  const raw = await Bun.file(filePath).text();
+  return SessionFileSchema.parse(JSON.parse(raw));
 }
 
 function readSessionTimestamps(value: unknown): { lastUpdatedAt?: number; updatedAt?: number } {
@@ -392,4 +443,6 @@ export const sessionFileInternals = {
   readSessionFile,
   toSessionFile,
   listSessionSummaries,
+  scanDescendants,
+  readTopLevelSessionDirNames,
 };

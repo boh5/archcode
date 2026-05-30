@@ -6,7 +6,7 @@ import type { Logger } from "../logger";
 import { sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { __hasSessionsDirOverrideForTest } from "./sessions-dir";
+import { __hasSessionsDirOverrideForTest, getSessionsDir } from "./sessions-dir";
 import {
   type SessionEventEnvelope,
   type SessionEventPayload,
@@ -24,6 +24,8 @@ export class SessionStoreManager {
   #pendingLoads = new Map<string, Promise<StoreApi<SessionStoreState>>>();
   #pendingPersists = new Map<string, Promise<void>>();
   #hydrating = new Set<string>();
+  #rootIdIndex = new Map<string, string>();
+  #scanPromiseByWorkspace = new Map<string, Promise<void>>();
   readonly #logger: Logger;
 
   constructor(options: SessionStoreManagerOptions) {
@@ -32,6 +34,21 @@ export class SessionStoreManager {
 
   private key(sessionId: string, workspaceRoot?: string): string {
     return workspaceRoot === undefined ? sessionId : `${workspaceRoot}\0${sessionId}`;
+  }
+
+  private indexKey(sessionId: string, workspaceRoot: string): string {
+    return `${workspaceRoot}\0${sessionId}`;
+  }
+
+  #registerRootSessionId(sessionId: string, workspaceRoot: string, rootSessionId: string): void {
+    this.#rootIdIndex.set(this.indexKey(sessionId, workspaceRoot), rootSessionId);
+  }
+
+  #forgetWorkspaceIndex(workspaceRoot: string): void {
+    const prefix = `${workspaceRoot}\0`;
+    for (const key of this.#rootIdIndex.keys()) {
+      if (key.startsWith(prefix)) this.#rootIdIndex.delete(key);
+    }
   }
 
   create(sessionId: string, workspaceRoot?: string): StoreApi<SessionStoreState> {
@@ -132,6 +149,7 @@ export class SessionStoreManager {
     }));
 
     this.#registry.set(key, store);
+    if (shouldPersist) this.#registerRootSessionId(sessionId, persistWorkspaceRoot, sessionId);
     if (!this.#hydrating.has(key)) persist();
     return store;
   }
@@ -167,8 +185,28 @@ export class SessionStoreManager {
   }
 
   async getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile> {
-    const store = await this.getOrLoad(sessionId, workspaceRoot);
-    return sessionFileInternals.toSessionFile(store.getState());
+    const existing = this.get(sessionId, workspaceRoot);
+    if (existing) return sessionFileInternals.toSessionFile(existing.getState());
+
+    const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
+    return await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+  }
+
+  async resolveRootSessionId(sessionId: string, workspaceRoot: string): Promise<string> {
+    const cached = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
+    if (cached !== undefined) return cached;
+
+    if (await this.#isRootSessionOnDisk(sessionId, workspaceRoot)) {
+      this.#registerRootSessionId(sessionId, workspaceRoot, sessionId);
+      return sessionId;
+    }
+
+    await this.#scanWorkspaceDescendants(workspaceRoot);
+
+    const resolved = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
+    if (resolved !== undefined) return resolved;
+
+    throw new Error(`Session file not found for "${sessionId}"`);
   }
 
   async listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
@@ -179,7 +217,8 @@ export class SessionStoreManager {
     sessionId: string,
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
-    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot);
+    const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
+    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -213,6 +252,7 @@ export class SessionStoreManager {
         eventOffset: 0,
         nextEventId: 0,
       });
+      this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
 
       return store;
     } finally {
@@ -221,14 +261,73 @@ export class SessionStoreManager {
   }
 
   delete(sessionId: string, workspaceRoot?: string): boolean {
-    return this.#registry.delete(this.key(sessionId, workspaceRoot));
+    const removed = this.#registry.delete(this.key(sessionId, workspaceRoot));
+    if (workspaceRoot !== undefined) this.#forgetWorkspaceIndex(workspaceRoot);
+    return removed;
   }
 
   clearAll(): void {
     this.#registry.clear();
+    this.#rootIdIndex.clear();
+    this.#scanPromiseByWorkspace.clear();
   }
 
   has(sessionId: string, workspaceRoot?: string): boolean {
     return this.#registry.has(this.key(sessionId, workspaceRoot));
   }
+
+  async #isRootSessionOnDisk(sessionId: string, workspaceRoot: string): Promise<boolean> {
+    try {
+      const file = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, sessionId);
+      return file.rootSessionId === sessionId;
+    } catch (error) {
+      if (isMissingFileError(error)) return false;
+      throw error;
+    }
+  }
+
+  async #scanWorkspaceDescendants(workspaceRoot: string): Promise<void> {
+    const pending = this.#scanPromiseByWorkspace.get(workspaceRoot);
+    if (pending) return pending;
+
+    const scan = this.#scanWorkspaceDescendantsOnce(workspaceRoot).finally(() => {
+      if (this.#scanPromiseByWorkspace.get(workspaceRoot) === scan) {
+        this.#scanPromiseByWorkspace.delete(workspaceRoot);
+      }
+    });
+    this.#scanPromiseByWorkspace.set(workspaceRoot, scan);
+    return scan;
+  }
+
+  async #scanWorkspaceDescendantsOnce(workspaceRoot: string): Promise<void> {
+    const rootSessionIds = new Set<string>();
+    for (const summary of await sessionFileInternals.listSessionSummaries(workspaceRoot)) {
+      rootSessionIds.add(summary.rootSessionId);
+      this.#registerRootSessionId(summary.sessionId, workspaceRoot, summary.rootSessionId);
+    }
+    for (const dirname of await sessionFileInternals.readTopLevelSessionDirNames(getSessionsDir(workspaceRoot))) {
+      rootSessionIds.add(dirname);
+    }
+
+    for (const rootSessionId of rootSessionIds) {
+      let descendants: Map<string, string>;
+      try {
+        descendants = await sessionFileInternals.scanDescendants(workspaceRoot, rootSessionId);
+      } catch (error) {
+        this.#logger.warn("session.descendant_scan.failed", {
+          error,
+          context: { sessionId: rootSessionId },
+          meta: { workspaceRoot },
+        });
+        continue;
+      }
+      for (const [childSessionId, childRootSessionId] of descendants) {
+        this.#registerRootSessionId(childSessionId, workspaceRoot, childRootSessionId);
+      }
+    }
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
