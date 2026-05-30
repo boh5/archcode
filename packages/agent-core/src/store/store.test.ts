@@ -141,9 +141,9 @@ describe("SessionStoreManager", () => {
     expect("runCount" in persisted).toBe(false);
   });
 
-  test("append persistence is coalesced and serialized for durable high-frequency events", async () => {
+  test("assistant append events persist on run-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-coalesced");
+    const sessionId = uniqueSessionId("persist-on-run-end");
     const store = createSessionStore(sessionId);
 
     const state = store.getState();
@@ -152,6 +152,7 @@ describe("SessionStoreManager", () => {
     state.append({ type: "text-delta", text: "hel" });
     state.append({ type: "text-delta", text: "lo" });
     state.append({ type: "text-end" });
+    state.append({ type: "run-end", status: "completed" });
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       const messages = session.messages;

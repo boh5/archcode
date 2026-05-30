@@ -252,7 +252,8 @@ function truncateOutput(value: string): string {
 
 export const backgroundOutputTool = defineTool({
   name: "background_output",
-  description: "Read latest or full transcript output from a direct child background sub-agent session.",
+  description:
+    `Read output from a direct child background sub-agent session. Parameters: session_id (child session, must be a direct child of current session), block (wait for child to finish), timeout_ms (max wait when blocking, default 60000), full_session (return full message history instead of latest output), message_limit (max messages in full_session mode), since_message_id (exclusive cursor for incremental reads), include_tool_results (include tool call results, default hidden), include_reasoning (include reasoning content, default hidden).`,
   inputSchema: BackgroundOutputInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: executeBackgroundOutput,

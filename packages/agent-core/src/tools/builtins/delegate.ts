@@ -230,7 +230,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    "Delegate a prompt to another allowed agent. The skills field is required; pass [] when no Skill should be active. Use background=true to start it asynchronously and retrieve output later with background_output.",
+    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later). Output: natural language summary + <delegate_metadata> block with session_id and status.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),
