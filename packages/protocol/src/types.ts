@@ -5,7 +5,7 @@ export interface ExecutionStartEvent {
 
 export interface ExecutionEndEvent {
   type: "execution-end";
-  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out";
+  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted";
   error?: string;
 }
 

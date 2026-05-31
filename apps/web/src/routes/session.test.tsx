@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import { TOOL_DELEGATE } from "@specra/protocol";
+import type { ToolChildSessionLink } from "@specra/protocol";
 import type { Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,
@@ -23,6 +24,7 @@ function createSession(input: {
   parentSessionId?: string;
   title: string;
   messages: NonNullable<Session["messages"]>;
+  childSessionLinks?: ToolChildSessionLink[];
 }): Session {
   return {
     id: input.id,
@@ -36,6 +38,7 @@ function createSession(input: {
     steps: [],
     todos: [],
     reminders: [],
+    childSessionLinks: input.childSessionLinks ?? [],
     eventCursor: 0,
   };
 }
@@ -193,32 +196,30 @@ describe("SessionRoute focused view store behavior", () => {
               toolCallId: "delegate-call",
               toolName: TOOL_DELEGATE,
               input: { agent_type: "explorer", description: "Explore child session" },
-              output: [
-                "Sub-agent completed.",
-                "Agent type: explorer",
-                "Session ID: child-session",
-                "Status: completed",
-                "Duration: 1000ms",
-                "Result:",
-                "  Child content",
-                "",
-                "<delegate_metadata>",
-                "session_id: child-session",
-                "parent_session_id: root-session",
-                'agent_type: "explorer"',
-                'description: "Explore child session"',
-                "status: completed",
-                "background: false",
-                "started_at: 1",
-                "ended_at: 2",
-                "duration_ms: 1000",
-                "</delegate_metadata>",
-              ].join("\n"),
+              output: "Sub-agent completed.",
               createdAt: 1,
               startedAt: 1,
               endedAt: 2,
             },
           ],
+        },
+      ],
+      childSessionLinks: [
+        {
+          parentSessionId: "root-session",
+          parentToolCallId: "delegate-call",
+          toolName: "delegate",
+          childSessionId: "child-session",
+          childAgentName: "explorer",
+          title: "Explore child session",
+          description: "Explore child session",
+          depth: 1,
+          background: false,
+          status: "completed",
+          createdAt: 1,
+          startedAt: 1,
+          endedAt: 2,
+          durationMs: 1000,
         },
       ],
     });

@@ -34,7 +34,7 @@ const SessionStatsSchema = z.strictObject({
 const SessionExecutionRecordSchema = z.strictObject({
   id: z.string(),
   startedAt: z.number(),
-  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out"]),
+  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"]),
   endedAt: z.number().optional(),
   durationMs: z.number().optional(),
   error: z.string().optional(),

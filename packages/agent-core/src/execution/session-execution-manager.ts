@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import type { SessionExecutionRecord, SessionTreeNode, ToolChildSessionLinkStatus } from "@specra/protocol";
+import type { SessionExecutionRecord, SessionTreeNode, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@specra/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -27,6 +27,14 @@ import type { Logger } from "../logger";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
+const TERMINAL_CHILD_LINK_STATUSES = new Set<ToolChildSessionLinkStatus>([
+  "completed",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "interrupted",
+]);
+
 export type SessionExecutionOrigin =
   | "user_message"
   | "tool_call";
@@ -41,6 +49,13 @@ export interface ActiveSessionExecution {
   readonly executionToken: symbol;
   readonly startedAt: number;
 }
+
+// Session execution lifecycle:
+//   active execution: starting -> running -> cancelling -> completed | failed | cancelled | timed_out | interrupted
+//   parent link:      linked   -> running -> cancelling -> completed | failed | cancelled | timed_out | interrupted
+// `executionToken` is the generation guard for every manager-owned completion path:
+// stale promises may resolve after abort/restart, but must not write terminal execution
+// events, child links, reminders, or deferred-request cleanup for a newer generation.
 
 export interface StartSessionExecutionInput {
   readonly slug: string;
@@ -77,6 +92,7 @@ interface SessionExecutionManagerConfig {
 
 export class SessionExecutionManager {
   readonly #active = new Map<string, ActiveSessionExecution | PendingSessionExecution>();
+  readonly #childSlots = new Map<string, number>();
   readonly #eventBridge: SessionEventBridge;
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
@@ -132,10 +148,7 @@ export class SessionExecutionManager {
     const executions = this.#collectActiveCascade(workspaceRoot, sessionId);
     if (executions.length === 0) return false;
 
-    for (const execution of executions) {
-      execution.abortController.abort();
-      this.#active.delete(scopedKey(execution.workspaceRoot, execution.sessionId));
-    }
+    for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
     return true;
   }
 
@@ -143,10 +156,7 @@ export class SessionExecutionManager {
     const executions = this.#collectActiveCascade(workspaceRoot, sessionId);
     if (executions.length === 0) return;
 
-    for (const execution of executions) {
-      execution.abortController.abort();
-      this.#active.delete(scopedKey(execution.workspaceRoot, execution.sessionId));
-    }
+    for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
 
     const timeout = new Promise<void>((resolve) => setTimeout(resolve, ABORT_AND_WAIT_TIMEOUT_MS));
     await Promise.race([
@@ -157,10 +167,7 @@ export class SessionExecutionManager {
 
   async abortAll(): Promise<void> {
     const executions = [...this.#active.values()];
-    for (const execution of executions) {
-      execution.abortController.abort();
-      this.#active.delete(scopedKey(execution.workspaceRoot, execution.sessionId));
-    }
+    for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
 
     await Promise.allSettled(executions.map((execution) => execution.promise));
   }
@@ -200,62 +207,61 @@ export class SessionExecutionManager {
       throw new DepthLimitError(currentDepth);
     }
 
-    const activeChildren = this.#countActiveChildren(workspaceRoot, request.parentSessionId);
-    if (activeChildren >= childPolicy.maxConcurrent) {
-      throw new ConcurrentLimitError(activeChildren);
-    }
-
     const activeSkills = await factory.resolveDelegatedSkills(targetDefinition, request.skills);
+    this.#reserveChildSlot(workspaceRoot, request.parentSessionId, childPolicy.maxConcurrent);
+    let childSlotReserved = true;
+
+    this.#config.sessionAgentManager.acquireSlot(workspaceRoot, request.parentSessionId);
+    let parentSlotReserved = true;
     const background = request.background ?? false;
     const childSessionId = crypto.randomUUID();
     const childTitle = request.title ?? request.description;
     const createdAt = Date.now();
-    const parentState = request.parentStore.getState();
-    const childStore = this.#config.storeManager.create(childSessionId, workspaceRoot, {
-      rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
-      parentSessionId: request.parentSessionId,
-      agentName: targetDefinition.name,
-      ...(childTitle === undefined ? {} : { title: childTitle }),
-    });
-    this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
+    let childStore: StoreApi<SessionStoreState> | undefined;
+    let execution: ActiveSessionExecution;
 
-    request.parentStore.getState().append({
-      type: "tool-child-session-link",
-      link: {
+    try {
+      this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
+      const parentState = request.parentStore.getState();
+      childStore = this.#config.storeManager.create(childSessionId, workspaceRoot, {
+        rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
         parentSessionId: request.parentSessionId,
-        parentToolCallId: request.parentToolCallId,
-        toolName: request.toolName,
-        childSessionId,
-        childAgentName: targetDefinition.name,
+        agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
-        ...(request.description === undefined ? {} : { description: request.description }),
+      });
+      this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
+
+      this.#config.sessionAgentManager.createChildAgent({
+        workspaceRoot,
+        sessionId: childSessionId,
+        agentName: targetDefinition.name,
+        store: childStore,
         depth: currentDepth + 1,
-        background,
-        status: "linked",
-        createdAt,
-      },
-    });
+        parentSessionId: request.parentSessionId,
+        ...(childTitle === undefined ? {} : { title: childTitle }),
+        activeSkills,
+      });
 
-    this.#config.sessionAgentManager.createChildAgent({
-      workspaceRoot,
-      sessionId: childSessionId,
-      agentName: targetDefinition.name,
-      store: childStore,
-      depth: currentDepth + 1,
-      parentSessionId: request.parentSessionId,
-      ...(childTitle === undefined ? {} : { title: childTitle }),
-      activeSkills,
-    });
-
-    const execution = this.startExecution({
-      slug: "",
-      workspaceRoot,
-      sessionId: childSessionId,
-      userMessage: request.prompt,
-      agentName: targetDefinition.name,
-      origin: "tool_call",
-    });
-    this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt);
+      this.#config.sessionAgentManager.releaseSlot(workspaceRoot, request.parentSessionId);
+      parentSlotReserved = false;
+      execution = this.startExecution({
+        slug: "",
+        workspaceRoot,
+        sessionId: childSessionId,
+        userMessage: request.prompt,
+        agentName: targetDefinition.name,
+        origin: "tool_call",
+      });
+      this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt, background);
+    } catch (error) {
+      if (parentSlotReserved) this.#config.sessionAgentManager.releaseSlot(workspaceRoot, request.parentSessionId);
+      if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+      if (childStore !== undefined) {
+        this.#eventBridge.detachSession(workspaceRoot, childSessionId);
+        this.#config.storeManager.delete(childSessionId, workspaceRoot);
+      }
+      throw error;
+    }
 
     const timeout = childPolicy.timeoutMs > 0
       ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
@@ -269,8 +275,14 @@ export class SessionExecutionManager {
       .finally(() => {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
+        if (childSlotReserved) {
+          this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
+          childSlotReserved = false;
+        }
+        const current = this.#active.get(scopedKey(workspaceRoot, childSessionId));
+        if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
-        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt);
+        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt, background);
         if (background && childPolicy.terminalReminders) {
           appendTerminalReminder(request.parentStore, childSessionId, status);
         }
@@ -280,7 +292,7 @@ export class SessionExecutionManager {
       sessionId: childSessionId,
       store: childStore,
       result,
-      abort: () => execution.abortController.abort(new Error("Sub-agent aborted")),
+      abort: () => this.#cancelExecution(execution, "Sub-agent aborted"),
     };
   }
 
@@ -354,6 +366,8 @@ export class SessionExecutionManager {
       });
     } catch (error) {
       if (!execution.abortController.signal.aborted) {
+        const current = this.#active.get(scopedKey(input.workspaceRoot, input.sessionId));
+        if (current?.executionToken !== execution.executionToken) return;
         const store = this.#config.storeManager.get(input.sessionId, input.workspaceRoot);
         if (store?.getState().isRunning) {
           store.getState().append({
@@ -385,9 +399,21 @@ export class SessionExecutionManager {
       this.#active.delete(key);
     }
 
-    if (slotAcquired) this.#config.sessionAgentManager.releaseSlot(execution.workspaceRoot, execution.sessionId);
+    if (isCurrentExecution) {
+      if (slotAcquired) this.#config.sessionAgentManager.releaseSlot(execution.workspaceRoot, execution.sessionId);
+      this.#config.cleanupDeferredSession(execution.workspaceRoot, execution.sessionId);
+      this.#detachIfIdle(execution.workspaceRoot, execution.sessionId);
+    }
+  }
+
+  #cancelExecution(execution: ActiveSessionExecution | PendingSessionExecution, reason: string): void {
+    const key = scopedKey(execution.workspaceRoot, execution.sessionId);
+    const current = this.#active.get(key);
+    if (current?.executionToken !== execution.executionToken) return;
+
+    this.#markParentLinkCancelling(execution.workspaceRoot, execution.sessionId);
+    execution.abortController.abort(new Error(reason));
     this.#config.cleanupDeferredSession(execution.workspaceRoot, execution.sessionId);
-    this.#detachIfIdle(execution.workspaceRoot, execution.sessionId);
   }
 
   async #abortAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {
@@ -395,10 +421,7 @@ export class SessionExecutionManager {
       .map((sessionId) => this.#active.get(scopedKey(workspaceRoot, sessionId)))
       .filter((execution): execution is ActiveSessionExecution | PendingSessionExecution => execution !== undefined);
 
-    for (const execution of executions) {
-      execution.abortController.abort();
-      this.#active.delete(scopedKey(execution.workspaceRoot, execution.sessionId));
-    }
+    for (const execution of executions) this.#cancelExecution(execution, "Session cancelled");
 
     const settled = await Promise.all(executions.map(async (execution) => {
       try {
@@ -453,6 +476,22 @@ export class SessionExecutionManager {
     return count;
   }
 
+  #reserveChildSlot(workspaceRoot: string, parentSessionId: string, maxConcurrent: number): void {
+    const key = scopedKey(workspaceRoot, parentSessionId);
+    const activeChildren = this.#countActiveChildren(workspaceRoot, parentSessionId);
+    const reservedChildren = this.#childSlots.get(key) ?? 0;
+    const totalChildren = Math.max(activeChildren, reservedChildren);
+    if (totalChildren >= maxConcurrent) throw new ConcurrentLimitError(totalChildren);
+    this.#childSlots.set(key, reservedChildren + 1);
+  }
+
+  #releaseChildSlot(workspaceRoot: string, parentSessionId: string): void {
+    const key = scopedKey(workspaceRoot, parentSessionId);
+    const reservedChildren = this.#childSlots.get(key) ?? 0;
+    if (reservedChildren <= 1) this.#childSlots.delete(key);
+    else this.#childSlots.set(key, reservedChildren - 1);
+  }
+
   #appendChildLinkStatus(
     workspaceRoot: string,
     request: ChildExecutionRequest,
@@ -462,6 +501,7 @@ export class SessionExecutionManager {
     status: ToolChildSessionLinkStatus,
     title: string | undefined,
     createdAt?: number,
+    background?: boolean,
   ): void {
     const run = this.#config.storeManager.get(childSessionId, workspaceRoot)?.getState().executions.at(-1);
     request.parentStore.getState().append({
@@ -475,7 +515,7 @@ export class SessionExecutionManager {
         ...(title === undefined ? {} : { title }),
         ...(request.description === undefined ? {} : { description: request.description }),
         depth,
-        background: request.background ?? false,
+        background: background ?? request.background ?? false,
         status,
         createdAt: createdAt ?? Date.now(),
         ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
@@ -483,6 +523,28 @@ export class SessionExecutionManager {
         ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
         ...(run?.error === undefined ? {} : { error: run.error }),
       },
+    });
+  }
+
+  #markParentLinkCancelling(workspaceRoot: string, childSessionId: string): void {
+    const childStore = this.#config.storeManager.get(childSessionId, workspaceRoot);
+    const childState = childStore?.getState();
+    const parentSessionId = childState?.parentSessionId;
+    if (parentSessionId === undefined) return;
+    const parentStore = this.#config.storeManager.get(parentSessionId, workspaceRoot);
+    const links = parentStore?.getState().childSessionLinks ?? [];
+    let link: ToolChildSessionLink | undefined;
+    for (let index = links.length - 1; index >= 0; index -= 1) {
+      const candidate = links[index];
+      if (candidate?.childSessionId === childSessionId && !TERMINAL_CHILD_LINK_STATUSES.has(candidate.status)) {
+        link = candidate;
+        break;
+      }
+    }
+    if (parentStore === undefined || link === undefined || link.status === "cancelling") return;
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: { ...link, status: "cancelling" },
     });
   }
 }

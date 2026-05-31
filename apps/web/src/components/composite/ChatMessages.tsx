@@ -18,7 +18,8 @@ import type {
   ReasoningPart,
   TextPart,
   ToolPart,
-  CompletedToolPart,
+  ToolChildSessionLink,
+  ToolChildSessionLinkStatus,
 } from "@specra/protocol";
 import { TOOL_DELEGATE } from "@specra/protocol";
 import type { AgentType } from "../../lib/agent-constants";
@@ -72,11 +73,13 @@ function MsgAgent({
   agentName,
   projectSlug,
   focusStoreSessionId,
+  childSessionLinks,
 }: {
   message: SessionMessage;
   agentName: string;
   projectSlug: string;
   focusStoreSessionId: string;
+  childSessionLinks: ToolChildSessionLink[];
 }) {
   const agentType = isValidAgentType(agentName) ? (agentName as AgentType) : "orchestrator" as AgentType;
   const initials = AGENT_INITIALS[agentType];
@@ -95,7 +98,7 @@ function MsgAgent({
         </div>
         <div className="msg-parts">
           {message.parts.map((part) => (
-            <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} />
+            <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />
           ))}
         </div>
       </div>
@@ -133,70 +136,33 @@ export function parseToolOutput(output: string | undefined): Record<string, unkn
   try { return JSON.parse(output); } catch { return null; }
 }
 
-export function mapDelegationStatus(state: ToolPart["state"]): BadgeStatus {
-  switch (state) {
+export function mapLinkStatusToBadge(status: ToolChildSessionLinkStatus): BadgeStatus {
+  switch (status) {
     case "completed": return "completed";
-    case "running": return "running";
-    case "pending": return "running";
-    case "error": return "error";
+    case "running":
+    case "linked": return "running";
+    case "cancelling": return "running";
+    case "failed":
+    case "timed_out":
+    case "cancelled":
+    case "interrupted": return "error";
   }
 }
 
-/**
- * Extracts session_id and status from a <delegate_metadata> block in the
- * delegate tool output. Returns null if no valid metadata is found.
- */
-export function parseDelegateMetadata(output: string): { sessionId: string; status: string } | null {
-  const match = output.match(/<delegate_metadata>([\s\S]*?)<\/delegate_metadata>/);
-  if (!match) return null;
-
-  const block = match[1];
-  const sessionIdMatch = block.match(/session_id:\s*"?([^"\s]+)"?/);
-  const statusMatch = block.match(/status:\s*(\S+)/);
-
-  if (!sessionIdMatch) return null;
-
-  return {
-    sessionId: sessionIdMatch[1],
-    status: statusMatch?.[1] ?? "completed",
-  };
-}
-
-/** Maps delegate run status (from metadata) to BadgeStatus — error-like statuses → "error". */
-export function mapDelegateRunStatus(status: string): BadgeStatus {
-  if (status === "completed") return "completed";
-  if (status === "running") return "running";
-  return "error";
-}
-
-function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: ToolPart; projectSlug: string; focusStoreSessionId: string }) {
+function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSessionLinks }: { part: ToolPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[] }) {
   const parsedInput = parseToolInput("input" in part ? part.input : undefined);
-  const agentType = (parsedInput?.agent_type as string) ?? "explorer";
-  const agentName = (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
-  const summary = (parsedInput?.description as string) ?? "";
 
-  // Extract sessionId and delegate status from <delegate_metadata> in the output
-  let sessionId = "";
-  let delegateRunStatus: string | undefined;
+  const link = childSessionLinks.find((l) => l.parentToolCallId === part.toolCallId);
 
-  if (part.state === "completed") {
-    const metadata = parseDelegateMetadata((part as CompletedToolPart).output);
-    if (metadata) {
-      sessionId = metadata.sessionId;
-      delegateRunStatus = metadata.status;
-    }
-  }
-
-  // Do NOT fall back to part.id — it's the tool part's ID, not the sub-agent's session ID.
-  // When sessionId is unavailable (sub-agent hasn't completed yet), keep it empty
-  // so DelegationCard can disable the "View full conversation" button.
-
-  // Use delegate run status (from metadata) when available, otherwise fall back to part state
-  const status: BadgeStatus = delegateRunStatus
-    ? mapDelegateRunStatus(delegateRunStatus)
-    : mapDelegationStatus(part.state);
-
-  const startedAt = "startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt;
+  const sessionId = link?.childSessionId ?? "";
+  const agentType = link?.childAgentName ?? (parsedInput?.agent_type as string) ?? "explorer";
+  const agentName = link?.title ?? link?.description ?? (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
+  const summary = link?.summary ?? link?.description ?? (parsedInput?.description as string) ?? "";
+  const status: BadgeStatus = link
+    ? mapLinkStatusToBadge(link.status)
+    : part.state === "error" ? "error" : "running";
+  const depth = link?.depth ?? 1;
+  const startedAt = link?.startedAt ?? ("startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt);
 
   const delegationProps: DelegationCardProps = {
     sessionId,
@@ -204,18 +170,18 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: To
     agentType,
     agentName,
     status,
-    depth: 1,
+    depth,
     startedAt,
     summary,
     tools: [],
     projectSlug,
-    canNavigate: sessionId !== "",
+    canNavigate: Boolean(link?.childSessionId),
   };
 
   return <DelegationCard {...delegationProps} />;
 }
 
-export function PartRenderer({ part, projectSlug, focusStoreSessionId }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string }) {
+export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSessionLinks }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[] }) {
   switch (part.type) {
     case "text":
       return (
@@ -227,7 +193,7 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId }: { part:
       return <ReasoningBlock part={part} />;
     case "tool":
       if (part.toolName === TOOL_DELEGATE) {
-        return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} />;
+        return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
       }
       return <ToolCard part={part} />;
     case "system-notice":
@@ -247,6 +213,7 @@ interface ChatMessagesProps {
 export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
+  const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -287,7 +254,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }
-        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName(msg)} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} />;
+        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName(msg)} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
       })}
       <div ref={sentinelRef} />
     </div>

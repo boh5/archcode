@@ -217,7 +217,7 @@ export class SessionStoreManager {
     if (existing) return sessionFileInternals.toSessionFile(existing.getState());
 
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    return await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+    return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
   }
 
   async resolveRootSessionId(sessionId: string, workspaceRoot: string): Promise<string> {
@@ -242,7 +242,7 @@ export class SessionStoreManager {
   }
 
   async buildSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse> {
-    const rootFile = await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId);
+    const rootFile = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(rootSessionId, workspaceRoot, rootSessionId));
     if (rootFile.parentSessionId !== undefined) {
       throw new NotRootSessionError(rootSessionId, rootFile.parentSessionId);
     }
@@ -316,7 +316,7 @@ export class SessionStoreManager {
     workspaceRoot: string,
   ): Promise<StoreApi<SessionStoreState>> {
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
-    const parsed = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId);
+    const parsed = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
 
     // Re-check registry after I/O: a concurrent create() may have registered
     // a store for this key while we were reading from disk. If so, return it
@@ -386,7 +386,7 @@ export class SessionStoreManager {
 
   async #isRootSessionOnDisk(sessionId: string, workspaceRoot: string): Promise<boolean> {
     try {
-      const file = await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, sessionId);
+      const file = reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, sessionId));
       return file.rootSessionId === sessionId;
     } catch (error) {
       if (isMissingFileError(error)) return false;
@@ -483,7 +483,7 @@ async function readRawSessionFileForTree(
   }
 
   const parsed = SessionFileSchema.safeParse(raw);
-  if (parsed.success) return parsed.data;
+    if (parsed.success) return reconcileInterruptedSessionFile(parsed.data);
 
   pushDiagnostic(diagnostics, "invalid_json", readDiagnosticSessionId(raw) ?? sessionId, filePath,
     `Invalid session JSON in "${filePath}": ${parsed.error.message}`);
@@ -514,6 +514,46 @@ function readLastUpdatedAt(file: SessionFile): number | undefined {
   if (typeof record.lastUpdatedAt === "number") return record.lastUpdatedAt;
   if (typeof record.updatedAt === "number") return record.updatedAt;
   return undefined;
+}
+
+const TERMINAL_EXECUTION_STATUSES = new Set<SessionFile["executions"][number]["status"]>([
+  "completed",
+  "max_steps",
+  "failed",
+  "aborted",
+  "cancelled",
+  "timed_out",
+  "interrupted",
+]);
+
+const ACTIVE_CHILD_LINK_STATUSES = new Set(["linked", "running", "cancelling"]);
+
+function reconcileInterruptedSessionFile(file: SessionFile): SessionFile {
+  const now = Date.now();
+  let changed = false;
+  const executions = file.executions.map((execution) => {
+    if (TERMINAL_EXECUTION_STATUSES.has(execution.status)) return execution;
+    changed = true;
+    const endedAt = execution.endedAt ?? now;
+    return {
+      ...execution,
+      status: "interrupted" as const,
+      endedAt,
+      durationMs: execution.durationMs ?? Math.max(0, endedAt - execution.startedAt),
+      error: execution.error ?? "Execution interrupted by restart",
+    };
+  });
+  const childSessionLinks = file.childSessionLinks.map((link) => {
+    if (!ACTIVE_CHILD_LINK_STATUSES.has(link.status)) return link;
+    changed = true;
+    return {
+      ...link,
+      status: "interrupted" as const,
+      endedAt: link.endedAt ?? now,
+      error: link.error ?? "Child execution interrupted by restart",
+    };
+  });
+  return changed ? { ...file, executions, childSessionLinks } : file;
 }
 
 function pushDiagnostic(

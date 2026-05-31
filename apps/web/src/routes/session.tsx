@@ -34,6 +34,7 @@ export function SessionRoute() {
         parentSessionId,
         stats,
         executions,
+        childSessionLinks,
         eventCursor,
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
@@ -46,6 +47,7 @@ export function SessionRoute() {
         parentSessionId,
         stats,
         executions,
+        childSessionLinks,
         eventCursor,
       });
     }
@@ -71,6 +73,7 @@ export function SessionRoute() {
         parentSessionId,
         stats,
         executions,
+        childSessionLinks,
         eventCursor,
       } = session;
       store.getState().initializeFromSnapshot({
@@ -83,6 +86,7 @@ export function SessionRoute() {
         parentSessionId,
         stats,
         executions,
+        childSessionLinks,
         eventCursor,
       });
     }
