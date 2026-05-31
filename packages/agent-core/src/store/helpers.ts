@@ -235,7 +235,7 @@ const StepInfoSchema = z.strictObject({
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
-  agentName: z.string().optional(),
+  agentName: z.string(),
   title: z.string().nullable().optional(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema),
@@ -269,10 +269,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
+  "sessionId" | "createdAt" | "agentName" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "agentName" | "reminders" | "childSessionLinks" | "parentSessionId"
+  "reminders" | "childSessionLinks" | "parentSessionId"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -309,7 +309,7 @@ async function saveSessionTranscript(
   const data: SessionFile = {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
-    agentName: state.agentName ?? "orchestrator",
+    agentName: state.agentName,
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
@@ -361,7 +361,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
   return {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
-    agentName: state.agentName ?? "orchestrator",
+    agentName: state.agentName,
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
@@ -390,7 +390,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
           sessionId: parsed.sessionId,
           rootSessionId: parsed.rootSessionId,
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
-          agentName: parsed.agentName ?? null,
+          agentName: parsed.agentName,
           title: parsed.title ?? null,
           createdAt: parsed.createdAt,
           ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),

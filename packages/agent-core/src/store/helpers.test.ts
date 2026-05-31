@@ -1,10 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createMockStore } from "./test-helpers";
 import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
-import { SessionStoreManager } from "./session-store-manager";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@specra/protocol";
 import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
@@ -255,7 +253,7 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().childSessionLinks).toEqual(links);
   });
 
-  test("save/load roundtrips agentName and accepts legacy files without it", async () => {
+  test("save/load roundtrips agentName", async () => {
     const sessionId = uniqueSessionId("agent-name");
     const state = { ...persistedState(sessionId), agentName: "explore" };
 
@@ -265,23 +263,15 @@ describe("session transcript serialization", () => {
 
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
     expect(loaded.getState().agentName).toBe("explore");
+  });
 
-    const legacySessionId = uniqueSessionId("legacy-agent-name");
-    await writeSessionFile(legacySessionId, {
-      sessionId: legacySessionId,
-      createdAt: 100,
-      title: null,
-      messages: [],
-      steps: [],
-      stats: createEmptySessionStats(),
-      executions: [],
-      todos: [],
-      reminders: [],
-      rootSessionId: legacySessionId,
-    });
+  test("load rejects files without agentName", async () => {
+    const sessionId = uniqueSessionId("missing-agent-name");
+    const { agentName: _agentName, ...stateWithoutAgentName } = persistedState(sessionId);
 
-    const legacyLoaded = await storeManager.getOrLoad(legacySessionId, TMP_DIR);
-    expect(legacyLoaded.getState().agentName).toBe("orchestrator");
+    await writeSessionFile(sessionId, stateWithoutAgentName);
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("root save writes only the top-level session file", async () => {
@@ -754,8 +744,6 @@ describe("session transcript serialization", () => {
 
   test("getOrLoad resets readSnapshots to empty Map", async () => {
     const sessionId = uniqueSessionId("read-snapshots");
-
-    const store = createMockStore({ readSnapshots: new Map([["file.ts", 456]]) });
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);

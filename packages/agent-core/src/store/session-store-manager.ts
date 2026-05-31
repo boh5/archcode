@@ -330,13 +330,13 @@ export class SessionStoreManager {
       const store = this.create(sessionId, workspaceRoot, {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
-        ...(parsed.agentName === undefined ? {} : { agentName: parsed.agentName }),
+        agentName: parsed.agentName,
         ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
       });
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
-        agentName: parsed.agentName ?? "orchestrator",
+        agentName: parsed.agentName,
         title: parsed.title ?? null,
         messages: parsed.messages,
         steps: parsed.steps,
@@ -502,7 +502,7 @@ function toSessionSummary(file: SessionFile): SessionSummary {
     sessionId: file.sessionId,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
-    agentName: file.agentName ?? null,
+    agentName: file.agentName,
     title: file.title ?? null,
     createdAt: file.createdAt,
     ...(lastUpdatedAt === undefined ? {} : { lastUpdatedAt }),

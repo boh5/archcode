@@ -92,6 +92,19 @@ interface FakeManagerOptions {
 
 type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof SessionExecutionManager>[0];
 
+function storeCallbacks(manager: SessionStoreManager): Pick<
+  SessionExecutionManagerConfigForTest,
+  "createSessionStore" | "getSessionStore" | "deleteSessionStore" | "resolveRootSessionId" | "buildSessionTree"
+> {
+  return {
+    createSessionStore: (sessionId, root, createOptions) => manager.create(sessionId, root, createOptions),
+    getSessionStore: (sessionId, root) => manager.get(sessionId, root),
+    deleteSessionStore: (sessionId, root, deleteOptions) => manager.delete(sessionId, root, deleteOptions),
+    resolveRootSessionId: (sessionId, root) => manager.resolveRootSessionId(sessionId, root),
+    buildSessionTree: (root, rootSessionId) => manager.buildSessionTree(root, rootSessionId),
+  };
+}
+
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
   const activeByWorkspace = new Map<string, Set<string>>();
   const max = options.maxConcurrentSessions ?? 4;
@@ -176,7 +189,7 @@ function createManager(agents: Record<string, MockAgent>, options: FakeManagerOp
   const untrackSession = mock(() => undefined);
   const manager = new SessionExecutionManager({
     sessionAgentManager,
-    storeManager: executionStoreManager,
+    ...storeCallbacks(executionStoreManager),
     requestPermission,
     requestQuestion,
     cleanupDeferredSession,
@@ -199,6 +212,7 @@ async function writeSessionFile(input: {
   const file: SessionFile = {
     sessionId: input.sessionId,
     createdAt: Date.now(),
+    agentName: input.parentSessionId === undefined ? "orchestrator" : "explore",
     title: input.title ?? null,
     messages: [],
     steps: [],
@@ -280,7 +294,7 @@ describe("SessionExecutionManager", () => {
         ...sessionAgentManager,
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
-      storeManager,
+      ...storeCallbacks(storeManager),
       requestPermission: mock(async (): Promise<ToolConfirmationResult> => "approve_once"),
       requestQuestion: mock(async (): Promise<AskUserResponse> => ({ answers: [] })),
       cleanupDeferredSession: mock(() => undefined),
@@ -412,7 +426,7 @@ describe("SessionExecutionManager", () => {
     const sessionAgentManager = createFakeManager({ "same-session": agentB });
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
-      storeManager,
+      ...storeCallbacks(storeManager),
       requestPermission: mock(async (): Promise<ToolConfirmationResult> => "approve_once"),
       requestQuestion: mock(async (): Promise<AskUserResponse> => ({ answers: [] })),
       cleanupDeferredSession: mock(() => undefined),

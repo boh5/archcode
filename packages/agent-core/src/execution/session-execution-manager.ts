@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import type { SessionExecutionRecord, SessionTreeNode, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@specra/protocol";
+import type { SessionExecutionRecord, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@specra/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
@@ -19,7 +19,6 @@ import type { SubscribeSessionEventsInput } from "../events/session-event-bridge
 import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
 import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { SessionStoreManager } from "../store/session-store-manager";
 import type { Reminder, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
@@ -72,7 +71,24 @@ interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"
 
 interface SessionExecutionManagerConfig {
   readonly sessionAgentManager: SessionAgentManager;
-  readonly storeManager: SessionStoreManager;
+  readonly createSessionStore: (
+    sessionId: string,
+    workspaceRoot: string,
+    options?: {
+      readonly rootSessionId?: string;
+      readonly parentSessionId?: string;
+      readonly agentName?: string;
+      readonly title?: string;
+    },
+  ) => StoreApi<SessionStoreState>;
+  readonly getSessionStore: (sessionId: string, workspaceRoot: string) => StoreApi<SessionStoreState> | undefined;
+  readonly deleteSessionStore: (
+    sessionId: string,
+    workspaceRoot: string,
+    options?: { readonly forgetWorkspaceIndex?: boolean },
+  ) => boolean;
+  readonly resolveRootSessionId: (sessionId: string, workspaceRoot: string) => Promise<string>;
+  readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
   readonly requestPermission: (
     workspaceRoot: string,
     sessionId: string,
@@ -101,7 +117,7 @@ export class SessionExecutionManager {
     this.#config = config;
     this.#logger = config.logger;
     this.#eventBridge = new SessionEventBridge({
-      getStore: (workspaceRoot, sessionId) => this.#config.storeManager.get(sessionId, workspaceRoot),
+      getStore: (workspaceRoot, sessionId) => this.#config.getSessionStore(sessionId, workspaceRoot),
     });
   }
 
@@ -223,7 +239,7 @@ export class SessionExecutionManager {
     try {
       this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "linked", childTitle, createdAt, background);
       const parentState = request.parentStore.getState();
-      childStore = this.#config.storeManager.create(childSessionId, workspaceRoot, {
+      childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
         rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
         parentSessionId: request.parentSessionId,
         agentName: targetDefinition.name,
@@ -258,7 +274,7 @@ export class SessionExecutionManager {
       if (childSlotReserved) this.#releaseChildSlot(workspaceRoot, request.parentSessionId);
       if (childStore !== undefined) {
         this.#eventBridge.detachSession(workspaceRoot, childSessionId);
-        this.#config.storeManager.delete(childSessionId, workspaceRoot);
+        this.#config.deleteSessionStore(childSessionId, workspaceRoot);
       }
       throw error;
     }
@@ -311,8 +327,8 @@ export class SessionExecutionManager {
   }
 
   async deleteSession(workspaceRoot: string, sessionId: string): Promise<void> {
-    const rootSessionId = await this.#config.storeManager.resolveRootSessionId(sessionId, workspaceRoot);
-    const tree = await this.#config.storeManager.buildSessionTree(workspaceRoot, rootSessionId);
+    const rootSessionId = await this.#config.resolveRootSessionId(sessionId, workspaceRoot);
+    const tree = await this.#config.buildSessionTree(workspaceRoot, rootSessionId);
     const sessionIds = sessionId === rootSessionId
       ? flattenSessionTree(tree.root)
       : collectSubtreeSessionIds(tree.root, sessionId);
@@ -336,13 +352,13 @@ export class SessionExecutionManager {
     if (sessionId === rootSessionId) {
       await removeIfExists(getRootSessionPath(workspaceRoot, rootSessionId));
       await rm(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true, force: true });
-      for (const id of sessionIds) this.#config.storeManager.delete(id, workspaceRoot);
-      this.#config.storeManager.delete(rootSessionId, workspaceRoot, { forgetWorkspaceIndex: true });
+      for (const id of sessionIds) this.#config.deleteSessionStore(id, workspaceRoot);
+      this.#config.deleteSessionStore(rootSessionId, workspaceRoot, { forgetWorkspaceIndex: true });
     } else {
       for (const id of sessionIds) {
         await removeIfExists(getSessionPath(workspaceRoot, rootSessionId, id));
       }
-      for (const id of sessionIds) this.#config.storeManager.delete(id, workspaceRoot);
+      for (const id of sessionIds) this.#config.deleteSessionStore(id, workspaceRoot);
     }
   }
 
@@ -368,7 +384,7 @@ export class SessionExecutionManager {
       if (!execution.abortController.signal.aborted) {
         const current = this.#active.get(scopedKey(input.workspaceRoot, input.sessionId));
         if (current?.executionToken !== execution.executionToken) return;
-        const store = this.#config.storeManager.get(input.sessionId, input.workspaceRoot);
+        const store = this.#config.getSessionStore(input.sessionId, input.workspaceRoot);
         if (store?.getState().isRunning) {
           store.getState().append({
             type: "execution-end",
@@ -389,7 +405,7 @@ export class SessionExecutionManager {
     const current = this.#active.get(key);
     const isCurrentExecution = current?.executionToken === execution.executionToken;
     if (isCurrentExecution) {
-      const store = this.#config.storeManager.get(execution.sessionId, execution.workspaceRoot);
+      const store = this.#config.getSessionStore(execution.sessionId, execution.workspaceRoot);
       if (store?.getState().isRunning) {
         store.getState().append({
           type: "execution-end",
@@ -443,14 +459,14 @@ export class SessionExecutionManager {
       .map((execution) => execution.sessionId);
 
     for (const activeSessionId of activeSessionIds) {
-      const store = this.#config.storeManager.get(activeSessionId, workspaceRoot);
+      const store = this.#config.getSessionStore(activeSessionId, workspaceRoot);
       let parentSessionId = store?.getState().parentSessionId;
       while (parentSessionId !== undefined) {
         if (parentSessionId === sessionId) {
           sessionIds.add(activeSessionId);
           break;
         }
-        parentSessionId = this.#config.storeManager.get(parentSessionId, workspaceRoot)?.getState().parentSessionId;
+        parentSessionId = this.#config.getSessionStore(parentSessionId, workspaceRoot)?.getState().parentSessionId;
       }
     }
 
@@ -470,7 +486,7 @@ export class SessionExecutionManager {
     let count = 0;
     for (const execution of this.#active.values()) {
       if (execution.workspaceRoot !== workspaceRoot) continue;
-      const store = this.#config.storeManager.get(execution.sessionId, workspaceRoot);
+      const store = this.#config.getSessionStore(execution.sessionId, workspaceRoot);
       if (store?.getState().parentSessionId === parentSessionId) count += 1;
     }
     return count;
@@ -503,7 +519,7 @@ export class SessionExecutionManager {
     createdAt?: number,
     background?: boolean,
   ): void {
-    const run = this.#config.storeManager.get(childSessionId, workspaceRoot)?.getState().executions.at(-1);
+    const run = this.#config.getSessionStore(childSessionId, workspaceRoot)?.getState().executions.at(-1);
     request.parentStore.getState().append({
       type: "tool-child-session-link",
       link: {
@@ -527,11 +543,11 @@ export class SessionExecutionManager {
   }
 
   #markParentLinkCancelling(workspaceRoot: string, childSessionId: string): void {
-    const childStore = this.#config.storeManager.get(childSessionId, workspaceRoot);
+    const childStore = this.#config.getSessionStore(childSessionId, workspaceRoot);
     const childState = childStore?.getState();
     const parentSessionId = childState?.parentSessionId;
     if (parentSessionId === undefined) return;
-    const parentStore = this.#config.storeManager.get(parentSessionId, workspaceRoot);
+    const parentStore = this.#config.getSessionStore(parentSessionId, workspaceRoot);
     const links = parentStore?.getState().childSessionLinks ?? [];
     let link: ToolChildSessionLink | undefined;
     for (let index = links.length - 1; index >= 0; index -= 1) {

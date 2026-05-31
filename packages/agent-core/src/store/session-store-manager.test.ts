@@ -163,6 +163,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId,
         createdAt: 1000,
+        agentName: "orchestrator",
         title: "disk-title",
         messages: [],
         steps: [],
@@ -225,6 +226,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId: childSessionId,
         createdAt: 1000,
+        agentName: "explore",
         title: "child-title",
         messages: [],
         steps: [],
@@ -282,6 +284,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId: childSessionId,
         createdAt: 1000,
+        agentName: "explore",
         title: "child-title",
         messages: [],
         steps: [],
@@ -322,6 +325,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId,
         createdAt: 1000,
+        agentName: "orchestrator",
         title: "disk-title",
         messages: [],
         steps: [],
@@ -360,6 +364,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId,
         createdAt: 1000,
+        agentName: "orchestrator",
         title: "disk-title",
         messages: [],
         steps: [],
@@ -387,6 +392,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId,
         createdAt: 1000,
+        agentName: "orchestrator",
         title: "disk-title",
         messages: [],
         steps: [],
@@ -474,6 +480,7 @@ describe("SessionStoreManager", () => {
     await Bun.write(join(rootDir, `${rootMismatchId}.json`), JSON.stringify({
       sessionId: rootMismatchId,
       createdAt: 1000,
+      agentName: "explore",
       title: "bad-root",
       messages: [],
       steps: [],
@@ -487,6 +494,7 @@ describe("SessionStoreManager", () => {
     await Bun.write(join(rootDir, `${mismatchFileId}.json`), JSON.stringify({
       sessionId: mismatchJsonId,
       createdAt: 1000,
+      agentName: "explore",
       title: "mismatch",
       messages: [],
       steps: [],
@@ -520,6 +528,7 @@ describe("SessionStoreManager", () => {
     await Bun.write(join(rootDir, `${fileSessionId}.json`), JSON.stringify({
       sessionId: jsonSessionId,
       createdAt: 1000,
+      agentName: "explore",
       title: "invalid-node",
       messages: [],
       steps: [],
@@ -549,6 +558,7 @@ describe("SessionStoreManager", () => {
     await Bun.write(join(rootDir, `${rootSessionId}.json`), JSON.stringify({
       sessionId: rootSessionId,
       createdAt: 1000,
+      agentName: "explore",
       title: "duplicate-root",
       messages: [],
       steps: [],
