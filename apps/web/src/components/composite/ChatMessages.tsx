@@ -187,9 +187,9 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: To
     }
   }
 
-  if (!sessionId) {
-    sessionId = part.id;
-  }
+  // Do NOT fall back to part.id — it's the tool part's ID, not the sub-agent's session ID.
+  // When sessionId is unavailable (sub-agent hasn't completed yet), keep it empty
+  // so DelegationCard can disable the "View full conversation" button.
 
   // Use delegate run status (from metadata) when available, otherwise fall back to part state
   const status: BadgeStatus = delegateRunStatus
@@ -209,6 +209,7 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: To
     summary,
     tools: [],
     projectSlug,
+    canNavigate: sessionId !== "",
   };
 
   return <DelegationCard {...delegationProps} />;

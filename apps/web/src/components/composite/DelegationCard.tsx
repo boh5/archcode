@@ -45,6 +45,8 @@ export interface DelegationCardProps {
   summary: string;
   tools: Array<{ name: string; status: ToolStatus; input?: unknown }>;
   projectSlug: string;
+  /** When true, the "View full conversation" button is disabled (sessionId not yet available). */
+  canNavigate?: boolean;
 }
 
 export function DelegationCard({
@@ -58,12 +60,14 @@ export function DelegationCard({
   summary,
   tools,
   projectSlug,
+  canNavigate = true,
 }: DelegationCardProps) {
   const resolvedType = isValidAgentType(agentType) ? agentType : "explorer" as AgentType;
   const colorClasses = AGENT_ICON_COLORS[resolvedType];
   const initials = AGENT_INITIALS[resolvedType];
 
   const handleViewConversation = () => {
+    if (!canNavigate) return;
     const store = getWebSessionStore(focusStoreSessionId, projectSlug);
     store.getState().setFocusSessionId(sessionId);
   };
@@ -71,12 +75,13 @@ export function DelegationCard({
   return (
     <div className="bg-bg-surface border border-border-default rounded-lg overflow-hidden my-2.5 shrink-0 min-h-0 transition-colors duration-150 hover:border-border-strong">
       <div
-        className="flex items-center gap-2.5 px-3.5 py-2.5 bg-bg-elevated border-b border-border-subtle cursor-pointer select-none hover:bg-bg-hover"
+        className={`flex items-center gap-2.5 px-3.5 py-2.5 bg-bg-elevated border-b border-border-subtle select-none ${canNavigate ? "cursor-pointer hover:bg-bg-hover" : "cursor-not-allowed opacity-70"}`}
         onClick={handleViewConversation}
         role="button"
-        tabIndex={0}
+        tabIndex={canNavigate ? 0 : undefined}
+        aria-disabled={!canNavigate}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") handleViewConversation();
+          if (canNavigate && (e.key === "Enter" || e.key === " ")) handleViewConversation();
         }}
       >
         <div
@@ -111,9 +116,15 @@ export function DelegationCard({
           )}
         </div>
 
-        <span className="px-2.5 py-1 rounded-sm text-[11px] font-medium text-accent bg-accent-subtle cursor-pointer transition-colors duration-150 hover:bg-accent-muted shrink-0">
-          View full conversation →
-        </span>
+        {canNavigate ? (
+          <span className="px-2.5 py-1 rounded-sm text-[11px] font-medium text-accent bg-accent-subtle cursor-pointer transition-colors duration-150 hover:bg-accent-muted shrink-0">
+            View full conversation →
+          </span>
+        ) : (
+          <span className="px-2.5 py-1 rounded-sm text-[11px] font-medium text-text-muted bg-bg-active shrink-0" title="Session ID not yet available — sub-agent is still starting">
+            Waiting…
+          </span>
+        )}
       </div>
 
       {summary && (

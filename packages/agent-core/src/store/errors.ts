@@ -14,3 +14,10 @@ export class SessionDeleteConflictError extends Error {
     this.name = "SessionDeleteConflictError";
   }
 }
+
+export class SessionFileNotFoundError extends Error {
+  constructor(public readonly sessionId: string) {
+    super(`Session file not found for "${sessionId}"`);
+    this.name = "SessionFileNotFoundError";
+  }
+}

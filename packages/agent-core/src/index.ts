@@ -26,7 +26,7 @@ export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
 
-export { NotRootSessionError, SessionDeleteConflictError } from "./store/errors";
+export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";
 export type {
   BusyError,

@@ -11,7 +11,7 @@ import type {
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "../logger";
-import { NotRootSessionError } from "./errors";
+import { NotRootSessionError, SessionFileNotFoundError } from "./errors";
 import { SessionFileSchema, sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
@@ -233,7 +233,7 @@ export class SessionStoreManager {
     const resolved = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
     if (resolved !== undefined) return resolved;
 
-    throw new Error(`Session file not found for "${sessionId}"`);
+    throw new SessionFileNotFoundError(sessionId);
   }
 
   async listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {

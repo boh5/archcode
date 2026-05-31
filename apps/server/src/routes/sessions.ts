@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { NotRootSessionError, SessionDeleteConflictError } from "@specra/agent-core";
+import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
 import { BadRequestError, ConflictError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -26,7 +26,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
     try {
       return c.json(await runtime.getSessionFile(project.workspaceRoot, sessionId));
     } catch (error) {
-      if (isMissingFileError(error)) {
+      if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);
       }
       throw error;
@@ -43,7 +43,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
       if (error instanceof NotRootSessionError) {
         throw new BadRequestError(`Session "${sessionId}" is not a root session`);
       }
-      if (isMissingFileError(error)) {
+      if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);
       }
       throw error;
@@ -61,7 +61,7 @@ export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
       if (error instanceof SessionDeleteConflictError) {
         throw new ConflictError(error.sessionIds);
       }
-      if (isMissingFileError(error)) {
+      if (error instanceof SessionFileNotFoundError || isMissingFileError(error)) {
         throw new SessionNotFoundError(sessionId);
       }
       throw error;
