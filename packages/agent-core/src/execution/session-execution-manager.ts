@@ -209,13 +209,15 @@ export class SessionExecutionManager {
     const background = request.background ?? false;
     const childSessionId = crypto.randomUUID();
     const childTitle = request.title ?? request.description;
+    const createdAt = Date.now();
     const parentState = request.parentStore.getState();
     const childStore = this.#config.storeManager.create(childSessionId, workspaceRoot, {
-      rootSessionId: parentState.rootSessionId,
+      rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
       parentSessionId: request.parentSessionId,
       agentName: targetDefinition.name,
       ...(childTitle === undefined ? {} : { title: childTitle }),
     });
+    this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
 
     request.parentStore.getState().append({
       type: "tool-child-session-link",
@@ -230,7 +232,7 @@ export class SessionExecutionManager {
         depth: currentDepth + 1,
         background,
         status: "linked",
-        createdAt: Date.now(),
+        createdAt,
       },
     });
 
@@ -253,7 +255,7 @@ export class SessionExecutionManager {
       agentName: targetDefinition.name,
       origin: "tool_call",
     });
-    this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle);
+    this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle, createdAt);
 
     const timeout = childPolicy.timeoutMs > 0
       ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
@@ -268,7 +270,7 @@ export class SessionExecutionManager {
         if (timeout !== undefined) clearTimeout(timeout);
         removeParentAbort();
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
-        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle);
+        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle, createdAt);
         if (background && childPolicy.terminalReminders) {
           appendTerminalReminder(request.parentStore, childSessionId, status);
         }
@@ -352,6 +354,14 @@ export class SessionExecutionManager {
       });
     } catch (error) {
       if (!execution.abortController.signal.aborted) {
+        const store = this.#config.storeManager.get(input.sessionId, input.workspaceRoot);
+        if (store?.getState().isRunning) {
+          store.getState().append({
+            type: "execution-end",
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         this.#logger.error("session.execution.failed", {
           error,
           context: { sessionId: input.sessionId, agentName: execution.agentName, origin: execution.origin },
@@ -369,7 +379,7 @@ export class SessionExecutionManager {
       if (store?.getState().isRunning) {
         store.getState().append({
           type: "execution-end",
-          status: execution.abortController.signal.aborted ? "aborted" : "completed",
+          status: execution.abortController.signal.aborted ? abortExecutionStatus(execution.abortController.signal) : "completed",
         });
       }
       this.#active.delete(key);
@@ -451,6 +461,7 @@ export class SessionExecutionManager {
     depth: number,
     status: ToolChildSessionLinkStatus,
     title: string | undefined,
+    createdAt?: number,
   ): void {
     const run = this.#config.storeManager.get(childSessionId, workspaceRoot)?.getState().executions.at(-1);
     request.parentStore.getState().append({
@@ -466,7 +477,7 @@ export class SessionExecutionManager {
         depth,
         background: request.background ?? false,
         status,
-        createdAt: Date.now(),
+        createdAt: createdAt ?? Date.now(),
         ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
         ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
         ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
@@ -476,7 +487,7 @@ export class SessionExecutionManager {
   }
 }
 
-type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled"> | "interrupted";
+type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
 
 function wireAbortCascade(parentAbort: AbortSignal | undefined, childController: AbortController): () => void {
   if (parentAbort === undefined) return () => {};
@@ -500,6 +511,15 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
     return "cancelled";
   }
   return "failed";
+}
+
+function abortExecutionStatus(signal: AbortSignal): "aborted" | "cancelled" | "timed_out" {
+  const reason = signal.reason;
+  if (reason instanceof Error) {
+    if (/timed out/i.test(reason.message)) return "timed_out";
+    if (/cancelled|canceled|aborted/i.test(reason.message)) return "cancelled";
+  }
+  return "aborted";
 }
 
 function appendTerminalReminder(

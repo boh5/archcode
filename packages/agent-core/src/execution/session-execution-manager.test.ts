@@ -49,7 +49,11 @@ class MockAgent implements Agent {
   readonly store;
   readonly runMock = mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
     const signal = options instanceof AbortSignal ? options : options?.abort;
-    return await withAbort(this.result, signal);
+    const result = await withAbort(this.result, signal);
+    this.store.getState().append({ type: "text-start" });
+    this.store.getState().append({ type: "text-delta", text: result.text });
+    this.store.getState().append({ type: "text-end" });
+    return result;
   });
   dispatchCommandMock?: (name: string, args?: string) => Promise<CommandResult>;
 
@@ -80,6 +84,7 @@ interface FakeManagerOptions {
   storeManager?: SessionStoreManager;
   factory?: AgentFactory;
   childRun?: Promise<AgentResult>;
+  childRunStarted?: () => void;
 }
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
@@ -110,12 +115,15 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
         store: input.store,
         run: mock(async (_message: string, runOptions?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
           const signal = runOptions instanceof AbortSignal ? runOptions : runOptions?.abort;
+          options.childRunStarted?.();
           signal?.throwIfAborted();
+          const result = options.childRun
+            ? await withAbort(options.childRun, signal)
+            : { text: "child result", steps: 1 };
           input.store.getState().append({ type: "text-start" });
-          input.store.getState().append({ type: "text-delta", text: "child result" });
+          input.store.getState().append({ type: "text-delta", text: result.text });
           input.store.getState().append({ type: "text-end" });
-          if (options.childRun) return await withAbort(options.childRun, signal);
-          return { text: "child result", steps: 1 };
+          return result;
         }),
         dispose: mock(() => undefined),
       } as unknown as MockAgent;
@@ -417,6 +425,9 @@ describe("SessionExecutionManager", () => {
     expect(sessionAgentManager.createChildAgent).toHaveBeenCalled();
     expect(handle.store.getState().parentSessionId).toBe(parentId);
     expect(handle.store.getState().agentName).toBe("explore");
+    expect(parentStore.getState().events
+      .filter((event) => event.kind === "tool-child-session-link")
+      .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status)).toEqual(["linked", "running", "completed"]);
     expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
       parentSessionId: parentId,
       parentToolCallId: "tool-call",
@@ -428,6 +439,92 @@ describe("SessionExecutionManager", () => {
       background: false,
       status: "completed",
     });
+  });
+
+  test("startChildExecution appends link before child run and bridges child store before model execution", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const factory = makeFactory();
+    const received: unknown[] = [];
+    let linkStatusesAtRunStart: string[] = [];
+    const { manager } = createManager({}, {
+      factory,
+      childRunStarted: () => {
+        linkStatusesAtRunStart = parentStore.getState().events
+          .filter((event) => event.kind === "tool-child-session-link")
+          .map((event) => (event.payload as { link: ToolChildSessionLink }).link.status);
+      },
+    });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: handle.sessionId, onEvent: (event) => received.push(event) });
+    await handle.result;
+    unsubscribe();
+
+    expect(linkStatusesAtRunStart).toEqual(["linked", "running"]);
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
+  });
+
+  test("startChildExecution marks failed and timed-out children with terminal link statuses", async () => {
+    const failedParentId = crypto.randomUUID();
+    const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { agentName: "orchestrator" });
+    const failedRun = Promise.reject(new Error("child exploded"));
+    const failed = createManager({}, { factory: makeFactory(), childRun: failedRun });
+
+    const failedHandle = await failed.manager.startChildExecution(workspaceRoot, {
+      parentStore: failedParentStore,
+      parentSessionId: failedParentId,
+      parentToolCallId: "failed-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await failedHandle.result;
+    expect(failedParentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "failed", error: "child exploded" });
+
+    const timedParentId = crypto.randomUUID();
+    const timedParentStore = storeManager.create(timedParentId, workspaceRoot, { agentName: "orchestrator" });
+    const timed = createManager({}, {
+      factory: makeFactory({
+        getDefinition: mock((name: string) => {
+          const base = makeFactory().getDefinition(name);
+          if (name === "orchestrator") return { ...base, childPolicy: { ...base.childPolicy!, timeoutMs: 1 } };
+          return base;
+        }),
+      }),
+      childRun: new Promise<AgentResult>(() => undefined),
+    });
+
+    const timedHandle = await timed.manager.startChildExecution(workspaceRoot, {
+      parentStore: timedParentStore,
+      parentSessionId: timedParentId,
+      parentToolCallId: "timed-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await timedHandle.result;
+    expect(timedParentStore.getState().childSessionLinks.at(-1)).toMatchObject({ status: "timed_out" });
   });
 
   test("startChildExecution enforces delegate targets and child concurrency", async () => {

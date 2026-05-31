@@ -31,6 +31,12 @@ export interface DelegateErrorOutput {
   };
 }
 
+interface ChildExecutionOutcome {
+  readonly status: DelegateStatus;
+  readonly resultText: string;
+  readonly terminalError?: unknown;
+}
+
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
   if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
@@ -48,7 +54,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       parentStore: ctx.store,
       parentSessionId: ctx.store.getState().sessionId,
       parentToolCallId: ctx.toolCallId,
-      toolName: ctx.toolName,
+      toolName: "delegate",
       targetAgentName: input.agent_type,
       prompt: input.prompt,
       skills: input.skills,
@@ -75,41 +81,24 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
   }
 
   if (input.background ?? false) {
-    return formatAsyncDelegateOutput({ input, ctx, handle });
+    return formatAsyncDelegateOutput({ input, handle });
   }
 
-  let terminalError: unknown;
-  try {
-    await handle.result;
-  } catch (error) {
-    terminalError = error;
-  }
-
-  return formatSyncDelegateOutput({ input, ctx, handle, terminalError });
+  const outcome = await waitForChildOutcome(handle);
+  return formatSyncDelegateOutput({ input, handle, outcome });
 }
 
 interface DelegateOutputOptions {
   readonly input: DelegateInput;
-  readonly ctx: ToolExecutionContext;
   readonly handle: ChildExecutionHandle;
 }
 
 interface SyncDelegateOutputOptions extends DelegateOutputOptions {
-  readonly terminalError?: unknown;
+  readonly outcome: ChildExecutionOutcome;
 }
 
 function formatAsyncDelegateOutput(options: DelegateOutputOptions): string {
-  const { input, ctx, handle } = options;
-  const run = handle.store.getState().executions.at(-1);
-  const metadata = formatDelegateMetadata({
-    sessionId: handle.sessionId,
-    parentSessionId: ctx.store.getState().sessionId,
-    agentType: input.agent_type,
-    description: input.description,
-    status: "running",
-    background: true,
-    startedAt: run?.startedAt ?? Date.now(),
-  });
+  const { input, handle } = options;
 
   return [
     "Sub-agent started.",
@@ -117,72 +106,44 @@ function formatAsyncDelegateOutput(options: DelegateOutputOptions): string {
     `Session ID: ${handle.sessionId}`,
     "Status: running",
     `Use background_output(session_id="${handle.sessionId}") to read the result.`,
-    "",
-    metadata,
   ].join("\n");
 }
 
 function formatSyncDelegateOutput(options: SyncDelegateOutputOptions): string {
-  const { input, ctx, handle, terminalError } = options;
+  const { input, handle, outcome } = options;
   const state = handle.store.getState();
   const run = state.executions.at(-1);
-  const status = terminalStatus(run, terminalError);
-  const resultText = getLastAssistantText(state.messages);
-  const metadata = formatDelegateMetadata({
-    sessionId: handle.sessionId,
-    parentSessionId: ctx.store.getState().sessionId,
-    agentType: input.agent_type,
-    description: input.description,
-    status,
-    background: false,
-    startedAt: run?.startedAt,
-    endedAt: run?.endedAt,
-    durationMs: run?.durationMs,
-  });
 
   return [
-    `Sub-agent ${formatHeadlineStatus(status)}.`,
+    `Sub-agent result: ${formatHeadlineStatus(outcome.status)}.`,
     `Agent type: ${input.agent_type}`,
     `Session ID: ${handle.sessionId}`,
-    `Status: ${status}`,
+    `Status: ${outcome.status}`,
     durationLine(run),
+    errorLine(outcome.terminalError, run),
     "Result:",
-    resultText,
-    "",
-    metadata,
+    outcome.resultText,
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 
 type DelegateStatus = SessionExecutionRecord["status"];
 
-interface DelegateMetadataInput {
-  readonly sessionId: string;
-  readonly parentSessionId: string;
-  readonly agentType: string;
-  readonly description?: string;
-  readonly status: DelegateStatus;
-  readonly background: boolean;
-  readonly startedAt?: number;
-  readonly endedAt?: number;
-  readonly durationMs?: number;
-}
-
-function formatDelegateMetadata(input: DelegateMetadataInput): string {
-  const lines = [
-    "<delegate_metadata>",
-    `session_id: ${yamlScalar(input.sessionId)}`,
-    `parent_session_id: ${yamlScalar(input.parentSessionId)}`,
-    `agent_type: ${yamlScalar(input.agentType)}`,
-    `description: ${yamlScalar(input.description ?? "")}`,
-    `status: ${input.status}`,
-    `background: ${input.background ? "true" : "false"}`,
-    `started_at: ${numberOrEmpty(input.startedAt)}`,
-    `ended_at: ${numberOrEmpty(input.endedAt)}`,
-    `duration_ms: ${numberOrEmpty(input.durationMs)}`,
-    "</delegate_metadata>",
-  ];
-
-  return lines.join("\n");
+async function waitForChildOutcome(handle: ChildExecutionHandle): Promise<ChildExecutionOutcome> {
+  try {
+    const result = await handle.result;
+    const run = handle.store.getState().executions.at(-1);
+    return {
+      status: terminalStatus(run, undefined),
+      resultText: result.text || getLastAssistantText(handle.store.getState().messages),
+    };
+  } catch (error) {
+    const run = handle.store.getState().executions.at(-1);
+    return {
+      status: terminalStatus(run, error),
+      resultText: getLastAssistantText(handle.store.getState().messages),
+      terminalError: error,
+    };
+  }
 }
 
 function terminalStatus(run: SessionExecutionRecord | undefined, terminalError: unknown): DelegateStatus {
@@ -201,19 +162,17 @@ function durationLine(run: SessionExecutionRecord | undefined): string | undefin
   return `Duration: ${run.durationMs}ms`;
 }
 
+function errorLine(error: unknown, run: SessionExecutionRecord | undefined): string | undefined {
+  if (run?.error !== undefined) return `Error: ${run.error}`;
+  if (error === undefined) return undefined;
+  return `Error: ${error instanceof Error ? error.message : String(error)}`;
+}
+
 function formatHeadlineStatus(status: DelegateStatus): string {
   if (status === "completed") return "completed";
   if (status === "timed_out") return "timed out";
   if (status === "max_steps") return "reached max steps";
   return status;
-}
-
-function numberOrEmpty(value: number | undefined): string {
-  return value === undefined ? "" : String(value);
-}
-
-function yamlScalar(value: string): string {
-  return value.replaceAll("\r", "\\r").replaceAll("\n", "\\n");
 }
 
 export function getLastAssistantText(messages: readonly StoredMessage[]): string {
@@ -232,7 +191,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later). Output: natural language summary + <delegate_metadata> block with session_id and status.`,
+    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later). Output: plain text summary with the child session id and status.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

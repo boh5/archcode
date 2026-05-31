@@ -64,12 +64,6 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   agentName: "orchestrator", ...overrides,  };
 }
 
-function metadataBlock(output: string): string {
-  const matches = output.match(/<delegate_metadata>\n[\s\S]*?\n<\/delegate_metadata>/g) ?? [];
-  expect(matches).toHaveLength(1);
-  return matches[0]!;
-}
-
 describe("delegate tool", () => {
   it("accepts any non-empty agent_type string in the input schema", () => {
     expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [] }).success).toBe(true);
@@ -87,7 +81,7 @@ describe("delegate tool", () => {
     }
   });
 
-  it("sync delegation waits and returns formatted result with metadata", async () => {
+  it("sync delegation waits and returns a plain formatted result", async () => {
     const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
@@ -95,21 +89,13 @@ describe("delegate tool", () => {
       makeContext({ startChildExecution: (request) => executor.start(request), currentDepth: 1, store: parentStore }),
     );
 
-    expect((result as string).startsWith("Sub-agent completed.\n")).toBe(true);
+    expect((result as string).startsWith("Sub-agent result: completed.\n")).toBe(true);
     expect(result).toContain("Agent type: explore");
     expect(result).toContain(`Session ID: ${executor.store.getState().sessionId}`);
     expect(result).toContain("Status: completed");
     expect(result).toContain("Duration: ");
     expect(result).toContain("Result:\ndelegated output");
-    expect(metadataBlock(result as string)).toContain(`session_id: ${executor.store.getState().sessionId}`);
-    expect(metadataBlock(result as string)).toContain(`parent_session_id: ${parentStore.getState().sessionId}`);
-    expect(metadataBlock(result as string)).toContain("agent_type: explore");
-    expect(metadataBlock(result as string)).toContain("description: Scan");
-    expect(metadataBlock(result as string)).toContain("status: completed");
-    expect(metadataBlock(result as string)).toContain("background: false");
-    expect(metadataBlock(result as string)).toContain("started_at: ");
-    expect(metadataBlock(result as string)).toContain("ended_at: ");
-    expect(metadataBlock(result as string)).toContain("duration_ms: ");
+    expect(result).not.toContain("delegate_metadata");
     expect(executor.lastRequest?.parentSessionId).toBe(parentStore.getState().sessionId);
     expect(executor.lastRequest?.parentToolCallId).toBe("delegate-call");
     expect(executor.lastRequest?.toolName).toBe("delegate");
@@ -120,7 +106,7 @@ describe("delegate tool", () => {
     expect(executor.lastRequest?.background).toBe(false);
   });
 
-  it("async delegation returns launch text with metadata", async () => {
+  it("async delegation returns launch guidance without metadata", async () => {
     const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
@@ -133,14 +119,7 @@ describe("delegate tool", () => {
     expect(result).toContain(`Session ID: ${executor.store.getState().sessionId}`);
     expect(result).toContain("Status: running");
     expect(result).toContain(`Use background_output(session_id="${executor.store.getState().sessionId}") to read the result.`);
-    expect(metadataBlock(result as string)).toContain(`session_id: ${executor.store.getState().sessionId}`);
-    expect(metadataBlock(result as string)).toContain(`parent_session_id: ${parentStore.getState().sessionId}`);
-    expect(metadataBlock(result as string)).toContain("agent_type: explore");
-    expect(metadataBlock(result as string)).toContain("description: Scan");
-    expect(metadataBlock(result as string)).toContain("status: running");
-    expect(metadataBlock(result as string)).toContain("background: true");
-    expect(metadataBlock(result as string)).toContain("ended_at: ");
-    expect(metadataBlock(result as string)).toContain("duration_ms: ");
+    expect(result).not.toContain("delegate_metadata");
     expect(executor.lastRequest?.description).toBe("Scan");
     expect(executor.lastRequest?.background).toBe(true);
     expect(executor.lastRequest?.skills).toEqual(["codemap"]);
@@ -155,31 +134,11 @@ describe("delegate tool", () => {
 
     expect(typeof result).toBe("string");
     expect((result as string).includes('"code":"TOOL_DELEGATE_FAILED"')).toBe(false);
-    expect((result as string).startsWith("Sub-agent failed.\n")).toBe(true);
+    expect((result as string).startsWith("Sub-agent result: failed.\n")).toBe(true);
     expect(result).toContain("Status: failed");
+    expect(result).toContain("Error: child failed");
     expect(result).toContain("Result:\ndelegated output");
-    expect(metadataBlock(result as string)).toContain("status: failed");
-    expect(metadataBlock(result as string)).toContain("background: false");
-  });
-
-  it("keeps delegate metadata limited to stable v1 fields", async () => {
-    const executor = new ToolStubExecutor();
-    const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
-      makeContext({ startChildExecution: (request) => executor.start(request) }),
-    );
-    const metadata = metadataBlock(result as string);
-
-    expect(metadata).toContain("session_id: ");
-    expect(metadata).toContain("parent_session_id: ");
-    expect(metadata).toContain("agent_type: explore");
-    expect(metadata).toContain("status: completed");
-    expect(metadata).not.toContain("task_id");
-    expect(metadata).not.toContain("background_task_id");
-    expect(metadata).not.toContain("stats");
-    expect(metadata).not.toContain("usage");
-    expect(metadata).not.toContain("tool_counts");
-    expect(metadata).not.toContain("result_text");
+    expect(result).not.toContain("delegate_metadata");
   });
 
   it("returns structured error when child execution context is missing", async () => {
