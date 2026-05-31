@@ -15,6 +15,7 @@ export const queryKeys = {
   projects: ["projects"] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
+  focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
   workflow: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "workflow"] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
   diff: (slug: string) => ["projects", slug, "diff"] as const,
@@ -57,6 +58,19 @@ export function sessionQueryOptions(slug: string, sessionId: string) {
       return normalizeSession(response);
     },
     enabled: slug.length > 0 && sessionId.length > 0,
+  });
+}
+
+export function focusedSessionQueryOptions(slug: string, focusSessionId: string | null) {
+  return queryOptions({
+    queryKey: queryKeys.focusedSession(slug, focusSessionId ?? ""),
+    queryFn: async () => {
+      const response = await apiFetch<SessionResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(focusSessionId!)}`,
+      );
+      return normalizeSession(response);
+    },
+    enabled: slug.length > 0 && focusSessionId !== null && focusSessionId.length > 0,
   });
 }
 
@@ -111,6 +125,10 @@ export function sessionTreeQueryOptions(slug: string, rootSessionId: string) {
     },
     enabled: slug.length > 0 && rootSessionId.length > 0,
   });
+}
+
+export function useFocusedSession(slug: string, focusSessionId: string | null) {
+  return useQuery(focusedSessionQueryOptions(slug, focusSessionId));
 }
 
 export function useSessionTree(slug: string, rootSessionId: string) {

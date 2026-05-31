@@ -2,20 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSessionStore } from "../../store/session-store";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
+import { DelegationCard } from "./DelegationCard";
+import type { DelegationCardProps } from "./DelegationCard";
 import {
   AGENT_INITIALS,
   AGENT_ICON_COLORS,
   AGENT_DISPLAY_NAMES,
   isValidAgentType,
+  type BadgeStatus,
 } from "../../lib/agent-constants";
 import type {
   SessionMessage,
   SessionPart,
-  CompactionPart,
   SystemNoticePart,
   ReasoningPart,
   TextPart,
+  ToolPart,
+  CompletedToolPart,
 } from "@specra/protocol";
+import { TOOL_DELEGATE } from "@specra/protocol";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 
@@ -65,9 +70,13 @@ function MsgUser({ message }: { message: SessionMessage }) {
 function MsgAgent({
   message,
   agentName,
+  projectSlug,
+  focusStoreSessionId,
 }: {
   message: SessionMessage;
   agentName: string;
+  projectSlug: string;
+  focusStoreSessionId: string;
 }) {
   const agentType = isValidAgentType(agentName) ? (agentName as AgentType) : "orchestrator" as AgentType;
   const initials = AGENT_INITIALS[agentType];
@@ -86,7 +95,7 @@ function MsgAgent({
         </div>
         <div className="msg-parts">
           {message.parts.map((part) => (
-            <PartRenderer key={part.id} part={part} />
+            <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} />
           ))}
         </div>
       </div>
@@ -102,7 +111,7 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
   );
 }
 
-function CompactionBlock({ part }: { part: CompactionPart }) {
+function CompactionBlock() {
   return (
     <div className="text-center text-[11px] text-text-muted py-1">
       Context compacted — earlier messages summarized
@@ -110,7 +119,65 @@ function CompactionBlock({ part }: { part: CompactionPart }) {
   );
 }
 
-function PartRenderer({ part }: { part: SessionPart }) {
+export function parseToolInput(input: unknown): Record<string, unknown> | null {
+  if (!input) return null;
+  if (typeof input === "object" && input !== null) return input as Record<string, unknown>;
+  if (typeof input === "string") {
+    try { return JSON.parse(input); } catch { return null; }
+  }
+  return null;
+}
+
+export function parseToolOutput(output: string | undefined): Record<string, unknown> | null {
+  if (!output) return null;
+  try { return JSON.parse(output); } catch { return null; }
+}
+
+export function mapDelegationStatus(state: ToolPart["state"]): BadgeStatus {
+  switch (state) {
+    case "completed": return "completed";
+    case "running": return "running";
+    case "pending": return "running";
+    case "error": return "pending";
+  }
+}
+
+function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: ToolPart; projectSlug: string; focusStoreSessionId: string }) {
+  const parsedInput = parseToolInput("input" in part ? part.input : undefined);
+  const agentType = (parsedInput?.agent_type as string) ?? "explorer";
+  const agentName = (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
+  const summary = (parsedInput?.description as string) ?? "";
+
+  let sessionId = "";
+  if (part.state === "completed") {
+    const parsedOutput = parseToolOutput((part as CompletedToolPart).output);
+    sessionId = (parsedOutput?.sessionId as string) ?? "";
+  }
+
+  if (!sessionId) {
+    sessionId = part.id;
+  }
+
+  const status = mapDelegationStatus(part.state);
+  const startedAt = "startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt;
+
+  const delegationProps: DelegationCardProps = {
+    sessionId,
+    focusStoreSessionId,
+    agentType,
+    agentName,
+    status,
+    depth: 1,
+    startedAt,
+    summary,
+    tools: [],
+    projectSlug,
+  };
+
+  return <DelegationCard {...delegationProps} />;
+}
+
+export function PartRenderer({ part, projectSlug, focusStoreSessionId }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string }) {
   switch (part.type) {
     case "text":
       return (
@@ -121,11 +188,14 @@ function PartRenderer({ part }: { part: SessionPart }) {
     case "reasoning":
       return <ReasoningBlock part={part} />;
     case "tool":
+      if (part.toolName === TOOL_DELEGATE) {
+        return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} />;
+      }
       return <ToolCard part={part} />;
     case "system-notice":
       return <SystemNoticeBlock part={part} />;
     case "compaction":
-      return <CompactionBlock part={part} />;
+      return <CompactionBlock />;
     default:
       return null;
   }
@@ -138,6 +208,7 @@ interface ChatMessagesProps {
 
 export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
+  const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -178,7 +249,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }
-        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName(msg)} />;
+        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName(msg)} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} />;
       })}
       <div ref={sentinelRef} />
     </div>

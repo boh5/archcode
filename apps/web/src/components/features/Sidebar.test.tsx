@@ -122,6 +122,20 @@ mock.module("../../api/mutations", () => ({
   usePostCommand: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
 }));
 
+let focusSessionId: string | null = null;
+const setFocusSessionId = mock((id: string | null) => { focusSessionId = id; });
+const getWebSessionStore = mock((_sessionId: string, _slug?: string) => ({
+  getState: () => ({ setFocusSessionId, focusSessionId }),
+}));
+const useSessionStore = mock((_sessionId: string, selector: (state: { focusSessionId: string | null }) => unknown, _slug?: string) =>
+  selector({ focusSessionId }),
+);
+
+mock.module("../../store/session-store", () => ({
+  getWebSessionStore,
+  useSessionStore,
+}));
+
 mock.module("../../api/queries", () => ({
   queryKeys: {},
   projectsQueryOptions: () => ({}),
@@ -174,6 +188,7 @@ describe("Sidebar", () => {
     sessions = [];
     sessionTree = null;
     createSessionPending = false;
+    focusSessionId = null;
     useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "" }));
     for (const fn of [
       navigate,
@@ -188,6 +203,9 @@ describe("Sidebar", () => {
       useSessions,
       useSessionTree,
       useWorkflow,
+      setFocusSessionId,
+      getWebSessionStore,
+      useSessionStore,
     ]) {
       fn.mockClear();
     }
@@ -273,5 +291,121 @@ describe("Sidebar", () => {
     expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
     expect(agentNodes).toHaveLength(2);
     expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
+  });
+
+  test("agent tree click calls setFocusSessionId instead of navigate", () => {
+    projects = [project];
+    sessions = [
+      {
+        id: "root-session",
+        sessionId: "root-session",
+        rootSessionId: "root-session",
+        title: "Root Session",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "child-session",
+        sessionId: "child-session",
+        rootSessionId: "root-session",
+        parentSessionId: "root-session",
+        title: "Child Session",
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    sessionTree = {
+      root: {
+        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        children: [
+          {
+            session: {
+              sessionId: "child-session",
+              rootSessionId: "root-session",
+              parentSessionId: "root-session",
+              title: "Child Session",
+              createdAt: 2,
+            },
+            children: [],
+          },
+        ],
+      },
+      diagnostics: [],
+    };
+    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "root-session" }));
+
+    const tree = render();
+    const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
+
+    // Click child node → setFocusSessionId(childSessionId)
+    const childNode = agentNodes[1];
+    (childNode?.props?.onClick as () => void)?.();
+    expect(setFocusSessionId).toHaveBeenCalledWith("child-session");
+    expect(navigate).not.toHaveBeenCalled();
+
+    setFocusSessionId.mockClear();
+    navigate.mockClear();
+
+    // Click root node → setFocusSessionId(null)
+    const rootNode = agentNodes[0];
+    (rootNode?.props?.onClick as () => void)?.();
+    expect(setFocusSessionId).toHaveBeenCalledWith(null);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  test("agent tree isActive follows focusSessionId", () => {
+    projects = [project];
+    sessions = [
+      {
+        id: "root-session",
+        sessionId: "root-session",
+        rootSessionId: "root-session",
+        title: "Root Session",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: "child-session",
+        sessionId: "child-session",
+        rootSessionId: "root-session",
+        parentSessionId: "root-session",
+        title: "Child Session",
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    sessionTree = {
+      root: {
+        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        children: [
+          {
+            session: {
+              sessionId: "child-session",
+              rootSessionId: "root-session",
+              parentSessionId: "root-session",
+              title: "Child Session",
+              createdAt: 2,
+            },
+            children: [],
+          },
+        ],
+      },
+      diagnostics: [],
+    };
+    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "root-session" }));
+
+    // focusSessionId is null → root is active
+    focusSessionId = null;
+    let tree = render();
+    let agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
+    expect(agentNodes[0]?.props?.isActive).toBe(true);
+    expect(agentNodes[1]?.props?.isActive).toBe(false);
+
+    // focusSessionId is child → child is active
+    focusSessionId = "child-session";
+    tree = render();
+    agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
+    expect(agentNodes[0]?.props?.isActive).toBe(false);
+    expect(agentNodes[1]?.props?.isActive).toBe(true);
   });
 });

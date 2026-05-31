@@ -27,6 +27,7 @@ export interface WebSessionStoreState extends SessionProjection {
   createdAt: number;
   rootSessionId: string;
   parentSessionId: string | undefined;
+  focusSessionId: string | null;
   lastTodoWriteStepIndex: number | null;
   lastTodoReminderStepIndex: number | null;
   todoStepReminderCount: number;
@@ -36,6 +37,7 @@ export interface WebSessionStoreState extends SessionProjection {
   events: SessionEventEnvelope[];
   eventOffset: number;
   nextEventId: number;
+  setFocusSessionId: (id: string | null) => void;
   append: (event: SessionEventPayload) => void;
   applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => void;
   pendingPermissions: Map<string, PermissionRequest>;
@@ -263,6 +265,7 @@ export function createWebSessionStore(
     isStreamingModel: false,
     readSnapshots: new Map(),
     runCount: 0,
+    focusSessionId: null,
     lastTodoWriteStepIndex: null,
     lastTodoReminderStepIndex: null,
     todoStepReminderCount: 0,
@@ -274,6 +277,7 @@ export function createWebSessionStore(
     nextEventId: 0,
     pendingPermissions: new Map(),
     pendingQuestions: new Map(),
+    setFocusSessionId: (id: string | null) => set({ focusSessionId: id }),
     append: (event: SessionEventPayload) => {
       set((state) => {
         const envelope = {

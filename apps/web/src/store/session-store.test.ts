@@ -360,6 +360,23 @@ describe("initializeFromSnapshot", () => {
   });
 });
 
+describe("focusSessionId", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
+  test("defaults to null and updates via setFocusSessionId", () => {
+    const store = createWebSessionStore("focus-test", "demo");
+    expect(store.getState().focusSessionId).toBeNull();
+
+    store.getState().setFocusSessionId("child-123");
+    expect(store.getState().focusSessionId).toBe("child-123");
+
+    store.getState().setFocusSessionId(null);
+    expect(store.getState().focusSessionId).toBeNull();
+  });
+});
+
 describe("resetTransientState", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();

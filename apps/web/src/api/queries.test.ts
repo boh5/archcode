@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { SessionSummary, SessionTreeResponse } from "@specra/protocol";
-import { sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { focusedSessionQueryOptions, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -66,6 +66,41 @@ describe("web session query contracts", () => {
         lastUpdatedAt: 1_700,
       },
     ]);
+  });
+
+  test("focusedSessionQueryOptions fetches a single child session and normalizes identity", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const serverResponse = {
+      sessionId: "child-session",
+      rootSessionId: "root-session",
+      parentSessionId: "root-session",
+      title: "Focused Child",
+      createdAt: 1_000,
+      lastUpdatedAt: 2_000,
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/specra/sessions/child-session");
+      return jsonResponse(serverResponse);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await (focusedSessionQueryOptions("specra", "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect(result).toMatchObject({
+      id: "child-session",
+      sessionId: "child-session",
+      rootSessionId: "root-session",
+      title: "Focused Child",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      lastUpdatedAt: 2_000,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("focusedSessionQueryOptions is disabled when focusSessionId is null", () => {
+    const opts = focusedSessionQueryOptions("specra", null);
+    expect(opts.enabled).toBe(false);
   });
 
   test("sessionTreeQueryOptions fetches the root tree endpoint and returns child identity", async () => {

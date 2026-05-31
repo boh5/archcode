@@ -9,6 +9,7 @@ import { CloseProjectDialog } from "./CloseProjectDialog";
 import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType } from "../../lib/agent-constants";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
+import { getWebSessionStore, useSessionStore } from "../../store/session-store";
 
 function isSessionActive(session: Session): boolean {
   const updatedAt = session.updatedAt ?? session.lastUpdatedAt ?? session.createdAt;
@@ -88,8 +89,8 @@ function AgentNode({
 
   return (
     <div
-      className={`flex items-center gap-1.5 py-[5px] ${paddingLeft} cursor-pointer transition-colors duration-150 text-xs ${
-        isActive ? "bg-accent-subtle text-accent" : "hover:bg-bg-hover"
+      className={`flex items-center gap-1.5 py-[5px] ${paddingLeft} cursor-pointer transition-colors duration-150 text-xs relative ${
+        isActive ? "bg-accent-subtle" : "hover:bg-bg-hover"
       }`}
       onClick={onClick}
       role="button"
@@ -98,6 +99,9 @@ function AgentNode({
         if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
       }}
     >
+      {isActive && (
+        <div className="absolute left-0 top-1 bottom-1 w-0.5 rounded-r-sm bg-accent" />
+      )}
       <div className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${AGENT_ICON_COLORS[agentType]}`}>
         {AGENT_INITIALS[agentType]}
       </div>
@@ -138,6 +142,8 @@ export function Sidebar() {
   }, [sessionId, sessions]);
 
   const { data: sessionTree } = useSessionTree(slug, rootSessionId);
+
+  const focusSessionId = useSessionStore(rootSessionId, (s) => s.focusSessionId, slug);
 
   const handleNewSession = () => {
     createSession.mutate({ slug }, {
@@ -186,7 +192,9 @@ export function Sidebar() {
       const s = node.session;
       const agentType = isValidAgentType(s.title ?? "") ? (s.title as AgentType) : "explorer";
       const isRunning = isSessionActive({ ...s, id: s.sessionId } as Session);
-      const isActive = s.sessionId === sessionId;
+      const isActive = focusSessionId === null
+        ? s.sessionId === rootSessionId
+        : s.sessionId === focusSessionId;
 
       agents.push({
         name: s.title || "Untitled",
@@ -204,10 +212,19 @@ export function Sidebar() {
 
     walkNode(sessionTree.root, 0);
     return agents;
-  }, [sessionTree, sessionId]);
+  }, [sessionTree, rootSessionId, focusSessionId]);
 
   const handleSessionClick = (clickedSessionId: string) => {
     navigate(`/projects/${slug}/sessions/${clickedSessionId}`);
+  };
+
+  const handleAgentTreeClick = (clickedSessionId: string) => {
+    const store = getWebSessionStore(rootSessionId, slug);
+    if (clickedSessionId === rootSessionId) {
+      store.getState().setFocusSessionId(null);
+    } else {
+      store.getState().setFocusSessionId(clickedSessionId);
+    }
   };
 
   return (
@@ -326,7 +343,7 @@ export function Sidebar() {
                 status={agent.status}
                 depth={agent.depth}
                 isActive={agent.isActive}
-                onClick={() => handleSessionClick(agent.sessionId)}
+                onClick={() => handleAgentTreeClick(agent.sessionId)}
               />
             ))}
           </div>

@@ -61,9 +61,15 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
   return { type, props: resolvedProps, key };
 });
 
-const mockNavigate = mock((_path: string) => {});
-mock.module("react-router-dom", () => ({
-  useNavigate: () => mockNavigate,
+const mockSetFocusSessionId = mock((_id: string | null) => {});
+const mockStoreState = {
+  setFocusSessionId: mockSetFocusSessionId,
+};
+const mockGetWebSessionStore = mock((_sessionId: string, _slug?: string) => ({
+  getState: () => mockStoreState,
+}));
+mock.module("../../store/session-store", () => ({
+  getWebSessionStore: mockGetWebSessionStore,
 }));
 
 mock.module("react", () => ({
@@ -100,16 +106,16 @@ describe("ToolChip", () => {
   });
 
   test("renders category icon for grep", () => {
-    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "TODO" } });
+    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "needle" } });
     const text = textContent(result);
     expect(text).toContain("🔍");
   });
 
   test("renders tool name and primary summary for grep with input", () => {
-    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "TODO" } });
+    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "needle" } });
     const text = textContent(result);
     expect(text).toContain("grep");
-    expect(text).toContain("TODO");
+    expect(text).toContain("needle");
   });
 
   test("renders bash with description as summary", () => {
@@ -121,7 +127,7 @@ describe("ToolChip", () => {
   });
 
   test("renders success status icon", () => {
-    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "TODO" } });
+    const result = ToolChip({ name: "grep", status: "success", input: { pattern: "needle" } });
     const text = textContent(result);
     expect(text).toContain("✓");
   });
@@ -148,6 +154,7 @@ describe("ToolChip", () => {
 describe("DelegationCard", () => {
   const baseProps = {
     sessionId: "session-child-1",
+    focusStoreSessionId: "session-root-1",
     agentType: "explorer",
     agentName: "Explorer Agent",
     status: "running" as const,
@@ -155,7 +162,7 @@ describe("DelegationCard", () => {
     startedAt: Date.now() - 60000,
     summary: "Searching for relevant files",
     tools: [
-      { name: "grep", status: "success" as const, input: { pattern: "TODO" } },
+      { name: "grep", status: "success" as const, input: { pattern: "needle" } },
       { name: "file_read", status: "default" as const, input: { filePath: "/src/index.ts" } },
     ],
     projectSlug: "my-project",
@@ -214,5 +221,16 @@ describe("DelegationCard", () => {
     const result = DelegationCard(props);
     const text = textContent(result);
     expect(text).toContain("grep");
+  });
+
+  test("clicking view conversation calls setFocusSessionId on store", () => {
+    const result = DelegationCard(baseProps);
+    const buttons = findAllWithClass(result, "bg-bg-elevated");
+    expect(buttons.length).toBe(1);
+    const onClick = buttons[0]?.props?.onClick as (() => void) | undefined;
+    expect(onClick).toBeFunction();
+    onClick!();
+    expect(mockGetWebSessionStore).toHaveBeenCalledWith("session-root-1", "my-project");
+    expect(mockSetFocusSessionId).toHaveBeenCalledWith("session-child-1");
   });
 });

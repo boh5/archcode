@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { getWebSessionStore } from "../../store/session-store";
 import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType, type AgentType, BADGE_CLASSES, BADGE_LABELS, type BadgeStatus } from "../../lib/agent-constants";
 import { formatElapsed } from "../../lib/time-format";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
@@ -35,28 +35,21 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
 }
 
 export interface DelegationCardProps {
-  /** Child session ID used to navigate directly to the sub-agent conversation */
   sessionId: string;
-  /** Agent type for color mapping (falls back to "explorer" if unknown) */
+  focusStoreSessionId: string;
   agentType: string;
-  /** Display name shown in the header */
   agentName: string;
-  /** Current status of the delegation */
   status: BadgeStatus;
-  /** Delegation depth (0 = top-level, 1 = first sub-agent, etc.) */
   depth: number;
-  /** Timestamp (ms) when the delegation started, used for elapsed time */
   startedAt: number;
-  /** Short summary of what the sub-agent is doing / has done */
   summary: string;
-  /** Tool invocations to display as chips */
   tools: Array<{ name: string; status: ToolStatus; input?: unknown }>;
-  /** Current project slug (for building navigation link) */
   projectSlug: string;
 }
 
 export function DelegationCard({
   sessionId,
+  focusStoreSessionId,
   agentType,
   agentName,
   status,
@@ -66,13 +59,13 @@ export function DelegationCard({
   tools,
   projectSlug,
 }: DelegationCardProps) {
-  const navigate = useNavigate();
   const resolvedType = isValidAgentType(agentType) ? agentType : "explorer" as AgentType;
   const colorClasses = AGENT_ICON_COLORS[resolvedType];
   const initials = AGENT_INITIALS[resolvedType];
 
   const handleViewConversation = () => {
-    navigate(`/projects/${projectSlug}/sessions/${sessionId}`);
+    const store = getWebSessionStore(focusStoreSessionId, projectSlug);
+    store.getState().setFocusSessionId(sessionId);
   };
 
   return (
