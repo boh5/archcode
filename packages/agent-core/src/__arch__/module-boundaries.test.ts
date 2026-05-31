@@ -107,6 +107,18 @@ const forbiddenRootExports = [
   "saveSessionTranscript",
   "readSessionFile",
   "SessionStoreState",
+  "AgentJobRunner",
+  "AgentRunner",
+  "submitAgentJob",
+  "abortAgentJob",
+] as const;
+
+const forbiddenExecutionExports = [
+  "AgentJobRunner",
+  "AgentRunner",
+  "submitAgentJob",
+  "abortAgentJob",
+  "jobId",
 ] as const;
 
 const forbiddenAgentExports = [
@@ -195,6 +207,25 @@ function findServerBoundaryViolations(): Violation[] {
 
     for (const match of source.matchAll(/\bruntime\.sessionAgentManager\b|\bthis\.#runtime\.sessionAgentManager\b/g)) {
       violations.push({ file: relativeFile(file), importPath: `source-pattern:${match[0]}` });
+    }
+  }
+
+  return violations;
+}
+
+function findServerInternalAgentCoreImportViolations(): Violation[] {
+  const serverRoot = join(projectRoot, "apps/server/src");
+  const violations: Violation[] = [];
+
+  for (const file of findTsFiles(serverRoot, { includeTests: true })) {
+    for (const importRecord of extractImports(file)) {
+      if (
+        importRecord.importPath.startsWith("../../../packages/agent-core/src/")
+        || importRecord.importPath.startsWith("packages/agent-core/src/")
+        || importRecord.importPath.startsWith("@specra/agent-core/src/")
+      ) {
+        violations.push({ file: relativeFile(file), importPath: importRecord.importPath });
+      }
     }
   }
 
@@ -306,6 +337,7 @@ describe("module migration boundary contracts", () => {
       expectNoViolations([
         ...findPublicApiExportViolations(join(srcRoot, "index.ts"), forbiddenRootExports),
         ...findPublicApiExportViolations(join(srcRoot, "agents/index.ts"), forbiddenAgentExports),
+        ...findPublicApiExportViolations(join(srcRoot, "execution/index.ts"), forbiddenExecutionExports),
       ]);
     });
   });
@@ -313,6 +345,10 @@ describe("module migration boundary contracts", () => {
   describe("server boundary", () => {
     test("server sources do not reach into agent-core session store internals", () => {
       expectNoViolations(findServerBoundaryViolations());
+    });
+
+    test("server imports agent-core only through the package public API", () => {
+      expectNoViolations(findServerInternalAgentCoreImportViolations());
     });
   });
 

@@ -15,7 +15,7 @@ export type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessi
 export { SessionEventBridge } from "./events";
 export type { SessionEventBridgeOptions } from "./events";
 
-export type { McpWarning } from "./mcp/index";
+export type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
 
 export {
   createConsoleLogger,

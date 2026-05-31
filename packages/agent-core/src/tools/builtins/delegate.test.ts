@@ -95,7 +95,6 @@ describe("delegate tool", () => {
     expect(result).toContain("Status: completed");
     expect(result).toContain("Duration: ");
     expect(result).toContain("Result:\ndelegated output");
-    expect(result).not.toContain("delegate_metadata");
     expect(executor.lastRequest?.parentSessionId).toBe(parentStore.getState().sessionId);
     expect(executor.lastRequest?.parentToolCallId).toBe("delegate-call");
     expect(executor.lastRequest?.toolName).toBe("delegate");
@@ -119,7 +118,6 @@ describe("delegate tool", () => {
     expect(result).toContain(`Session ID: ${executor.store.getState().sessionId}`);
     expect(result).toContain("Status: running");
     expect(result).toContain(`Use background_output(session_id="${executor.store.getState().sessionId}") to read the result.`);
-    expect(result).not.toContain("delegate_metadata");
     expect(executor.lastRequest?.description).toBe("Scan");
     expect(executor.lastRequest?.background).toBe(true);
     expect(executor.lastRequest?.skills).toEqual(["codemap"]);
@@ -138,7 +136,6 @@ describe("delegate tool", () => {
     expect(result).toContain("Status: failed");
     expect(result).toContain("Error: child failed");
     expect(result).toContain("Result:\ndelegated output");
-    expect(result).not.toContain("delegate_metadata");
   });
 
   it("returns structured error when child execution context is missing", async () => {

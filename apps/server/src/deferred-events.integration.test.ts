@@ -2,13 +2,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { McpDiscoveryResult, McpManager, SpecraRuntime } from "@specra/agent-core";
 import type { GlobalSSEEvent, GlobalSessionEventEnvelope, SessionEventPayload } from "@specra/protocol";
 import { createSpecraRuntime } from "@specra/agent-core";
-import type { McpDiscoveryResult, McpManager } from "../../../packages/agent-core/src/mcp/index";
-import { __setSessionsDirForTest } from "../../../packages/agent-core/src/store/sessions-dir";
-import { storeManager } from "../../../packages/agent-core/src/store/store";
-import { createRegistry } from "../../../packages/agent-core/src/tools/registry";
 import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
@@ -31,18 +27,11 @@ interface ParsedSseFrame {
 
 type SessionEventByKind<K extends SessionEventPayload["type"]> = GlobalSessionEventEnvelope<Extract<SessionEventPayload, { type: K }>>;
 
-beforeEach(() => {
-  storeManager.clearAll();
-});
+beforeEach(() => undefined);
 
-afterEach(() => {
-  __setSessionsDirForTest(undefined);
-  storeManager.clearAll();
-});
+afterEach(() => undefined);
 
 afterAll(async () => {
-  __setSessionsDirForTest(undefined);
-  storeManager.clearAll();
   await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -269,14 +258,15 @@ async function createFixture(): Promise<Fixture> {
   roots.push(root);
   const workspaceRoot = join(root, "workspace");
   await mkdir(workspaceRoot, { recursive: true });
-  __setSessionsDirForTest((requestedWorkspaceRoot) => join(requestedWorkspaceRoot, ".test-sessions"));
-  expect(createRegistry([]).getAll()).toEqual([]);
 
   const configPath = await writeConfig(root);
   const runtime = await createSpecraRuntime({
     configPath,
     workspaceRoot,
-    mcpManagerFactory: () => makeFakeMcpManager(),
+    mcpManagerFactory: () => ({
+      discover: mock(async (): Promise<McpDiscoveryResult> => ({ descriptors: [], warnings: [] })),
+      closeAll: mock(async () => []),
+    } as unknown as McpManager),
   });
   const { app } = createServerApp(runtime, { dev: true });
   const session = await runtime.createSession(workspaceRoot);
@@ -319,13 +309,6 @@ async function writeConfig(root: string): Promise<string> {
     mcp: { servers: {} },
   }));
   return configPath;
-}
-
-function makeFakeMcpManager(): McpManager {
-  return {
-    discover: mock(async (): Promise<McpDiscoveryResult> => ({ descriptors: [], warnings: [] })),
-    closeAll: mock(async () => []),
-  } as unknown as McpManager;
 }
 
 function permissionRequest(toolCallId: string) {

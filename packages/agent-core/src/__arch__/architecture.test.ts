@@ -186,9 +186,18 @@ function findProductionFiles(scopeDir: string): string[] {
   return findTsFiles(join(projectRoot, scopeDir));
 }
 
+function findProductionAppFiles(scopeDir: string): string[] {
+  return findProductionFiles(scopeDir).filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"));
+}
+
+function findProductionTextViolationsInScope(scopeDir: string, patterns: RegExp[]): Violation[] {
+  return findProductionTextViolations(findProductionFiles(scopeDir), patterns);
+}
+
 // Boundary rules are enforced across static imports, re-exports, and dynamic imports.
 const protocolForbiddenPatterns = [
   /^ai$/,
+  /^zod(\/|$)/,
   /^zustand(\/|$)/,
   /^hono(\/|$)/,
   /^node:/,
@@ -226,8 +235,16 @@ const webForbiddenPatterns = [
   /^node:/,
   /^bun:/,
   /^apps\/server(\/|$)/,
+  /^apps\/server\/src\/routes(\/|$)/,
   /^packages\/agent-core\/src(\/|$)/,
   /^packages\/server\/src(\/|$)/,
+  /^packages\/agent-core\/src\/execution(\/|$)/,
+];
+
+const serverInternalAgentCorePatterns = [
+  /^\.\.\/\.\.\/\.\.\/packages\/agent-core\/src\//,
+  /^packages\/agent-core\/src\//,
+  /^@specra\/agent-core\/src\//,
 ];
 
 describe("monorepo package boundaries", () => {
@@ -246,6 +263,10 @@ describe("monorepo package boundaries", () => {
 
     test("web has no runtime/server dependencies", () => {
       expectNoViolations(findViolations("apps/web/src", webForbiddenPatterns));
+    });
+
+    test("server imports only the public agent-core API", () => {
+      expectNoViolations(findViolations("apps/server/src", serverInternalAgentCorePatterns));
     });
   });
 
@@ -298,6 +319,19 @@ describe("monorepo package boundaries", () => {
         ]),
       );
     });
+
+    test("protocol source has no schema, filesystem, server, web, or agent-core imports", () => {
+      expectNoViolations(
+        findViolations("packages/protocol/src", [
+          /^zod(\/|$)/,
+          /^node:(fs|path|os)(\/|$)/,
+          /^bun:/,
+          /^@specra\/(agent-core|server|web)(\/|$)/,
+          /^apps\/(server|web)(\/|$)/,
+          /^packages\/(agent-core|server|web)\/src(\/|$)/,
+        ]),
+      );
+    });
   });
 
   test("reduce isomorphism", () => {
@@ -315,6 +349,49 @@ describe("monorepo package boundaries", () => {
   });
 
   describe("session stats and sub-agent guardrails", () => {
+    test("AgentFactory stays free of store, bridge, and execution manager lifecycle ownership", () => {
+      expectNoViolations(
+        findProductionTextViolations([join(projectRoot, "packages/agent-core/src/agents/factory.ts")], [
+          /SessionEventBridge/,
+          /SessionExecutionManager/,
+          /activeChildrenByParent/,
+        ]),
+      );
+    });
+
+    test("web production code does not parse legacy delegate metadata", () => {
+      expectNoViolations(
+        findProductionTextViolationsInScope("apps/web/src", [
+          /<delegate_metadata>/,
+          /delegate_metadata/,
+          /parseDelegateMetadata/,
+        ]),
+      );
+    });
+
+    test("agent-core does not import server event bus or app modules", () => {
+      expectNoViolations(findViolations("packages/agent-core/src", [
+        /^\.\.\/\.\.\/\.\.\/apps\/(server|web)\//,
+        /^apps\/(server|web)(\/|$)/,
+        /^@specra\/(server|web)(\/|$)/,
+      ]));
+    });
+
+    test("production API surface has no public run graph routes or root-run identifiers", () => {
+      expectNoViolations(
+        findProductionTextViolations([
+          ...findProductionAppFiles("apps/server/src"),
+          ...findProductionAppFiles("apps/web/src"),
+          ...findProductionAppFiles("packages/protocol/src"),
+        ], [
+          /\/runs\b/,
+          /\bRunGraph\b/,
+          /\bparentRunId\b/,
+          /\brootRunId\b/,
+        ]),
+      );
+    });
+
     test("child store operations do not import the global test-only storeManager", () => {
       const files = [
         ...findProductionFiles("packages/agent-core/src/agents"),

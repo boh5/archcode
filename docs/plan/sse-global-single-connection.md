@@ -326,7 +326,7 @@ T5  SSE 后续事件带 slug=newSlug → findStore 找到 store → append
 | 服务端 | `sse/global-event-bus.ts` | 新建 | EventEmitter 单例 + 类型定义 |
 | 服务端 | `sse/project-event-bridge.ts` | 新建 | store.subscribe → GlobalEventBus 桥接 |
 | 服务端 | `sse/global-sse-handler.ts` | 新建 | `GET /api/events` 端点 |
-| 服务端 | `agent-runner.ts` | 修改 | agent 启动时注册 bridge，结束时清理 |
+| 服务端 | `runtime.ts` / `SessionExecutionManager` | 修改 | session execution 启动时注册 bridge，结束时清理 |
 | 服务端 | `app.ts` | 修改 | 挂载新路由 |
 | 服务端 | `routes/events.ts` | 保留 | 旧端点不删，兼容过渡 |
 | 客户端 | `lib/sse-client.ts` | 新建 | fetch+eventsource-parser SSE 客户端 (~80行) |

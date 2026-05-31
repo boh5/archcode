@@ -609,6 +609,63 @@ describe("SessionExecutionManager", () => {
     expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
   });
 
+  test("sync child execution exposes live parent link and bridged child events before resolving", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const childRun = deferred<AgentResult>();
+    const received: unknown[] = [];
+    let childSessionId = "";
+    let linkWhileRunning: ToolChildSessionLink | undefined;
+    let resultResolved = false;
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      childRun: childRun.promise,
+      childRunStarted: () => {
+        linkWhileRunning = parentStore.getState().childSessionLinks.at(-1);
+        childSessionId = linkWhileRunning?.childSessionId ?? "";
+        if (childSessionId.length > 0) {
+          manager.subscribe({ slug: "project", workspaceRoot, sessionId: childSessionId, onEvent: (event) => received.push(event) });
+        }
+      },
+    });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "sync-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    handle.result.then(() => { resultResolved = true; });
+    await Promise.resolve();
+
+    expect(resultResolved).toBe(false);
+    expect(linkWhileRunning).toMatchObject({
+      parentSessionId: parentId,
+      parentToolCallId: "sync-tool-call",
+      childSessionId: handle.sessionId,
+      status: "running",
+      background: false,
+    });
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "execution-start")).toBe(true);
+
+    childRun.resolve({ text: "live child done", steps: 1 });
+    const result = await handle.result;
+
+    expect(result).toEqual({ text: "live child done", steps: 0 });
+    expect(resultResolved).toBe(true);
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: handle.sessionId,
+      status: "completed",
+    });
+    expect(received.some((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "text-delta")).toBe(true);
+  });
+
   test("startChildExecution marks failed and timed-out children with terminal link statuses", async () => {
     const failedParentId = crypto.randomUUID();
     const failedParentStore = storeManager.create(failedParentId, workspaceRoot, { agentName: "orchestrator" });
