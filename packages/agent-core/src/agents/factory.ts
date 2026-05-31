@@ -1,11 +1,10 @@
-import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import type { SpecraConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import type { Reminder, ReminderSource, SessionStoreState } from "../store/types";
+import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
 import { SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
@@ -13,21 +12,17 @@ import type { ResolvedSkill } from "../skills/types";
 import type { ToolRegistry } from "../tools/index";
 import { ConfiguredAgent } from "./configured-agent";
 import {
-  AgentChildPolicyMissingError,
-  ConcurrentLimitError,
-  DelegateTargetNotAllowedError,
-  DelegationToolNotAllowedError,
-  DepthLimitError,
   NoModelsConfiguredError,
   SkillNotAllowedError,
-  SubAgentError,
 } from "./errors";
-import type { AgentDefinition, AgentName, AgentRunHandle, DelegateAgentOptions } from "./factory-types";
+import type { StoreApi } from "zustand";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { AgentDefinition, AgentName } from "./factory-types";
 import { DELEGATION_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
 import { resolveAgentModel } from "./model-resolver";
 
-export type { AgentRunHandle, DelegateAgentOptions } from "./factory-types";
+export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 
 export interface AgentFactoryConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -39,6 +34,7 @@ export interface AgentFactoryConfig {
   readonly config?: SpecraConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
+  readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly logger: Logger;
 }
 
@@ -54,11 +50,11 @@ export interface CreateAgentOptions {
 export interface AgentFactory {
   createRootAgent(name: AgentName, options?: CreateAgentOptions): Agent;
   createAgent(name: AgentName, options?: CreateAgentOptions): Agent;
-  delegate(options: DelegateAgentOptions): Promise<AgentRunHandle>;
   getDefinition(name: string): AgentDefinition;
   listAgentNames(): string[];
   resolveAllowedTools(definition: AgentDefinition, depth: number): string[];
   getDelegateTargetsFor(definition: AgentDefinition, depth: number): string[];
+  resolveDelegatedSkills(targetDefinition: AgentDefinition, requestedSkills: readonly string[]): Promise<readonly ResolvedSkill[]>;
 }
 
 export class DuplicateAgentDefinitionError extends Error {
@@ -77,7 +73,6 @@ export class UnknownAgentDefinitionError extends Error {
 
 export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
   const definitions = new Map<string, AgentDefinition>();
-  const activeChildrenByParent = new Map<string, Set<string>>();
   const sharedBackgroundTaskManager = config.backgroundTaskManager ?? new DefaultBackgroundTaskManager({ logger: config.logger });
   const agentConfig = { ...config, backgroundTaskManager: sharedBackgroundTaskManager };
 
@@ -91,111 +86,11 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
   const factory: AgentFactory = {
     createRootAgent(name, options = {}) {
       const rootConfig = { ...agentConfig, backgroundTaskManager: undefined };
-      return createConfiguredAgent(rootConfig, factory, factory.getDefinition(name), options);
+      return createConfiguredAgent(rootConfig, factory.getDefinition(name), options);
     },
 
     createAgent(name, options = {}) {
-      return createConfiguredAgent(agentConfig, factory, factory.getDefinition(name), options);
-    },
-
-    async delegate(options) {
-      const currentDepth = options.currentDepth ?? 0;
-      const parentDefinition = factory.getDefinition(options.parentAgentName);
-      const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
-
-      if (!allowedTools.includes("delegate")) {
-        throw new DelegationToolNotAllowedError(options.parentAgentName, currentDepth);
-      }
-
-      const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
-      if (!delegateTargets.includes(options.targetAgentName)) {
-        throw new DelegateTargetNotAllowedError(options.parentAgentName, options.targetAgentName, currentDepth);
-      }
-
-      const targetDefinition = factory.getDefinition(options.targetAgentName);
-      const childPolicy = parentDefinition.childPolicy;
-      if (childPolicy === undefined) {
-        throw new AgentChildPolicyMissingError(options.parentAgentName);
-      }
-
-      if (currentDepth >= childPolicy.maxDepth) {
-        throw new DepthLimitError(currentDepth);
-      }
-
-      const parentSessionId = options.parentStore.getState().sessionId;
-      const activeChildren = activeChildrenByParent.get(parentSessionId) ?? new Set<string>();
-      if (activeChildren.size >= childPolicy.maxConcurrent) {
-        throw new ConcurrentLimitError(activeChildren.size);
-      }
-
-      const activeSkills = await resolveDelegatedSkills(
-        agentConfig.skillService,
-        agentConfig.workspaceRoot,
-        targetDefinition,
-        options.skills,
-      );
-
-      const childSessionId = crypto.randomUUID();
-      const childTitle = options.title ?? options.description;
-      const childStore = config.storeManager.create(childSessionId, config.workspaceRoot, {
-        rootSessionId: options.parentStore.getState().rootSessionId,
-        parentSessionId,
-        agentName: targetDefinition.name,
-        ...(childTitle === undefined ? {} : { title: childTitle }),
-      });
-
-      const childAbortController = new AbortController();
-      const timeout = childPolicy.timeoutMs > 0
-        ? setTimeout(() => childAbortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
-        : undefined;
-      const removeParentAbort = childPolicy.abortCascade
-        ? wireAbortCascade(options.parentAbort, childAbortController)
-        : () => {};
-
-      const childAgent = factory.createAgent(targetDefinition.name, {
-        store: childStore,
-        depth: currentDepth + 1,
-        parentSessionId,
-        ...(childTitle !== undefined ? { title: childTitle } : {}),
-        abortSignal: childAbortController.signal,
-        activeSkills,
-      });
-
-      activeChildren.add(childSessionId);
-      activeChildrenByParent.set(parentSessionId, activeChildren);
-
-      const result = runWithAbort(childAgent.run(options.prompt, { abort: childAbortController.signal }), childAbortController.signal)
-        .catch((error: unknown) => {
-          if (error instanceof SubAgentError) throw error;
-          agentConfig.logger.warn("agent.delegation.sub-agent.failed", {
-            error: error instanceof Error
-              ? { name: error.name || "Error", message: error.message }
-              : { name: typeof error, message: String(error) },
-          });
-          throw new SubAgentError(error instanceof Error ? error.message : String(error));
-        })
-        .finally(() => {
-          if (timeout !== undefined) clearTimeout(timeout);
-          removeParentAbort();
-          activeChildren.delete(childSessionId);
-          if (activeChildren.size === 0) {
-            activeChildrenByParent.delete(parentSessionId);
-          }
-        });
-
-      if (options.background === true && childPolicy.terminalReminders) {
-        result.then(
-          () => appendTerminalReminder(options.parentStore, childSessionId, "completed"),
-          (error) => appendTerminalReminder(options.parentStore, childSessionId, classifyTerminalStatus(error, childAbortController.signal)),
-        );
-      }
-
-      return {
-        sessionId: childSessionId,
-        store: childStore,
-        result,
-        abort: () => childAbortController.abort(new Error("Sub-agent aborted")),
-      };
+      return createConfiguredAgent(agentConfig, factory.getDefinition(name), options);
     },
 
     getDefinition(name) {
@@ -222,93 +117,13 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
 
       return [...(definition.tools.delegateTargets ?? [])];
     },
+
+    resolveDelegatedSkills(targetDefinition, requestedSkills) {
+      return resolveDelegatedSkills(agentConfig.skillService, agentConfig.workspaceRoot, targetDefinition, requestedSkills);
+    },
   };
 
   return factory;
-}
-
-type SubAgentTerminalStatus = "completed" | "failed" | "timed_out" | "cancelled" | "max_steps" | "aborted";
-
-function runWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortReasonToError(signal.reason));
-
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortReasonToError(signal.reason));
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error);
-      },
-    );
-  });
-}
-
-function abortReasonToError(reason: unknown): Error {
-  if (reason instanceof Error) return reason;
-  if (reason !== undefined) return new Error(String(reason));
-  return new Error("Sub-agent aborted");
-}
-
-function wireAbortCascade(parentAbort: AbortSignal | undefined, childController: AbortController): () => void {
-  if (parentAbort === undefined) return () => {};
-  const onAbort = () => childController.abort(parentAbort.reason);
-  if (parentAbort.aborted) {
-    onAbort();
-    return () => {};
-  }
-  parentAbort.addEventListener("abort", onAbort, { once: true });
-  return () => parentAbort.removeEventListener("abort", onAbort);
-}
-
-function appendTerminalReminder(
-  parentStore: StoreApi<SessionStoreState>,
-  sessionId: string,
-  status: SubAgentTerminalStatus,
-): void {
-  const reminder: Reminder = {
-    id: crypto.randomUUID(),
-    source: terminalSource(status, sessionId),
-    delivery: "on_demand",
-    sessionId,
-    terminalState: status,
-    content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
-    createdAt: Date.now(),
-    consumedAt: null,
-    targetSessionId: parentStore.getState().sessionId,
-  };
-  parentStore.getState().append({ type: "reminder", reminder });
-}
-
-function classifyTerminalStatus(error: unknown, signal: AbortSignal): SubAgentTerminalStatus {
-  if (signal.aborted) {
-    const reason = signal.reason;
-    if (reason instanceof Error && /timed out/i.test(reason.message)) return "timed_out";
-    if (reason instanceof Error && /max steps/i.test(reason.message)) return "max_steps";
-    return "cancelled";
-  }
-  if (error instanceof Error && /timed out/i.test(error.message)) return "timed_out";
-  if (error instanceof Error && /max steps/i.test(error.message)) return "max_steps";
-  if (error instanceof Error && /aborted/i.test(error.message)) return "aborted";
-  if (error instanceof Error && /cancelled|canceled/i.test(error.message)) return "cancelled";
-  return "failed";
-}
-
-function terminalSource(status: SubAgentTerminalStatus, sessionId: string): ReminderSource {
-  if (status === "completed") return { type: "subagent_completed", sessionId };
-  if (status === "timed_out") return { type: "subagent_timed_out", sessionId };
-  if (status === "cancelled") return { type: "subagent_cancelled", sessionId };
-  return { type: "subagent_failed", sessionId };
-}
-
-function formatStatus(status: SubAgentTerminalStatus): string {
-  if (status === "timed_out") return "timed out";
-  if (status === "max_steps") return "reached max steps";
-  return status;
 }
 
 async function resolveDelegatedSkills(
@@ -344,7 +159,6 @@ async function resolveDelegatedSkills(
 
 function createConfiguredAgent(
   config: AgentFactoryConfig,
-  factory: AgentFactory,
   definition: AgentDefinition,
   options: CreateAgentOptions,
 ): Agent {
@@ -372,7 +186,7 @@ function createConfiguredAgent(
     projectContextResolver: config.projectContextResolver,
     logger: config.logger,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
-    agentFactory: factory,
+    startChildExecution: config.startChildExecution,
     activeSkills: options.activeSkills,
   });
 }

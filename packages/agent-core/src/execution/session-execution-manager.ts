@@ -1,8 +1,18 @@
 import { rm } from "node:fs/promises";
-import type { SessionTreeNode } from "@specra/protocol";
+import type { SessionExecutionRecord, SessionTreeNode, ToolChildSessionLinkStatus } from "@specra/protocol";
+import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
-import { AgentRunningError } from "../agents/errors";
+import {
+  AgentChildPolicyMissingError,
+  AgentRunningError,
+  ConcurrentLimitError,
+  DelegateTargetNotAllowedError,
+  DelegationToolNotAllowedError,
+  DepthLimitError,
+} from "../agents/errors";
+import type { AgentResult } from "../agents/types";
 import type { CommandResult } from "../commands/types";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
@@ -10,6 +20,8 @@ import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/
 import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { SessionStoreManager } from "../store/session-store-manager";
+import type { Reminder, SessionStoreState } from "../store/types";
+import type { StoredMessage } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import type { Logger } from "../logger";
 
@@ -162,6 +174,114 @@ export class SessionExecutionManager {
     return execution?.promise ? execution as ActiveSessionExecution : undefined;
   }
 
+  async startChildExecution(workspaceRoot: string, request: ChildExecutionRequest): Promise<ChildExecutionHandle> {
+    const factory = this.#config.sessionAgentManager.getFactory(workspaceRoot);
+    const currentDepth = request.currentDepth ?? 0;
+    const parentAgentName = request.parentStore.getState().agentName ?? "orchestrator";
+    const parentDefinition = factory.getDefinition(parentAgentName);
+    const allowedTools = factory.resolveAllowedTools(parentDefinition, currentDepth);
+
+    if (!allowedTools.includes("delegate")) {
+      throw new DelegationToolNotAllowedError(parentAgentName, currentDepth);
+    }
+
+    const delegateTargets = factory.getDelegateTargetsFor(parentDefinition, currentDepth);
+    if (!delegateTargets.includes(request.targetAgentName)) {
+      throw new DelegateTargetNotAllowedError(parentAgentName, request.targetAgentName, currentDepth);
+    }
+
+    const targetDefinition = factory.getDefinition(request.targetAgentName);
+    const childPolicy = parentDefinition.childPolicy;
+    if (childPolicy === undefined) {
+      throw new AgentChildPolicyMissingError(parentAgentName);
+    }
+
+    if (currentDepth >= childPolicy.maxDepth) {
+      throw new DepthLimitError(currentDepth);
+    }
+
+    const activeChildren = this.#countActiveChildren(workspaceRoot, request.parentSessionId);
+    if (activeChildren >= childPolicy.maxConcurrent) {
+      throw new ConcurrentLimitError(activeChildren);
+    }
+
+    const activeSkills = await factory.resolveDelegatedSkills(targetDefinition, request.skills);
+    const background = request.background ?? false;
+    const childSessionId = crypto.randomUUID();
+    const childTitle = request.title ?? request.description;
+    const parentState = request.parentStore.getState();
+    const childStore = this.#config.storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentState.rootSessionId,
+      parentSessionId: request.parentSessionId,
+      agentName: targetDefinition.name,
+      ...(childTitle === undefined ? {} : { title: childTitle }),
+    });
+
+    request.parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: request.parentSessionId,
+        parentToolCallId: request.parentToolCallId,
+        toolName: request.toolName,
+        childSessionId,
+        childAgentName: targetDefinition.name,
+        ...(childTitle === undefined ? {} : { title: childTitle }),
+        ...(request.description === undefined ? {} : { description: request.description }),
+        depth: currentDepth + 1,
+        background,
+        status: "linked",
+        createdAt: Date.now(),
+      },
+    });
+
+    this.#config.sessionAgentManager.createChildAgent({
+      workspaceRoot,
+      sessionId: childSessionId,
+      agentName: targetDefinition.name,
+      store: childStore,
+      depth: currentDepth + 1,
+      parentSessionId: request.parentSessionId,
+      ...(childTitle === undefined ? {} : { title: childTitle }),
+      activeSkills,
+    });
+
+    const execution = this.startExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: childSessionId,
+      userMessage: request.prompt,
+      agentName: targetDefinition.name,
+      origin: "tool_call",
+    });
+    this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, "running", childTitle);
+
+    const timeout = childPolicy.timeoutMs > 0
+      ? setTimeout(() => execution.abortController.abort(new Error("Sub-agent timed out")), childPolicy.timeoutMs)
+      : undefined;
+    const removeParentAbort = childPolicy.abortCascade
+      ? wireAbortCascade(request.parentAbort, execution.abortController)
+      : () => {};
+
+    const result = execution.promise
+      .then(() => toAgentResult(childStore))
+      .finally(() => {
+        if (timeout !== undefined) clearTimeout(timeout);
+        removeParentAbort();
+        const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
+        this.#appendChildLinkStatus(workspaceRoot, request, childSessionId, targetDefinition.name, currentDepth + 1, status, childTitle);
+        if (background && childPolicy.terminalReminders) {
+          appendTerminalReminder(request.parentStore, childSessionId, status);
+        }
+      });
+
+    return {
+      sessionId: childSessionId,
+      store: childStore,
+      result,
+      abort: () => execution.abortController.abort(new Error("Sub-agent aborted")),
+    };
+  }
+
   async dispatchCommand(
     workspaceRoot: string,
     sessionId: string,
@@ -312,6 +432,121 @@ export class SessionExecutionManager {
     if (this.isRunning(workspaceRoot, sessionId)) return;
     this.#eventBridge.detachSession(workspaceRoot, sessionId);
   }
+
+  #countActiveChildren(workspaceRoot: string, parentSessionId: string): number {
+    let count = 0;
+    for (const execution of this.#active.values()) {
+      if (execution.workspaceRoot !== workspaceRoot) continue;
+      const store = this.#config.storeManager.get(execution.sessionId, workspaceRoot);
+      if (store?.getState().parentSessionId === parentSessionId) count += 1;
+    }
+    return count;
+  }
+
+  #appendChildLinkStatus(
+    workspaceRoot: string,
+    request: ChildExecutionRequest,
+    childSessionId: string,
+    childAgentName: string,
+    depth: number,
+    status: ToolChildSessionLinkStatus,
+    title: string | undefined,
+  ): void {
+    const run = this.#config.storeManager.get(childSessionId, workspaceRoot)?.getState().executions.at(-1);
+    request.parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: request.parentSessionId,
+        parentToolCallId: request.parentToolCallId,
+        toolName: request.toolName,
+        childSessionId,
+        childAgentName,
+        ...(title === undefined ? {} : { title }),
+        ...(request.description === undefined ? {} : { description: request.description }),
+        depth,
+        background: request.background ?? false,
+        status,
+        createdAt: Date.now(),
+        ...(run?.startedAt === undefined ? {} : { startedAt: run.startedAt }),
+        ...(run?.endedAt === undefined ? {} : { endedAt: run.endedAt }),
+        ...(run?.durationMs === undefined ? {} : { durationMs: run.durationMs }),
+        ...(run?.error === undefined ? {} : { error: run.error }),
+      },
+    });
+  }
+}
+
+type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled"> | "interrupted";
+
+function wireAbortCascade(parentAbort: AbortSignal | undefined, childController: AbortController): () => void {
+  if (parentAbort === undefined) return () => {};
+  const onAbort = () => childController.abort(parentAbort.reason);
+  if (parentAbort.aborted) {
+    onAbort();
+    return () => {};
+  }
+  parentAbort.addEventListener("abort", onAbort, { once: true });
+  return () => parentAbort.removeEventListener("abort", onAbort);
+}
+
+function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: AbortSignal): SubAgentTerminalStatus {
+  if (run?.status === "completed") return "completed";
+  if (run?.status === "timed_out") return "timed_out";
+  if (run?.status === "cancelled") return "cancelled";
+  if (run?.status === "failed") return "failed";
+  if (signal.aborted) {
+    const reason = signal.reason;
+    if (reason instanceof Error && /timed out/i.test(reason.message)) return "timed_out";
+    return "cancelled";
+  }
+  return "failed";
+}
+
+function appendTerminalReminder(
+  parentStore: StoreApi<SessionStoreState>,
+  sessionId: string,
+  status: SubAgentTerminalStatus,
+): void {
+  const reminder: Reminder = {
+    id: crypto.randomUUID(),
+    source: status === "completed"
+      ? { type: "subagent_completed", sessionId }
+      : status === "timed_out"
+        ? { type: "subagent_timed_out", sessionId }
+        : status === "cancelled"
+          ? { type: "subagent_cancelled", sessionId }
+          : { type: "subagent_failed", sessionId },
+    delivery: "on_demand",
+    sessionId,
+    terminalState: status,
+    content: `Sub-agent ${sessionId} ${formatStatus(status)}. Use background_output(session_id="${sessionId}") to read the result.`,
+    createdAt: Date.now(),
+    consumedAt: null,
+    targetSessionId: parentStore.getState().sessionId,
+  };
+  parentStore.getState().append({ type: "reminder", reminder });
+}
+
+function formatStatus(status: SubAgentTerminalStatus): string {
+  if (status === "timed_out") return "timed out";
+  return status;
+}
+
+function toAgentResult(store: StoreApi<SessionStoreState>): AgentResult {
+  return { text: getLastAssistantText(store.getState().messages), steps: store.getState().steps.length };
+}
+
+function getLastAssistantText(messages: readonly StoredMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    const text = message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    if (text.length > 0) return text;
+  }
+  return "";
 }
 
 async function waitForExecutionToStop(execution: ActiveSessionExecution | PendingSessionExecution): Promise<void> {

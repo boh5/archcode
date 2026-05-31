@@ -1,4 +1,4 @@
-export type { AgentFactoryLike, AgentRunHandle, DelegateAgentOptions } from "../delegation/types";
+export type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 
 export type AgentName = "orchestrator" | "explore" | (string & {});
 

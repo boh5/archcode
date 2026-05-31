@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { AgentRunningError, ProjectRegistry, silentLogger } from "@specra/agent-core";
 import type { ActiveSessionExecution, SpecraRuntime } from "@specra/agent-core";
 import { createServerApp } from "../app";
+import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "messages-routes");
 
@@ -74,6 +75,7 @@ async function createTestApp(testName: string) {
   return {
     app: createServerApp(runtime, { dev: true }).app,
     project,
+    runtime,
   };
 }
 
@@ -99,6 +101,34 @@ describe("messages routes", () => {
 
     expect(res.status).toBe(202);
     expect(body).toEqual({ ok: true });
+  });
+
+  test("POST message wires runtime session events into global event bus", async () => {
+    const { app, project, runtime } = await createTestApp("session-events");
+    const received: unknown[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => received.push(event));
+
+    const res = await app.request(`/api/projects/${project.slug}/sessions/session-events/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text: "Hello" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(202);
+    expect(runtime.subscribeSessionEvents).toHaveBeenCalledWith({
+      slug: project.slug,
+      workspaceRoot: project.workspaceRoot,
+      sessionId: "session-events",
+      onEvent: expect.any(Function),
+    });
+
+    const subscribeMock = runtime.subscribeSessionEvents as unknown as {
+      mock: { calls: Array<[{ onEvent: (event: { type: "shutdown"; reason: string }) => void }]> };
+    };
+    subscribeMock.mock.calls[0]?.[0]?.onEvent({ type: "shutdown", reason: "test" });
+    unsubscribe();
+
+    expect(received).toContainEqual({ type: "shutdown", reason: "test" });
   });
 
   test("POST message with missing text returns 400", async () => {

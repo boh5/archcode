@@ -239,6 +239,7 @@ export async function createSpecraRuntime(
       untrackSession,
       logger,
     });
+    sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
 
     return {
       mcpManager,

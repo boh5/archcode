@@ -1,5 +1,4 @@
 import type { SpecraRuntime } from "@specra/agent-core";
-import { AgentRunner } from "./agent-runner";
 import { globalEventBus } from "./events/global-event-bus";
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
@@ -31,7 +30,6 @@ export interface GracefulShutdownHandle {
 
 export function setupGracefulShutdown(
   server: LifecycleServer,
-  agentRunner: AgentRunner,
   runtime: SpecraRuntime,
   options: GracefulShutdownOptions = {},
 ): GracefulShutdownHandle {
@@ -44,7 +42,7 @@ export function setupGracefulShutdown(
   const shutdown = async (_signal?: ShutdownSignal): Promise<number> => {
     if (shutdownPromise) return await shutdownPromise;
 
-    shutdownPromise = runShutdown(server, agentRunner, runtime, timeoutMs, log, error);
+    shutdownPromise = runShutdown(server, runtime, timeoutMs, log, error);
     const exitCode = await shutdownPromise;
     processRef.exit(exitCode);
     return exitCode;
@@ -70,7 +68,6 @@ export function setupGracefulShutdown(
 
 async function runShutdown(
   server: LifecycleServer,
-  agentRunner: AgentRunner,
   runtime: SpecraRuntime,
   timeoutMs: number,
   log: (message: string) => void,
@@ -82,7 +79,7 @@ async function runShutdown(
   const timeout = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs);
   });
-  const result = await Promise.race([agentRunner.abortAll().then(() => "completed" as const), timeout]);
+  const result = await Promise.race([runtime.abortAllSessionExecutions().then(() => "completed" as const), timeout]);
   const exitCode = result === "timeout" ? 1 : 0;
 
   if (result === "timeout") {

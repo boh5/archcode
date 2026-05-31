@@ -33,6 +33,15 @@ function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
 }
 
+function createSkillServiceWithBuiltins(): SkillService {
+  return new SkillService({
+    builtinSkills: {
+      "git-master": "---\nname: git-master\ndescription: Git helper\nwhen_to_use: Use for git operations.\n---\nUse git carefully.",
+      codemap: "---\nname: codemap\ndescription: Code map helper\nwhen_to_use: Use before implementation.\n---\nMap code first.",
+    },
+  });
+}
+
 function makeProviderRegistry(): ProviderRegistry {
   const fallbackModel = new ModelInfo({
     model: {} as ConstructorParameters<typeof ModelInfo>[0]["model"],
@@ -92,7 +101,7 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 
 function makeFactory(
   definitions: readonly AgentDefinition[] = [definition()],
-  options: { providerRegistry?: ProviderRegistry; config?: Partial<SpecraConfig> } = {},
+  options: { providerRegistry?: ProviderRegistry; config?: Partial<SpecraConfig>; skillService?: SkillService } = {},
 ) {
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
   const config: SpecraConfig = {
@@ -112,7 +121,7 @@ function makeFactory(
     ...EXPLORER_READ_ONLY_TOOLS.map(makeTool),
     ...DELEGATION_TOOLS.map(makeTool),
   ]),
-  skillService: createTestSkillService(),
+  skillService: options.skillService ?? createTestSkillService(),
   storeManager,
   workspaceRoot: import.meta.dir,
   config, logger: silentLogger });
@@ -420,5 +429,15 @@ describe("createAgentFactory", () => {
     // depth 3 (>= MAX_SUB_AGENT_DEPTH): delegation stripped, targets empty
     expect(factory.getDelegateTargetsFor(depthFilteredDefinition, 3)).toEqual([]);
     expect(factory.getDelegateTargetsFor(explicitWithoutDelegate, 0)).toEqual([]);
+  });
+
+  test("resolves delegated skills with target allow-list validation and dedupe", async () => {
+    const target = definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools }, skills: ["codemap", "git-master"] });
+    const factory = makeFactory([definition(), target], { skillService: createSkillServiceWithBuiltins() });
+
+    const skills = await factory.resolveDelegatedSkills(target, ["codemap", "git-master", "codemap"]);
+
+    expect(skills.map((skill) => skill.metadata.name)).toEqual(["codemap", "git-master"]);
+    await expect(factory.resolveDelegatedSkills(target, ["research-docs"])).rejects.toThrow("Skill \"research-docs\" is not allowed");
   });
 });

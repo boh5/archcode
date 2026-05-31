@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { SpecraRuntime } from "@specra/agent-core";
-import type { AgentRunner } from "./agent-runner";
 import { globalEventBus } from "./events/global-event-bus";
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
 
@@ -31,24 +30,20 @@ function createProcess() {
   return { handlers, processRef };
 }
 
-function makeRuntime(): SpecraRuntime {
+function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): SpecraRuntime {
   return {
+    abortAllSessionExecutions,
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as SpecraRuntime;
-}
-
-function makeRunner(abortAll = mock(async () => undefined)): AgentRunner {
-  return { abortAll } as unknown as AgentRunner;
 }
 
 describe("server lifecycle", () => {
   test("setupGracefulShutdown registers signal handlers", () => {
     const { handlers, processRef } = createProcess();
     const server = { stop: mock(() => undefined) };
-    const runner = makeRunner();
     const runtime = makeRuntime();
 
-    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef });
+    const handle = setupGracefulShutdown(server, runtime, { process: processRef });
 
     expect(processRef.on).toHaveBeenCalledWith("SIGINT", expect.any(Function));
     expect(processRef.on).toHaveBeenCalledWith("SIGTERM", expect.any(Function));
@@ -62,8 +57,7 @@ describe("server lifecycle", () => {
 
   test("shutdown pushes SSE shutdown, aborts, waits, stops, then exits", async () => {
     const order: string[] = [];
-    const runtime = makeRuntime();
-    const runner = makeRunner(mock(async () => {
+    const runtime = makeRuntime(mock(async () => {
       order.push("abort");
       order.push("wait");
     }));
@@ -76,30 +70,41 @@ describe("server lifecycle", () => {
       throw new ExitError(code);
     });
 
-    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef, log: () => undefined });
+    const handle = setupGracefulShutdown(server, runtime, { process: processRef, log: () => undefined });
     expect(handlers.has("SIGTERM")).toBe(true);
-    await expect(handle.shutdown("SIGTERM")).rejects.toMatchObject({ name: "ExitError", code: 0 });
+    await expectExitCode(handle.shutdown("SIGTERM"), 0);
     unsubscribeGlobalEvents();
 
     expect(runtime.notifyRuntimeShutdown).toHaveBeenCalledWith("server_shutdown");
+    expect(runtime.abortAllSessionExecutions).toHaveBeenCalled();
     expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
     expect(order).toEqual(["abort", "wait", "stop", "exit:0"]);
   });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {
     const server = { stop: mock(() => undefined) };
-    const runtime = makeRuntime();
-    const runner = makeRunner(mock(async () => {
+    const runtime = makeRuntime(mock(async () => {
       await new Promise(() => undefined);
     }));
     const { handlers, processRef } = createProcess();
     const error = mock((_message: string) => undefined);
 
-    const handle = setupGracefulShutdown(server, runner, runtime, { process: processRef, timeoutMs: 1, log: () => undefined, error });
+    const handle = setupGracefulShutdown(server, runtime, { process: processRef, timeoutMs: 1, log: () => undefined, error });
     expect(handlers.has("SIGINT")).toBe(true);
 
-    await expect(handle.shutdown("SIGINT")).rejects.toMatchObject({ name: "ExitError", code: 1 });
+    await expectExitCode(handle.shutdown("SIGINT"), 1);
     expect(error).toHaveBeenCalledWith("Graceful shutdown timed out after 1ms");
     expect(server.stop).toHaveBeenCalled();
   });
 });
+
+async function expectExitCode(promise: Promise<number>, code: number): Promise<void> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toMatchObject({ name: "ExitError", code });
+    return;
+  }
+
+  throw new Error("Expected shutdown to exit the process");
+}

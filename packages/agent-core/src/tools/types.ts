@@ -4,7 +4,7 @@ import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { ToolErrorKind } from "./errors";
 import type { ZodTypeAny } from "zod";
-import type { AgentFactoryLike } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
@@ -46,7 +46,7 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
-  agentFactory?: AgentFactoryLike;
+  startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   currentDepth?: number;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
   onInputResolved?: (redactedInput: unknown) => void;

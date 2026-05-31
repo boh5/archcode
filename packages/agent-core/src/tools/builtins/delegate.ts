@@ -4,7 +4,7 @@ import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext } from "../types";
 import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
-import type { AgentRunHandle } from "../../delegation/types";
+import type { ChildExecutionHandle } from "../../delegation/types";
 import type { SessionExecutionRecord } from "@specra/protocol";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
@@ -32,21 +32,23 @@ export interface DelegateErrorOutput {
 }
 
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
-  if (ctx.agentFactory === undefined) {
+  if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
       kind: "execution",
-      code: "TOOL_DELEGATE_FACTORY_UNAVAILABLE",
+      code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
       name: "SubAgentError",
-      message: "AgentFactory is not available in this execution context",
+      message: "Child execution is not available in this execution context",
       details: { ok: false, session_id: "" } satisfies Pick<DelegateErrorOutput, "ok" | "session_id">,
     });
   }
 
-  let handle: AgentRunHandle;
+  let handle: ChildExecutionHandle;
   try {
-    handle = await ctx.agentFactory.delegate({
+    handle = await ctx.startChildExecution({
       parentStore: ctx.store,
-      parentAgentName: ctx.agentName ?? "orchestrator",
+      parentSessionId: ctx.store.getState().sessionId,
+      parentToolCallId: ctx.toolCallId,
+      toolName: ctx.toolName,
       targetAgentName: input.agent_type,
       prompt: input.prompt,
       skills: input.skills,
@@ -89,7 +91,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
 interface DelegateOutputOptions {
   readonly input: DelegateInput;
   readonly ctx: ToolExecutionContext;
-  readonly handle: AgentRunHandle;
+  readonly handle: ChildExecutionHandle;
 }
 
 interface SyncDelegateOutputOptions extends DelegateOutputOptions {

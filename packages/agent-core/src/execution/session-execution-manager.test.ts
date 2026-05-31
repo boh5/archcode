@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@specra/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
-import { AgentRunningError, ConcurrentSessionLimitError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { CommandResult } from "../commands/types";
 import type { AskUserResponse } from "../deferred";
@@ -15,6 +15,8 @@ import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } 
 import { SessionExecutionManager } from "./session-execution-manager";
 import { silentLogger } from "../logger";
 import type { ToolChildSessionLink } from "../store/types";
+import type { AgentFactory } from "../agents/factory";
+import type { AgentDefinition } from "../agents/factory-types";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -76,6 +78,8 @@ class MockAgent implements Agent {
 interface FakeManagerOptions {
   maxConcurrentSessions?: number;
   storeManager?: SessionStoreManager;
+  factory?: AgentFactory;
+  childRun?: Promise<AgentResult>;
 }
 
 function createFakeManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}): SessionAgentManager {
@@ -100,8 +104,53 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
       const active = activeByWorkspace.get(root);
       active?.delete(sessionId);
     }),
+    getFactory: mock(() => options.factory),
+    createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
+      const childAgent = {
+        store: input.store,
+        run: mock(async (_message: string, runOptions?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
+          const signal = runOptions instanceof AbortSignal ? runOptions : runOptions?.abort;
+          signal?.throwIfAborted();
+          input.store.getState().append({ type: "text-start" });
+          input.store.getState().append({ type: "text-delta", text: "child result" });
+          input.store.getState().append({ type: "text-end" });
+          if (options.childRun) return await withAbort(options.childRun, signal);
+          return { text: "child result", steps: 1 };
+        }),
+        dispose: mock(() => undefined),
+      } as unknown as MockAgent;
+      agents[input.sessionId] = childAgent;
+      return childAgent;
+    }),
     dispose: mock(() => undefined),
   } as unknown as SessionAgentManager;
+}
+
+function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
+  const parentDefinition: AgentDefinition = {
+    name: "orchestrator",
+    promptProfileId: "default",
+    tools: { tools: ["delegate"], delegateTargets: ["explore"] },
+    hooks: { autoCompact: false, autoInjectReminder: false, todoContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
+    childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
+    includeMemoryInPrompt: false,
+    skills: [],
+  };
+  const childDefinition: AgentDefinition = { ...parentDefinition, name: "explore", tools: { tools: [] }, childPolicy: undefined };
+  return {
+    createRootAgent: mock(() => { throw new Error("unused"); }),
+    createAgent: mock(() => { throw new Error("unused"); }),
+    getDefinition: mock((name: string) => {
+      if (name === "orchestrator") return parentDefinition;
+      if (name === "explore") return childDefinition;
+      throw new Error(`Unknown agent definition: ${name}`);
+    }),
+    listAgentNames: mock(() => ["orchestrator", "explore"]),
+    resolveAllowedTools: mock((definition: AgentDefinition) => definition.tools.tools),
+    getDelegateTargetsFor: mock((definition: AgentDefinition) => definition.tools.delegateTargets ?? []),
+    resolveDelegatedSkills: mock(async () => []),
+    ...overrides,
+  } as AgentFactory;
 }
 
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
@@ -341,6 +390,93 @@ describe("SessionExecutionManager", () => {
 
     expect(requestPermission).toHaveBeenCalled();
     expect(requestQuestion).toHaveBeenCalled();
+  });
+
+  test("startChildExecution validates through factory and runs a child session", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const factory = makeFactory();
+    const { manager, sessionAgentManager } = createManager({}, { factory });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      description: "Inspect files",
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    await handle.result;
+
+    expect(sessionAgentManager.createChildAgent).toHaveBeenCalled();
+    expect(handle.store.getState().parentSessionId).toBe(parentId);
+    expect(handle.store.getState().agentName).toBe("explore");
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      parentSessionId: parentId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      childSessionId: handle.sessionId,
+      childAgentName: "explore",
+      description: "Inspect files",
+      depth: 1,
+      background: false,
+      status: "completed",
+    });
+  });
+
+  test("startChildExecution enforces delegate targets and child concurrency", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const factory = makeFactory();
+    const childRun = new Promise<AgentResult>(() => undefined);
+    const { manager } = createManager({}, { factory, childRun });
+
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "bad-target",
+      toolName: "delegate",
+      targetAgentName: "writer",
+      prompt: "inspect",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(DelegateTargetNotAllowedError);
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "first",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    await expect(manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "second",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "inspect",
+      skills: [],
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(ConcurrentLimitError);
+    first.abort();
+    await first.result;
   });
 
   test("dispatchCommand only dispatches for active executions", async () => {

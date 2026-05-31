@@ -6,6 +6,7 @@ import { scopedKey } from "../store/key";
 import type { SessionStoreState } from "../store/types";
 import type { ToolRegistry } from "../tools/index";
 import type { SkillService } from "../skills";
+import type { ResolvedSkill } from "../skills/types";
 import type { StoreApi } from "zustand";
 import { ConcurrentSessionLimitError } from "./errors";
 import { createAgentFactory } from "./factory";
@@ -14,6 +15,7 @@ import type { AgentDefinition } from "./factory-types";
 import type { Agent } from "./types";
 import type { CommandResult } from "../commands/types";
 import type { Logger } from "../logger";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -25,6 +27,7 @@ export interface SessionAgentManagerConfig {
   readonly maxConcurrentSessions?: number;
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
+  readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly logger: Logger;
 }
 
@@ -41,13 +44,19 @@ export class SessionAgentManager {
   readonly tombstoneTtlMs: number;
   readonly #storeManager: SessionStoreManager;
   readonly #logger: Logger;
+  #startChildExecution: SessionAgentManagerConfig["startChildExecution"];
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
     this.#storeManager = config.storeManager;
     this.#logger = config.logger;
+    this.#startChildExecution = config.startChildExecution;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
+  }
+
+  setStartChildExecution(callback: SessionAgentManagerConfig["startChildExecution"]): void {
+    this.#startChildExecution = callback;
   }
 
   async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
@@ -83,7 +92,7 @@ export class SessionAgentManager {
   }
 
   async #createAgent(workspaceRoot: string, sessionId: string): Promise<Agent> {
-    const factory = this.#getFactory(workspaceRoot);
+    const factory = this.getFactory(workspaceRoot);
     let store: StoreApi<SessionStoreState>;
     try {
       store = await this.#storeManager.getOrLoad(sessionId, workspaceRoot);
@@ -91,6 +100,32 @@ export class SessionAgentManager {
       store = this.#storeManager.create(sessionId, workspaceRoot);
     }
     return factory.createRootAgent("orchestrator", { store });
+  }
+
+  createChildAgent(input: {
+    workspaceRoot: string;
+    sessionId: string;
+    agentName: string;
+    store: StoreApi<SessionStoreState>;
+    depth: number;
+    parentSessionId: string;
+    title?: string;
+    activeSkills?: readonly ResolvedSkill[];
+  }): Agent {
+    const key = scopedKey(input.workspaceRoot, input.sessionId);
+    const existing = this.#agents.get(key);
+    if (existing) return existing;
+
+    const factory = this.getFactory(input.workspaceRoot);
+    const agent = factory.createAgent(input.agentName, {
+      store: input.store,
+      depth: input.depth,
+      parentSessionId: input.parentSessionId,
+      ...(input.title === undefined ? {} : { title: input.title }),
+      activeSkills: input.activeSkills,
+    });
+    this.#agents.set(key, agent);
+    return agent;
   }
 
   get(workspaceRoot: string, sessionId: string): Agent | undefined {
@@ -167,7 +202,7 @@ export class SessionAgentManager {
       .map(([, agent]) => agent);
   }
 
-  #getFactory(workspaceRoot: string): AgentFactory {
+  getFactory(workspaceRoot: string): AgentFactory {
     let factory = this.#factories.get(workspaceRoot);
     if (!factory) {
       factory = createAgentFactory({
@@ -179,6 +214,12 @@ export class SessionAgentManager {
         workspaceRoot,
         config: this.#config.config,
         projectContextResolver: this.#config.projectContextResolver,
+        startChildExecution: (request) => {
+          if (this.#startChildExecution === undefined) {
+            return Promise.reject(new Error("Child execution is not available in this session agent manager"));
+          }
+          return this.#startChildExecution(workspaceRoot, request);
+        },
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);

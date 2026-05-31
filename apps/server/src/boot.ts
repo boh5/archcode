@@ -5,7 +5,7 @@ import { startServer } from "./listen";
 
 export async function bootServer(runtime: SpecraRuntime): Promise<void> {
   const dev = !Bun.env.SPECRA_SERVER_PASSWORD;
-  const { app, agentRunner } = createServerApp(runtime, {
+  const { app } = createServerApp(runtime, {
     dev,
     password: Bun.env.SPECRA_SERVER_PASSWORD,
   });
@@ -14,7 +14,7 @@ export async function bootServer(runtime: SpecraRuntime): Promise<void> {
     port: parseInt(Bun.env.SPECRA_PORT ?? "4096", 10) || undefined,
   });
 
-  setupGracefulShutdown(server, agentRunner, runtime);
+  setupGracefulShutdown(server, runtime);
 
   console.info(`Specra server running at ${url}`);
 

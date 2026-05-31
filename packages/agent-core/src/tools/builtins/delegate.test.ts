@@ -1,24 +1,24 @@
 import { describe, expect, it } from "bun:test";
 import { DelegateTargetNotAllowedError, SubAgentError } from "../../agents/errors";
-import type { AgentFactoryLike, DelegateAgentOptions } from "../../delegation/types";
+import type { ChildExecutionRequest } from "../../delegation/types";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { TOOL_ERROR_META_KEY } from "../errors";
 import { DelegateInputSchema, executeDelegate } from "./delegate";
 import { createTestProjectContext } from "../test-project-context";
 
-class ToolStubFactory implements AgentFactoryLike {
-  lastOptions: DelegateAgentOptions | undefined;
+class ToolStubExecutor {
+  lastRequest: ChildExecutionRequest | undefined;
   readonly store = storeManager.create(`delegate-child-${crypto.randomUUID()}`);
 
-  async delegate(options: DelegateAgentOptions) {
-    this.lastOptions = options;
-    this.store.getState().setParentSessionId(options.parentStore.getState().sessionId);
+  async start(request: ChildExecutionRequest) {
+    this.lastRequest = request;
+    this.store.getState().setParentSessionId(request.parentStore.getState().sessionId);
     this.store.getState().append({ type: "execution-start", executionId: "delegate-run" });
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: "delegated output" });
     this.store.getState().append({ type: "text-end" });
-    if (options.background !== true) {
+    if (request.background !== true) {
       this.store.getState().append({ type: "execution-end", status: "completed" });
     }
     return {
@@ -30,16 +30,16 @@ class ToolStubFactory implements AgentFactoryLike {
   }
 }
 
-class FailingChildFactory extends ToolStubFactory {
-  async delegate(options: DelegateAgentOptions) {
-    this.lastOptions = options;
+class FailingChildExecutor extends ToolStubExecutor {
+  async start(request: ChildExecutionRequest) {
+    this.lastRequest = request;
     const state = this.store.getState();
-    state.setParentSessionId(options.parentStore.getState().sessionId);
+    state.setParentSessionId(request.parentStore.getState().sessionId);
     state.append({ type: "execution-start", executionId: "delegate-run" });
     state.append({ type: "text-start" });
     state.append({ type: "text-delta", text: "delegated output" });
     state.append({ type: "text-end" });
-    if (options.background !== true) state.append({ type: "execution-end", status: "failed", error: "child failed" });
+    if (request.background !== true) state.append({ type: "execution-end", status: "failed", error: "child failed" });
     return {
       sessionId: state.sessionId,
       store: this.store,
@@ -88,20 +88,20 @@ describe("delegate tool", () => {
   });
 
   it("sync delegation waits and returns formatted result with metadata", async () => {
-    const factory = new ToolStubFactory();
+    const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
-      makeContext({ agentFactory: factory, currentDepth: 1, store: parentStore }),
+      makeContext({ startChildExecution: (request) => executor.start(request), currentDepth: 1, store: parentStore }),
     );
 
     expect((result as string).startsWith("Sub-agent completed.\n")).toBe(true);
     expect(result).toContain("Agent type: explore");
-    expect(result).toContain(`Session ID: ${factory.store.getState().sessionId}`);
+    expect(result).toContain(`Session ID: ${executor.store.getState().sessionId}`);
     expect(result).toContain("Status: completed");
     expect(result).toContain("Duration: ");
     expect(result).toContain("Result:\ndelegated output");
-    expect(metadataBlock(result as string)).toContain(`session_id: ${factory.store.getState().sessionId}`);
+    expect(metadataBlock(result as string)).toContain(`session_id: ${executor.store.getState().sessionId}`);
     expect(metadataBlock(result as string)).toContain(`parent_session_id: ${parentStore.getState().sessionId}`);
     expect(metadataBlock(result as string)).toContain("agent_type: explore");
     expect(metadataBlock(result as string)).toContain("description: Scan");
@@ -110,28 +110,30 @@ describe("delegate tool", () => {
     expect(metadataBlock(result as string)).toContain("started_at: ");
     expect(metadataBlock(result as string)).toContain("ended_at: ");
     expect(metadataBlock(result as string)).toContain("duration_ms: ");
-    expect(factory.lastOptions?.parentAgentName).toBe("orchestrator");
-    expect(factory.lastOptions?.targetAgentName).toBe("explore");
-    expect(factory.lastOptions?.prompt).toBe("inspect");
-    expect(factory.lastOptions?.skills).toEqual([]);
-    expect(factory.lastOptions?.currentDepth).toBe(1);
-    expect(factory.lastOptions?.background).toBe(false);
+    expect(executor.lastRequest?.parentSessionId).toBe(parentStore.getState().sessionId);
+    expect(executor.lastRequest?.parentToolCallId).toBe("delegate-call");
+    expect(executor.lastRequest?.toolName).toBe("delegate");
+    expect(executor.lastRequest?.targetAgentName).toBe("explore");
+    expect(executor.lastRequest?.prompt).toBe("inspect");
+    expect(executor.lastRequest?.skills).toEqual([]);
+    expect(executor.lastRequest?.currentDepth).toBe(1);
+    expect(executor.lastRequest?.background).toBe(false);
   });
 
   it("async delegation returns launch text with metadata", async () => {
-    const factory = new ToolStubFactory();
+    const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: ["codemap"], description: "Scan", background: true },
-      makeContext({ agentFactory: factory, store: parentStore }),
+      makeContext({ startChildExecution: (request) => executor.start(request), store: parentStore }),
     );
 
     expect((result as string).startsWith("Sub-agent started.\n")).toBe(true);
     expect(result).toContain("Agent type: explore");
-    expect(result).toContain(`Session ID: ${factory.store.getState().sessionId}`);
+    expect(result).toContain(`Session ID: ${executor.store.getState().sessionId}`);
     expect(result).toContain("Status: running");
-    expect(result).toContain(`Use background_output(session_id="${factory.store.getState().sessionId}") to read the result.`);
-    expect(metadataBlock(result as string)).toContain(`session_id: ${factory.store.getState().sessionId}`);
+    expect(result).toContain(`Use background_output(session_id="${executor.store.getState().sessionId}") to read the result.`);
+    expect(metadataBlock(result as string)).toContain(`session_id: ${executor.store.getState().sessionId}`);
     expect(metadataBlock(result as string)).toContain(`parent_session_id: ${parentStore.getState().sessionId}`);
     expect(metadataBlock(result as string)).toContain("agent_type: explore");
     expect(metadataBlock(result as string)).toContain("description: Scan");
@@ -139,16 +141,16 @@ describe("delegate tool", () => {
     expect(metadataBlock(result as string)).toContain("background: true");
     expect(metadataBlock(result as string)).toContain("ended_at: ");
     expect(metadataBlock(result as string)).toContain("duration_ms: ");
-    expect(factory.lastOptions?.description).toBe("Scan");
-    expect(factory.lastOptions?.background).toBe(true);
-    expect(factory.lastOptions?.skills).toEqual(["codemap"]);
+    expect(executor.lastRequest?.description).toBe("Scan");
+    expect(executor.lastRequest?.background).toBe(true);
+    expect(executor.lastRequest?.skills).toEqual(["codemap"]);
   });
 
   it("sync delegation formats child terminal failures instead of returning a tool error", async () => {
-    const factory = new FailingChildFactory();
+    const executor = new FailingChildExecutor();
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
-      makeContext({ agentFactory: factory }),
+      makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
 
     expect(typeof result).toBe("string");
@@ -161,10 +163,10 @@ describe("delegate tool", () => {
   });
 
   it("keeps delegate metadata limited to stable v1 fields", async () => {
-    const factory = new ToolStubFactory();
+    const executor = new ToolStubExecutor();
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
-      makeContext({ agentFactory: factory }),
+      makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
     const metadata = metadataBlock(result as string);
 
@@ -180,7 +182,7 @@ describe("delegate tool", () => {
     expect(metadata).not.toContain("result_text");
   });
 
-  it("returns structured error when factory context is missing", async () => {
+  it("returns structured error when child execution context is missing", async () => {
     const result = await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], background: false },
       makeContext(),
@@ -191,22 +193,20 @@ describe("delegate tool", () => {
     expect(errorResult.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     expect(JSON.parse(errorResult.output)).toMatchObject({
       name: "SubAgentError",
-      code: "TOOL_DELEGATE_FACTORY_UNAVAILABLE",
-      message: "AgentFactory is not available in this execution context",
+      code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
+      message: "Child execution is not available in this execution context",
       details: { ok: false, session_id: "" },
     });
   });
 
-  it("returns structured error when factory rejects a disallowed target", async () => {
-    const factory: AgentFactoryLike = {
-      async delegate() {
-        throw new DelegateTargetNotAllowedError("orchestrator", "writer", 0);
-      },
+  it("returns structured error when child execution rejects a disallowed target", async () => {
+    const startChildExecution = async () => {
+      throw new DelegateTargetNotAllowedError("orchestrator", "writer", 0);
     };
 
     const result = await executeDelegate(
       { agent_type: "writer", prompt: "inspect", skills: [], background: false },
-      makeContext({ agentFactory: factory }),
+      makeContext({ startChildExecution }),
     );
 
     const errorResult = result as ToolExecutionResult;
@@ -227,8 +227,8 @@ describe("delegate tool", () => {
     });
   });
 
-  it("forwards title and description to the factory", async () => {
-    const factory = new ToolStubFactory();
+  it("forwards title and description to child execution", async () => {
+    const executor = new ToolStubExecutor();
     const parentAbort = new AbortController();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
 
@@ -241,12 +241,14 @@ describe("delegate tool", () => {
         description: "Scan repository",
         background: false,
       },
-      makeContext({ agentFactory: factory, store: parentStore, abort: parentAbort.signal, agentName: "explore" }),
+      makeContext({ startChildExecution: (request) => executor.start(request), store: parentStore, abort: parentAbort.signal, agentName: "explore" }),
     );
 
-    expect(factory.lastOptions).toMatchObject({
+    expect(executor.lastRequest).toMatchObject({
       parentStore,
-      parentAgentName: "explore",
+      parentSessionId: parentStore.getState().sessionId,
+      parentToolCallId: "delegate-call",
+      toolName: "delegate",
       targetAgentName: "explore",
       prompt: "inspect",
       skills: ["research-docs"],
@@ -259,13 +261,13 @@ describe("delegate tool", () => {
   });
 
   it("uses description as delegated title when title is omitted", async () => {
-    const factory = new ToolStubFactory();
+    const executor = new ToolStubExecutor();
 
     await executeDelegate(
       { agent_type: "explore", prompt: "inspect", skills: [], description: "Fallback Title", background: false },
-      makeContext({ agentFactory: factory }),
+      makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
 
-    expect(factory.lastOptions?.title).toBe("Fallback Title");
+    expect(executor.lastRequest?.title).toBe("Fallback Title");
   });
 });

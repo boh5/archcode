@@ -7,7 +7,7 @@ import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
-import type { AgentFactoryLike } from "../../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
 import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
@@ -32,7 +32,7 @@ export interface QueryLoopOptions {
   maxSteps?: number;
   store: StoreApi<SessionStoreState>;
   commandRegistry?: CommandRegistry;
-  agentFactory?: AgentFactoryLike;
+  startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   agentName?: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;

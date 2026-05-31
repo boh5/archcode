@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { AgentRunner } from "./agent-runner";
 import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
@@ -28,8 +27,9 @@ export interface CreateServerAppOptions {
 export function createServerApp(
   runtime: SpecraRuntime,
   options: CreateServerAppOptions = {},
-): { app: Hono; agentRunner: AgentRunner } {
+): { app: Hono } {
   const app = new Hono();
+  const serverRuntime = createServerEventRuntime(runtime);
 
   app.onError(errorHandler);
   app.use("*", requestLogger());
@@ -71,17 +71,16 @@ export function createServerApp(
 
   app.get("/api/health", (c) => c.json({ ok: true }));
 
-  const projects = createProjectsRoutes(runtime);
-  const agentRunner = new AgentRunner(runtime);
-  const sessions = createSessionsRoutes(runtime);
-  const messages = createMessagesRoutes(runtime, agentRunner);
+  const projects = createProjectsRoutes(serverRuntime);
+  const sessions = createSessionsRoutes(serverRuntime);
+  const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
-  const permissions = createPermissionRoutes(new PermissionService(runtime));
-  const questions = createQuestionsRoutes(new AskUserService(runtime));
-  const commands = createCommandsRoutes(runtime, agentRunner);
+  const permissions = createPermissionRoutes(new PermissionService(serverRuntime));
+  const questions = createQuestionsRoutes(new AskUserService(serverRuntime));
+  const commands = createCommandsRoutes(serverRuntime);
   const agents = new Hono();
-  const workflow = createWorkflowRoutes(runtime);
-  const files = createFilesRoutes(runtime);
+  const workflow = createWorkflowRoutes(serverRuntime);
+  const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
 
   app.route("/api/projects", projects);
@@ -104,5 +103,28 @@ export function createServerApp(
     app.use("/*", createEmbeddedAssetHandler());
   }
 
-  return { app, agentRunner };
+  return { app };
+}
+
+function createServerEventRuntime(runtime: SpecraRuntime): SpecraRuntime {
+  return {
+    ...runtime,
+    startSessionExecution(input) {
+      const unsubscribe = runtime.subscribeSessionEvents({
+        slug: input.slug,
+        workspaceRoot: input.workspaceRoot,
+        sessionId: input.sessionId,
+        onEvent: (event) => globalEventBus.emit(event),
+      });
+
+      try {
+        const execution = runtime.startSessionExecution(input);
+        void execution.promise.finally(unsubscribe);
+        return execution;
+      } catch (error) {
+        unsubscribe();
+        throw error;
+      }
+    },
+  };
 }

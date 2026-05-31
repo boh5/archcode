@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { AgentRunningError, ConcurrentSessionLimitError } from "@specra/agent-core";
 import type { SpecraRuntime } from "@specra/agent-core";
-import { AgentRunner } from "../agent-runner";
 import {
   BadRequestError,
   ConcurrentSessionLimitHttpError,
@@ -20,7 +19,7 @@ class AgentAlreadyRunningError extends ServerError {
   }
 }
 
-export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
+export function createMessagesRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
 
   app.post("/messages", async (c) => {
@@ -31,7 +30,7 @@ export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const project = await resolveProject(runtime, slug);
 
     try {
-      agentRunner.start({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
+      runtime.startSessionExecution({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
       return c.json({ ok: true }, 202);
     } catch (error) {
       if (error instanceof AgentRunningError) {
@@ -48,7 +47,7 @@ export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const slug = requiredParam(c.req.param("slug"), "slug");
     const sessionId = requiredParam(c.req.param("sessionId"), "sessionId");
     const project = await resolveProject(runtime, slug);
-    const aborted = agentRunner.abort(project.workspaceRoot, sessionId);
+    const aborted = runtime.abortSessionExecution(project.workspaceRoot, sessionId);
 
     return c.json({ ok: true, aborted });
   });

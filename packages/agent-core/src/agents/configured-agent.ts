@@ -22,7 +22,7 @@ import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
-import type { AgentFactoryLike } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
 import {
   createAutoCompactHook,
@@ -53,7 +53,7 @@ export interface ConfiguredAgentOptions {
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
-  readonly agentFactory?: AgentFactoryLike;
+  readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
@@ -89,7 +89,7 @@ export class ConfiguredAgent implements Agent {
   private readonly backgroundTaskManager: BackgroundTaskManager;
   private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
-  private readonly agentFactory: AgentFactoryLike | undefined;
+  private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
@@ -126,7 +126,7 @@ export class ConfiguredAgent implements Agent {
     });
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
-    this.agentFactory = options.agentFactory;
+    this.startChildExecution = options.startChildExecution;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
@@ -217,7 +217,7 @@ export class ConfiguredAgent implements Agent {
             systemPrompt,
             store: this.store,
             commandRegistry: this.commandRegistry,
-            agentFactory: this.agentFactory,
+            startChildExecution: this.startChildExecution,
             agentName: this.definition.name,
             currentDepth: this.depth,
             hooks,

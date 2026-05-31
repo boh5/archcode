@@ -13,7 +13,7 @@ export {
   createAgentFactory,
 } from "./factory";
 export type { AgentFactory, AgentFactoryConfig, CreateAgentOptions } from "./factory";
-export type { AgentFactoryLike, AgentRunHandle, DelegateAgentOptions } from "./factory-types";
+export type { ChildExecutionHandle, ChildExecutionRequest } from "./factory-types";
 export type {
   AgentChildPolicy,
   AgentDefinition,

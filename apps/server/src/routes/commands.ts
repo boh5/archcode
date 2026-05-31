@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { SpecraRuntime } from "@specra/agent-core";
-import type { AgentRunner } from "../agent-runner";
 import { BadRequestError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
 
@@ -10,7 +9,7 @@ const CommandRequestSchema = z.object({
   args: z.string().optional(),
 }).strict();
 
-export function createCommandsRoutes(runtime: SpecraRuntime, agentRunner: AgentRunner): Hono {
+export function createCommandsRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
 
   app.post("/", async (c) => {
@@ -23,11 +22,11 @@ export function createCommandsRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     }
 
     const project = await resolveProject(runtime, slug);
-    if (!agentRunner.isRunning(project.workspaceRoot, sessionId)) {
+    if (!runtime.isSessionExecutionRunning(project.workspaceRoot, sessionId)) {
       throw new SessionNotFoundError(sessionId);
     }
 
-    const result = await agentRunner.dispatchCommand(project.workspaceRoot, sessionId, parsed.data.name, parsed.data.args);
+    const result = await runtime.dispatchCommand(project.workspaceRoot, sessionId, parsed.data.name, parsed.data.args);
     if (!result) {
       throw new SessionNotFoundError(sessionId);
     }
@@ -53,4 +52,3 @@ async function readCommandBody(bodyPromise: Promise<unknown>): Promise<unknown> 
     throw new BadRequestError("Invalid JSON body");
   }
 }
-
