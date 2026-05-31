@@ -14,12 +14,12 @@ class ToolStubFactory implements AgentFactoryLike {
   async delegate(options: DelegateAgentOptions) {
     this.lastOptions = options;
     this.store.getState().setParentSessionId(options.parentStore.getState().sessionId);
-    this.store.getState().append({ type: "run-start", runId: "delegate-run" });
+    this.store.getState().append({ type: "execution-start", executionId: "delegate-run" });
     this.store.getState().append({ type: "text-start" });
     this.store.getState().append({ type: "text-delta", text: "delegated output" });
     this.store.getState().append({ type: "text-end" });
     if (options.background !== true) {
-      this.store.getState().append({ type: "run-end", status: "completed" });
+      this.store.getState().append({ type: "execution-end", status: "completed" });
     }
     return {
       sessionId: this.store.getState().sessionId,
@@ -35,11 +35,11 @@ class FailingChildFactory extends ToolStubFactory {
     this.lastOptions = options;
     const state = this.store.getState();
     state.setParentSessionId(options.parentStore.getState().sessionId);
-    state.append({ type: "run-start", runId: "delegate-run" });
+    state.append({ type: "execution-start", executionId: "delegate-run" });
     state.append({ type: "text-start" });
     state.append({ type: "text-delta", text: "delegated output" });
     state.append({ type: "text-end" });
-    if (options.background !== true) state.append({ type: "run-end", status: "failed", error: "child failed" });
+    if (options.background !== true) state.append({ type: "execution-end", status: "failed", error: "child failed" });
     return {
       sessionId: state.sessionId,
       store: this.store,

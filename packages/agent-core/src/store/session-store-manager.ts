@@ -104,7 +104,7 @@ export class SessionStoreManager {
     };
 
     const persistForEvent = (event: SessionEventPayload) => {
-      if (event.type === "user-message" || event.type === "run-end") persist();
+      if (event.type === "user-message" || event.type === "execution-end" || event.type === "tool-child-session-link") persist();
     };
 
     store = createStore<SessionStoreState>((set, get) => ({
@@ -115,16 +115,17 @@ export class SessionStoreManager {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [],
       reminders: [],
+      childSessionLinks: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
-      runCount: 0,
+      executionCount: 0,
       lastTodoWriteStepIndex: null,
       lastTodoReminderStepIndex: null,
       todoStepReminderCount: 0,
@@ -340,15 +341,16 @@ export class SessionStoreManager {
         messages: parsed.messages,
         steps: parsed.steps,
         stats: parsed.stats,
-        runs: parsed.runs,
-        runCount: parsed.runs.length,
+        executions: parsed.executions,
+        executionCount: parsed.executions.length,
         todos: parsed.todos ?? [],
         reminders: parsed.reminders,
+        childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
         isRunning: false,
         isStreamingModel: false,
-        currentRunId: undefined,
+        currentExecutionId: undefined,
         currentAssistantMessageId: undefined,
         readSnapshots: new Map(),
         events: [],

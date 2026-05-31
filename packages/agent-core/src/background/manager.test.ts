@@ -37,9 +37,9 @@ describe("BackgroundTaskManager", () => {
     });
 
     test("same-name dispatch returns false when deduplicated", async () => {
-      let runCount = 0;
+      let executionCount = 0;
       const fn = async () => {
-        runCount++;
+        executionCount++;
         await tick(20);
       };
 
@@ -50,24 +50,24 @@ describe("BackgroundTaskManager", () => {
       expect(second).toBe(false);
 
       await tick(40);
-      expect(runCount).toBe(1);
+      expect(executionCount).toBe(1);
     });
 
     test("allows re-dispatch after previous task completes and returns true", async () => {
-      let runCount = 0;
+      let executionCount = 0;
       const fn = async () => {
-        runCount++;
+        executionCount++;
       };
 
       const first = manager.dispatch("reuse", fn);
       expect(first).toBe(true);
       await tick(10);
-      expect(runCount).toBe(1);
+      expect(executionCount).toBe(1);
 
       const second = manager.dispatch("reuse", fn);
       expect(second).toBe(true);
       await tick(10);
-      expect(runCount).toBe(2);
+      expect(executionCount).toBe(2);
     });
 
     test("records last completed timestamp after task settles", async () => {

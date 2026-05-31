@@ -4,7 +4,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../../config/provider";
 import type { Logger } from "../../logger";
-import type { RunEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
+import type { ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
@@ -85,10 +85,10 @@ export async function runQueryLoop(
   let steps = 0;
   let lastText = "";
   let failed = false;
-  let runEndStatus: RunEndEvent["status"] = "completed";
+  let runEndStatus: ExecutionEndEvent["status"] = "completed";
   const doomTracker = new DoomTracker();
 
-  store.getState().append({ type: "run-start" });
+  store.getState().append({ type: "execution-start" });
 
   try {
     const commandResult = await maybeHandleCommand(options, userMessage, abort);
@@ -193,9 +193,9 @@ export async function runQueryLoop(
     }
 
     store.getState().append({
-      type: "run-end",
+      type: "execution-end",
       status: runEndStatus,
-      ...(failed ? { error: "Run failed" } : {}),
+      ...(failed ? { error: "Execution failed" } : {}),
     });
     await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus }, logger, { sessionId, agentName });
   }

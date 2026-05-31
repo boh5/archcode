@@ -18,7 +18,7 @@ const TODO_STATUSES = new Set<SessionTodo["status"]>([
  * Runtime-specific wrapper around the protocol reducer.
  *
  * Adds two runtime-only behaviours:
- * 1. `run-start` — throws BusyError if already running (protocol doesn't enforce this)
+ * 1. `execution-start` — throws BusyError if already running (protocol doesn't enforce this)
  * 2. `todo-write` — throws InvalidTodoStateError on invalid todos (protocol silently
  *    returns {}), and tracks `lastTodoWriteStepIndex`
  */
@@ -27,7 +27,7 @@ export function reduceStreamEvent(
   event: StreamEvent,
 ): Partial<SessionStoreState> {
   // Runtime-specific guards
-  if (event.type === "run-start" && state.isRunning) {
+  if (event.type === "execution-start" && state.isRunning) {
     throw new BusyError(state.sessionId);
   }
 

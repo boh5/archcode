@@ -1,7 +1,7 @@
 export type {
   StreamEvent,
-  RunStartEvent,
-  RunEndEvent,
+  ExecutionStartEvent,
+  ExecutionEndEvent,
   UserMessageEvent,
   TextStartEvent,
   TextDeltaEvent,

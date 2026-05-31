@@ -1,16 +1,16 @@
 import { rm } from "node:fs/promises";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, SessionTreeNode } from "@specra/protocol";
+import type { SessionTreeNode } from "@specra/protocol";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import { AgentRunningError } from "../agents/errors";
 import type { CommandResult } from "../commands/types";
 import type { AskUserResponse } from "../deferred";
+import { SessionEventBridge } from "../events/session-event-bridge";
+import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
 import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
 import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import type { SessionEventEnvelope, SessionStoreState } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
-import type { StoreApi } from "zustand";
 import type { Logger } from "../logger";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
@@ -28,13 +28,6 @@ export interface SubmitAgentJobInput {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly userMessage: string;
-}
-
-export interface SubscribeSessionEventsInput {
-  readonly slug: string;
-  readonly workspaceRoot: string;
-  readonly sessionId: string;
-  readonly onEvent: (event: GlobalSSEEvent) => void;
 }
 
 interface AgentJobRunnerConfig {
@@ -57,20 +50,18 @@ interface AgentJobRunnerConfig {
   readonly logger: Logger;
 }
 
-interface SubscriptionRegistration extends SubscribeSessionEventsInput {
-  lastForwardedNextEventId: number;
-  unsubscribeStore?: () => void;
-}
-
 export class AgentJobRunner {
   readonly #jobs = new Map<string, RunningJob>();
-  readonly #subscriptions = new Map<string, Set<SubscriptionRegistration>>();
+  readonly #eventBridge: SessionEventBridge;
   readonly #config: AgentJobRunnerConfig;
   readonly #logger: Logger;
 
   constructor(config: AgentJobRunnerConfig) {
     this.#config = config;
     this.#logger = config.logger;
+    this.#eventBridge = new SessionEventBridge({
+      getStore: (workspaceRoot, sessionId) => this.#config.storeManager.get(sessionId, workspaceRoot),
+    });
   }
 
   submit(input: SubmitAgentJobInput): RunningJob {
@@ -149,23 +140,7 @@ export class AgentJobRunner {
   }
 
   subscribe(input: SubscribeSessionEventsInput): () => void {
-    const key = scopedKey(input.workspaceRoot, input.sessionId);
-    const registration: SubscriptionRegistration = {
-      ...input,
-      lastForwardedNextEventId: 0,
-    };
-    const registrations = this.#subscriptions.get(key) ?? new Set<SubscriptionRegistration>();
-    registrations.add(registration);
-    this.#subscriptions.set(key, registrations);
-
-    const store = this.#config.storeManager.get(input.sessionId, input.workspaceRoot);
-    if (store) this.#attachSubscription(registration, store);
-
-    return () => {
-      registration.unsubscribeStore?.();
-      registrations.delete(registration);
-      if (registrations.size === 0) this.#subscriptions.delete(key);
-    };
+    return this.#eventBridge.subscribe(input);
   }
 
   async deleteSession(workspaceRoot: string, sessionId: string): Promise<void> {
@@ -188,7 +163,7 @@ export class AgentJobRunner {
       this.#config.cleanupDeferredSession(workspaceRoot, id);
       this.#config.sessionAgentManager.dispose(workspaceRoot, id);
       this.#config.untrackSession(workspaceRoot, id);
-      this.#unsubscribeSession(workspaceRoot, id);
+      this.#eventBridge.detachSession(workspaceRoot, id);
     }
 
     if (sessionId === rootSessionId) {
@@ -229,7 +204,7 @@ export class AgentJobRunner {
   async #runJob(input: SubmitAgentJobInput, abortController: AbortController): Promise<void> {
     try {
       const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
-      this.#attachSubscriptionsForSession(input.workspaceRoot, input.sessionId, agent.store);
+      this.#eventBridge.attachSession(input.workspaceRoot, input.sessionId, agent.store);
       if (abortController.signal.aborted) return;
 
       await agent.run(input.userMessage, {
@@ -249,67 +224,6 @@ export class AgentJobRunner {
     }
   }
 
-  #attachSubscriptionsForSession(
-    workspaceRoot: string,
-    sessionId: string,
-    store: StoreApi<SessionStoreState>,
-  ): void {
-    const registrations = this.#subscriptions.get(scopedKey(workspaceRoot, sessionId));
-    if (!registrations) return;
-    for (const registration of registrations) {
-      this.#attachSubscription(registration, store);
-    }
-  }
-
-  #attachSubscription(
-    registration: SubscriptionRegistration,
-    store: StoreApi<SessionStoreState>,
-  ): void {
-    registration.unsubscribeStore?.();
-    registration.unsubscribeStore = store.subscribe((current) => this.#forwardCurrent(registration, current));
-    this.#forwardCurrent(registration, store.getState());
-  }
-
-  #forwardCurrent(registration: SubscriptionRegistration, current: SessionStoreState): void {
-    if (current.nextEventId <= registration.lastForwardedNextEventId) return;
-
-    if (registration.lastForwardedNextEventId < current.eventOffset) {
-      registration.lastForwardedNextEventId = current.nextEventId;
-      registration.onEvent({
-        type: "reset",
-        slug: registration.slug,
-        sessionId: registration.sessionId,
-        reason: "lagged",
-      });
-      return;
-    }
-
-    const start = registration.lastForwardedNextEventId - current.eventOffset;
-    const envelopes: SessionEventEnvelope[] = current.events.slice(start);
-    registration.lastForwardedNextEventId = current.nextEventId;
-    for (const envelope of envelopes) {
-      const event: GlobalSessionEventEnvelope = {
-        type: "event",
-        slug: registration.slug,
-        sessionId: registration.sessionId,
-        eventId: envelope.id,
-        createdAt: envelope.createdAt,
-        kind: envelope.kind,
-        payload: envelope.payload,
-      };
-      registration.onEvent(event);
-    }
-  }
-
-  #unsubscribeSession(workspaceRoot: string, sessionId: string): void {
-    const key = scopedKey(workspaceRoot, sessionId);
-    const registrations = this.#subscriptions.get(key);
-    if (!registrations) return;
-    for (const registration of registrations) {
-      registration.unsubscribeStore?.();
-    }
-    this.#subscriptions.delete(key);
-  }
 }
 
 async function waitForJobToStop(job: RunningJob): Promise<void> {

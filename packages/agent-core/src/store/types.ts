@@ -7,13 +7,14 @@ import type {
   SessionEventEnvelope,
   SessionEventPayload,
   SessionStats,
-  SessionRun,
+  SessionExecutionRecord,
+  ToolChildSessionLink,
 } from "@specra/protocol";
 
 export type {
   StreamEvent,
-  RunStartEvent,
-  RunEndEvent,
+  ExecutionStartEvent,
+  ExecutionEndEvent,
   UserMessageEvent,
   SystemNoticeEvent,
   TextStartEvent,
@@ -26,6 +27,9 @@ export type {
   ToolCallEvent,
   ToolInputResolvedEvent,
   ToolResultEvent,
+  ToolChildSessionLink,
+  ToolChildSessionLinkEvent,
+  ToolChildSessionLinkStatus,
   CompactEvent,
   TodoWriteEvent,
   ReminderEvent,
@@ -75,21 +79,22 @@ export interface SessionStoreState {
   messages: SessionMessage[];
   steps: SessionStep[];
   stats: SessionStats;
-  runs: SessionRun[];
+  executions: SessionExecutionRecord[];
 
   // Session-only state
   todos: SessionTodo[];
   reminders: Reminder[];
+  childSessionLinks: ToolChildSessionLink[];
   // Identity is assigned at creation/load and treated as immutable afterwards.
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
 
   // Running state
-  runCount: number;
+  executionCount: number;
   isRunning: boolean;
   isStreamingModel: boolean;
-  currentRunId?: string;
+  currentExecutionId?: string;
   currentAssistantMessageId?: string;
 
   // Todo continuation tracking (persistent across loops)

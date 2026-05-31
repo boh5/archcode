@@ -31,7 +31,7 @@ const SessionStatsSchema = z.strictObject({
   usage: NormalizedUsageSchema,
 });
 
-const SessionRunSchema = z.strictObject({
+const SessionExecutionRecordSchema = z.strictObject({
   id: z.string(),
   startedAt: z.number(),
   status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out"]),
@@ -86,6 +86,34 @@ const ReminderSchema = z.strictObject({
   createdAt: z.number(),
   consumedAt: z.number().nullable(),
   targetSessionId: z.string().optional(),
+});
+
+const ToolChildSessionLinkSchema = z.strictObject({
+  parentSessionId: z.string(),
+  parentToolCallId: z.string(),
+  toolName: z.string(),
+  childSessionId: z.string(),
+  childAgentName: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  depth: z.number(),
+  background: z.boolean(),
+  status: z.enum([
+    "linked",
+    "running",
+    "cancelling",
+    "completed",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "interrupted",
+  ]),
+  createdAt: z.number(),
+  startedAt: z.number().optional(),
+  endedAt: z.number().optional(),
+  durationMs: z.number().optional(),
+  summary: z.string().optional(),
+  error: z.string().optional(),
 });
 
 const TextPartSchema = z.strictObject({
@@ -189,14 +217,14 @@ const StoredMessageSchema = z.strictObject({
   parts: z.array(StoredPartSchema),
   createdAt: z.number(),
   completedAt: z.number().optional(),
-  runId: z.string().optional(),
+  executionId: z.string().optional(),
   compacted: z.boolean().optional(),
 });
 
 const StepInfoSchema = z.strictObject({
   id: z.string(),
   step: z.number(),
-  runId: z.string().optional(),
+  executionId: z.string().optional(),
   startedAt: z.number(),
   completedAt: z.number().optional(),
   finishReason: z.string().optional(),
@@ -212,7 +240,7 @@ export const SessionFileSchema = z.strictObject({
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
-  runs: z.array(SessionRunSchema),
+  executions: z.array(SessionExecutionRecordSchema),
   todos: z.array(StoredTodoSchema)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
@@ -220,6 +248,7 @@ export const SessionFileSchema = z.strictObject({
     )
     .optional(),
   reminders: z.array(ReminderSchema).default([]),
+  childSessionLinks: z.array(ToolChildSessionLinkSchema).default([]),
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
@@ -240,10 +269,10 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "runs" | "todos" | "rootSessionId"
+  "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "agentName" | "reminders" | "parentSessionId"
+  "agentName" | "reminders" | "childSessionLinks" | "parentSessionId"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -285,9 +314,10 @@ async function saveSessionTranscript(
     messages: state.messages,
     steps: state.steps,
     stats: state.stats,
-    runs: state.runs,
+    executions: state.executions,
     todos: state.todos,
     reminders: state.reminders ?? [],
+    childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
   };
@@ -336,9 +366,10 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     messages: state.messages,
     steps: state.steps,
     stats: state.stats,
-    runs: state.runs,
+    executions: state.executions,
     todos: state.todos,
     reminders: state.reminders ?? [],
+    childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),

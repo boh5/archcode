@@ -113,7 +113,7 @@ describe("SessionStoreManager", () => {
     expect(state.messages).toEqual([]);
     expect(state.steps).toEqual([]);
     expect(state.stats).toEqual(createEmptySessionStats());
-    expect(state.runs).toEqual([]);
+    expect(state.executions).toEqual([]);
     expect(state.todos).toEqual([]);
     expect(state.createdAt).toBeGreaterThan(0);
     expect(state.isRunning).toBe(false);
@@ -135,22 +135,22 @@ describe("SessionStoreManager", () => {
     expect(persisted.sessionId).toBe(sessionId);
     expect(persisted.messages).toEqual([]);
     expect(persisted.stats).toEqual(createEmptySessionStats());
-    expect(persisted.runs).toEqual([]);
-    expect("runCount" in persisted).toBe(false);
+    expect(persisted.executions).toEqual([]);
+    expect("executionCount" in persisted).toBe(false);
   });
 
-  test("assistant append events persist on run-end", async () => {
+  test("assistant append events persist on execution-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-on-run-end");
+    const sessionId = uniqueSessionId("persist-on-execution-end");
     const store = createSessionStore(sessionId);
 
     const state = store.getState();
-    state.append({ type: "run-start", runId: "run-1" });
+    state.append({ type: "execution-start", executionId: "run-1" });
     state.append({ type: "text-start" });
     state.append({ type: "text-delta", text: "hel" });
     state.append({ type: "text-delta", text: "lo" });
     state.append({ type: "text-end" });
-    state.append({ type: "run-end", status: "completed" });
+    state.append({ type: "execution-end", status: "completed" });
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       const messages = session.messages;
@@ -171,11 +171,11 @@ describe("SessionStoreManager", () => {
     expect(persisted.parentSessionId).toBeUndefined();
   });
 
-  test("user-message append persists before run-end", async () => {
+  test("user-message append persists before execution-end", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
     const sessionId = uniqueSessionId("persist-user-message");
     const store = createSessionStore(sessionId);
-    store.getState().append({ type: "user-message", content: "hello before run-end" });
+    store.getState().append({ type: "user-message", content: "hello before execution-end" });
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       const messages = session.messages;
@@ -184,16 +184,16 @@ describe("SessionStoreManager", () => {
     expect(persisted.messages).toEqual(store.getState().messages);
   });
 
-  test("run-end persists final transcript", async () => {
+  test("execution-end persists final transcript", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-run-end");
+    const sessionId = uniqueSessionId("persist-execution-end");
     const store = createSessionStore(sessionId);
     const state = store.getState();
 
-    state.append({ type: "run-start", runId: "run-1" });
+    state.append({ type: "execution-start", executionId: "run-1" });
     state.append({ type: "text-start" });
     state.append({ type: "text-delta", text: "final answer" });
-    state.append({ type: "run-end", status: "completed" });
+    state.append({ type: "execution-end", status: "completed" });
 
     const persisted = await waitForPersistedSession(sessionId, (session) => {
       const messages = session.messages;
@@ -201,8 +201,8 @@ describe("SessionStoreManager", () => {
     });
     expect(persisted.messages).toEqual(store.getState().messages);
     expect(persisted.stats).toEqual(store.getState().stats);
-    expect(persisted.runs).toEqual(store.getState().runs);
-    expect("runCount" in persisted).toBe(false);
+    expect(persisted.executions).toEqual(store.getState().executions);
+    expect("executionCount" in persisted).toBe(false);
   });
 
   test("title metadata action persists and survives reload", async () => {
@@ -218,38 +218,38 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().title).toBe("Persisted Title");
   });
 
-  test("reload from disk preserves stats and runs exactly while deriving runCount", async () => {
+  test("reload from disk preserves stats and executions exactly while deriving executionCount", async () => {
     __setSessionsDirForTest(() => TMP_DIR);
-    const sessionId = uniqueSessionId("persist-stats-runs");
+    const sessionId = uniqueSessionId("persist-stats-executions");
     const store = createSessionStore(sessionId);
     const state = store.getState();
 
-    state.append({ type: "run-start", runId: "run-one" });
+    state.append({ type: "execution-start", executionId: "run-one" });
     state.append({ type: "user-message", content: "collect stats" });
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-ok", toolName: "read", input: { path: "a.ts" } });
     state.append({ type: "tool-result", toolCallId: "tool-ok", toolName: "read", output: "ok", isError: false });
     state.append({ type: "step-end", step: 0, finishReason: "tool-calls", usage: { inputTokens: 2, outputTokens: 3 } });
-    state.append({ type: "run-end", status: "completed" });
-    state.append({ type: "run-start", runId: "run-two" });
+    state.append({ type: "execution-end", status: "completed" });
+    state.append({ type: "execution-start", executionId: "run-two" });
     state.append({ type: "step-start", step: 0 });
     state.append({ type: "tool-call", toolCallId: "tool-fail", toolName: "bash", input: "false" });
     state.append({ type: "tool-result", toolCallId: "tool-fail", toolName: "bash", output: "failed", isError: true });
     state.append({ type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 5, outputTokens: 7 } });
-    state.append({ type: "run-end", status: "failed", error: "child failed" });
+    state.append({ type: "execution-end", status: "failed", error: "child failed" });
 
-    await waitForPersistedSession(sessionId, (session) => Array.isArray(session.runs) && session.runs.length === 2);
+    await waitForPersistedSession(sessionId, (session) => Array.isArray(session.executions) && session.executions.length === 2);
     const expectedStats = store.getState().stats;
-    const expectedRuns = store.getState().runs;
+    const expectedExecutions = store.getState().executions;
 
     const manager = new SessionStoreManager({ logger: silentLogger });
     const loaded = await manager.getOrLoad(sessionId, "ignored-by-test-override");
     const loadedState = loaded.getState();
 
     expect(loadedState.stats).toEqual(expectedStats);
-    expect(loadedState.runs).toEqual(expectedRuns);
-    expect(loadedState.runCount).toBe(expectedRuns.length);
-    expect(loadedState.runCount).toBe(loadedState.runs.length);
+    expect(loadedState.executions).toEqual(expectedExecutions);
+    expect(loadedState.executionCount).toBe(expectedExecutions.length);
+    expect(loadedState.executionCount).toBe(loadedState.executions.length);
   });
 
   test("create returns the same store for the same session id", () => {
@@ -367,26 +367,26 @@ describe("events log", () => {
   });
 });
 
-describe("runCount", () => {
-  test("initial runCount is 0", () => {
-    const store = createFreshStore("runCount-init");
-    expect(store.getState().runCount).toBe(0);
+describe("executionCount", () => {
+  test("initial executionCount is 0", () => {
+    const store = createFreshStore("executionCount-init");
+    expect(store.getState().executionCount).toBe(0);
   });
 
-  test("after run-start event, runCount is 1", () => {
-    const store = createFreshStore("runCount-after-start");
-    store.getState().append({ type: "run-start" });
-    expect(store.getState().runCount).toBe(1);
-    expect(store.getState().runs).toHaveLength(1);
+  test("after execution-start event, executionCount is 1", () => {
+    const store = createFreshStore("executionCount-after-start");
+    store.getState().append({ type: "execution-start" });
+    expect(store.getState().executionCount).toBe(1);
+    expect(store.getState().executions).toHaveLength(1);
   });
 
-  test("after two run-start events (with run-end between), runCount is 2", () => {
-    const store = createFreshStore("runCount-two-runs");
-    store.getState().append({ type: "run-start" });
-    store.getState().append({ type: "run-end", status: "completed" });
-    store.getState().append({ type: "run-start" });
-    expect(store.getState().runCount).toBe(2);
-    expect(store.getState().runCount).toBe(store.getState().runs.length);
+  test("after two execution-start events (with execution-end between), executionCount is 2", () => {
+    const store = createFreshStore("executionCount-two-executions");
+    store.getState().append({ type: "execution-start" });
+    store.getState().append({ type: "execution-end", status: "completed" });
+    store.getState().append({ type: "execution-start" });
+    expect(store.getState().executionCount).toBe(2);
+    expect(store.getState().executionCount).toBe(store.getState().executions.length);
   });
 });
 
@@ -555,108 +555,108 @@ describe("todo-write events", () => {
   });
 });
 
-describe("run lifecycle", () => {
-  test("run-start sets running state and generated currentRunId", () => {
-    const store = createFreshStore("run-start");
-    store.getState().append({ type: "run-start" });
+describe("execution lifecycle", () => {
+  test("execution-start sets running state and generated currentExecutionId", () => {
+    const store = createFreshStore("execution-start");
+    store.getState().append({ type: "execution-start" });
 
     const state = store.getState();
     expect(state.isRunning).toBe(true);
-    expect(state.currentRunId).toBeString();
+    expect(state.currentExecutionId).toBeString();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(state.isStreamingModel).toBe(false);
   });
 
-  test("run-start uses a provided runId", () => {
-    const store = createFreshStore("provided-run-id");
-    store.getState().append({ type: "run-start", runId: "run-123" });
-    expect(store.getState().currentRunId).toBe("run-123");
+  test("execution-start uses a provided executionId", () => {
+    const store = createFreshStore("provided-execution-id");
+    store.getState().append({ type: "execution-start", executionId: "run-123" });
+    expect(store.getState().currentExecutionId).toBe("run-123");
   });
 
-  test("run-start while running throws BusyError without mutating state", () => {
+  test("execution-start while running throws BusyError without mutating state", () => {
     const store = createFreshStore("busy");
-    store.getState().append({ type: "run-start", runId: "first" });
+    store.getState().append({ type: "execution-start", executionId: "first" });
     const before = store.getState();
 
-    expect(() => store.getState().append({ type: "run-start", runId: "second" })).toThrow(BusyError);
+    expect(() => store.getState().append({ type: "execution-start", executionId: "second" })).toThrow(BusyError);
     const after = store.getState();
-    expect(after.currentRunId).toBe("first");
+    expect(after.currentExecutionId).toBe("first");
     expect(after.isRunning).toBe(true);
     expect(after.messages).toBe(before.messages);
     expect(after.steps).toBe(before.steps);
   });
 
-  test("run-end completed clears all temporary state and completes assistant message", () => {
-    const store = createFreshStore("run-end-success");
-    store.getState().append({ type: "run-start", runId: "run" });
+  test("execution-end completed clears all temporary state and completes assistant message", () => {
+    const store = createFreshStore("execution-end-success");
+    store.getState().append({ type: "execution-start", executionId: "run" });
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "hello" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "reasoning-start" });
     store.getState().append({ type: "tool-input-start", toolCallId: "tool", toolName: "read" });
     store.getState().append({ type: "step-start", step: 0 });
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     const state = store.getState();
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentExecutionId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(onlyMessage(state.messages).completedAt).toBeGreaterThan(0);
-    expect(state.runs[0]?.status).toBe("completed");
+    expect(state.executions[0]?.status).toBe("completed");
   });
 
-  test("run-end failed performs the same cleanup and preserves messages", () => {
-    const store = createFreshStore("run-end-failure");
-    store.getState().append({ type: "run-start", runId: "run" });
+  test("execution-end failed performs the same cleanup and preserves messages", () => {
+    const store = createFreshStore("execution-end-failure");
+    store.getState().append({ type: "execution-start", executionId: "run" });
     store.getState().append({ type: "user-message", content: "keep me" });
     const messages = store.getState().messages;
-    store.getState().append({ type: "run-end", status: "failed", error: "boom" });
+    store.getState().append({ type: "execution-end", status: "failed", error: "boom" });
 
     const state = store.getState();
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentExecutionId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
     expect(state.messages).toEqual(messages);
-    expect(state.runs[0]?.status).toBe("failed");
-    expect(state.runs[0]?.error).toBe("boom");
+    expect(state.executions[0]?.status).toBe("failed");
+    expect(state.executions[0]?.error).toBe("boom");
   });
 
-  test("run-end records cancelled, aborted, and timed_out statuses", () => {
-    const store = createFreshStore("run-terminal-statuses");
+  test("execution-end records cancelled, aborted, and timed_out statuses", () => {
+    const store = createFreshStore("execution-terminal-statuses");
 
     for (const status of ["cancelled", "aborted", "timed_out"] as const) {
-      store.getState().append({ type: "run-start", runId: `run-${status}` });
-      store.getState().append({ type: "run-end", status, error: `${status} error` });
+      store.getState().append({ type: "execution-start", executionId: `run-${status}` });
+      store.getState().append({ type: "execution-end", status, error: `${status} error` });
     }
 
-    expect(store.getState().runs.map((run) => run.status)).toEqual(["cancelled", "aborted", "timed_out"]);
-    expect(store.getState().runCount).toBe(3);
+    expect(store.getState().executions.map((execution) => execution.status)).toEqual(["cancelled", "aborted", "timed_out"]);
+    expect(store.getState().executionCount).toBe(3);
   });
 
-  test("command-handled completed run records a run without messages", () => {
-    const store = createFreshStore("command-handled-run");
+  test("command-handled completed execution records an execution without messages", () => {
+    const store = createFreshStore("command-handled-execution");
 
-    store.getState().append({ type: "run-start", runId: "command-run" });
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-start", executionId: "command-run" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     expect(store.getState().messages).toEqual([]);
-    expect(store.getState().runs).toHaveLength(1);
-    expect(store.getState().runs[0]?.id).toBe("command-run");
-    expect(store.getState().runCount).toBe(1);
+    expect(store.getState().executions).toHaveLength(1);
+    expect(store.getState().executions[0]?.id).toBe("command-run");
+    expect(store.getState().executionCount).toBe(1);
   });
 });
 
 describe("user messages", () => {
-  test("user-message creates a completed user message with a completed text part and runId", () => {
+  test("user-message creates a completed user message with a completed text part and executionId", () => {
     const store = createFreshStore("user-message");
-    store.getState().append({ type: "run-start", runId: "run-user" });
+    store.getState().append({ type: "execution-start", executionId: "run-user" });
     store.getState().append({ type: "user-message", content: "hello" });
 
     const message = onlyMessage(store.getState().messages);
     expect(message.role).toBe("user");
-    expect(message.runId).toBe("run-user");
+    expect(message.executionId).toBe("run-user");
     expect(message.completedAt).toBeGreaterThan(0);
     const part = textPart(message);
     expect(part.text).toBe("hello");
@@ -876,15 +876,15 @@ describe("tool streaming", () => {
 });
 
 describe("settleIncompleteState behavior", () => {
-  test("run-end marks incomplete text and reasoning parts completed", () => {
+  test("execution-end marks incomplete text and reasoning parts completed", () => {
     const store = createFreshStore("settle-incomplete");
-    store.getState().append({ type: "run-start", runId: "run" });
+    store.getState().append({ type: "execution-start", executionId: "run" });
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "hello" });
     store.getState().append({ type: "reasoning-start" });
     store.getState().append({ type: "reasoning-delta", text: "why" });
 
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     const message = onlyMessage(store.getState().messages);
     const text = textPart(message, 0);
@@ -900,14 +900,14 @@ describe("settleIncompleteState behavior", () => {
 describe("steps and errors", () => {
   test("step-start sets isStreamingModel and creates StepInfo", () => {
     const store = createFreshStore("step-start");
-    store.getState().append({ type: "run-start", runId: "run-step" });
+    store.getState().append({ type: "execution-start", executionId: "run-step" });
     store.getState().append({ type: "step-start", step: 1 });
 
     const state = store.getState();
     const step = onlyStep(state.steps);
     expect(state.isStreamingModel).toBe(true);
     expect(step.step).toBe(1);
-    expect(step.runId).toBe("run-step");
+    expect(step.executionId).toBe("run-step");
     expect(step.startedAt).toBeGreaterThan(0);
   });
 
@@ -941,12 +941,12 @@ describe("steps and errors", () => {
 
   test("loop-error without a matching step appends an error step", () => {
     const store = createFreshStore("loop-error-append");
-    store.getState().append({ type: "run-start", runId: "run-error" });
+    store.getState().append({ type: "execution-start", executionId: "run-error" });
     store.getState().append({ type: "loop-error", step: 4, error: "missing step" });
 
     const step = onlyStep(store.getState().steps);
     expect(step.step).toBe(4);
-    expect(step.runId).toBe("run-error");
+    expect(step.executionId).toBe("run-error");
     expect(step.error).toBe("missing step");
     expect(step.startedAt).toBeGreaterThan(0);
   });
@@ -984,7 +984,7 @@ describe("Zustand integration and immutability", () => {
 describe("Oracle regression tests", () => {
   test("multi-step tool call creates separate assistant messages", () => {
     const store = createFreshStore("multi-step");
-    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "run tool" });
 
     // Step 0: assistant calls a tool
@@ -1008,7 +1008,7 @@ describe("Oracle regression tests", () => {
     store.getState().append({ type: "text-delta", text: "Here's the result" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "step-end", step: 1, finishReason: "stop" });
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     // Two distinct assistant messages — tool-call in one, final text in another
     const messages = store.getState().messages;
@@ -1023,47 +1023,47 @@ describe("Oracle regression tests", () => {
     expect(modelMessages[3]!.role).toBe("assistant");
   });
 
-  test("second run's step-end does not update first run's step", () => {
-    const store = createFreshStore("cross-run-step");
+  test("second execution's step-end does not update first execution's step", () => {
+    const store = createFreshStore("cross-execution-step");
 
-    // Run 1
-    store.getState().append({ type: "run-start" });
+    // Execution 1
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "first" });
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "first response" });
     store.getState().append({ type: "text-end" });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
-    // Run 2 with same step number
-    store.getState().append({ type: "run-start" });
+    // Execution 2 with same step number
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "second" });
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "step-end", step: 0, finishReason: "stop" });
-    store.getState().append({ type: "run-end", status: "completed" });
+    store.getState().append({ type: "execution-end", status: "completed" });
 
     const run2Steps = store.getState().steps;
-    // Both runs' step 0 should still have their original data
+    // Both executions' step 0 should still have their original data
     expect(run2Steps.length).toBe(2);
-    expect(run2Steps[0]!.runId).not.toBe(run2Steps[1]!.runId);
+    expect(run2Steps[0]!.executionId).not.toBe(run2Steps[1]!.executionId);
   });
 
   test("partial text preserved when stream errors after text-delta", () => {
     const store = createFreshStore("stream-error-text");
-    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "prompt" });
     store.getState().append({ type: "step-start", step: 0 });
 
-    // Start text streaming, then simulate error (run-end handles cleanup)
+    // Start text streaming, then simulate error (execution-end handles cleanup)
     store.getState().append({ type: "text-start" });
     store.getState().append({ type: "text-delta", text: "partial" });
 
     // consumeFullStream's finally block would flush text-end,
-    // then loop-error records the failure, then run-end settles incomplete state
+    // then loop-error records the failure, then execution-end settles incomplete state
     store.getState().append({ type: "text-end" }); // flushed by try/finally
     store.getState().append({ type: "loop-error", step: 0, error: "stream failed" });
-    store.getState().append({ type: "run-end", status: "failed" });
+    store.getState().append({ type: "execution-end", status: "failed" });
 
     // Partial text should be persisted (not lost)
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
@@ -1076,7 +1076,7 @@ describe("Oracle regression tests", () => {
 
   test("duplicate text-start flushes previous text part", () => {
     const store = createFreshStore("dup-text-start");
-    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "prompt" });
     store.getState().append({ type: "step-start", step: 0 });
 
@@ -1097,18 +1097,18 @@ describe("Oracle regression tests", () => {
     expect(textParts[0]!.completedAt).toBeDefined();
   });
 
-  test("failed run settles pending/running tools as error", () => {
-    const store = createFreshStore("failed-run-tools");
-    store.getState().append({ type: "run-start" });
+  test("failed execution settles pending/running tools as error", () => {
+    const store = createFreshStore("failed-execution-tools");
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "use tool" });
     store.getState().append({ type: "step-start", step: 0 });
 
     store.getState().append({ type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" });
     store.getState().append({ type: "tool-call", toolCallId: "tc-1", toolName: "bash", input: "ls" });
 
-    // Run ends before tool-result arrives
+    // Execution ends before tool-result arrives
     store.getState().append({ type: "loop-error", step: 0, error: "model crashed" });
-    store.getState().append({ type: "run-end", status: "failed" });
+    store.getState().append({ type: "execution-end", status: "failed" });
 
     const assistantMsg = store.getState().messages.find(m => m.role === "assistant");
     expect(assistantMsg).toBeDefined();
@@ -1116,7 +1116,7 @@ describe("Oracle regression tests", () => {
     expect(toolParts.length).toBe(1);
     expect(toolParts[0]!.state).toBe("error");
     if (toolParts[0]!.type === "tool" && toolParts[0]!.state === "error") {
-      expect(toolParts[0]!.errorMessage).toBe("Run ended before tool result");
+      expect(toolParts[0]!.errorMessage).toBe("Execution ended before tool result");
     }
   });
 });
@@ -1180,7 +1180,7 @@ describe("compact event", () => {
   test("compact event marks prefix messages as compacted and inserts synthetic message", () => {
     const store = createFreshStore("compact-basic");
     store.getState().append({ type: "user-message", content: "old question" });
-    store.getState().append({ type: "run-start" });
+    store.getState().append({ type: "execution-start" });
     store.getState().append({ type: "user-message", content: "new question" });
 
     const messages = store.getState().messages;

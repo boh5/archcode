@@ -38,8 +38,9 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
+        childSessionLinks: [],
         rootSessionId: input.rootSessionId ?? input.sessionId,
         ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
       },
@@ -55,6 +56,26 @@ describe("SessionStoreManager", () => {
     throw new Error(`Timed out waiting for file: ${path}`);
   }
 
+  async function readSessionJson(path: string): Promise<Record<string, unknown>> {
+    await waitForFile(path);
+    return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
+  }
+
+  async function waitForSessionJson(
+    path: string,
+    predicate: (json: Record<string, unknown>) => boolean,
+  ): Promise<Record<string, unknown>> {
+    let lastJson: Record<string, unknown> | undefined;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (await Bun.file(path).exists()) {
+        lastJson = await readSessionJson(path);
+        if (predicate(lastJson)) return lastJson;
+      }
+      await Bun.sleep(1);
+    }
+    throw new Error(`Timed out waiting for matching session JSON: ${path}`);
+  }
+
   test("create() returns the same store for the same sessionId+workspaceRoot", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -68,6 +89,13 @@ describe("SessionStoreManager", () => {
     const store1 = manager.create(sessionId(), TMP_DIR);
     const store2 = manager.create(sessionId(), TMP_DIR);
     expect(store1).not.toBe(store2);
+  });
+
+  test("create() defaults child session links to empty", () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const store = manager.create(sessionId(), TMP_DIR);
+
+    expect(store.getState().childSessionLinks).toEqual([]);
   });
 
   test("get() returns undefined for unknown session", () => {
@@ -139,8 +167,9 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
+        childSessionLinks: [],
         rootSessionId: sessionId,
       },
       TMP_DIR,
@@ -149,6 +178,42 @@ describe("SessionStoreManager", () => {
     const store = await manager.getOrLoad(sessionId, TMP_DIR);
     expect(store.getState().sessionId).toBe(sessionId);
     expect(store.getState().title).toBe("disk-title");
+  });
+
+  test("persists background child session completion link events", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const parentSessionId = sessionId();
+    const childSessionId = sessionId();
+    const store = manager.create(parentSessionId, TMP_DIR);
+    const link = {
+      parentSessionId,
+      parentToolCallId: "tool-call-1",
+      toolName: "delegate",
+      childSessionId,
+      childAgentName: "explore",
+      title: "Background child",
+      description: "Run in the background",
+      depth: 1,
+      background: true,
+      status: "completed" as const,
+      createdAt: 100,
+      startedAt: 110,
+      endedAt: 210,
+      durationMs: 100,
+      summary: "Background work completed",
+    };
+
+    store.getState().append({ type: "tool-child-session-link", link });
+
+    const raw = await waitForSessionJson(
+      join(TMP_DIR, ".specra", "sessions", `${parentSessionId}.json`),
+      (json) => Array.isArray(json.childSessionLinks) && json.childSessionLinks.length === 1,
+    );
+    expect(raw.childSessionLinks).toEqual([link]);
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(parentSessionId, TMP_DIR);
+    expect(loaded.getState().childSessionLinks).toEqual([link]);
   });
 
   test("getSessionFile() finds a child session through lazy descendant scan", async () => {
@@ -164,8 +229,9 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
+        childSessionLinks: [],
         rootSessionId,
         parentSessionId: rootSessionId,
       },
@@ -220,7 +286,7 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
         rootSessionId,
         parentSessionId: rootSessionId,
@@ -260,7 +326,7 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
         rootSessionId: sessionId,
       },
@@ -298,7 +364,7 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
         rootSessionId: sessionId,
       },
@@ -325,7 +391,7 @@ describe("SessionStoreManager", () => {
         messages: [],
         steps: [],
         stats: createEmptySessionStats(),
-        runs: [],
+        executions: [],
         todos: [],
         rootSessionId: sessionId,
       },
@@ -412,7 +478,7 @@ describe("SessionStoreManager", () => {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [],
       reminders: [],
       rootSessionId: otherRootId,
@@ -425,7 +491,7 @@ describe("SessionStoreManager", () => {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [],
       reminders: [],
       rootSessionId,
@@ -458,7 +524,7 @@ describe("SessionStoreManager", () => {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [{ id: "a", content: "first", status: "in_progress" }, { id: "b", content: "second", status: "in_progress" }],
       reminders: [],
       rootSessionId,
@@ -487,7 +553,7 @@ describe("SessionStoreManager", () => {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [],
       reminders: [],
       rootSessionId,

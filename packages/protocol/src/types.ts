@@ -1,10 +1,10 @@
-export interface RunStartEvent {
-  type: "run-start";
-  runId?: string;
+export interface ExecutionStartEvent {
+  type: "execution-start";
+  executionId?: string;
 }
 
-export interface RunEndEvent {
-  type: "run-end";
+export interface ExecutionEndEvent {
+  type: "execution-end";
   status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out";
   error?: string;
 }
@@ -24,10 +24,10 @@ export interface SessionStats {
   usage: NormalizedUsage;
 }
 
-export interface SessionRun {
+export interface SessionExecutionRecord {
   id: string;
   startedAt: number;
-  status: "running" | RunEndEvent["status"];
+  status: "running" | ExecutionEndEvent["status"];
   endedAt?: number;
   durationMs?: number;
   error?: string;
@@ -148,6 +148,40 @@ export interface ToolResultEvent {
   meta?: Record<string, unknown>;
 }
 
+export type ToolChildSessionLinkStatus =
+  | "linked"
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "timed_out"
+  | "cancelled"
+  | "interrupted";
+
+export interface ToolChildSessionLink {
+  parentSessionId: string;
+  parentToolCallId: string;
+  toolName: string;
+  childSessionId: string;
+  childAgentName: string;
+  title?: string;
+  description?: string;
+  depth: number;
+  background: boolean;
+  status: ToolChildSessionLinkStatus;
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  durationMs?: number;
+  summary?: string;
+  error?: string;
+}
+
+export interface ToolChildSessionLinkEvent {
+  type: "tool-child-session-link";
+  link: ToolChildSessionLink;
+}
+
 export interface CompactEvent {
   type: "compact";
   summary: string;
@@ -188,8 +222,8 @@ export interface LoopErrorEvent {
 }
 
 export type StreamEvent =
-  | RunStartEvent
-  | RunEndEvent
+  | ExecutionStartEvent
+  | ExecutionEndEvent
   | UserMessageEvent
   | SystemNoticeEvent
   | TextStartEvent
@@ -202,6 +236,7 @@ export type StreamEvent =
   | ToolCallEvent
   | ToolInputResolvedEvent
   | ToolResultEvent
+  | ToolChildSessionLinkEvent
   | TodoWriteEvent
   | ReminderEvent
   | ReminderConsumedEvent
@@ -390,14 +425,14 @@ export interface SessionMessage {
   parts: SessionPart[];
   createdAt: number;
   completedAt?: number;
-  runId?: string;
+  executionId?: string;
   compacted?: boolean;
 }
 
 export interface SessionStep {
   id: string;
   step: number;
-  runId?: string;
+  executionId?: string;
   startedAt: number;
   completedAt?: number;
   finishReason?: string;
@@ -414,12 +449,13 @@ export interface SessionProjection {
   steps: SessionStep[];
   todos: SessionTodo[];
   reminders: Reminder[];
+  childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
-  runs: SessionRun[];
-  runCount: number;
+  executions: SessionExecutionRecord[];
+  executionCount: number;
   isRunning: boolean;
   isStreamingModel: boolean;
-  currentRunId?: string;
+  currentExecutionId?: string;
   currentAssistantMessageId?: string;
 }
 
@@ -495,8 +531,9 @@ export interface Session {
   steps?: SessionStep[];
   todos?: SessionTodo[];
   reminders?: unknown[];
+  childSessionLinks?: ToolChildSessionLink[];
   stats?: SessionStats;
-  runs?: SessionRun[];
+  executions?: SessionExecutionRecord[];
   parentSessionId?: string;
   eventCursor?: number;
 }

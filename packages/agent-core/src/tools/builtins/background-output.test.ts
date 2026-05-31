@@ -54,11 +54,11 @@ function linkChild(ctx: ToolExecutionContext, childId = `background-child-${cryp
 }
 
 function appendAssistantText(ctx: ToolExecutionContext, text: string): void {
-  ctx.store.getState().append({ type: "run-start", runId: crypto.randomUUID() });
+  ctx.store.getState().append({ type: "execution-start", executionId: crypto.randomUUID() });
   ctx.store.getState().append({ type: "text-start" });
   ctx.store.getState().append({ type: "text-delta", text });
   ctx.store.getState().append({ type: "text-end" });
-  ctx.store.getState().append({ type: "run-end", status: "completed" });
+  ctx.store.getState().append({ type: "execution-end", status: "completed" });
 }
 
 describe("BackgroundOutputInputSchema", () => {
@@ -144,7 +144,7 @@ describe("background_output tool", () => {
   it("returns partial/latest text and running guidance while child is running", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "run-start", runId: "run-1" });
+    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
     childStore.getState().append({ type: "text-start" });
     childStore.getState().append({ type: "text-delta", text: "partial" });
 
@@ -193,14 +193,14 @@ describe("background_output tool", () => {
     grandchild.getState().setParentSessionId(childStore.getState().sessionId);
     grandchild.setState({ rootSessionId: childStore.getState().rootSessionId });
 
-    childStore.getState().append({ type: "run-start", runId: "child-run" });
+    childStore.getState().append({ type: "execution-start", executionId: "child-run" });
     childStore.getState().append({ type: "tool-call", toolCallId: "child-tool", toolName: "read", input: {} });
     childStore.getState().append({ type: "tool-result", toolCallId: "child-tool", toolName: "read", output: "ok", isError: false });
-    childStore.getState().append({ type: "run-end", status: "completed" });
-    grandchild.getState().append({ type: "run-start", runId: "grandchild-run" });
+    childStore.getState().append({ type: "execution-end", status: "completed" });
+    grandchild.getState().append({ type: "execution-start", executionId: "grandchild-run" });
     grandchild.getState().append({ type: "tool-call", toolCallId: "grandchild-tool", toolName: "bash", input: "false" });
     grandchild.getState().append({ type: "tool-result", toolCallId: "grandchild-tool", toolName: "bash", output: "failed", isError: true });
-    grandchild.getState().append({ type: "run-end", status: "failed" });
+    grandchild.getState().append({ type: "execution-end", status: "failed" });
 
     expect(childStore.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
     expect(grandchild.getState().stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
@@ -231,7 +231,7 @@ describe("background_output tool", () => {
   it("waits with block=true until the child stops", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "run-start", runId: "run-1" });
+    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
     childStore.getState().append({ type: "text-start" });
     childStore.getState().append({ type: "text-delta", text: "done after wait" });
 
@@ -245,7 +245,7 @@ describe("background_output tool", () => {
       include_reasoning: false,
     }, ctx);
 
-    setTimeout(() => childStore.getState().append({ type: "run-end", status: "completed" }), 5);
+    setTimeout(() => childStore.getState().append({ type: "execution-end", status: "completed" }), 5);
     const result = await resultPromise;
 
     expect(result).toContain("Status: completed");
@@ -256,7 +256,7 @@ describe("background_output tool", () => {
   it("returns current output plus timeout note when block=true times out", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "run-start", runId: "run-1" });
+    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
     childStore.getState().append({ type: "text-start" });
     childStore.getState().append({ type: "text-delta", text: "still working" });
 
@@ -306,13 +306,13 @@ describe("background_output tool", () => {
   it("omits tool result payloads and reasoning by default", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "run-start", runId: "run-1" });
+    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
     childStore.getState().append({ type: "reasoning-start" });
     childStore.getState().append({ type: "reasoning-delta", text: "private chain" });
     childStore.getState().append({ type: "reasoning-end" });
     childStore.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "grep", input: { pattern: "x" } });
     childStore.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "grep", output: "secret payload", isError: false });
-    childStore.getState().append({ type: "run-end", status: "completed" });
+    childStore.getState().append({ type: "execution-end", status: "completed" });
 
     const result = await executeBackgroundOutput({
       session_id: childStore.getState().sessionId,
@@ -332,13 +332,13 @@ describe("background_output tool", () => {
   it("includes capped tool result and reasoning output when requested", async () => {
     const ctx = makeContext();
     const childStore = linkChild(ctx);
-    childStore.getState().append({ type: "run-start", runId: "run-1" });
+    childStore.getState().append({ type: "execution-start", executionId: "run-1" });
     childStore.getState().append({ type: "reasoning-start" });
     childStore.getState().append({ type: "reasoning-delta", text: `${"r".repeat(1_100)}reasoning-tail` });
     childStore.getState().append({ type: "reasoning-end" });
     childStore.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "bash", input: { command: "x" } });
     childStore.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "bash", output: `${"t".repeat(2_100)}tool-tail`, isError: false });
-    childStore.getState().append({ type: "run-end", status: "completed" });
+    childStore.getState().append({ type: "execution-end", status: "completed" });
 
     const result = await executeBackgroundOutput({
       session_id: childStore.getState().sessionId,
@@ -382,7 +382,7 @@ describe("background_output tool", () => {
         ...createEmptySessionStats(),
         tools: { calls: 1, completed: 1, failed: 0 },
       },
-      runs: [{ id: "run-1", startedAt: Date.now(), status: "completed", endedAt: Date.now() }],
+      executions: [{ id: "run-1", startedAt: Date.now(), status: "completed", endedAt: Date.now() }],
       todos: [],
       reminders: [],
     }, workspaceRoot);
@@ -403,7 +403,7 @@ describe("background_output tool", () => {
     const loaded = ctx.storeManager.get(childId, workspaceRoot);
     expect(loaded).toBeDefined();
     expect(loaded!.getState().stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
-    expect(loaded!.getState().runCount).toBe(1);
+    expect(loaded!.getState().executionCount).toBe(1);
   });
 
   it("returns descriptive error when getOrLoad fails with corrupt session file", async () => {

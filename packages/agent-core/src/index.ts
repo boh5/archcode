@@ -11,6 +11,8 @@ export { WorkflowArtifactKindSchema, WorkflowStateManager } from "./agents/workf
 
 export type { CommandResult } from "./commands/types";
 export type { RunningJob, SubscribeSessionEventsInput } from "./runner";
+export { SessionEventBridge } from "./events";
+export type { SessionEventBridgeOptions } from "./events";
 
 export type { McpWarning } from "./mcp/index";
 

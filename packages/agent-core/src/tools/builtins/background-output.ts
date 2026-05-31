@@ -221,7 +221,7 @@ function renderToolPart(part: ToolPart, includeToolResults: boolean): string {
 
 function sessionStatus(state: SessionStoreState): string {
   if (state.isRunning) return "running";
-  return state.runs.at(-1)?.status ?? "idle";
+  return state.executions.at(-1)?.status ?? "idle";
 }
 
 function statusNote(state: SessionStoreState, waitResult: WaitResult): string {

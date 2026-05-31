@@ -1,4 +1,4 @@
-import type { Reminder, RunEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
+import type { Reminder, ExecutionEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
 
 export const TODO_REMINDER_STEP_INTERVAL = 10;
 export const TODO_REMINDER_COOLDOWN_MS = 30_000;
@@ -102,7 +102,7 @@ export function shouldInjectReminder(
 
 export function shouldContinueAfterLoop(
   state: SessionStoreState,
-  loopEndStatus: RunEndEvent["status"],
+  loopEndStatus: ExecutionEndEvent["status"],
   now: number,
 ): ContinuationCheckResult {
   if (!isLoopEndAllowed(loopEndStatus)) {

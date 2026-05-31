@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Reminder, RunEndEvent, StreamEvent } from "./types";
+import type { Reminder, ExecutionEndEvent, StreamEvent } from "./types";
 import { BusyError } from "./types";
 
 describe("BusyError", () => {
@@ -117,9 +117,9 @@ describe("StreamEvent", () => {
   });
 });
 
-describe("RunEndEvent", () => {
+describe("ExecutionEndEvent", () => {
   test("accepts all terminal status values", () => {
-    const statuses: RunEndEvent["status"][] = [
+    const statuses: ExecutionEndEvent["status"][] = [
       "completed",
       "max_steps",
       "failed",
@@ -128,8 +128,8 @@ describe("RunEndEvent", () => {
       "timed_out",
     ];
 
-    const events: RunEndEvent[] = statuses.map((status) => ({
-      type: "run-end",
+    const events: ExecutionEndEvent[] = statuses.map((status) => ({
+      type: "execution-end",
       status,
     }));
 

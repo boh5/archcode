@@ -138,9 +138,10 @@ async function writeSessionFile(input: {
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
-    runs: [],
+    executions: [],
     todos: [],
     reminders: [],
+    childSessionLinks: [],
     rootSessionId,
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
@@ -237,6 +238,21 @@ describe("AgentJobRunner", () => {
     expect(received).toMatchObject([{ type: "event", slug: "project", sessionId: "events", kind: "system-notice" }]);
     unsubscribe();
     run.resolve({ text: "done", steps: 1 });
+    await job.promise;
+  });
+
+  test("subscribes child session events when the child store attaches after subscription", async () => {
+    const child = new MockAgent("child-events", Promise.resolve({ text: "done", steps: 1 }));
+    const { runner } = createRunner({ "child-events": child });
+    const received: unknown[] = [];
+
+    const unsubscribe = runner.subscribe({ slug: "project", workspaceRoot, sessionId: "child-events", onEvent: (event) => received.push(event) });
+    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
+    await Promise.resolve();
+    child.store.getState().append({ type: "system-notice", message: "child" });
+
+    expect(received).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", kind: "system-notice" }]);
+    unsubscribe();
     await job.promise;
   });
 

@@ -79,6 +79,40 @@ describe("web session store registry", () => {
     expect(childStore.getState()).not.toHaveProperty("subAgentDescriptions");
   });
 
+  test("projects child session links from remote events and snapshots", () => {
+    const store = createWebSessionStore("session-1", "demo");
+    const link = {
+      parentSessionId: "session-1",
+      parentToolCallId: "tool-call-1",
+      toolName: "delegate",
+      childSessionId: "child-1",
+      childAgentName: "explore",
+      depth: 1,
+      background: true,
+      status: "linked" as const,
+      createdAt: 100,
+    };
+    const completed = {
+      ...link,
+      status: "completed" as const,
+      endedAt: 200,
+      durationMs: 100,
+      summary: "Done",
+    };
+
+    store.getState().applyRemoteEnvelope(event(0, { type: "tool-child-session-link", link }));
+    store.getState().applyRemoteEnvelope(event(1, { type: "tool-child-session-link", link: completed }));
+
+    expect(store.getState().childSessionLinks).toEqual([completed]);
+
+    store.getState().initializeFromSnapshot({
+      childSessionLinks: [link],
+      eventCursor: 1,
+    });
+
+    expect(store.getState().childSessionLinks).toEqual([link]);
+  });
+
   test("evicts least-recent idle stores down to twenty", () => {
     for (let index = 0; index < 22; index += 1) {
       createWebSessionStore(`idle-${index}`, "lru");
@@ -288,10 +322,10 @@ describe("initializeFromSnapshot", () => {
 
     // Simulate SSE processing events up to event 5
     store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-guard" });
     store.getState().applyRemoteEnvelope({ ...event(2, userMessage("world")), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(3, { type: "run-end", runId: "run-1", status: "completed" } as SessionEventPayload), sessionId: "stale-guard" });
-    store.getState().applyRemoteEnvelope({ ...event(4, { type: "run-start", runId: "run-2" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(3, { type: "execution-end", executionId: "run-1", status: "completed" } as SessionEventPayload), sessionId: "stale-guard" });
+    store.getState().applyRemoteEnvelope({ ...event(4, { type: "execution-start", executionId: "run-2" } as SessionEventPayload), sessionId: "stale-guard" });
 
     expect(store.getState().nextEventId).toBe(5);
 
@@ -321,7 +355,7 @@ describe("initializeFromSnapshot", () => {
 
     // Local state has only processed 2 events
     store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "fresh-snapshot" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "fresh-snapshot" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "fresh-snapshot" });
     expect(store.getState().nextEventId).toBe(2);
 
     // Snapshot from server has up-to-date data (eventCursor matches)
@@ -342,7 +376,7 @@ describe("initializeFromSnapshot", () => {
     const store = createWebSessionStore("stale-metadata", "demo");
 
     store.getState().applyRemoteEnvelope({ ...event(0, userMessage("hello")), sessionId: "stale-metadata" });
-    store.getState().applyRemoteEnvelope({ ...event(1, { type: "run-start", runId: "run-1" } as SessionEventPayload), sessionId: "stale-metadata" });
+    store.getState().applyRemoteEnvelope({ ...event(1, { type: "execution-start", executionId: "run-1" } as SessionEventPayload), sessionId: "stale-metadata" });
 
     store.getState().initializeFromSnapshot({
       title: "New Title",

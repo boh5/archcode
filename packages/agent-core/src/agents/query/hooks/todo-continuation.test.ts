@@ -2,7 +2,7 @@ import { describe, expect, test, mock, afterEach } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { ModelInfo } from "../../../provider/model";
 import { createMockStore } from "../../../store/test-helpers";
-import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, RunEndEvent } from "../../../store/types";
+import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, ExecutionEndEvent } from "../../../store/types";
 import type { AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";
 import { silentLogger } from "../../../logger";
 import { createTodoContinuationHook } from "./todo-continuation";
@@ -206,7 +206,7 @@ async function runStep(
 async function runLoopEnd(
   hook: (ctx: AfterLoopEndContext) => Promise<void>,
   store: StoreApi<SessionStoreState>,
-  loopEndStatus: RunEndEvent["status"],
+  loopEndStatus: ExecutionEndEvent["status"],
 ): Promise<void> {
   await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger, loopEndStatus });
 }

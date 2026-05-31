@@ -10,6 +10,7 @@ import type {
   SessionStep,
   SessionTodo,
   StreamEvent,
+  ToolChildSessionLink,
 } from "./types";
 
 function createProjection(overrides: Partial<SessionProjection> = {}): SessionProjection {
@@ -21,9 +22,10 @@ function createProjection(overrides: Partial<SessionProjection> = {}): SessionPr
     steps: [],
     todos: [],
     reminders: [],
+    childSessionLinks: [],
     stats: createEmptySessionStats(),
-    runs: [],
-    runCount: 0,
+    executions: [],
+    executionCount: 0,
     isRunning: false,
     isStreamingModel: false,
     ...overrides,
@@ -82,16 +84,33 @@ function makeReminder(overrides: Partial<Reminder> = {}): Reminder {
   };
 }
 
+function makeChildSessionLink(overrides: Partial<ToolChildSessionLink> = {}): ToolChildSessionLink {
+  return {
+    parentSessionId: "parent-1",
+    parentToolCallId: "tool-call-1",
+    toolName: "delegate",
+    childSessionId: "child-1",
+    childAgentName: "explore",
+    title: "Child title",
+    description: "Investigate a thing",
+    depth: 1,
+    background: true,
+    status: "linked",
+    createdAt: 100,
+    ...overrides,
+  };
+}
+
 describe("reduceStreamEvent", () => {
-  test("defaults stats to all zeros and runs to empty for never-run sessions", () => {
+  test("defaults stats to all zeros and executions to empty for never-run sessions", () => {
     const state = createProjection();
 
     expect(state.stats).toEqual(createEmptySessionStats());
     expect(state.stats.tools.calls).toBe(0);
     expect(state.stats.tools.completed).toBe(0);
     expect(state.stats.tools.failed).toBe(0);
-    expect(state.runs).toEqual([]);
-    expect(state.runCount).toBe(state.runs.length);
+    expect(state.executions).toEqual([]);
+    expect(state.executionCount).toBe(state.executions.length);
   });
 
   test("accumulates text deltas between start and end", () => {
@@ -111,7 +130,7 @@ describe("reduceStreamEvent", () => {
 
   test("produces identical projections with the same events and deterministic context", () => {
     const events: StreamEvent[] = [
-      { type: "run-start" },
+      { type: "execution-start" },
       { type: "user-message", content: "hello" },
       { type: "step-start", step: 0 },
       { type: "text-start" },
@@ -126,7 +145,7 @@ describe("reduceStreamEvent", () => {
         isError: false,
       },
       { type: "step-end", step: 0, finishReason: "stop" },
-      { type: "run-end", status: "completed" },
+      { type: "execution-end", status: "completed" },
     ];
 
     const first = applyEvents(createProjection(), events);
@@ -170,6 +189,57 @@ describe("reduceStreamEvent", () => {
     expect(tool.output).toBe("content");
     expect(tool.meta).toEqual({ exitCode: 0 });
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
+  });
+
+  test("creates a tool child session link", () => {
+    const link = makeChildSessionLink();
+
+    const state = applyEvents(createProjection(), [
+      { type: "tool-child-session-link", link },
+    ]);
+
+    expect(state.childSessionLinks).toEqual([link]);
+  });
+
+  test("updates existing tool child session link by parent session, parent tool call, and child session", () => {
+    const initial = makeChildSessionLink({ status: "running", startedAt: 110 });
+    const completed = makeChildSessionLink({
+      status: "completed",
+      startedAt: 110,
+      endedAt: 210,
+      durationMs: 100,
+      summary: "Done",
+    });
+
+    const state = applyEvents(createProjection(), [
+      { type: "tool-child-session-link", link: initial },
+      { type: "tool-child-session-link", link: completed },
+    ]);
+
+    expect(state.childSessionLinks).toEqual([completed]);
+  });
+
+  test("does not collapse links that share childSessionId but have different parent tool calls", () => {
+    const first = makeChildSessionLink({ parentToolCallId: "tool-call-1" });
+    const second = makeChildSessionLink({ parentToolCallId: "tool-call-2", status: "running" });
+
+    const state = applyEvents(createProjection(), [
+      { type: "tool-child-session-link", link: first },
+      { type: "tool-child-session-link", link: second },
+    ]);
+
+    expect(state.childSessionLinks).toEqual([first, second]);
+  });
+
+  test("suppresses exact duplicate tool child session link events", () => {
+    const link = makeChildSessionLink();
+
+    const state = applyEvents(createProjection(), [
+      { type: "tool-child-session-link", link },
+      { type: "tool-child-session-link", link },
+    ]);
+
+    expect(state.childSessionLinks).toEqual([link]);
   });
 
   test("preserves nested diff metadata on completed tool parts", () => {
@@ -270,7 +340,7 @@ describe("reduceStreamEvent", () => {
 
   test("tracks step start and end", () => {
     const usage = { inputTokens: 1, outputTokens: 2 };
-    const state = applyEvents(createProjection({ currentRunId: "run-1" }), [
+    const state = applyEvents(createProjection({ currentExecutionId: "run-1" }), [
       { type: "step-start", step: 0 },
       { type: "step-end", step: 0, finishReason: "stop", usage },
     ]);
@@ -278,7 +348,7 @@ describe("reduceStreamEvent", () => {
     const step = onlyStep(state.steps);
     expect(state.isStreamingModel).toBe(false);
     expect(step.step).toBe(0);
-    expect(step.runId).toBe("run-1");
+    expect(step.executionId).toBe("run-1");
     expect(step.finishReason).toBe("stop");
     expect(step.usage).toBe(usage);
     expect(step.completedAt).toBeGreaterThan(0);
@@ -334,39 +404,39 @@ describe("reduceStreamEvent", () => {
   });
 
   test("creates system notice messages", () => {
-    const state = applyEvents(createProjection({ currentRunId: "run-system" }), [
+    const state = applyEvents(createProjection({ currentExecutionId: "run-system" }), [
       { type: "system-notice", message: "notice" },
     ]);
 
     const message = onlyMessage(state.messages);
     expect(message.role).toBe("user");
-    expect(message.runId).toBe("run-system");
+    expect(message.executionId).toBe("run-system");
     expect(partOfType(message, "system-notice").notice).toBe("notice");
     expect(state.stats.messages).toEqual({ user: 0, assistant: 0, total: 0 });
   });
 
-  test("tracks run start and end without busy errors", () => {
+  test("tracks execution start and end without busy errors", () => {
     const afterStart = applyEvents(
       createProjection({
         isRunning: true,
-        runs: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1 }],
-        runCount: 1,
+        executions: [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 2, durationMs: 1 }],
+        executionCount: 1,
       }),
-      [{ type: "run-start", runId: "run-2" }],
+      [{ type: "execution-start", executionId: "run-2" }],
     );
 
     expect(afterStart.isRunning).toBe(true);
-    expect(afterStart.currentRunId).toBe("run-2");
-    expect(afterStart.runCount).toBe(2);
-    expect(afterStart.runCount).toBe(afterStart.runs.length);
+    expect(afterStart.currentExecutionId).toBe("run-2");
+    expect(afterStart.executionCount).toBe(2);
+    expect(afterStart.executionCount).toBe(afterStart.executions.length);
 
-    const afterEnd = applyEvents(afterStart, [{ type: "run-end", status: "completed" }]);
+    const afterEnd = applyEvents(afterStart, [{ type: "execution-end", status: "completed" }]);
     expect(afterEnd.isRunning).toBe(false);
     expect(afterEnd.isStreamingModel).toBe(false);
-    expect(afterEnd.currentRunId).toBeUndefined();
+    expect(afterEnd.currentExecutionId).toBeUndefined();
     expect(afterEnd.currentAssistantMessageId).toBeUndefined();
-    expect(afterEnd.runs[1]).toMatchObject({ id: "run-2", status: "completed" });
-    expect(afterEnd.runCount).toBe(afterEnd.runs.length);
+    expect(afterEnd.executions[1]).toMatchObject({ id: "run-2", status: "completed" });
+    expect(afterEnd.executionCount).toBe(afterEnd.executions.length);
   });
 
   test("user, assistant, and total message counts update exactly without compaction double-counting", () => {
@@ -416,20 +486,20 @@ describe("reduceStreamEvent", () => {
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
 
-  test("pending and running tools settled by run-end increment failed exactly once for counted calls", () => {
+  test("pending and running tools settled by execution-end increment failed exactly once for counted calls", () => {
     const state = applyEvents(createProjection(), [
-      { type: "run-start", runId: "run-1" },
+      { type: "execution-start", executionId: "run-1" },
       { type: "tool-input-start", toolCallId: "pending", toolName: "read" },
       { type: "tool-call", toolCallId: "running", toolName: "read", input: {} },
-      { type: "run-end", status: "failed", error: "boom" },
-      { type: "run-end", status: "failed" },
+      { type: "execution-end", status: "failed", error: "boom" },
+      { type: "execution-end", status: "failed" },
     ]);
 
     expect(state.stats.tools).toEqual({ calls: 1, completed: 0, failed: 1 });
   });
 
   test("step-end usage provider variants normalize into shared usage stats", () => {
-    const state = applyEvents(createProjection({ currentRunId: "run-usage" }), [
+    const state = applyEvents(createProjection({ currentExecutionId: "run-usage" }), [
       { type: "step-start", step: 0 },
       { type: "step-end", step: 0, finishReason: "stop", usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 6 } },
       { type: "step-start", step: 1 },
@@ -448,7 +518,7 @@ describe("reduceStreamEvent", () => {
   });
 
   test("reasoning and cached-token aliases populate normalized usage fields", () => {
-    const state = applyEvents(createProjection({ currentRunId: "run-usage" }), [
+    const state = applyEvents(createProjection({ currentExecutionId: "run-usage" }), [
       { type: "step-start", step: 0 },
       { type: "step-end", step: 0, finishReason: "stop", usage: { inputTokens: 1, outputTokens: 2, reasoningTokens: 3, cachedInputTokens: 4 } },
       { type: "step-start", step: 1 },
@@ -476,54 +546,54 @@ describe("reduceStreamEvent", () => {
     expect(state.stats.messages.total).toBe(0);
   });
 
-  test("computed run id aligns runs, current run, messages, and steps", () => {
+  test("computed execution id aligns executions, current execution, messages, and steps", () => {
     const state = applyEvents(createProjection(), [
-      { type: "run-start" },
+      { type: "execution-start" },
       { type: "user-message", content: "hello" },
       { type: "step-start", step: 0 },
     ]);
-    const runId = state.runs[0]!.id;
+    const executionId = state.executions[0]!.id;
 
-    expect(state.currentRunId).toBe(runId);
-    expect(state.messages[0]!.runId).toBe(runId);
-    expect(state.steps[0]!.runId).toBe(runId);
+    expect(state.currentExecutionId).toBe(executionId);
+    expect(state.messages[0]!.executionId).toBe(executionId);
+    expect(state.steps[0]!.executionId).toBe(executionId);
   });
 
-  test("run-end without current run does not append a fake run", () => {
-    const state = applyEvents(createProjection(), [{ type: "run-end", status: "completed" }]);
+  test("execution-end without current execution does not append a fake execution", () => {
+    const state = applyEvents(createProjection(), [{ type: "execution-end", status: "completed" }]);
 
-    expect(state.runs).toEqual([]);
-    expect(state.runCount).toBe(0);
+    expect(state.executions).toEqual([]);
+    expect(state.executionCount).toBe(0);
   });
 
-  test("runCount equals runs.length after create, run-start, and run-end", () => {
+  test("executionCount equals executions.length after create, execution-start, and execution-end", () => {
     const created = createProjection();
-    expect(created.runCount).toBe(created.runs.length);
+    expect(created.executionCount).toBe(created.executions.length);
 
-    const started = applyEvents(created, [{ type: "run-start", runId: "run-1" }]);
-    expect(started.runCount).toBe(started.runs.length);
+    const started = applyEvents(created, [{ type: "execution-start", executionId: "run-1" }]);
+    expect(started.executionCount).toBe(started.executions.length);
 
-    const ended = applyEvents(started, [{ type: "run-end", status: "completed" }]);
-    expect(ended.runCount).toBe(ended.runs.length);
+    const ended = applyEvents(started, [{ type: "execution-end", status: "completed" }]);
+    expect(ended.executionCount).toBe(ended.executions.length);
   });
 
-  test("cancelled, aborted, and timed_out run-end statuses populate latest run", () => {
+  test("cancelled, aborted, and timed_out execution-end statuses populate latest execution", () => {
     const state = applyEvents(createProjection(), [
-      { type: "run-start", runId: "run-cancelled" },
-      { type: "run-end", status: "cancelled", error: "cancelled by user" },
-      { type: "run-start", runId: "run-aborted" },
-      { type: "run-end", status: "aborted", error: "abort signal" },
-      { type: "run-start", runId: "run-timed-out" },
-      { type: "run-end", status: "timed_out", error: "deadline" },
+      { type: "execution-start", executionId: "run-cancelled" },
+      { type: "execution-end", status: "cancelled", error: "cancelled by user" },
+      { type: "execution-start", executionId: "run-aborted" },
+      { type: "execution-end", status: "aborted", error: "abort signal" },
+      { type: "execution-start", executionId: "run-timed-out" },
+      { type: "execution-end", status: "timed_out", error: "deadline" },
     ]);
 
-    expect(state.runs.map((run) => run.status)).toEqual(["cancelled", "aborted", "timed_out"]);
-    expect(state.runs.at(-1)).toMatchObject({
+    expect(state.executions.map((execution) => execution.status)).toEqual(["cancelled", "aborted", "timed_out"]);
+    expect(state.executions.at(-1)).toMatchObject({
       id: "run-timed-out",
       status: "timed_out",
       error: "deadline",
     });
-    expect(state.runCount).toBe(state.runs.length);
+    expect(state.executionCount).toBe(state.executions.length);
   });
 
   test("compaction summary updates do not mutate existing stats", () => {
@@ -561,31 +631,31 @@ describe("reduceStreamEvent", () => {
   });
 
   test("creates user messages", () => {
-    const state = applyEvents(createProjection({ currentRunId: "run-user" }), [
+    const state = applyEvents(createProjection({ currentExecutionId: "run-user" }), [
       { type: "user-message", content: "hello" },
     ]);
 
     const message = onlyMessage(state.messages);
     expect(message.role).toBe("user");
-    expect(message.runId).toBe("run-user");
+    expect(message.executionId).toBe("run-user");
     expect(message.completedAt).toBeGreaterThan(0);
     expect(partOfType(message, "text").text).toBe("hello");
     expect(state.stats.messages).toEqual({ user: 1, assistant: 0, total: 1 });
   });
 
   test("records loop errors on matching or synthetic steps", () => {
-    const matching = applyEvents(createProjection({ currentRunId: "run-error" }), [
+    const matching = applyEvents(createProjection({ currentExecutionId: "run-error" }), [
       { type: "step-start", step: 1 },
       { type: "loop-error", step: 1, error: "bad loop" },
     ]);
     expect(onlyStep(matching.steps).error).toBe("bad loop");
 
-    const synthetic = applyEvents(createProjection({ currentRunId: "run-error" }), [
+    const synthetic = applyEvents(createProjection({ currentExecutionId: "run-error" }), [
       { type: "loop-error", step: 4, error: "missing step" },
     ]);
     const step = onlyStep(synthetic.steps);
     expect(step.step).toBe(4);
-    expect(step.runId).toBe("run-error");
+    expect(step.executionId).toBe("run-error");
     expect(step.error).toBe("missing step");
   });
 

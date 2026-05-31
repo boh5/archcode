@@ -7,7 +7,7 @@ import { SkillService } from "../../skills";
 import { CommandRegistry } from "../../commands/registry";
 import { createSkillCommand } from "../../commands/skill";
 import { storeManager } from "../../store/store";
-import type { Reminder, RunEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
+import type { Reminder, ExecutionEndEvent, SessionEventPayload, SessionStoreState, StoredMessage, StoredTodo } from "../../store/types";
 import { createRegistry, defineTool } from "../../tools/index";
 import { REDACTION_MARKER } from "../../tools/index";
 import { createTestProjectContext } from "../../tools/test-project-context";
@@ -266,10 +266,10 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(store.getState().isRunning).toBe(false);
     expect(store.getState().isStreamingModel).toBe(false);
-    expect(store.getState().currentRunId).toBeUndefined();
+    expect(store.getState().currentExecutionId).toBeUndefined();
   });
 
-  test("sets running flags during streamText after run-start and step-start", async () => {
+  test("sets running flags during streamText after execution-start and step-start", async () => {
     const store = createStore();
     const snapshots: Array<Pick<SessionStoreState, "isRunning" | "isStreamingModel">> = [];
     const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
@@ -941,7 +941,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(JSON.stringify(store.getState().messages)).not.toContain(DOOM_LOOP_MESSAGE);
   });
 
-  test("maxSteps emits loop-error but run-end completed", async () => {
+  test("maxSteps emits loop-error but execution-end completed", async () => {
     const store = createStore();
     createMockStreamText([
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: {} }] },
@@ -1061,7 +1061,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect("messages" in (contexts[2] as Record<string, unknown>)).toBe(false);
     });
 
-    test("RunEndEvent uses max_steps status when step limit is reached", async () => {
+    test("ExecutionEndEvent uses max_steps status when step limit is reached", async () => {
       const store = createStore();
       const events = captureEvents(store);
       createMockStreamText([
@@ -1073,7 +1073,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         "Hi",
       );
 
-      const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+      const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
       expect(runEnd?.status).toBe("max_steps");
     });
 
@@ -1168,7 +1168,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     test("beforeModelBuild can modify store state and changes are reflected in projected messages", async () => {
       const store = createStore();
       store.getState().append({ type: "user-message", content: "original" });
-      store.getState().append({ type: "run-end", status: "completed" });
+      store.getState().append({ type: "execution-end", status: "completed" });
 
       const streamFn = createMockStreamText([{ text: "ok" }]);
 
@@ -1360,7 +1360,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
-  test("streamText throw emits failed run-end state", async () => {
+  test("streamText throw emits failed execution-end state", async () => {
     const store = createStore();
     const fn = mock(() => {
       throw new Error("model unavailable");
@@ -2224,7 +2224,7 @@ describe("runQueryLoop slash commands", () => {
 });
 
 describe("runQueryLoop abort handling", () => {
-  test("abort before loop starts emits aborted run-end", async () => {
+  test("abort before loop starts emits aborted execution-end", async () => {
     const abortController = new AbortController();
     abortController.abort();
     const store = createStore();
@@ -2234,11 +2234,11 @@ describe("runQueryLoop abort handling", () => {
     const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
 
     expect(result.steps).toBe(0);
-    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
     expect(runEnd?.status).toBe("aborted");
   });
 
-  test("abort during stream breaks out and emits aborted run-end", async () => {
+  test("abort during stream breaks out and emits aborted execution-end", async () => {
     const abortController = new AbortController();
     const store = createStore();
     const events = captureEvents(store);
@@ -2249,7 +2249,7 @@ describe("runQueryLoop abort handling", () => {
     const result = await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
 
     expect(result.steps).toBeLessThanOrEqual(1);
-    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
     expect(runEnd).toBeDefined();
   });
 
@@ -2277,11 +2277,11 @@ describe("runQueryLoop abort handling", () => {
     );
 
     expect(result.steps).toBeLessThanOrEqual(1);
-    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
     expect(runEnd?.status).toBe("aborted");
   });
 
-  test("abort between stream end and tool execution emits aborted run-end", async () => {
+  test("abort between stream end and tool execution emits aborted execution-end", async () => {
     const abortController = new AbortController();
     const store = createStore();
     const events = captureEvents(store);
@@ -2301,7 +2301,7 @@ describe("runQueryLoop abort handling", () => {
       "Hi",
     );
 
-    const runEnd = events.find((event): event is RunEndEvent => event.type === "run-end");
+    const runEnd = events.find((event): event is ExecutionEndEvent => event.type === "execution-end");
     expect(runEnd?.status).toBe("aborted");
   });
 });

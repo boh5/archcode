@@ -7,11 +7,12 @@ import type {
   PermissionTerminalEvent,
   QuestionTerminalEvent,
   Reminder,
+  ToolChildSessionLink,
   SessionEventEnvelope,
   SessionEventPayload,
   SessionMessage,
   SessionProjection,
-  SessionRun,
+  SessionExecutionRecord,
   SessionStats,
   SessionStep,
   SessionTodo,
@@ -54,12 +55,13 @@ export interface WebSessionStoreState extends SessionProjection {
     steps?: SessionStep[];
     todos?: SessionTodo[];
     reminders?: Reminder[];
+    childSessionLinks?: ToolChildSessionLink[];
     title?: string | null;
     createdAt?: number;
     rootSessionId?: string;
     parentSessionId?: string;
     stats?: SessionStats;
-    runs?: SessionRun[];
+    executions?: SessionExecutionRecord[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
   }) => void;
@@ -255,16 +257,17 @@ export function createWebSessionStore(
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
-    runs: [],
+    executions: [],
     todos: [],
     reminders: [],
+    childSessionLinks: [],
     // Mirrors persisted identity; tree relationships come from session-tree responses.
     rootSessionId: sessionId,
     parentSessionId: undefined,
     isRunning: false,
     isStreamingModel: false,
     readSnapshots: new Map(),
-    runCount: 0,
+    executionCount: 0,
     focusSessionId: null,
     lastTodoWriteStepIndex: null,
     lastTodoReminderStepIndex: null,
@@ -372,6 +375,9 @@ export function createWebSessionStore(
         if (data.reminders !== undefined && !stale) {
           updates.reminders = data.reminders as Reminder[];
         }
+        if (data.childSessionLinks !== undefined && !stale) {
+          updates.childSessionLinks = data.childSessionLinks;
+        }
         if (data.title !== undefined) {
           updates.title = data.title;
         }
@@ -381,8 +387,8 @@ export function createWebSessionStore(
         if (data.stats !== undefined && !stale) {
           updates.stats = data.stats;
         }
-        if (data.runs !== undefined && !stale) {
-          updates.runs = data.runs;
+        if (data.executions !== undefined && !stale) {
+          updates.executions = data.executions;
         }
         if (data.rootSessionId !== undefined) {
           updates.rootSessionId = data.rootSessionId;

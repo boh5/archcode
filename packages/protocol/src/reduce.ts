@@ -11,10 +11,11 @@ import type {
   SessionTodo,
   StreamEvent,
   SystemNoticePart,
+  ToolChildSessionLink,
   TextPart,
   ToolInputResolvedEvent,
   ToolPart,
-  RunEndEvent,
+  ExecutionEndEvent,
 } from "./types";
 import { addUsage, createEmptySessionStats, normalizeUsage } from "./usage";
 
@@ -49,36 +50,36 @@ export function reduceStreamEvent(
   const timestamp = ctx.timestamp;
 
   switch (event.type) {
-    case "run-start": {
-      const runId = event.runId ?? ctx.generateId();
-      const runs = [
-        ...(state.runs ?? []),
-        { id: runId, startedAt: timestamp, status: "running" as const },
+    case "execution-start": {
+      const executionId = event.executionId ?? ctx.generateId();
+      const executions = [
+        ...(state.executions ?? []),
+        { id: executionId, startedAt: timestamp, status: "running" as const },
       ];
 
       return {
         isRunning: true,
-        currentRunId: runId,
+        currentExecutionId: executionId,
         currentAssistantMessageId: undefined,
         isStreamingModel: false,
-        runs,
-        runCount: runs.length,
+        executions,
+        executionCount: executions.length,
       };
     }
 
-    case "run-end": {
+    case "execution-end": {
       const settledToolFailures = countRunningTools(state.messages, state.currentAssistantMessageId);
       const stats = incrementToolFailures(state.stats, settledToolFailures);
-      const runs = settleCurrentRun(state.runs ?? [], state.currentRunId, event, timestamp);
+      const executions = settleCurrentExecution(state.executions ?? [], state.currentExecutionId, event, timestamp);
 
       return {
         messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp),
         stats,
-        runs,
-        runCount: runs.length,
+        executions,
+        executionCount: executions.length,
         isRunning: false,
         isStreamingModel: false,
-        currentRunId: undefined,
+        currentExecutionId: undefined,
         currentAssistantMessageId: undefined,
       };
     }
@@ -97,7 +98,7 @@ export function reduceStreamEvent(
         parts: [part],
         createdAt: timestamp,
         completedAt: timestamp,
-        runId: state.currentRunId,
+        executionId: state.currentExecutionId,
       };
 
       return { messages: [...state.messages, message], stats: incrementUserMessages(state.stats) };
@@ -117,7 +118,7 @@ export function reduceStreamEvent(
         parts: [part],
         createdAt: timestamp,
         completedAt: timestamp,
-        runId: state.currentRunId,
+        executionId: state.currentExecutionId,
       };
 
       return { messages: [...state.messages, message] };
@@ -379,6 +380,12 @@ export function reduceStreamEvent(
       };
     }
 
+    case "tool-child-session-link": {
+      return {
+        childSessionLinks: upsertChildSessionLink(state.childSessionLinks, event.link),
+      };
+    }
+
     case "todo-write": {
       if (!areTodosValid(event.todos)) return {};
       return { todos: [...event.todos] };
@@ -431,7 +438,7 @@ export function reduceStreamEvent(
           {
             id: ctx.generateId(),
             step: event.step,
-            runId: state.currentRunId,
+            executionId: state.currentExecutionId,
             startedAt: timestamp,
           },
         ],
@@ -442,12 +449,12 @@ export function reduceStreamEvent(
     case "step-end": {
       const usage = normalizeUsage(event.usage);
       const hasOpenStep = state.steps.some(
-        (step) => step.step === event.step && step.runId === state.currentRunId && !step.completedAt,
+        (step) => step.step === event.step && step.executionId === state.currentExecutionId && !step.completedAt,
       );
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
-          step.step === event.step && step.runId === state.currentRunId && !step.completedAt
+          step.step === event.step && step.executionId === state.currentExecutionId && !step.completedAt
             ? {
                 ...step,
                 completedAt: timestamp,
@@ -464,7 +471,7 @@ export function reduceStreamEvent(
       const matchingStep =
         event.step !== undefined
           ? state.steps.find(
-              (step) => step.step === event.step && step.runId === state.currentRunId,
+              (step) => step.step === event.step && step.executionId === state.currentExecutionId,
             )
           : undefined;
 
@@ -482,7 +489,7 @@ export function reduceStreamEvent(
           {
             id: ctx.generateId(),
             step: event.step ?? state.steps.length,
-            runId: state.currentRunId,
+            executionId: state.currentExecutionId,
             startedAt: timestamp,
             error: event.error,
           },
@@ -552,6 +559,21 @@ export function reduceStreamEvent(
   }
 }
 
+function upsertChildSessionLink(
+  links: readonly ToolChildSessionLink[],
+  nextLink: ToolChildSessionLink,
+): ToolChildSessionLink[] {
+  const existingIndex = links.findIndex((link) =>
+    link.parentSessionId === nextLink.parentSessionId &&
+    link.parentToolCallId === nextLink.parentToolCallId &&
+    link.childSessionId === nextLink.childSessionId
+  );
+
+  if (existingIndex === -1) return [...links, nextLink];
+
+  return links.map((link, index) => index === existingIndex ? nextLink : link);
+}
+
 function areTodosValid(todos: readonly SessionTodo[]): boolean {
   let inProgressCount = 0;
 
@@ -617,17 +639,17 @@ function incrementStepCompleted(stats: SessionStats, usage: ReturnType<typeof no
   };
 }
 
-function settleCurrentRun(
-  runs: SessionProjection["runs"],
-  currentRunId: string | undefined,
-  event: RunEndEvent,
+function settleCurrentExecution(
+  executions: SessionProjection["executions"],
+  currentExecutionId: string | undefined,
+  event: ExecutionEndEvent,
   timestamp: number,
-): SessionProjection["runs"] {
-  if (!currentRunId) return runs;
+): SessionProjection["executions"] {
+  if (!currentExecutionId) return executions;
 
   let changed = false;
-  const updated = runs.map((run) => {
-    if (run.id !== currentRunId || run.status !== "running") return run;
+  const updated = executions.map((run) => {
+    if (run.id !== currentExecutionId || run.status !== "running") return run;
     changed = true;
     return {
       ...run,
@@ -638,7 +660,7 @@ function settleCurrentRun(
     };
   });
 
-  return changed ? updated : runs;
+  return changed ? updated : executions;
 }
 
 function countRunningTools(
@@ -676,7 +698,7 @@ function settleIncompleteState(
         const errorPart: ErrorToolPart = {
           ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),
           state: "error",
-          errorMessage: "Run ended before tool result",
+          errorMessage: "Execution ended before tool result",
           endedAt: timestamp,
         };
 
@@ -728,7 +750,7 @@ function ensureCurrentAssistantMessage(
     role: "assistant",
     parts: [],
     createdAt: timestamp,
-    runId: state.currentRunId,
+    executionId: state.currentExecutionId,
   };
 
   return {

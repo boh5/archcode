@@ -6,7 +6,7 @@ import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { __setSessionsDirForTest } from "./sessions-dir";
-import { createEmptySessionStats, type SessionRun, type SessionStats } from "@specra/protocol";
+import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@specra/protocol";
 import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
@@ -69,7 +69,7 @@ function sampleMessages(): StoredMessage[] {
       parts: [textPart("user-text-1", "hello", 101)],
       createdAt: 100,
       completedAt: 101,
-      runId: "run-1",
+      executionId: "run-1",
     },
     {
       id: "assistant-1",
@@ -77,7 +77,7 @@ function sampleMessages(): StoredMessage[] {
       parts: [textPart("assistant-text-1", "world", 103)],
       createdAt: 102,
       completedAt: 104,
-      runId: "run-1",
+      executionId: "run-1",
     },
   ];
 }
@@ -88,7 +88,7 @@ function allPartVariantsMessage(): StoredMessage {
     role: "assistant",
     createdAt: 200,
     completedAt: 220,
-    runId: "run-all",
+    executionId: "run-all",
     parts: [
       { type: "text", id: "text-complete", text: "done", createdAt: 201, completedAt: 202 },
       { type: "text", id: "text-incomplete", text: "streaming", createdAt: 203 },
@@ -106,7 +106,7 @@ function sampleSteps(): StepInfo[] {
     {
       id: "step-1",
       step: 1,
-      runId: "run-1",
+      executionId: "run-1",
       startedAt: 300,
       completedAt: 310,
       finishReason: "stop",
@@ -150,6 +150,28 @@ function sampleReminders(): Reminder[] {
   ];
 }
 
+function sampleChildSessionLinks(): ToolChildSessionLink[] {
+  return [
+    {
+      parentSessionId: "parent-session",
+      parentToolCallId: "tool-call-1",
+      toolName: "delegate",
+      childSessionId: "child-session",
+      childAgentName: "explore",
+      title: "Explore task",
+      description: "Look up details",
+      depth: 1,
+      background: true,
+      status: "completed",
+      createdAt: 700,
+      startedAt: 710,
+      endedAt: 760,
+      durationMs: 50,
+      summary: "Found answer",
+    },
+  ];
+}
+
 type PersistedSessionState = Pick<
   SessionStoreState,
   | "sessionId"
@@ -159,9 +181,10 @@ type PersistedSessionState = Pick<
   | "messages"
   | "steps"
   | "stats"
-  | "runs"
+  | "executions"
   | "todos"
   | "reminders"
+  | "childSessionLinks"
   | "rootSessionId"
   | "parentSessionId"
 >;
@@ -172,10 +195,11 @@ function persistedState(
   steps = sampleSteps(),
   todos = sampleTodos(),
   stats: SessionStats = createEmptySessionStats(),
-  runs: SessionRun[] = [],
+  executions: SessionExecutionRecord[] = [],
   reminders: Reminder[] = [],
   rootSessionId?: string,
   parentSessionId: string | undefined = undefined,
+  childSessionLinks: ToolChildSessionLink[] = [],
 ): PersistedSessionState {
   return {
     sessionId,
@@ -185,20 +209,21 @@ function persistedState(
     messages,
     steps,
     stats,
-    runs,
+    executions,
     todos,
     reminders,
+    childSessionLinks,
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
   };
 }
 
 describe("session transcript serialization", () => {
-  test("save/load roundtrips sessionId, createdAt, messages, steps, stats, runs, and todos", async () => {
+  test("save/load roundtrips sessionId, createdAt, messages, steps, stats, executions, and todos", async () => {
     const sessionId = uniqueSessionId("roundtrip");
     const stats = { ...createEmptySessionStats(), messages: { user: 1, assistant: 1, total: 2 } };
-    const runs: SessionRun[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2 }];
-    const state = persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), stats, runs);
+    const executions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 1, status: "completed", endedAt: 3, durationMs: 2 }];
+    const state = persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), stats, executions);
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
@@ -209,9 +234,25 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().messages).toEqual(state.messages);
     expect(loaded.getState().steps).toEqual(state.steps);
     expect(loaded.getState().stats).toEqual(state.stats);
-    expect(loaded.getState().runs).toEqual(state.runs);
-    expect(loaded.getState().runCount).toBe(state.runs.length);
+    expect(loaded.getState().executions).toEqual(state.executions);
+    expect(loaded.getState().executionCount).toBe(state.executions.length);
     expect(loaded.getState().todos).toEqual(state.todos);
+    expect(loaded.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("save/load roundtrips child session links", async () => {
+    const sessionId = uniqueSessionId("child-session-links");
+    const links = sampleChildSessionLinks();
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(sessionId, sampleMessages(), sampleSteps(), sampleTodos(), createEmptySessionStats(), [], [], undefined, undefined, links),
+      TMP_DIR,
+    );
+    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
+    expect(raw.childSessionLinks).toEqual(links);
+
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+    expect(loaded.getState().childSessionLinks).toEqual(links);
   });
 
   test("save/load roundtrips agentName and accepts legacy files without it", async () => {
@@ -233,7 +274,7 @@ describe("session transcript serialization", () => {
       messages: [],
       steps: [],
       stats: createEmptySessionStats(),
-      runs: [],
+      executions: [],
       todos: [],
       reminders: [],
       rootSessionId: legacySessionId,
@@ -324,7 +365,7 @@ describe("session transcript serialization", () => {
 
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentExecutionId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
   });
 
@@ -336,9 +377,9 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("load rejects missing required runs", async () => {
-    const sessionId = uniqueSessionId("missing-runs");
-    const { runs: _runs, ...legacyState } = persistedState(sessionId);
+  test("load rejects missing required executions", async () => {
+    const sessionId = uniqueSessionId("missing-executions");
+    const { executions: _executions, ...legacyState } = persistedState(sessionId);
     await writeSessionFile(sessionId, legacyState);
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
@@ -419,13 +460,13 @@ describe("session transcript serialization", () => {
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    loaded.getState().append({ type: "run-start", runId: "run-after-load" });
+    loaded.getState().append({ type: "execution-start", executionId: "run-after-load" });
     loaded.getState().append({ type: "user-message", content: "after load" });
 
     const state = loaded.getState();
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]?.role).toBe("user");
-    expect(state.messages[0]?.runId).toBe("run-after-load");
+    expect(state.messages[0]?.executionId).toBe("run-after-load");
   });
 
   test("atomic write leaves no temporary file behind", async () => {
@@ -610,11 +651,12 @@ describe("session transcript serialization", () => {
 
     expect(Object.keys(parsed).sort()).toEqual([
       "agentName",
+      "childSessionLinks",
       "createdAt",
+      "executions",
       "messages",
       "reminders",
       "rootSessionId",
-      "runs",
       "sessionId",
       "stats",
       "steps",
@@ -622,11 +664,12 @@ describe("session transcript serialization", () => {
       "todos",
     ]);
     expect("events" in parsed).toBe(false);
-    expect("runCount" in parsed).toBe(false);
+    expect("executionCount" in parsed).toBe(false);
     expect(parsed.stats).toEqual(createEmptySessionStats());
-    expect(parsed.runs).toEqual([]);
+    expect(parsed.executions).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
     expect(parsed.reminders).toEqual([]);
+    expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("orchestrator");
     expect(parsed.rootSessionId).toBe(sessionId);
   });
@@ -640,7 +683,7 @@ describe("session transcript serialization", () => {
 
     expect(state.isRunning).toBe(false);
     expect(state.isStreamingModel).toBe(false);
-    expect(state.currentRunId).toBeUndefined();
+    expect(state.currentExecutionId).toBeUndefined();
     expect(state.currentAssistantMessageId).toBeUndefined();
   });
 
@@ -659,8 +702,8 @@ describe("session transcript serialization", () => {
     expect(loadedState.messages).toEqual(originalMessages);
     expect(loadedState.steps).toEqual(originalSteps);
     expect(loadedState.stats).toEqual(createEmptySessionStats());
-    expect(loadedState.runs).toEqual([]);
-    expect(loadedState.runCount).toBe(0);
+    expect(loadedState.executions).toEqual([]);
+    expect(loadedState.executionCount).toBe(0);
     expect(loadedState.todos).toEqual(originalTodos);
   });
 
@@ -700,13 +743,13 @@ describe("session transcript serialization", () => {
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, [], []), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    loaded.getState().append({ type: "run-start", runId: "append-work-run" });
+    loaded.getState().append({ type: "execution-start", executionId: "append-work-run" });
     loaded.getState().append({ type: "user-message", content: "appended after load" });
 
     const state = loaded.getState();
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]?.role).toBe("user");
-    expect(state.messages[0]?.runId).toBe("append-work-run");
+    expect(state.messages[0]?.executionId).toBe("append-work-run");
   });
 
   test("getOrLoad resets readSnapshots to empty Map", async () => {
@@ -750,7 +793,7 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().nextEventId).toBe(0);
     expect(loaded.getState().events).toHaveLength(0);
 
-    loaded.getState().append({ type: "run-start", runId: "first-run" });
+    loaded.getState().append({ type: "execution-start", executionId: "first-run" });
     expect(loaded.getState().nextEventId).toBe(1);
     expect(loaded.getState().events).toHaveLength(1);
     expect(loaded.getState().events[0]?.id).toBe(0);

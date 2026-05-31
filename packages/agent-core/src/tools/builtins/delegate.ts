@@ -5,7 +5,7 @@ import type { ToolExecutionContext } from "../types";
 import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import type { AgentRunHandle } from "../../delegation/types";
-import type { SessionRun } from "@specra/protocol";
+import type { SessionExecutionRecord } from "@specra/protocol";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
@@ -98,7 +98,7 @@ interface SyncDelegateOutputOptions extends DelegateOutputOptions {
 
 function formatAsyncDelegateOutput(options: DelegateOutputOptions): string {
   const { input, ctx, handle } = options;
-  const run = handle.store.getState().runs.at(-1);
+  const run = handle.store.getState().executions.at(-1);
   const metadata = formatDelegateMetadata({
     sessionId: handle.sessionId,
     parentSessionId: ctx.store.getState().sessionId,
@@ -123,7 +123,7 @@ function formatAsyncDelegateOutput(options: DelegateOutputOptions): string {
 function formatSyncDelegateOutput(options: SyncDelegateOutputOptions): string {
   const { input, ctx, handle, terminalError } = options;
   const state = handle.store.getState();
-  const run = state.runs.at(-1);
+  const run = state.executions.at(-1);
   const status = terminalStatus(run, terminalError);
   const resultText = getLastAssistantText(state.messages);
   const metadata = formatDelegateMetadata({
@@ -151,7 +151,7 @@ function formatSyncDelegateOutput(options: SyncDelegateOutputOptions): string {
   ].filter((line): line is string => line !== undefined).join("\n");
 }
 
-type DelegateStatus = SessionRun["status"];
+type DelegateStatus = SessionExecutionRecord["status"];
 
 interface DelegateMetadataInput {
   readonly sessionId: string;
@@ -183,7 +183,7 @@ function formatDelegateMetadata(input: DelegateMetadataInput): string {
   return lines.join("\n");
 }
 
-function terminalStatus(run: SessionRun | undefined, terminalError: unknown): DelegateStatus {
+function terminalStatus(run: SessionExecutionRecord | undefined, terminalError: unknown): DelegateStatus {
   if (run !== undefined && run.status !== "running") return run.status;
   if (terminalError === undefined) return "completed";
   const message = terminalError instanceof Error ? terminalError.message : String(terminalError);
@@ -194,7 +194,7 @@ function terminalStatus(run: SessionRun | undefined, terminalError: unknown): De
   return "failed";
 }
 
-function durationLine(run: SessionRun | undefined): string | undefined {
+function durationLine(run: SessionExecutionRecord | undefined): string | undefined {
   if (run?.durationMs === undefined) return undefined;
   return `Duration: ${run.durationMs}ms`;
 }
