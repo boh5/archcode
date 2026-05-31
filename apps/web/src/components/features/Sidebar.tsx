@@ -190,7 +190,7 @@ export function Sidebar() {
 
     function walkNode(node: SessionTreeNode, depth: number): void {
       const s = node.session;
-      const agentType = isValidAgentType(s.title ?? "") ? (s.title as AgentType) : "explorer";
+      const agentType = isValidAgentType(s.agentName ?? "") ? (s.agentName as AgentType) : "orchestrator";
       const isRunning = isSessionActive({ ...s, id: s.sessionId } as Session);
       const isActive = focusSessionId === null
         ? s.sessionId === rootSessionId

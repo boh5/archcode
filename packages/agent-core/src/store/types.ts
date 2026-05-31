@@ -70,6 +70,7 @@ export interface SessionStoreState {
   createdAt: number;
 
   // Persistent layer
+  agentName: string;
   title: string | null;
   messages: SessionMessage[];
   steps: SessionStep[];

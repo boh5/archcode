@@ -7,6 +7,7 @@ export function createMockStore(
 ): StoreApi<SessionStoreState> {
   const state: SessionStoreState = {
     sessionId: "test",
+    agentName: "orchestrator",
     title: null,
     createdAt: Date.now(),
     messages: [],

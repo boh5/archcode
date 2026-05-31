@@ -140,6 +140,7 @@ export function createAgentFactory(config: AgentFactoryConfig): AgentFactory {
       const childStore = config.storeManager.create(childSessionId, config.workspaceRoot, {
         rootSessionId: options.parentStore.getState().rootSessionId,
         parentSessionId,
+        agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
       });
 
@@ -347,7 +348,7 @@ function createConfiguredAgent(
   definition: AgentDefinition,
   options: CreateAgentOptions,
 ): Agent {
-  const store = prepareStore(config, options);
+  const store = prepareStore(config, definition, options);
   if (config.providerRegistry.modelIds.length === 0) {
     throw new NoModelsConfiguredError();
   }
@@ -390,10 +391,12 @@ function factoryResolveAllowedTools(
   return resolved;
 }
 
-function prepareStore(config: AgentFactoryConfig, options: CreateAgentOptions): StoreApi<SessionStoreState> {
-  const store = options.store ?? config.storeManager.create(crypto.randomUUID(), config.workspaceRoot);
+function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, options: CreateAgentOptions): StoreApi<SessionStoreState> {
+  const store = options.store ?? config.storeManager.create(crypto.randomUUID(), config.workspaceRoot, {
+    agentName: definition.name,
+  });
 
-  const state: Partial<SessionStoreState> = {};
+  const state: Partial<SessionStoreState> = { agentName: definition.name };
   if (options.title !== undefined) {
     state.title = options.title;
   }

@@ -207,6 +207,7 @@ const StepInfoSchema = z.strictObject({
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
+  agentName: z.string().optional(),
   title: z.string().nullable().optional(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema),
@@ -231,6 +232,7 @@ export interface SessionSummary {
   sessionId: string;
   rootSessionId: string;
   parentSessionId?: string;
+  agentName?: string | null;
   title?: string | null;
   createdAt: number;
   lastUpdatedAt?: number;
@@ -241,7 +243,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "title" | "messages" | "steps" | "stats" | "runs" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "reminders" | "parentSessionId"
+  "agentName" | "reminders" | "parentSessionId"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -278,6 +280,7 @@ async function saveSessionTranscript(
   const data: SessionFile = {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
+    agentName: state.agentName ?? "orchestrator",
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
@@ -328,6 +331,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
   return {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
+    agentName: state.agentName ?? "orchestrator",
     title: state.title ?? null,
     messages: state.messages,
     steps: state.steps,
@@ -355,6 +359,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
           sessionId: parsed.sessionId,
           rootSessionId: parsed.rootSessionId,
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+          agentName: parsed.agentName ?? null,
           title: parsed.title ?? null,
           createdAt: parsed.createdAt,
           ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),

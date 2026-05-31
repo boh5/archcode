@@ -14,6 +14,7 @@ export const AGENT_TYPES = [
   "builder",
   "reviewer",
   "librarian",
+  "explore",
   "explorer",
 ] as const;
 
@@ -30,6 +31,7 @@ export const AGENT_INITIALS: Record<AgentType, string> = {
   builder: "B",
   reviewer: "R",
   librarian: "L",
+  explore: "E",
   explorer: "E",
 };
 
@@ -44,6 +46,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentType, string> = {
   builder: "Builder",
   reviewer: "Reviewer",
   librarian: "Librarian",
+  explore: "Explorer",
   explorer: "Explorer",
 };
 
@@ -58,6 +61,7 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   builder: "bg-agent-builder/20 text-agent-builder",
   reviewer: "bg-agent-reviewer/20 text-agent-reviewer",
   librarian: "bg-agent-librarian/20 text-agent-librarian",
+  explore: "bg-agent-explorer/20 text-agent-explorer",
   explorer: "bg-agent-explorer/20 text-agent-explorer",
 };
 

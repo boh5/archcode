@@ -366,6 +366,7 @@ describe("background_output tool", () => {
       rootSessionId: ctx.store.getState().rootSessionId,
       parentSessionId: ctx.store.getState().sessionId,
       createdAt: Date.now(),
+      agentName: "explore",
       title: null,
       messages: [
         {

@@ -263,13 +263,14 @@ describe("Sidebar", () => {
     ];
     sessionTree = {
       root: {
-        session: { sessionId: "root-session", rootSessionId: "root-session", title: "Root Session", createdAt: 1 },
+        session: { sessionId: "root-session", rootSessionId: "root-session", agentName: "orchestrator", title: "Root Session", createdAt: 1 },
         children: [
           {
             session: {
               sessionId: "child-session",
               rootSessionId: "root-session",
               parentSessionId: "root-session",
+              agentName: "explore",
               title: "Child Session",
               createdAt: 2,
             },
@@ -291,6 +292,7 @@ describe("Sidebar", () => {
     expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
     expect(agentNodes).toHaveLength(2);
     expect(agentNodes.map((node) => node.props?.name)).toEqual(["Root Session", "Child Session"]);
+    expect(agentNodes.map((node) => node.props?.agentType)).toEqual(["orchestrator", "explore"]);
   });
 
   test("agent tree click calls setFocusSessionId instead of navigate", () => {

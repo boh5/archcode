@@ -51,6 +51,7 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
   const state: SessionStoreState = {
     sessionId: "test-session",
     createdAt: Date.now(),
+    agentName: "orchestrator",
     title: null,
     messages,
     steps,

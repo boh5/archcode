@@ -31,6 +31,7 @@ export interface SessionStoreManagerOptions {
 export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
+  readonly agentName?: string;
   readonly title?: string;
 }
 
@@ -109,6 +110,7 @@ export class SessionStoreManager {
     store = createStore<SessionStoreState>((set, get) => ({
       sessionId,
       createdAt: Date.now(),
+      agentName: options.agentName ?? "orchestrator",
       title: options.title ?? null,
       messages: [],
       steps: [],
@@ -327,11 +329,13 @@ export class SessionStoreManager {
       const store = this.create(sessionId, workspaceRoot, {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
+        ...(parsed.agentName === undefined ? {} : { agentName: parsed.agentName }),
         ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
       });
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
+        agentName: parsed.agentName ?? "orchestrator",
         title: parsed.title ?? null,
         messages: parsed.messages,
         steps: parsed.steps,
@@ -496,6 +500,7 @@ function toSessionSummary(file: SessionFile): SessionSummary {
     sessionId: file.sessionId,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
+    agentName: file.agentName ?? null,
     title: file.title ?? null,
     createdAt: file.createdAt,
     ...(lastUpdatedAt === undefined ? {} : { lastUpdatedAt }),

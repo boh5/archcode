@@ -451,6 +451,7 @@ export interface SessionSummary {
   // Tree relationships derive from child session files, not childSessionIds/subAgentDescriptions caches.
   rootSessionId: string;
   parentSessionId?: string;
+  agentName?: string | null;
   title?: string | null;
   createdAt: number;
   lastUpdatedAt?: number;

@@ -33,6 +33,7 @@ describe("SessionStoreManager", () => {
       {
         sessionId: input.sessionId,
         createdAt: input.createdAt ?? 1000,
+        agentName: input.parentSessionId === undefined ? "orchestrator" : "explore",
         title: input.title ?? null,
         messages: [],
         steps: [],
@@ -360,6 +361,7 @@ describe("SessionStoreManager", () => {
     expect(tree.diagnostics).toEqual([]);
     expect(tree.root.session.sessionId).toBe(rootSessionId);
     expect(tree.root.session.title).toBe("root");
+    expect(tree.root.session.agentName).toBe("orchestrator");
     expect(tree.root.children).toEqual([]);
   });
 
@@ -378,6 +380,7 @@ describe("SessionStoreManager", () => {
     expect(tree.root.session.sessionId).toBe(rootSessionId);
     expect(tree.root.children).toHaveLength(1);
     expect(tree.root.children[0].session.sessionId).toBe(childSessionId);
+    expect(tree.root.children[0].session.agentName).toBe("explore");
     expect(tree.root.children[0].children).toHaveLength(1);
     expect(tree.root.children[0].children[0].session.sessionId).toBe(grandchildSessionId);
     expect("childSessionIds" in tree.root.session).toBe(false);
