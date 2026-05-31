@@ -112,6 +112,7 @@ describe("BADGE_CLASSES", () => {
     expect(BADGE_CLASSES.running).toContain("bg-success");
     expect(BADGE_CLASSES.completed).toContain("bg-accent");
     expect(BADGE_CLASSES.pending).toContain("bg-bg-active");
+    expect(BADGE_CLASSES.error).toContain("bg-error");
   });
 });
 
@@ -120,5 +121,6 @@ describe("BADGE_LABELS", () => {
     expect(BADGE_LABELS.running).toBe("Running");
     expect(BADGE_LABELS.completed).toBe("Completed");
     expect(BADGE_LABELS.pending).toBe("Pending");
+    expect(BADGE_LABELS.error).toBe("Error");
   });
 });

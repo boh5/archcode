@@ -75,16 +75,18 @@ export function isValidAgentType(value: string): value is AgentType {
 
 // ─── Badge status (from DelegationCard) ───
 
-export type BadgeStatus = "running" | "completed" | "pending";
+export type BadgeStatus = "running" | "completed" | "pending" | "error";
 
 export const BADGE_CLASSES: Record<BadgeStatus, string> = {
   running: "bg-success-muted text-success",
   completed: "bg-accent-muted text-accent",
   pending: "bg-bg-active text-text-muted",
+  error: "bg-error-muted text-error",
 };
 
 export const BADGE_LABELS: Record<BadgeStatus, string> = {
   running: "Running",
   completed: "Completed",
   pending: "Pending",
+  error: "Error",
 };

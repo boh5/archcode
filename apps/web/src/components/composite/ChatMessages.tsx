@@ -138,8 +138,35 @@ export function mapDelegationStatus(state: ToolPart["state"]): BadgeStatus {
     case "completed": return "completed";
     case "running": return "running";
     case "pending": return "running";
-    case "error": return "pending";
+    case "error": return "error";
   }
+}
+
+/**
+ * Extracts session_id and status from a <delegate_metadata> block in the
+ * delegate tool output. Returns null if no valid metadata is found.
+ */
+export function parseDelegateMetadata(output: string): { sessionId: string; status: string } | null {
+  const match = output.match(/<delegate_metadata>([\s\S]*?)<\/delegate_metadata>/);
+  if (!match) return null;
+
+  const block = match[1];
+  const sessionIdMatch = block.match(/session_id:\s*"?([^"\s]+)"?/);
+  const statusMatch = block.match(/status:\s*(\S+)/);
+
+  if (!sessionIdMatch) return null;
+
+  return {
+    sessionId: sessionIdMatch[1],
+    status: statusMatch?.[1] ?? "completed",
+  };
+}
+
+/** Maps delegate run status (from metadata) to BadgeStatus — error-like statuses → "error". */
+export function mapDelegateRunStatus(status: string): BadgeStatus {
+  if (status === "completed") return "completed";
+  if (status === "running") return "running";
+  return "error";
 }
 
 function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: ToolPart; projectSlug: string; focusStoreSessionId: string }) {
@@ -148,17 +175,27 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId }: { part: To
   const agentName = (parsedInput?.description as string) ?? (parsedInput?.title as string) ?? "Sub-agent";
   const summary = (parsedInput?.description as string) ?? "";
 
+  // Extract sessionId and delegate status from <delegate_metadata> in the output
   let sessionId = "";
+  let delegateRunStatus: string | undefined;
+
   if (part.state === "completed") {
-    const parsedOutput = parseToolOutput((part as CompletedToolPart).output);
-    sessionId = (parsedOutput?.sessionId as string) ?? "";
+    const metadata = parseDelegateMetadata((part as CompletedToolPart).output);
+    if (metadata) {
+      sessionId = metadata.sessionId;
+      delegateRunStatus = metadata.status;
+    }
   }
 
   if (!sessionId) {
     sessionId = part.id;
   }
 
-  const status = mapDelegationStatus(part.state);
+  // Use delegate run status (from metadata) when available, otherwise fall back to part state
+  const status: BadgeStatus = delegateRunStatus
+    ? mapDelegateRunStatus(delegateRunStatus)
+    : mapDelegationStatus(part.state);
+
   const startedAt = "startedAt" in part ? (part as { startedAt: number }).startedAt : part.createdAt;
 
   const delegationProps: DelegationCardProps = {
