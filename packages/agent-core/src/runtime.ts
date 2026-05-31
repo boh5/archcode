@@ -32,8 +32,8 @@ import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegi
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "./tools/types";
-import { AgentJobRunner } from "./runner";
-import type { RunningJob, SubscribeSessionEventsInput } from "./runner";
+import { SessionExecutionManager } from "./execution";
+import type { ActiveSessionExecution, SubscribeSessionEventsInput } from "./execution";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -58,12 +58,12 @@ export interface SpecraRuntime {
   createSession(workspaceRoot: string): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
-  submitAgentJob(input: { slug: string; workspaceRoot: string; sessionId: string; userMessage: string }): RunningJob;
-  abortAgentJob(workspaceRoot: string, sessionId: string): boolean;
-  abortAgentJobAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
-  abortAllAgentJobs(): Promise<void>;
-  isAgentJobRunning(workspaceRoot: string, sessionId: string): boolean;
-  getAgentJob(workspaceRoot: string, sessionId: string): RunningJob | undefined;
+  startSessionExecution(input: { slug: string; workspaceRoot: string; sessionId: string; userMessage: string }): ActiveSessionExecution;
+  abortSessionExecution(workspaceRoot: string, sessionId: string): boolean;
+  abortSessionExecutionAndWait(workspaceRoot: string, sessionId: string): Promise<void>;
+  abortAllSessionExecutions(): Promise<void>;
+  isSessionExecutionRunning(workspaceRoot: string, sessionId: string): boolean;
+  getSessionExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined;
   subscribeSessionEvents(input: SubscribeSessionEventsInput): () => void;
   deleteSession(workspaceRoot: string, sessionId: string): Promise<void>;
   listSessionTree(workspaceRoot: string, rootSessionId: string): Promise<SessionTreeResponse>;
@@ -187,7 +187,7 @@ export async function createSpecraRuntime(
       name: string,
       args?: string,
     ): Promise<CommandResult | null> {
-      return await jobRunner.dispatchCommand(workspaceRoot, sessionId, name, args);
+      return await executionManager.dispatchCommand(workspaceRoot, sessionId, name, args);
     }
 
     function requestPermission(
@@ -229,7 +229,7 @@ export async function createSpecraRuntime(
       activeSessionKeys.delete(scopedKey(workspaceRoot, sessionId));
     };
 
-    const jobRunner = new AgentJobRunner({
+    const executionManager = new SessionExecutionManager({
       sessionAgentManager,
       storeManager: sessionStoreManager,
       requestPermission,
@@ -251,14 +251,14 @@ export async function createSpecraRuntime(
       createSession: (workspaceRoot) => sessionStoreManager.createSessionFile(workspaceRoot),
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
-      submitAgentJob: (input) => jobRunner.submit(input),
-      abortAgentJob: (workspaceRoot, sessionId) => jobRunner.abort(workspaceRoot, sessionId),
-      abortAgentJobAndWait: (workspaceRoot, sessionId) => jobRunner.abortAndWait(workspaceRoot, sessionId),
-      abortAllAgentJobs: () => jobRunner.abortAll(),
-      isAgentJobRunning: (workspaceRoot, sessionId) => jobRunner.isRunning(workspaceRoot, sessionId),
-      getAgentJob: (workspaceRoot, sessionId) => jobRunner.getJob(workspaceRoot, sessionId),
-      subscribeSessionEvents: (input) => jobRunner.subscribe(input),
-      deleteSession: (workspaceRoot, sessionId) => jobRunner.deleteSession(workspaceRoot, sessionId),
+      startSessionExecution: (input) => executionManager.startExecution(input),
+      abortSessionExecution: (workspaceRoot, sessionId) => executionManager.abort(workspaceRoot, sessionId),
+      abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
+      abortAllSessionExecutions: () => executionManager.abortAll(),
+      isSessionExecutionRunning: (workspaceRoot, sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
+      getSessionExecution: (workspaceRoot, sessionId) => executionManager.getExecution(workspaceRoot, sessionId),
+      subscribeSessionEvents: (input) => executionManager.subscribe(input),
+      deleteSession: (workspaceRoot, sessionId) => executionManager.deleteSession(workspaceRoot, sessionId),
       listSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
       disposeSessionAgent: (workspaceRoot, sessionId) => sessionAgentManager.dispose(workspaceRoot, sessionId),
       disposeAllSessionAgents: () => sessionAgentManager.disposeAll(),

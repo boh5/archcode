@@ -88,7 +88,9 @@ export async function runQueryLoop(
   let runEndStatus: ExecutionEndEvent["status"] = "completed";
   const doomTracker = new DoomTracker();
 
-  store.getState().append({ type: "execution-start" });
+  if (!store.getState().isRunning) {
+    store.getState().append({ type: "execution-start" });
+  }
 
   try {
     const commandResult = await maybeHandleCommand(options, userMessage, abort);
@@ -192,11 +194,13 @@ export async function runQueryLoop(
       runEndStatus = "aborted";
     }
 
-    store.getState().append({
-      type: "execution-end",
-      status: runEndStatus,
-      ...(failed ? { error: "Execution failed" } : {}),
-    });
+    if (store.getState().isRunning) {
+      store.getState().append({
+        type: "execution-end",
+        status: runEndStatus,
+        ...(failed ? { error: "Execution failed" } : {}),
+      });
+    }
     await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus }, logger, { sessionId, agentName });
   }
 }

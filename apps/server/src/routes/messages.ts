@@ -31,8 +31,8 @@ export function createMessagesRoutes(runtime: SpecraRuntime, agentRunner: AgentR
     const project = await resolveProject(runtime, slug);
 
     try {
-      const job = agentRunner.submit({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
-      return c.json({ jobId: job.jobId }, 202);
+      agentRunner.start({ slug, sessionId, workspaceRoot: project.workspaceRoot, userMessage: text });
+      return c.json({ ok: true }, 202);
     } catch (error) {
       if (error instanceof AgentRunningError) {
         throw new AgentAlreadyRunningError();

@@ -12,10 +12,11 @@ import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
-import { AgentJobRunner } from "./agent-job-runner";
+import { SessionExecutionManager } from "./session-execution-manager";
 import { silentLogger } from "../logger";
+import type { ToolChildSessionLink } from "../store/types";
 
-const workspaceRoot = join(import.meta.dir, "__test_tmp__", "agent-job-runner-workspace");
+const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 interface Deferred<T> {
@@ -103,17 +104,17 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
   } as unknown as SessionAgentManager;
 }
 
-function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
+function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
   const sessionAgentManager = createFakeManager(agents, options);
-  const runnerStoreManager = options.storeManager ?? storeManager;
+  const executionStoreManager = options.storeManager ?? storeManager;
   const cleanupDeferredSession = mock(() => undefined);
   const requestPermission = mock(async (_root: string, _sessionId: string, _request: ToolConfirmationRequest): Promise<ToolConfirmationResult> => "approve_once");
   const requestQuestion = mock(async (_root: string, _sessionId: string, _request: AskUserRequest): Promise<AskUserResponse> => ({ answers: [] }));
   const trackSession = mock(() => undefined);
   const untrackSession = mock(() => undefined);
-  const runner = new AgentJobRunner({
+  const manager = new SessionExecutionManager({
     sessionAgentManager,
-    storeManager: runnerStoreManager,
+    storeManager: executionStoreManager,
     requestPermission,
     requestQuestion,
     cleanupDeferredSession,
@@ -121,7 +122,7 @@ function createRunner(agents: Record<string, MockAgent>, options: FakeManagerOpt
     untrackSession,
     logger: silentLogger,
   });
-  return { runner, sessionAgentManager, cleanupDeferredSession, requestPermission, requestQuestion, trackSession, untrackSession };
+  return { manager, sessionAgentManager, cleanupDeferredSession, requestPermission, requestQuestion, trackSession, untrackSession };
 }
 
 async function writeSessionFile(input: {
@@ -153,7 +154,21 @@ async function writeSessionFile(input: {
   await Bun.write(getSessionPath(workspaceRoot, rootSessionId, input.sessionId), JSON.stringify(file, null, 2));
 }
 
-describe("AgentJobRunner", () => {
+function makeChildLink(parentSessionId: string, childSessionId: string, childAgentName: string): ToolChildSessionLink {
+  return {
+    parentSessionId,
+    parentToolCallId: `tool-${childSessionId}`,
+    toolName: "delegate",
+    childSessionId,
+    childAgentName,
+    depth: 1,
+    background: true,
+    status: "running",
+    createdAt: Date.now(),
+  };
+}
+
+describe("SessionExecutionManager", () => {
   beforeEach(async () => {
     storeManager.clearAll();
     await rm(workspaceRoot, { recursive: true, force: true });
@@ -164,57 +179,161 @@ describe("AgentJobRunner", () => {
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
-  test("submit starts a job and rejects duplicate same-session submits", async () => {
+  test("startExecution starts an execution and rejects duplicate same-session starts", async () => {
     const run = deferred<AgentResult>();
     const agent = new MockAgent("session-start", run.promise);
-    const { runner } = createRunner({ "session-start": agent });
+    const { manager } = createManager({ "session-start": agent });
 
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "hello" });
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "hello" });
 
-    expect(job.sessionId).toBe("session-start");
-    expect(runner.isRunning(workspaceRoot, "session-start")).toBe(true);
-    expect(() => runner.submit({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).toThrow(AgentRunningError);
+    expect(execution.sessionId).toBe("session-start");
+    expect(execution.agentName).toBe("orchestrator");
+    expect(execution.origin).toBe("user_message");
+    expect(typeof execution.executionToken).toBe("symbol");
+    expect(manager.isRunning(workspaceRoot, "session-start")).toBe(true);
+    expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).toThrow(AgentRunningError);
     await Promise.resolve();
-    expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: job.abortController.signal }));
+    expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: execution.abortController.signal }));
     run.resolve({ text: "done", steps: 1 });
-    await job.promise;
-    expect(runner.isRunning(workspaceRoot, "session-start")).toBe(false);
+    await execution.promise;
+    expect(manager.isRunning(workspaceRoot, "session-start")).toBe(false);
   });
 
   test("enforces concurrent session limit with ConcurrentSessionLimitError", () => {
     const agentOne = new MockAgent("one", new Promise(() => undefined));
     const agentTwo = new MockAgent("two", new Promise(() => undefined));
-    const { runner } = createRunner({ one: agentOne, two: agentTwo }, { maxConcurrentSessions: 1 });
+    const { manager } = createManager({ one: agentOne, two: agentTwo }, { maxConcurrentSessions: 1 });
 
-    runner.submit({ slug: "project", workspaceRoot, sessionId: "one", userMessage: "one" });
+    manager.startExecution({ slug: "project", workspaceRoot, sessionId: "one", userMessage: "one" });
 
-    expect(() => runner.submit({ slug: "project", workspaceRoot, sessionId: "two", userMessage: "two" })).toThrow(ConcurrentSessionLimitError);
+    expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "two", userMessage: "two" })).toThrow(ConcurrentSessionLimitError);
   });
 
-  test("abort and abortAndWait cancel running jobs", async () => {
-    const agent = new MockAgent("abort", new Promise(() => undefined));
-    const { runner } = createRunner({ abort: agent });
+  test("atomically rejects duplicate starts while agent creation is pending", () => {
+    const sessionAgentManager = createFakeManager({});
+    const pendingManager = new SessionExecutionManager({
+      sessionAgentManager: {
+        ...sessionAgentManager,
+        getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
+      } as unknown as SessionAgentManager,
+      storeManager,
+      requestPermission: mock(async (): Promise<ToolConfirmationResult> => "approve_once"),
+      requestQuestion: mock(async (): Promise<AskUserResponse> => ({ answers: [] })),
+      cleanupDeferredSession: mock(() => undefined),
+      trackSession: mock(() => undefined),
+      untrackSession: mock(() => undefined),
+      logger: silentLogger,
+    });
 
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
-    expect(runner.abort(workspaceRoot, "abort")).toBe(true);
-    await job.promise;
-    expect(job.abortController.signal.aborted).toBe(true);
-    expect(runner.isRunning(workspaceRoot, "abort")).toBe(false);
+    pendingManager.startExecution({ slug: "project", workspaceRoot, sessionId: "pending-create", userMessage: "one" });
+
+    expect(() => pendingManager.startExecution({ slug: "project", workspaceRoot, sessionId: "pending-create", userMessage: "two" })).toThrow(AgentRunningError);
+  });
+
+  test("validates execution token before appending execution-end for stale completion", async () => {
+    const run = deferred<AgentResult>();
+    const agent = new MockAgent("stale", run.promise);
+    const { manager } = createManager({ stale: agent });
+
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "stale", userMessage: "work" });
+    await Promise.resolve();
+    expect(manager.abort(workspaceRoot, "stale")).toBe(true);
+    run.resolve({ text: "done", steps: 1 });
+    await execution.promise;
+
+    const state = agent.store.getState();
+    expect(state.executions).toHaveLength(1);
+    expect(state.executions[0]?.status).toBe("running");
+  });
+
+  test("abort cascades to active descendant sessions", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const siblingId = crypto.randomUUID();
+    storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
+    storeManager.create(grandchildId, workspaceRoot, { rootSessionId: rootId, parentSessionId: childId, agentName: "explore" });
+    storeManager.create(siblingId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
+    const rootRun = deferred<AgentResult>();
+    const siblingRun = deferred<AgentResult>();
+    const rootAgent = new MockAgent(rootId, rootRun.promise);
+    const childRun = deferred<AgentResult>();
+    const grandchildRun = deferred<AgentResult>();
+    const childAgent = new MockAgent(childId, childRun.promise);
+    const grandchildAgent = new MockAgent(grandchildId, grandchildRun.promise);
+    const siblingAgent = new MockAgent(siblingId, siblingRun.promise);
+    rootAgent.store.getState().append({
+      type: "tool-child-session-link",
+      link: makeChildLink(rootId, childId, "explore"),
+    });
+    rootAgent.store.getState().append({
+      type: "tool-child-session-link",
+      link: makeChildLink(rootId, siblingId, "explore"),
+    });
+    childAgent.store.getState().append({
+      type: "tool-child-session-link",
+      link: makeChildLink(childId, grandchildId, "explore"),
+    });
+    const { manager } = createManager({ [rootId]: rootAgent, [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
+    const rootExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: rootId, userMessage: "root" });
+    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child", origin: "tool_call", agentName: "explore" });
+    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild", origin: "tool_call", agentName: "explore" });
+    const siblingExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling", origin: "tool_call", agentName: "explore" });
+    await Promise.resolve();
+
+    expect(manager.abort(workspaceRoot, childId)).toBe(true);
+    childRun.resolve({ text: "done", steps: 1 });
+    grandchildRun.resolve({ text: "done", steps: 1 });
+    await Promise.all([childExecution.promise, grandchildExecution.promise]);
+
+    expect(rootExecution.abortController.signal.aborted).toBe(false);
+    expect(childExecution.abortController.signal.aborted).toBe(true);
+    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
+    expect(siblingExecution.abortController.signal.aborted).toBe(false);
+    rootRun.resolve({ text: "done", steps: 1 });
+    siblingRun.resolve({ text: "done", steps: 1 });
+    await Promise.all([rootExecution.promise, siblingExecution.promise]);
+  });
+
+  test("abort and abortAndWait cancel running executions", async () => {
+    const agent = new MockAgent("abort", new Promise(() => undefined));
+    const { manager } = createManager({ abort: agent });
+
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort", userMessage: "stop" });
+    expect(manager.abort(workspaceRoot, "abort")).toBe(true);
+    await execution.promise;
+    expect(execution.abortController.signal.aborted).toBe(true);
+    expect(manager.isRunning(workspaceRoot, "abort")).toBe(false);
 
     const agentTwo = new MockAgent("abort-wait", new Promise(() => undefined));
-    const second = createRunner({ "abort-wait": agentTwo });
-    const secondJob = second.runner.submit({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
-    await second.runner.abortAndWait(workspaceRoot, "abort-wait");
-    await secondJob.promise;
-    expect(secondJob.abortController.signal.aborted).toBe(true);
+    const second = createManager({ "abort-wait": agentTwo });
+    const secondExecution = second.manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-wait", userMessage: "stop" });
+    await second.manager.abortAndWait(workspaceRoot, "abort-wait");
+    await secondExecution.promise;
+    expect(secondExecution.abortController.signal.aborted).toBe(true);
+  });
+
+  test("abortAll cancels every active execution", async () => {
+    const firstAgent = new MockAgent("abort-all-one", new Promise(() => undefined));
+    const secondAgent = new MockAgent("abort-all-two", new Promise(() => undefined));
+    const { manager } = createManager({ "abort-all-one": firstAgent, "abort-all-two": secondAgent });
+    const first = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-one", userMessage: "one" });
+    const second = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "abort-all-two", userMessage: "two" });
+
+    await manager.abortAll();
+
+    expect(first.abortController.signal.aborted).toBe(true);
+    expect(second.abortController.signal.aborted).toBe(true);
+    expect(manager.isRunning(workspaceRoot, "abort-all-one")).toBe(false);
+    expect(manager.isRunning(workspaceRoot, "abort-all-two")).toBe(false);
   });
 
   test("bridges run options to core permission and question services", async () => {
     const agent = new MockAgent("callbacks", Promise.resolve({ text: "done", steps: 1 }));
-    const { runner, requestPermission, requestQuestion } = createRunner({ callbacks: agent });
+    const { manager, requestPermission, requestQuestion } = createManager({ callbacks: agent });
 
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
-    await job.promise;
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
+    await execution.promise;
     const options = agent.runMock.mock.calls[0]?.[1];
     if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
     await options.confirmPermission?.({ toolName: "bash", toolCallId: "call", input: {}, description: "confirm" });
@@ -224,36 +343,49 @@ describe("AgentJobRunner", () => {
     expect(requestQuestion).toHaveBeenCalled();
   });
 
+  test("dispatchCommand only dispatches for active executions", async () => {
+    const run = deferred<AgentResult>();
+    const agent = new MockAgent("commands", run.promise);
+    agent.dispatchCommandMock = mock(async (name, args) => ({ success: true, message: `${name}:${args}` }));
+    const { manager } = createManager({ commands: agent });
+
+    await expect(manager.dispatchCommand(workspaceRoot, "commands", "compact", "now")).resolves.toBeNull();
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "commands", userMessage: "work" });
+    await expect(manager.dispatchCommand(workspaceRoot, "commands", "compact", "now")).resolves.toEqual({ success: true, message: "compact:now" });
+    run.resolve({ text: "done", steps: 1 });
+    await execution.promise;
+  });
+
   test("subscribes session events without exposing stores", async () => {
     const run = deferred<AgentResult>();
     const agent = new MockAgent("events", run.promise);
-    const { runner } = createRunner({ events: agent });
+    const { manager } = createManager({ events: agent });
     const received: unknown[] = [];
-    const unsubscribe = runner.subscribe({ slug: "project", workspaceRoot, sessionId: "events", onEvent: (event) => received.push(event) });
+    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "events", onEvent: (event) => received.push(event) });
 
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "events", userMessage: "work" });
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "events", userMessage: "work" });
     await Promise.resolve();
     agent.store.getState().append({ type: "system-notice", message: "hello" });
 
-    expect(received).toMatchObject([{ type: "event", slug: "project", sessionId: "events", kind: "system-notice" }]);
+    expect(received.filter((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "system-notice")).toMatchObject([{ type: "event", slug: "project", sessionId: "events", kind: "system-notice" }]);
     unsubscribe();
     run.resolve({ text: "done", steps: 1 });
-    await job.promise;
+    await execution.promise;
   });
 
   test("subscribes child session events when the child store attaches after subscription", async () => {
     const child = new MockAgent("child-events", Promise.resolve({ text: "done", steps: 1 }));
-    const { runner } = createRunner({ "child-events": child });
+    const { manager } = createManager({ "child-events": child });
     const received: unknown[] = [];
 
-    const unsubscribe = runner.subscribe({ slug: "project", workspaceRoot, sessionId: "child-events", onEvent: (event) => received.push(event) });
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
+    const unsubscribe = manager.subscribe({ slug: "project", workspaceRoot, sessionId: "child-events", onEvent: (event) => received.push(event) });
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "child-events", userMessage: "work" });
     await Promise.resolve();
     child.store.getState().append({ type: "system-notice", message: "child" });
 
-    expect(received).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", kind: "system-notice" }]);
+    expect(received.filter((event) => "kind" in (event as { kind?: unknown }) && (event as { kind: unknown }).kind === "system-notice")).toMatchObject([{ type: "event", slug: "project", sessionId: "child-events", kind: "system-notice" }]);
     unsubscribe();
-    await job.promise;
+    await execution.promise;
   });
 
   test("root delete removes root file and descendant directory", async () => {
@@ -263,9 +395,9 @@ describe("AgentJobRunner", () => {
     await writeSessionFile({ sessionId: rootId });
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
-    const { runner, sessionAgentManager, untrackSession } = createRunner({});
+    const { manager, sessionAgentManager, untrackSession } = createManager({});
 
-    await runner.deleteSession(workspaceRoot, rootId);
+    await manager.deleteSession(workspaceRoot, rootId);
 
     expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(false);
     expect(await Bun.file(getRootSessionDir(workspaceRoot, rootId)).exists()).toBe(false);
@@ -282,9 +414,9 @@ describe("AgentJobRunner", () => {
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
     await writeSessionFile({ sessionId: siblingId, rootSessionId: rootId, parentSessionId: rootId });
-    const { runner } = createRunner({});
+    const { manager } = createManager({});
 
-    await runner.deleteSession(workspaceRoot, childId);
+    await manager.deleteSession(workspaceRoot, childId);
 
     expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(false);
@@ -301,9 +433,9 @@ describe("AgentJobRunner", () => {
     await writeSessionFile({ sessionId: childId, rootSessionId: rootId, parentSessionId: rootId });
     await writeSessionFile({ sessionId: grandchildId, rootSessionId: rootId, parentSessionId: childId });
     await manager.resolveRootSessionId(grandchildId, workspaceRoot);
-    const { runner } = createRunner({}, { storeManager: manager });
+    const { manager: executionManager } = createManager({}, { storeManager: manager });
 
-    await runner.deleteSession(workspaceRoot, childId);
+    await executionManager.deleteSession(workspaceRoot, childId);
 
     await expect(manager.resolveRootSessionId(childId, workspaceRoot)).rejects.toThrow(`Session file not found for "${childId}"`);
     await expect(manager.resolveRootSessionId(grandchildId, workspaceRoot)).rejects.toThrow(`Session file not found for "${grandchildId}"`);
@@ -319,9 +451,9 @@ describe("AgentJobRunner", () => {
     await writeSessionFile({ sessionId: firstGrandchildId, rootSessionId: firstRootId, parentSessionId: firstChildId, title: "first-grandchild" });
     await writeSessionFile({ sessionId: firstSiblingId, rootSessionId: firstRootId, parentSessionId: firstRootId, title: "first-sibling" });
     const coldChildStoreManager = new SessionStoreManager({ logger: silentLogger });
-    const { runner: childDeleteRunner, sessionAgentManager: childAgentManager, untrackSession: untrackChildSession } = createRunner({}, { storeManager: coldChildStoreManager });
+    const { manager: childDeleteManager, sessionAgentManager: childAgentManager, untrackSession: untrackChildSession } = createManager({}, { storeManager: coldChildStoreManager });
 
-    await childDeleteRunner.deleteSession(workspaceRoot, firstChildId);
+    await childDeleteManager.deleteSession(workspaceRoot, firstChildId);
 
     expect(await Bun.file(getRootSessionPath(workspaceRoot, firstRootId)).exists()).toBe(true);
     expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstChildId)).exists()).toBe(false);
@@ -337,9 +469,9 @@ describe("AgentJobRunner", () => {
     await writeSessionFile({ sessionId: secondChildId, rootSessionId: secondRootId, parentSessionId: secondRootId, title: "second-child" });
     await writeSessionFile({ sessionId: secondGrandchildId, rootSessionId: secondRootId, parentSessionId: secondChildId, title: "second-grandchild" });
     const coldRootStoreManager = new SessionStoreManager({ logger: silentLogger });
-    const { runner: rootDeleteRunner, sessionAgentManager: rootAgentManager, untrackSession: untrackRootSession } = createRunner({}, { storeManager: coldRootStoreManager });
+    const { manager: rootDeleteManager, sessionAgentManager: rootAgentManager, untrackSession: untrackRootSession } = createManager({}, { storeManager: coldRootStoreManager });
 
-    await rootDeleteRunner.deleteSession(workspaceRoot, secondRootId);
+    await rootDeleteManager.deleteSession(workspaceRoot, secondRootId);
 
     expect(await Bun.file(getRootSessionPath(workspaceRoot, secondRootId)).exists()).toBe(false);
     expect(await Bun.file(getRootSessionDir(workspaceRoot, secondRootId)).exists()).toBe(false);
@@ -359,22 +491,22 @@ describe("AgentJobRunner", () => {
     const childAgent = new MockAgent(childId, new Promise(() => undefined));
     const grandchildAgent = new MockAgent(grandchildId, new Promise(() => undefined));
     const siblingAgent = new MockAgent(siblingId, new Promise(() => undefined));
-    const { runner } = createRunner({ [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
-    const childJob = runner.submit({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
-    const grandchildJob = runner.submit({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild" });
-    const siblingJob = runner.submit({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling" });
+    const { manager } = createManager({ [childId]: childAgent, [grandchildId]: grandchildAgent, [siblingId]: siblingAgent });
+    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild" });
+    const siblingExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: siblingId, userMessage: "sibling" });
 
-    await runner.deleteSession(workspaceRoot, childId);
-    await Promise.all([childJob.promise, grandchildJob.promise]);
+    await manager.deleteSession(workspaceRoot, childId);
+    await Promise.all([childExecution.promise, grandchildExecution.promise]);
 
-    expect(childJob.abortController.signal.aborted).toBe(true);
-    expect(grandchildJob.abortController.signal.aborted).toBe(true);
-    expect(siblingJob.abortController.signal.aborted).toBe(false);
-    expect(runner.isRunning(workspaceRoot, childId)).toBe(false);
-    expect(runner.isRunning(workspaceRoot, grandchildId)).toBe(false);
-    expect(runner.isRunning(workspaceRoot, siblingId)).toBe(true);
-    runner.abort(workspaceRoot, siblingId);
-    await siblingJob.promise;
+    expect(childExecution.abortController.signal.aborted).toBe(true);
+    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
+    expect(siblingExecution.abortController.signal.aborted).toBe(false);
+    expect(manager.isRunning(workspaceRoot, childId)).toBe(false);
+    expect(manager.isRunning(workspaceRoot, grandchildId)).toBe(false);
+    expect(manager.isRunning(workspaceRoot, siblingId)).toBe(true);
+    manager.abort(workspaceRoot, siblingId);
+    await siblingExecution.promise;
   });
 
   test("abort timeout throws SessionDeleteConflictError and preserves target files", async () => {
@@ -387,8 +519,8 @@ describe("AgentJobRunner", () => {
       run: mock(async (): Promise<AgentResult> => await new Promise(() => undefined)),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
-    const { runner, sessionAgentManager } = createRunner({ [childId]: childAgent });
-    const job = runner.submit({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
+    const { manager, sessionAgentManager } = createManager({ [childId]: childAgent });
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child" });
     const originalSetTimeout = globalThis.setTimeout;
     globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
       if (timeout === 10000 && typeof handler === "function") {
@@ -401,7 +533,7 @@ describe("AgentJobRunner", () => {
     try {
       let caught: unknown;
       try {
-        await runner.deleteSession(workspaceRoot, childId);
+        await manager.deleteSession(workspaceRoot, childId);
       } catch (error) {
         caught = error;
       }
@@ -413,7 +545,7 @@ describe("AgentJobRunner", () => {
 
     expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(true);
     expect(sessionAgentManager.dispose).not.toHaveBeenCalled();
-    expect(job.abortController.signal.aborted).toBe(true);
+    expect(execution.abortController.signal.aborted).toBe(true);
   });
 
   test("SessionStoreManager.delete removes only the deleted session from workspace root index", async () => {

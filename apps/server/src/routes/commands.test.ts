@@ -2,18 +2,21 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ProjectRegistry, silentLogger } from "@specra/agent-core";
-import type { CommandResult, RunningJob, SpecraRuntime } from "@specra/agent-core";
+import type { ActiveSessionExecution, CommandResult, SpecraRuntime } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "commands-routes");
 
-function makeJob(sessionId: string, workspaceRoot: string): RunningJob {
+function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionExecution {
   return {
-    jobId: crypto.randomUUID(),
     sessionId,
     workspaceRoot,
+    agentName: "orchestrator",
+    origin: "user_message",
     abortController: new AbortController(),
     promise: new Promise(() => undefined),
+    executionToken: Symbol("test-execution"),
+    startedAt: Date.now(),
   };
 }
 
@@ -35,17 +38,17 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     listSessions: mock(async () => []),
-    submitAgentJob: mock((input) => {
+    startSessionExecution: mock((input) => {
       running.add(input.sessionId);
-      return makeJob(input.sessionId, input.workspaceRoot);
+      return makeExecution(input.sessionId, input.workspaceRoot);
     }),
-    abortAgentJob: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
-    abortAgentJobAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
+    abortSessionExecution: mock((_workspaceRoot: string, sessionId: string) => running.delete(sessionId)),
+    abortSessionExecutionAndWait: mock(async (_workspaceRoot: string, sessionId: string) => {
       running.delete(sessionId);
     }),
-    abortAllAgentJobs: mock(async () => running.clear()),
-    isAgentJobRunning: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId)),
-    getAgentJob: mock(() => undefined),
+    abortAllSessionExecutions: mock(async () => running.clear()),
+    isSessionExecutionRunning: mock((_workspaceRoot: string, sessionId: string) => running.has(sessionId)),
+    getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async (_workspaceRoot: string, sessionId: string) => {
       running.delete(sessionId);

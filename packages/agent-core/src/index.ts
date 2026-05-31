@@ -10,7 +10,8 @@ export { WorkflowArtifactManager } from "./agents/workflow/artifacts";
 export { WorkflowArtifactKindSchema, WorkflowStateManager } from "./agents/workflow/state";
 
 export type { CommandResult } from "./commands/types";
-export type { RunningJob, SubscribeSessionEventsInput } from "./runner";
+export { SessionExecutionManager } from "./execution";
+export type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 export { SessionEventBridge } from "./events";
 export type { SessionEventBridgeOptions } from "./events";
 

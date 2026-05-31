@@ -26,14 +26,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     createSession: async () => ({ sessionId: "session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     getSessionFile: async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] }),
     listSessions: async () => [],
-    submitAgentJob: () => {
+    startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortAgentJob: () => false,
-    abortAgentJobAndWait: async () => undefined,
-    abortAllAgentJobs: async () => undefined,
-    isAgentJobRunning: () => false,
-    getAgentJob: () => undefined,
+    abortSessionExecution: () => false,
+    abortSessionExecutionAndWait: async () => undefined,
+    abortAllSessionExecutions: async () => undefined,
+    isSessionExecutionRunning: () => false,
+    getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async () => undefined,
     disposeSessionAgent: () => undefined,

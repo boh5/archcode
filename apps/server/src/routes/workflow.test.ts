@@ -33,14 +33,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
       return { sessionId, createdAt: Date.now(), title: null, messages: [], steps: [], todos: [], reminders: [] };
     },
     listSessions: async () => [],
-    submitAgentJob: () => {
+    startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortAgentJob: () => false,
-    abortAgentJobAndWait: async () => undefined,
-    abortAllAgentJobs: async () => undefined,
-    isAgentJobRunning: () => false,
-    getAgentJob: () => undefined,
+    abortSessionExecution: () => false,
+    abortSessionExecutionAndWait: async () => undefined,
+    abortAllSessionExecutions: async () => undefined,
+    isSessionExecutionRunning: () => false,
+    getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async (workspaceRoot: string, sessionId: string) => {
       sessionIds.delete(`${workspaceRoot}\0${sessionId}`);

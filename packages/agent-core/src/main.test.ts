@@ -114,7 +114,7 @@ describe("createSpecraRuntime", () => {
     });
 
     expect(runtime.toolRegistry).toBeDefined();
-    expect(runtime.submitAgentJob).toBeDefined();
+    expect(runtime.startSessionExecution).toBeDefined();
     expect(runtime.subscribeSessionEvents).toBeDefined();
   });
 
@@ -172,10 +172,10 @@ describe("createSpecraRuntime", () => {
       mcpManagerFactory: () => manager,
     });
 
-    expect(runtime.abortAgentJob("/workspace", "missing")).toBe(false);
-    expect(runtime.isAgentJobRunning("/workspace", "missing")).toBe(false);
-    expect(runtime.getAgentJob("/workspace", "missing")).toBeUndefined();
-    await expect(runtime.abortAgentJobAndWait("/workspace", "missing")).resolves.toBeUndefined();
+    expect(runtime.abortSessionExecution("/workspace", "missing")).toBe(false);
+    expect(runtime.isSessionExecutionRunning("/workspace", "missing")).toBe(false);
+    expect(runtime.getSessionExecution("/workspace", "missing")).toBeUndefined();
+    await expect(runtime.abortSessionExecutionAndWait("/workspace", "missing")).resolves.toBeUndefined();
   });
 
   test("starts with mcp.servers as an empty object", async () => {

@@ -134,14 +134,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
         diagnostics: [],
       };
     },
-    submitAgentJob: () => {
+    startSessionExecution: () => {
       throw new Error("not implemented");
     },
-    abortAgentJob: () => false,
-    abortAgentJobAndWait: async () => undefined,
-    abortAllAgentJobs: async () => undefined,
-    isAgentJobRunning: () => false,
-    getAgentJob: () => undefined,
+    abortSessionExecution: () => false,
+    abortSessionExecutionAndWait: async () => undefined,
+    abortAllSessionExecutions: async () => undefined,
+    isSessionExecutionRunning: () => false,
+    getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
     deleteSession: async (workspaceRoot: string, sessionId: string) => {
       calls.deleteSession.push({ workspaceRoot, sessionId });

@@ -1,9 +1,9 @@
-import type { CommandResult, RunningJob, SpecraRuntime } from "@specra/agent-core";
+import type { ActiveSessionExecution, CommandResult, SpecraRuntime } from "@specra/agent-core";
 import { globalEventBus } from "./events/global-event-bus";
 
-export type { RunningJob } from "@specra/agent-core";
+export type { ActiveSessionExecution } from "@specra/agent-core";
 
-export interface SubmitAgentJobInput {
+export interface StartSessionExecutionInput {
   slug: string;
   sessionId: string;
   workspaceRoot: string;
@@ -17,7 +17,7 @@ export class AgentRunner {
     this.#runtime = runtime;
   }
 
-  submit(input: SubmitAgentJobInput): RunningJob {
+  start(input: StartSessionExecutionInput): ActiveSessionExecution {
     const unsubscribe = this.#runtime.subscribeSessionEvents({
       slug: input.slug,
       workspaceRoot: input.workspaceRoot,
@@ -25,21 +25,25 @@ export class AgentRunner {
       onEvent: (event) => globalEventBus.emit(event),
     });
     try {
-      const job = this.#runtime.submitAgentJob(input);
-      void job.promise.finally(unsubscribe);
-      return job;
+      const execution = this.#runtime.startSessionExecution(input);
+      void execution.promise.finally(unsubscribe);
+      return execution;
     } catch (error) {
       unsubscribe();
       throw error;
     }
   }
 
+  submit(input: StartSessionExecutionInput): ActiveSessionExecution {
+    return this.start(input);
+  }
+
   abort(workspaceRoot: string, sessionId: string): boolean {
-    return this.#runtime.abortAgentJob(workspaceRoot, sessionId);
+    return this.#runtime.abortSessionExecution(workspaceRoot, sessionId);
   }
 
   async abortAndWait(workspaceRoot: string, sessionId: string): Promise<void> {
-    await this.#runtime.abortAgentJobAndWait(workspaceRoot, sessionId);
+    await this.#runtime.abortSessionExecutionAndWait(workspaceRoot, sessionId);
   }
 
   cleanupSession(workspaceRoot: string, sessionId: string): void {
@@ -47,15 +51,15 @@ export class AgentRunner {
   }
 
   async abortAll(): Promise<void> {
-    await this.#runtime.abortAllAgentJobs();
+    await this.#runtime.abortAllSessionExecutions();
   }
 
   isRunning(workspaceRoot: string, sessionId: string): boolean {
-    return this.#runtime.isAgentJobRunning(workspaceRoot, sessionId);
+    return this.#runtime.isSessionExecutionRunning(workspaceRoot, sessionId);
   }
 
-  getJob(workspaceRoot: string, sessionId: string): RunningJob | undefined {
-    return this.#runtime.getAgentJob(workspaceRoot, sessionId);
+  getExecution(workspaceRoot: string, sessionId: string): ActiveSessionExecution | undefined {
+    return this.#runtime.getSessionExecution(workspaceRoot, sessionId);
   }
 
   async dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null> {
