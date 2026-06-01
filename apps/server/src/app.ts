@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { SpecraRuntime } from "@specra/agent-core";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@specra/protocol";
 import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
@@ -106,25 +107,89 @@ export function createServerApp(
   return { app };
 }
 
-function createServerEventRuntime(runtime: SpecraRuntime): SpecraRuntime {
+export function createServerEventRuntime(runtime: SpecraRuntime): SpecraRuntime {
   return {
     ...runtime,
     startSessionExecution(input) {
-      const unsubscribe = runtime.subscribeSessionEvents({
-        slug: input.slug,
-        workspaceRoot: input.workspaceRoot,
-        sessionId: input.sessionId,
-        onEvent: (event) => globalEventBus.emit(event),
-      });
+      const subscriptions = new Map<string, () => void>();
+      const terminalChildren = new Set<string>();
+      const rootKey = scopedSessionSubscriptionKey(input.slug, input.sessionId);
+      let rootCompleted = false;
+
+      const unsubscribeSession = (slug: string, sessionId: string) => {
+        const key = scopedSessionSubscriptionKey(slug, sessionId);
+        if (key === rootKey) return;
+        subscriptions.get(key)?.();
+        subscriptions.delete(key);
+      };
+
+      const maybeReleaseRoot = () => {
+        if (!rootCompleted) return;
+        const activeChildren = [...subscriptions.keys()].filter((key) => key !== rootKey && !terminalChildren.has(key));
+        if (activeChildren.length > 0) return;
+        for (const unsubscribe of subscriptions.values()) unsubscribe();
+        subscriptions.clear();
+      };
+
+      const subscribe = (sessionId: string) => {
+        const key = scopedSessionSubscriptionKey(input.slug, sessionId);
+        if (subscriptions.has(key)) return;
+        const unsubscribe = runtime.subscribeSessionEvents({
+          slug: input.slug,
+          workspaceRoot: input.workspaceRoot,
+          sessionId,
+          onEvent: (event) => {
+            globalEventBus.emit(event);
+            if (!isChildSessionLinkEvent(event)) return;
+
+            const childSessionId = event.payload.link.childSessionId;
+            const childKey = scopedSessionSubscriptionKey(input.slug, childSessionId);
+            if (isTerminalChildLinkStatus(event.payload.link.status)) {
+              terminalChildren.add(childKey);
+              unsubscribeSession(input.slug, childSessionId);
+              maybeReleaseRoot();
+              return;
+            }
+            subscribe(childSessionId);
+          },
+        });
+        subscriptions.set(key, unsubscribe);
+      };
+
+      subscribe(input.sessionId);
 
       try {
         const execution = runtime.startSessionExecution(input);
-        void execution.promise.finally(unsubscribe);
+        void execution.promise.finally(() => {
+          rootCompleted = true;
+          maybeReleaseRoot();
+        });
         return execution;
       } catch (error) {
-        unsubscribe();
+        for (const unsubscribe of subscriptions.values()) unsubscribe();
+        subscriptions.clear();
         throw error;
       }
     },
   };
+}
+
+const TERMINAL_CHILD_LINK_STATUSES = new Set<ToolChildSessionLinkStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "interrupted",
+]);
+
+function scopedSessionSubscriptionKey(slug: string, sessionId: string): string {
+  return `${slug}\0${sessionId}`;
+}
+
+function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<ToolChildSessionLinkEvent> {
+  return event.type === "event" && event.payload.type === "tool-child-session-link";
+}
+
+function isTerminalChildLinkStatus(status: ToolChildSessionLinkStatus): boolean {
+  return TERMINAL_CHILD_LINK_STATUSES.has(status);
 }

@@ -20,8 +20,12 @@ function createMockStore(): StoreApi<WebSessionStoreState> {
 }
 
 const mockApplyRemoteEnvelope = mock((_envelope: GlobalSessionEventEnvelope) => {});
+const mockInitializeFromSnapshot = mock((_data: Partial<WebSessionStoreState>) => {});
 const mockFindWebSessionStore = mock(
   (_sessionId: string, _slug?: string) => undefined as StoreApi<WebSessionStoreState> | undefined,
+);
+const mockCreateWebSessionStore = mock(
+  (_sessionId: string, _slug?: string) => createMockStore(),
 );
 const mockInvalidateQueries = mock((_opts: { queryKey: readonly unknown[] }) => Promise.resolve());
 const mockOnShutdown = mock(() => {});
@@ -30,6 +34,7 @@ const mockOnHeartbeat = mock((_createdAt: number) => {});
 function createDeps(): SSEEventHandlerDeps {
   return {
     findStore: mockFindWebSessionStore,
+    createStore: mockCreateWebSessionStore,
     invalidateQueries: mockInvalidateQueries,
     onShutdown: mockOnShutdown,
     onHeartbeat: mockOnHeartbeat,
@@ -93,7 +98,9 @@ describe("handleSSEEvent", () => {
 
   beforeEach(() => {
     mockApplyRemoteEnvelope.mockClear();
+    mockInitializeFromSnapshot.mockClear();
     mockFindWebSessionStore.mockClear();
+    mockCreateWebSessionStore.mockClear();
     mockInvalidateQueries.mockClear();
     mockOnShutdown.mockClear();
     mockOnHeartbeat.mockClear();
@@ -120,8 +127,10 @@ describe("handleSSEEvent", () => {
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
-  test("drops event when no matching session store exists", () => {
+  test("creates a store when no matching session store exists", () => {
     mockFindWebSessionStore.mockReturnValue(undefined);
+    const mockStore = createMockStore();
+    mockCreateWebSessionStore.mockReturnValue(mockStore);
 
     const envelope: GlobalSessionEventEnvelope = {
       type: "event",
@@ -136,25 +145,62 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockFindWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
-    expect(mockApplyRemoteEnvelope).not.toHaveBeenCalled();
+    expect(mockCreateWebSessionStore).toHaveBeenCalledWith("unknown-session", "my-project");
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
   });
 
-  test("does not create a store for unknown sessions", () => {
+  test("invalidates topology queries and preloads child metadata on child session link", () => {
+    const parentStore = createMockStore();
+    const childStore = {
+      ...createMockStore(),
+      getState: () => ({
+        applyRemoteEnvelope: mockApplyRemoteEnvelope,
+        initializeFromSnapshot: mockInitializeFromSnapshot,
+      } as unknown as WebSessionStoreState),
+    } as StoreApi<WebSessionStoreState>;
+    parentStore.getState = () => ({
+      applyRemoteEnvelope: mockApplyRemoteEnvelope,
+      rootSessionId: "root-session",
+    } as unknown as WebSessionStoreState);
     mockFindWebSessionStore.mockReturnValue(undefined);
+    mockFindWebSessionStore.mockImplementation((sessionId) => sessionId === "parent-session" ? parentStore : undefined);
+    mockCreateWebSessionStore.mockReturnValue(childStore);
 
     const envelope: GlobalSessionEventEnvelope = {
       type: "event",
       slug: "proj",
-      sessionId: "new-session",
+      sessionId: "parent-session",
       eventId: 1,
       createdAt: Date.now(),
-      kind: "text-start",
-      payload: { type: "text-start" },
+      kind: "tool-child-session-link",
+      payload: {
+        type: "tool-child-session-link",
+        link: {
+          parentSessionId: "parent-session",
+          parentToolCallId: "call-1",
+          toolName: "delegate",
+          childSessionId: "child-session",
+          childAgentName: "explore",
+          title: "Explore files",
+          depth: 1,
+          background: true,
+          status: "running",
+          createdAt: 123,
+        },
+      },
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    expect(mockFindWebSessionStore).toHaveBeenCalledWith("new-session", "proj");
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "root-session", "tree"] });
+    expect(mockCreateWebSessionStore).toHaveBeenCalledWith("child-session", "proj");
+    expect(mockInitializeFromSnapshot).toHaveBeenCalledWith({
+      rootSessionId: "root-session",
+      parentSessionId: "parent-session",
+      title: "Explore files",
+      createdAt: 123,
+    });
   });
 
   test("invalidates session query on reset event", () => {
@@ -236,4 +282,3 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 });
-

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, createElement, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { connectSSE } from "../lib/sse-client";
-import { findWebSessionStore } from "../store/session-store";
+import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
 import { queryKeys } from "../api/queries";
 import type {
   GlobalSSEEvent,
@@ -40,6 +40,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
 
 export interface SSEEventHandlerDeps {
   findStore: typeof findWebSessionStore;
+  createStore: typeof createWebSessionStore;
   invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void>;
   onShutdown: () => void;
   onHeartbeat: (createdAt: number) => void;
@@ -55,9 +56,22 @@ export function handleSSEEvent(
   switch (parsed.type) {
     case "event": {
       const envelope = parsed as GlobalSessionEventEnvelope;
-      const store = deps.findStore(envelope.sessionId, envelope.slug);
-      if (store) {
-        store.getState().applyRemoteEnvelope(envelope);
+      const store = deps.findStore(envelope.sessionId, envelope.slug)
+        ?? deps.createStore(envelope.sessionId, envelope.slug);
+      store.getState().applyRemoteEnvelope(envelope);
+
+      if (envelope.payload.type === "tool-child-session-link") {
+        const { link } = envelope.payload;
+        deps.invalidateQueries({ queryKey: queryKeys.sessions(envelope.slug) });
+        deps.invalidateQueries({ queryKey: queryKeys.tree(envelope.slug, store.getState().rootSessionId) });
+        const childStore = deps.findStore(link.childSessionId, envelope.slug)
+          ?? deps.createStore(link.childSessionId, envelope.slug);
+        childStore.getState().initializeFromSnapshot({
+          rootSessionId: store.getState().rootSessionId,
+          parentSessionId: link.parentSessionId,
+          title: link.title ?? link.description ?? null,
+          createdAt: link.createdAt,
+        });
       }
       break;
     }
@@ -93,6 +107,7 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
     (sseEvent: { event: string; data: string; id?: string }) => {
       handleSSEEvent(sseEvent, {
         findStore: findWebSessionStore,
+        createStore: createWebSessionStore,
         invalidateQueries: (opts) => queryClient.invalidateQueries(opts),
         onShutdown: () => {
           shutdownRef.current = true;
