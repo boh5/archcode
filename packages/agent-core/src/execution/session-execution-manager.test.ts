@@ -221,6 +221,7 @@ async function writeSessionFile(input: {
     stats: createEmptySessionStats(),
     executions: input.executions ?? [],
     todos: [],
+    pendingInteractions: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
     rootSessionId,

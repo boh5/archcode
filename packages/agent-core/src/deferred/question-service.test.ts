@@ -10,6 +10,8 @@ const manager = new SessionStoreManager({ logger: silentLogger });
 const request: AskUserRequest = {
   toolName: "ask_user",
   toolCallId: "call-1",
+  questionType: "decision",
+  context: { blockers: ["missing requirement"] },
   questions: [
     {
       question: "Which option?",
@@ -60,8 +62,12 @@ describe("DeferredQuestionService", () => {
     expect(JSON.parse(payload.question)).toMatchObject({
       toolName: request.toolName,
       toolCallId: request.toolCallId,
+      questionType: "decision",
+      context: { blockers: ["missing requirement"] },
       questions: request.questions,
     });
+    expect(payload.questionType).toBe("decision");
+    expect(payload.context).toEqual({ blockers: ["missing requirement"] });
 
     expect(service.respond(questionId, { answers: [["Yes"]] })).toBe(true);
     await expect(promise).resolves.toEqual({ answers: [["Yes"]] });

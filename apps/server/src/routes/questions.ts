@@ -14,7 +14,7 @@ export function createQuestionsRoutes(askUserService: AskUserService): Hono {
       throw new QuestionNotFoundError(id);
     }
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, questionId: id, status: "answered" as const });
   });
 
   return app;

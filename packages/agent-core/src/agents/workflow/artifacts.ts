@@ -24,6 +24,10 @@ export const SINGLE_FILE_ARTIFACT_PATHS = {
   FINAL_REPORT: "FINAL_REPORT.md",
 } as const;
 
+// INTERACTIONS.md is an archive/audit/handoff artifact only. Live question queue
+// state is stored in SessionStoreState.pendingInteractions, never in this file.
+export const ARCHIVE_ONLY_ARTIFACT_KINDS = ["INTERACTIONS"] as const;
+
 export const SINGLE_FILE_ARTIFACT_KINDS = [
   "RESEARCH",
   "PRD",

@@ -317,6 +317,16 @@ export interface QuestionRequestEvent {
   context?: Record<string, unknown>;
 }
 
+export interface PendingInteraction {
+  id: string;
+  type: "decision" | "approval" | "clarification";
+  question: string;
+  context?: Record<string, unknown>;
+  askedAt: string;
+  status: "pending" | "answered" | "expired";
+  answer?: { content: string; answeredAt: string };
+}
+
 export interface QuestionTerminalEvent {
   type: "question.terminal";
   questionId: string;
@@ -458,6 +468,7 @@ export interface SessionProjection {
   messages: SessionMessage[];
   steps: SessionStep[];
   todos: SessionTodo[];
+  pendingInteractions?: PendingInteraction[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;

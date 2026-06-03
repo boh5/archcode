@@ -21,6 +21,7 @@ import {
   type SessionEventPayload,
   type SessionStoreState,
   type StreamEvent,
+  type PendingInteraction,
   MAX_EVENTS,
 } from "./types";
 
@@ -106,7 +107,13 @@ export class SessionStoreManager {
     };
 
     const persistForEvent = (event: SessionEventPayload) => {
-      if (event.type === "user-message" || event.type === "execution-end" || event.type === "tool-child-session-link") persist();
+      if (
+        event.type === "user-message"
+        || event.type === "execution-end"
+        || event.type === "tool-child-session-link"
+        || event.type === "question.request"
+        || event.type === "question.terminal"
+      ) persist();
     };
 
     store = createStore<SessionStoreState>((set, get) => ({
@@ -119,6 +126,7 @@ export class SessionStoreManager {
       stats: createEmptySessionStats(),
       executions: [],
       todos: [],
+      pendingInteractions: [],
       reminders: [],
       childSessionLinks: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
@@ -159,11 +167,24 @@ export class SessionStoreManager {
             eventOffset += dropCount;
           }
 
-          const partial = reduceStreamEvent(state, event as StreamEvent);
+          const partial = reduceStoreEvent(state, event as SessionEventPayload);
 
           return { ...partial, events, eventOffset, nextEventId };
         });
         persistForEvent(event);
+      },
+      addPendingInteraction: (interaction: PendingInteraction) => {
+        set((state) => ({ pendingInteractions: upsertPendingInteraction(state.pendingInteractions ?? [], interaction) }));
+        persist();
+      },
+      answerPendingInteraction: (questionId: string, answer: string, answeredAt = new Date().toISOString()) => {
+        set((state) => ({ pendingInteractions: answerPendingInteraction(state.pendingInteractions ?? [], questionId, answer, answeredAt) }));
+        persist();
+      },
+      expirePendingInteractions: (questionIds?: string[], expiredAt = new Date().toISOString()) => {
+        void expiredAt;
+        set((state) => ({ pendingInteractions: expirePendingInteractions(state.pendingInteractions ?? [], questionIds) }));
+        persist();
       },
       setTitle: (title: string | null) => {
         set({ title });
@@ -374,6 +395,7 @@ export class SessionStoreManager {
         executions: parsed.executions,
         executionCount: parsed.executions.length,
         todos: parsed.todos ?? [],
+        pendingInteractions: parsed.pendingInteractions,
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
@@ -469,6 +491,82 @@ export class SessionStoreManager {
       }
     }
   }
+}
+
+function reduceStoreEvent(
+  state: SessionStoreState,
+  event: SessionEventPayload,
+): Partial<SessionStoreState> {
+  if (event.type === "question.request") {
+    return {
+      pendingInteractions: upsertPendingInteraction(state.pendingInteractions ?? [], {
+        id: event.questionId,
+        type: event.questionType ?? "clarification",
+        question: event.question,
+        ...(event.context === undefined ? {} : { context: event.context }),
+        askedAt: new Date().toISOString(),
+        status: "pending",
+      }),
+    };
+  }
+
+  if (event.type === "question.terminal") {
+    if (event.status === "resolved" && event.answer !== undefined) {
+      return {
+        pendingInteractions: answerPendingInteraction(
+          state.pendingInteractions ?? [],
+          event.questionId,
+          event.answer,
+          new Date().toISOString(),
+        ),
+      };
+    }
+
+    return {
+      pendingInteractions: expirePendingInteractions(state.pendingInteractions ?? [], [event.questionId]),
+    };
+  }
+
+  if (isStreamEvent(event)) return reduceStreamEvent(state, event);
+
+  return {};
+}
+
+function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
+  return !event.type.includes(".") && event.type !== "shutdown";
+}
+
+function upsertPendingInteraction(
+  interactions: readonly PendingInteraction[],
+  interaction: PendingInteraction,
+): PendingInteraction[] {
+  const index = interactions.findIndex((entry) => entry.id === interaction.id);
+  if (index === -1) return [...interactions, interaction];
+  return interactions.map((entry, currentIndex) => currentIndex === index ? interaction : entry);
+}
+
+function answerPendingInteraction(
+  interactions: readonly PendingInteraction[],
+  questionId: string,
+  answer: string,
+  answeredAt: string,
+): PendingInteraction[] {
+  return interactions.map((interaction) => interaction.id === questionId
+    ? { ...interaction, status: "answered", answer: { content: answer, answeredAt } }
+    : interaction,
+  );
+}
+
+function expirePendingInteractions(
+  interactions: readonly PendingInteraction[],
+  questionIds?: readonly string[],
+): PendingInteraction[] {
+  const ids = questionIds === undefined ? undefined : new Set(questionIds);
+  return interactions.map((interaction) => {
+    if (ids !== undefined && !ids.has(interaction.id)) return interaction;
+    if (interaction.status !== "pending") return interaction;
+    return { ...interaction, status: "expired" };
+  });
 }
 
 function isMissingFileError(error: unknown): boolean {

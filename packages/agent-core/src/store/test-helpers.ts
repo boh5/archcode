@@ -15,6 +15,7 @@ export function createMockStore(
     stats: createEmptySessionStats(),
     executions: [],
     todos: [],
+    pendingInteractions: [],
     reminders: [],
     childSessionLinks: [],
     rootSessionId: "test",
@@ -61,6 +62,23 @@ export function createMockStore(
           break;
         }
       }
+    },
+    addPendingInteraction: (interaction) => {
+      state.pendingInteractions = [...(state.pendingInteractions ?? []), interaction];
+    },
+    answerPendingInteraction: (questionId, answer, answeredAt = new Date().toISOString()) => {
+      state.pendingInteractions = (state.pendingInteractions ?? []).map((interaction) => interaction.id === questionId
+        ? { ...interaction, status: "answered", answer: { content: answer, answeredAt } }
+        : interaction,
+      );
+    },
+    expirePendingInteractions: (questionIds) => {
+      const ids = questionIds === undefined ? undefined : new Set(questionIds);
+      state.pendingInteractions = (state.pendingInteractions ?? []).map((interaction) => {
+        if (ids !== undefined && !ids.has(interaction.id)) return interaction;
+        if (interaction.status !== "pending") return interaction;
+        return { ...interaction, status: "expired" };
+      });
     },
     setTitle: (title) => {
       state.title = title;

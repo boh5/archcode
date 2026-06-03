@@ -32,7 +32,7 @@ describe("question routes", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, questionId: QUESTION_ID, status: "answered" });
   });
 
   test("POST error response returns ok", async () => {
@@ -46,7 +46,7 @@ describe("question routes", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, questionId: QUESTION_ID, status: "answered" });
   });
 
   test("POST invalid body returns 400", async () => {

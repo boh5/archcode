@@ -145,6 +145,8 @@ export interface AskUserRequest {
   toolName: string;
   toolCallId: string;
   questions: AskUserQuestion[];
+  questionType?: "decision" | "approval" | "clarification";
+  context?: Record<string, unknown>;
   abortSignal?: AbortSignal;
 }
 

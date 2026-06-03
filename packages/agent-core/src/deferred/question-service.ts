@@ -30,12 +30,16 @@ export class DeferredQuestionService {
       toolName: request.toolName,
       toolCallId: request.toolCallId,
       questions: request.questions,
+      ...(request.questionType === undefined ? {} : { questionType: request.questionType }),
+      ...(request.context === undefined ? {} : { context: request.context }),
     };
 
     this.#events.submitDeferredEvent(workspaceRoot, sessionId, {
       type: "question.request",
       questionId,
       question: JSON.stringify(serializedRequest),
+      ...(request.questionType === undefined ? {} : { questionType: request.questionType }),
+      ...(request.context === undefined ? {} : { context: request.context }),
     });
 
     if (request.abortSignal?.aborted) {

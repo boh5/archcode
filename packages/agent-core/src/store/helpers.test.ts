@@ -5,7 +5,7 @@ import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@specra/protocol";
-import type { CompactionPart, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
+import type { CompactionPart, PendingInteraction, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -120,6 +120,27 @@ function sampleTodos(): StoredTodo[] {
   ];
 }
 
+function samplePendingInteractions(): PendingInteraction[] {
+  return [
+    {
+      id: "question-1",
+      type: "decision",
+      question: "Proceed with the risky migration?",
+      context: { risk: "high" },
+      askedAt: "2026-06-03T00:00:00.000Z",
+      status: "pending",
+    },
+    {
+      id: "question-2",
+      type: "clarification",
+      question: "Which provider should be used?",
+      askedAt: "2026-06-03T00:01:00.000Z",
+      status: "answered",
+      answer: { content: "local", answeredAt: "2026-06-03T00:02:00.000Z" },
+    },
+  ];
+}
+
 function sampleReminders(): Reminder[] {
   return [
     {
@@ -181,6 +202,7 @@ type PersistedSessionState = Pick<
   | "stats"
   | "executions"
   | "todos"
+  | "pendingInteractions"
   | "reminders"
   | "childSessionLinks"
   | "rootSessionId"
@@ -200,6 +222,7 @@ function persistedState(
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
   workflowId: string | undefined = undefined,
+  pendingInteractions: PendingInteraction[] = [],
 ): PersistedSessionState {
   return {
     sessionId,
@@ -211,6 +234,7 @@ function persistedState(
     stats,
     executions,
     todos,
+    pendingInteractions,
     reminders,
     childSessionLinks,
     rootSessionId: rootSessionId ?? sessionId,
@@ -238,7 +262,37 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().executions).toEqual(state.executions);
     expect(loaded.getState().executionCount).toBe(state.executions.length);
     expect(loaded.getState().todos).toEqual(state.todos);
+    expect(loaded.getState().pendingInteractions).toEqual([]);
     expect(loaded.getState().childSessionLinks).toEqual([]);
+  });
+
+  test("save/load roundtrips pending interactions", async () => {
+    const sessionId = uniqueSessionId("pending-interactions");
+    const pendingInteractions = samplePendingInteractions();
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(
+        sessionId,
+        sampleMessages(),
+        sampleSteps(),
+        sampleTodos(),
+        createEmptySessionStats(),
+        [],
+        [],
+        undefined,
+        undefined,
+        [],
+        undefined,
+        pendingInteractions,
+      ),
+      TMP_DIR,
+    );
+
+    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
+    expect(raw.pendingInteractions).toEqual(pendingInteractions);
+
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+    expect(loaded.getState().pendingInteractions).toEqual(pendingInteractions);
   });
 
   test("save/load roundtrips child session links", async () => {
@@ -699,6 +753,7 @@ describe("session transcript serialization", () => {
       "createdAt",
       "executions",
       "messages",
+      "pendingInteractions",
       "reminders",
       "rootSessionId",
       "sessionId",
@@ -712,6 +767,7 @@ describe("session transcript serialization", () => {
     expect(parsed.stats).toEqual(createEmptySessionStats());
     expect(parsed.executions).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
+    expect(parsed.pendingInteractions).toEqual([]);
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("orchestrator");
@@ -749,6 +805,7 @@ describe("session transcript serialization", () => {
     expect(loadedState.executions).toEqual([]);
     expect(loadedState.executionCount).toBe(0);
     expect(loadedState.todos).toEqual(originalTodos);
+    expect(loadedState.pendingInteractions).toEqual([]);
   });
 
   test("load rejects unknown reminder fields", async () => {

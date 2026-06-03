@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   ArtifactPathError,
+  ARCHIVE_ONLY_ARTIFACT_KINDS,
   SINGLE_FILE_ARTIFACT_PATHS,
   WorkflowArtifactManager,
   WorkflowArtifactWriteInputSchema,
@@ -120,6 +121,11 @@ describe("WorkflowArtifactManager", () => {
     expect(state.artifacts.HANDOFF_SUMMARY).toBe("HANDOFF_SUMMARY.md");
     expect(state.artifacts.INTERACTIONS).toBe("INTERACTIONS.md");
     expect(state.artifacts.FINAL_REPORT).toBe("FINAL_REPORT.md");
+  });
+
+  test("defines INTERACTIONS as archive-only instead of a live queue", () => {
+    expect(ARCHIVE_ONLY_ARTIFACT_KINDS).toEqual(["INTERACTIONS"]);
+    expect(SINGLE_FILE_ARTIFACT_PATHS.INTERACTIONS).toBe("INTERACTIONS.md");
   });
 
   test("accepts supporting notes paths without recording core artifact metadata", async () => {
