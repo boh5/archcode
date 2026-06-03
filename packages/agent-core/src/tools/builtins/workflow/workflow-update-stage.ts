@@ -7,7 +7,8 @@ import {
   processCriticDecision,
   type CriticDecision,
 } from "../../../agents/workflow/critic-protocol";
-import { validateTransition, type ArtifactKind } from "../../../agents/workflow/guards";
+import { emitWorkflowStateChange } from "../../../agents/workflow/events";
+import { canTransitionTo, type ArtifactKind } from "../../../agents/workflow/guards";
 import {
   WorkflowPathError,
   WorkflowArtifactKindSchema,
@@ -45,17 +46,19 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
             criticReportPath: input.criticReportPath,
             currentStage: currentState.stage,
           }, stateManager);
+          emitWorkflowStateChange(ctx.store, result.newState.id, ["stage", "status", "artifacts", "stageCompletions"]);
           return JSON.stringify(result, null, 2);
         }
 
         const availableArtifacts = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
-        const transition = validateTransition({
-          workflowId: input.workflowId,
-          workflowType: currentState.type,
-          currentStage: currentState.stage,
-          targetStage: input.stage as WorkflowStage,
+        const transition = canTransitionTo({
+          id: currentState.id,
+          type: currentState.type,
+          status: currentState.status,
+          stage: currentState.stage,
           retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,
           maxRetries: currentState.maxRetries,
+        }, input.stage as WorkflowStage, {
           hasArtifact: (kind: string) => availableArtifacts.has(kind as ArtifactKind),
           hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
           hasUserApproval: input.hasUserApproval,
@@ -71,6 +74,7 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
 
         if (input.incrementRetry) await stateManager.incrementRetryCount(input.workflowId);
         const state = await stateManager.updateStage(input.workflowId, input.stage as WorkflowStage);
+        emitWorkflowStateChange(ctx.store, state.id, ["stage"]);
         return JSON.stringify(state, null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {

@@ -17,6 +17,8 @@ const WORKFLOW_TOOL_NAMES = [
   "workflow_create",
   "workflow_read",
   "workflow_update_stage",
+  "workflow_complete",
+  "workflow_record_completion",
   "artifact_read",
   "artifact_write",
   "workflow_task_check",
@@ -57,8 +59,10 @@ describe("workflow regression hardening", () => {
 
     expect(WORKFLOW_TOOL_NAMES.every((name) => toolNames.includes(name))).toBe(true);
     expect(toolNames.filter((name) => name.startsWith("workflow_")).sort()).toEqual([
+      "workflow_complete",
       "workflow_create",
       "workflow_read",
+      "workflow_record_completion",
       "workflow_task_check",
       "workflow_update_stage",
     ]);

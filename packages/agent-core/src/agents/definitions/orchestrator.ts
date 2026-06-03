@@ -64,6 +64,8 @@ Delegation boundaries:
       "workflow_create",
       "workflow_read",
       "workflow_update_stage",
+      "workflow_complete",
+      "workflow_record_completion",
       "artifact_read",
       "artifact_write",
       "workflow_task_check",

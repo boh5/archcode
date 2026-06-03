@@ -34,6 +34,14 @@ export function createMockStore(
     eventOffset: 0,
     nextEventId: 0,
     append: (event) => {
+      state.events = [...state.events, {
+        id: state.nextEventId,
+        createdAt: Date.now(),
+        kind: event.type,
+        payload: event,
+      }];
+      state.nextEventId += 1;
+
       switch (event.type) {
         case "reminder": {
           state.reminders = [...state.reminders, { ...event.reminder, consumedAt: null }];

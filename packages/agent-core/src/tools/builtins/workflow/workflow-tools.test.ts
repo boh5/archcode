@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
 import { WorkflowStateManager } from "../../../agents/workflow/state";
@@ -18,11 +19,14 @@ import { createToolExecutionContext, type AnyToolDescriptor, type ToolExecutionC
 import {
   createArtifactReadTool,
   createArtifactWriteTool,
+  createWorkflowCompleteTool,
   createWorkflowCreateTool,
   createWorkflowReadTool,
+  createWorkflowRecordCompletionTool,
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
 } from "./index";
+import type { SessionStoreState } from "../../../store/types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "workflow-tools");
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -71,6 +75,8 @@ function createWorkflowRegistry(): {
     createWorkflowCreateTool(),
     createWorkflowReadTool(),
     createWorkflowUpdateStageTool(),
+    createWorkflowCompleteTool(),
+    createWorkflowRecordCompletionTool(),
     createArtifactReadTool(),
     createArtifactWriteTool(),
     createWorkflowTaskCheckTool(),
@@ -88,8 +94,13 @@ function makeProjectContext(stateManager: WorkflowStateManager, artifactManager:
   };
 }
 
-function makeCtx(toolName: string, input: unknown, projectContext: ProjectContext): ToolExecutionContext {
-  return createToolExecutionContext({ store: createMockStore(), storeManager, toolName,
+function makeCtx(
+  toolName: string,
+  input: unknown,
+  projectContext: ProjectContext,
+  store: StoreApi<SessionStoreState> = createMockStore(),
+): ToolExecutionContext {
+  return createToolExecutionContext({ store, storeManager, toolName,
   toolCallId: `${toolName}-call`,
   input,
   step: 1,
@@ -99,6 +110,8 @@ function makeCtx(toolName: string, input: unknown, projectContext: ProjectContex
     "workflow_create",
     "workflow_read",
     "workflow_update_stage",
+    "workflow_complete",
+    "workflow_record_completion",
     "artifact_read",
     "artifact_write",
     "workflow_task_check",
@@ -108,11 +121,21 @@ function makeCtx(toolName: string, input: unknown, projectContext: ProjectContex
   projectContext, });
 }
 
-async function execute(registry: ToolRegistry, projectContext: ProjectContext, toolName: string, input: unknown) {
+async function execute(
+  registry: ToolRegistry,
+  projectContext: ProjectContext,
+  toolName: string,
+  input: unknown,
+  store?: StoreApi<SessionStoreState>,
+) {
   return registry.execute(
     { toolName, toolCallId: `${toolName}-call`, input },
-    makeCtx(toolName, input, projectContext),
+    makeCtx(toolName, input, projectContext, store),
   );
+}
+
+function workflowEvents(store: StoreApi<SessionStoreState>) {
+  return store.getState().events.filter((event) => event.kind === "workflow.state_change");
 }
 
 describe("workflow builtin tools", () => {
@@ -131,6 +154,27 @@ describe("workflow builtin tools", () => {
     const read = await execute(registry, projectContext, "workflow_read", { workflowId: "wf-create" });
     expect(read.isError).toBe(false);
     expect(JSON.parse(read.output)).toMatchObject({ id: "wf-create", stage: "idle" });
+  });
+
+  test("workflow_create links orchestrator session and emits state change", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const orchestratorStore = storeManager.create("orchestrator-link", TMP_DIR);
+    const store = createMockStore();
+
+    const created = await execute(registry, projectContext, "workflow_create", {
+      id: "wf-linked",
+      type: "full_feature",
+      orchestratorSessionId: "orchestrator-link",
+    }, store);
+
+    expect(created.isError).toBe(false);
+    expect(JSON.parse(created.output).sessionIds).toMatchObject({ orchestrator: "orchestrator-link" });
+    expect(orchestratorStore.getState().workflowId).toBe("wf-linked");
+    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+      type: "workflow.state_change",
+      workflowId: "wf-linked",
+      changed: ["stage", "status", "sessionIds"],
+    });
   });
 
   test("workflow_update_stage mutates stage with guarded transitions only", async () => {
@@ -161,6 +205,87 @@ describe("workflow builtin tools", () => {
     });
     expect(denied.isError).toBe(true);
     expect(denied.output).toContain("WorkflowTransitionError");
+  });
+
+  test("workflow_update_stage emits state change after mutation", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const store = createMockStore();
+    await stateManager.create({ id: "wf-stage-event", type: "full_feature" });
+
+    const updated = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: "wf-stage-event",
+      stage: "product_drafting",
+    }, store);
+
+    expect(updated.isError).toBe(false);
+    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+      type: "workflow.state_change",
+      workflowId: "wf-stage-event",
+      changed: ["stage"],
+    });
+  });
+
+  test("workflow_record_completion persists completion record and emits state change", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const store = createMockStore();
+    await stateManager.create({ id: "wf-completion-record", type: "quick_fix" });
+
+    const recorded = await execute(registry, projectContext, "workflow_record_completion", {
+      workflowId: "wf-completion-record",
+      stage: "quick_verify",
+      criticPassed: true,
+      evidence: ["evidence/check.md"],
+    }, store);
+
+    expect(recorded.isError).toBe(false);
+    const state = JSON.parse(recorded.output);
+    expect(state.stageCompletions.quick_verify).toMatchObject({
+      stage: "quick_verify",
+      criticPassed: true,
+      evidence: ["evidence/check.md"],
+    });
+    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+      type: "workflow.state_change",
+      workflowId: "wf-completion-record",
+      changed: ["stageCompletions"],
+    });
+  });
+
+  test("workflow_complete denies before completion policy is satisfied", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    await stateManager.create({ id: "wf-complete-denied", type: "quick_fix" });
+
+    const denied = await execute(registry, projectContext, "workflow_complete", {
+      workflowId: "wf-complete-denied",
+    });
+
+    expect(denied.isError).toBe(true);
+    expect(denied.output).toContain("WorkflowTransitionError");
+    expect(denied.output).toContain("required stage quick_verify");
+  });
+
+  test("workflow_complete checks policy, completes workflow, and emits state change", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const store = createMockStore();
+    await stateManager.create({ id: "wf-complete", type: "quick_fix" });
+    await stateManager.updateStage("wf-complete", "quick_verify");
+    await stateManager.recordStageCompletion("wf-complete", { stage: "quick_verify" });
+
+    const completed = await execute(registry, projectContext, "workflow_complete", {
+      workflowId: "wf-complete",
+    }, store);
+
+    expect(completed.isError).toBe(false);
+    expect(JSON.parse(completed.output)).toMatchObject({
+      id: "wf-complete",
+      stage: "quick_verify",
+      status: "completed",
+    });
+    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+      type: "workflow.state_change",
+      workflowId: "wf-complete",
+      changed: ["status"],
+    });
   });
 
   test("artifact_write and artifact_read use artifact manager without changing stage or status", async () => {
@@ -322,13 +447,15 @@ describe("workflow builtin tools", () => {
     expect(nonTasks.output).toContain("only supports TASKS.md");
   });
 
-  test("registerBuiltinTools includes all six workflow tools", () => {
+  test("registerBuiltinTools includes all workflow tools", () => {
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
 
     expect(registry.get("workflow_create")).toBeDefined();
     expect(registry.get("workflow_read")).toBeDefined();
     expect(registry.get("workflow_update_stage")).toBeDefined();
+    expect(registry.get("workflow_complete")).toBeDefined();
+    expect(registry.get("workflow_record_completion")).toBeDefined();
     expect(registry.get("artifact_read")).toBeDefined();
     expect(registry.get("artifact_write")).toBeDefined();
     expect(registry.get("workflow_task_check")).toBeDefined();

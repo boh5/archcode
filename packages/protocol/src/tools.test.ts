@@ -28,6 +28,8 @@ import {
   TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_READ,
   TOOL_WORKFLOW_UPDATE_STAGE,
+  TOOL_WORKFLOW_COMPLETE,
+  TOOL_WORKFLOW_RECORD_COMPLETION,
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
@@ -65,6 +67,8 @@ const ALL_BUILTIN_NAMES = [
   TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_READ,
   TOOL_WORKFLOW_UPDATE_STAGE,
+  TOOL_WORKFLOW_COMPLETE,
+  TOOL_WORKFLOW_RECORD_COMPLETION,
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
@@ -100,6 +104,8 @@ describe("tool name constants", () => {
     expect(TOOL_WORKFLOW_CREATE).toBe("workflow_create");
     expect(TOOL_WORKFLOW_READ).toBe("workflow_read");
     expect(TOOL_WORKFLOW_UPDATE_STAGE).toBe("workflow_update_stage");
+    expect(TOOL_WORKFLOW_COMPLETE).toBe("workflow_complete");
+    expect(TOOL_WORKFLOW_RECORD_COMPLETION).toBe("workflow_record_completion");
     expect(TOOL_WORKFLOW_TASK_CHECK).toBe("workflow_task_check");
     expect(TOOL_ARTIFACT_READ).toBe("artifact_read");
     expect(TOOL_ARTIFACT_WRITE).toBe("artifact_write");
@@ -126,6 +132,8 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
     expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_UPDATE_STAGE]).toBe("workflow");
+    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_COMPLETE]).toBe("workflow");
+    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_RECORD_COMPLETION]).toBe("workflow");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
     expect(TOOL_CATEGORY_MAP[TOOL_ARTIFACT_READ]).toBe("fileRead");
@@ -157,6 +165,8 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("bash")).toBe("shell");
     expect(getToolCategory("workflow_create")).toBe("workflow");
     expect(getToolCategory("workflow_update_stage")).toBe("workflow");
+    expect(getToolCategory("workflow_complete")).toBe("workflow");
+    expect(getToolCategory("workflow_record_completion")).toBe("workflow");
   });
 });
 
