@@ -6,3 +6,7 @@ export * from "./permissions";
 export * from "./state";
 export * from "./tasks-format";
 export * from "./workflow-types";
+
+export { createDerivedWorkflowWithOrchestrator } from "./linking";
+export { WorkflowStateManager, WorkflowTerminalStateError } from "./state";
+export type { CreateDerivedWorkflowInput, CreateDerivedWorkflowResult } from "./state";

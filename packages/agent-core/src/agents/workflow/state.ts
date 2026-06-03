@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import type { StoreApi } from "zustand";
 import { z } from "zod/v4";
 import {
   atomicWrite,
@@ -9,6 +10,8 @@ import {
 } from "../../utils/safe-file";
 import type { Logger } from "../../logger";
 import { silentLogger } from "../../logger";
+import type { SessionStoreState } from "../../store/types";
+import { emitWorkflowStateChange } from "./events";
 
 export const WorkflowStageSchema = z.enum([
   "idle",
@@ -121,6 +124,7 @@ export interface CreateDerivedWorkflowInput {
   reason: DerivedFrom["reason"];
   triggerMessageId?: string;
   id?: string;
+  eventStore?: StoreApi<SessionStoreState>;
 }
 
 export interface CreateDerivedWorkflowResult {
@@ -208,6 +212,11 @@ export class WorkflowStateManager {
         triggerMessageId: input.triggerMessageId,
       },
     });
+
+    if (input.eventStore) {
+      emitWorkflowStateChange(input.eventStore, sourceUpdated.id, ["artifacts", "derivedWorkflows"]);
+      emitWorkflowStateChange(input.eventStore, derived.id, ["stage", "status", "derivedFrom"]);
+    }
 
     return { source: sourceUpdated, derived, handoffSummary, handoffSummaryId };
   }

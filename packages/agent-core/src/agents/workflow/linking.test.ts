@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import {
+  createDerivedWorkflowWithOrchestrator,
   createWorkflowWithOrchestrator,
   linkSessionToWorkflow,
   unlinkSessionFromWorkflow,
@@ -126,6 +127,55 @@ describe("workflow session linking", () => {
       sessionIds: { orchestrator: "session-create" },
     });
     expect(result.session.workflowId).toBe("wf-create");
+  });
+
+  test("creates a derived workflow with a fresh orchestrator session and handoff message", async () => {
+    const { stateManager, storeManager } = createManagers();
+    storeManager.create("source-session", TMP_DIR);
+    await createWorkflowWithOrchestrator(
+      {
+        id: "wf-source-derived-link",
+        type: "research_only",
+        orchestratorSessionId: "source-session",
+        artifacts: { RESEARCH: "RESEARCH.md" },
+      },
+      stateManager,
+      storeManager,
+    );
+
+    const result = await createDerivedWorkflowWithOrchestrator(
+      {
+        sourceWorkflowId: "wf-source-derived-link",
+        targetType: "full_feature",
+        reason: "upgrade",
+        triggerMessageId: "msg-upgrade",
+        id: "wf-derived-link",
+        workspaceRoot: TMP_DIR,
+      },
+      stateManager,
+      storeManager,
+    );
+
+    expect(result.workflow.id).toBe("wf-derived-link");
+    expect(result.workflow.sessionIds.orchestrator).toBeDefined();
+    expect(result.workflow.sessionIds.orchestrator).not.toBe("source-session");
+    expect(result.session.workflowId).toBe("wf-derived-link");
+    expect(result.session.sessionId).toBe(result.workflow.sessionIds.orchestrator);
+    expect(result.session.messages[0]).toMatchObject({ role: "user" });
+    expect(JSON.stringify(result.session.messages[0])).toContain("Start derived workflow wf-derived-link");
+    expect(JSON.stringify(result.session.messages[0])).toContain("artifact_read");
+
+    const source = await stateManager.read("wf-source-derived-link");
+    expect(source.type).toBe("research_only");
+    expect(source.sessionIds.orchestrator).toBe("source-session");
+    expect(source.derivedWorkflows).toEqual([{
+      workflowId: "wf-derived-link",
+      reason: "upgrade",
+      createdAt: source.derivedWorkflows[0]?.createdAt,
+    }]);
+    await expect(storeManager.getSessionFile(TMP_DIR, result.session.sessionId)).resolves.toMatchObject({
+      workflowId: "wf-derived-link",
+    });
   });
 
   test("stable participant keys are explicit workflow role keys", () => {

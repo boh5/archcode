@@ -19,14 +19,18 @@ export {
   StageCompletionRecordSchema,
   WorkflowArtifactKindSchema,
   WorkflowStateManager,
+  WorkflowTerminalStateError,
   WorkflowTypeSchema,
 } from "./agents/workflow/state";
 export type {
+  CreateDerivedWorkflowInput,
+  CreateDerivedWorkflowResult,
   DerivedFrom,
   DerivedWorkflowEntry,
   StageCompletionRecord,
   WorkflowType,
 } from "./agents/workflow/state";
+export { createDerivedWorkflowWithOrchestrator } from "./agents/workflow/linking";
 
 export type { CommandResult } from "./commands/types";
 export { SessionExecutionManager } from "./execution";
