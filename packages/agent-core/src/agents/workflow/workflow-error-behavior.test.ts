@@ -143,6 +143,7 @@ describe("workflow error and partial failure behavior", () => {
       artifacts: { SPEC: "SPEC.md", TASKS: "TASKS.md" },
     });
     await stateManager.updateStage("wf-user-reject", "awaiting_user_approval");
+    await stateManager.recordStageCompletion("wf-user-reject", { stage: "awaiting_user_approval" });
     const current = await stateManager.read("wf-user-reject");
 
     const result = validateTransition({
@@ -153,6 +154,7 @@ describe("workflow error and partial failure behavior", () => {
       retryCount: current.retryCount,
       maxRetries: current.maxRetries,
       hasArtifact: (kind: string) => Boolean(current.artifacts[kind as keyof typeof current.artifacts]),
+      hasStageCompletion: (stage) => Boolean(current.stageCompletions[stage]),
       hasUserApproval: false,
     });
 

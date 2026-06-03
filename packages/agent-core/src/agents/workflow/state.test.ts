@@ -128,6 +128,37 @@ describe("WorkflowStateManager", () => {
     await expect(manager.read("wf-2")).resolves.toEqual(paused);
   });
 
+  test("records stage completion with completion timestamp", async () => {
+    const manager = new WorkflowStateManager(TMP_DIR);
+    await manager.create({ id: "wf-completion-record", type: "full_feature" });
+
+    const updated = await manager.recordStageCompletion("wf-completion-record", {
+      stage: "critic_prd_review",
+      criticPassed: true,
+      evidence: ["critic-reports/prd.md"],
+    });
+
+    expect(updated.stageCompletions.critic_prd_review).toMatchObject({
+      stage: "critic_prd_review",
+      criticPassed: true,
+      evidence: ["critic-reports/prd.md"],
+    });
+    expect(typeof updated.stageCompletions.critic_prd_review?.completedAt).toBe("string");
+    await expect(manager.read("wf-completion-record")).resolves.toEqual(updated);
+  });
+
+  test("complete sets completed status while preserving business stage", async () => {
+    const manager = new WorkflowStateManager(TMP_DIR);
+    await manager.create({ id: "wf-complete", type: "quick_fix" });
+    await manager.updateStage("wf-complete", "quick_verify");
+
+    const completed = await manager.complete("wf-complete");
+
+    expect(completed.status).toBe("completed");
+    expect(completed.stage).toBe("quick_verify");
+    await expect(manager.read("wf-complete")).resolves.toEqual(completed);
+  });
+
   test("stores artifact paths and ids without artifact contents", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 

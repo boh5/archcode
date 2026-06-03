@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  canCompleteWorkflow,
+  canTransitionTo,
   validateTransition,
   WorkflowRetryLimitError,
   WorkflowTransitionError,
   type TransitionInput,
 } from "./guards";
-import type { WorkflowStage, WorkflowType } from "./state";
+import type { WorkflowStage, WorkflowState, WorkflowType } from "./state";
 import {
   getCompletionPolicyForType,
   getStagePrerequisitesForType,
@@ -35,6 +37,25 @@ function input(overrides: Partial<TransitionInput>): TransitionInput {
   maxRetries: 3,
   hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
   hasUserApproval: true, ...overrides,  };
+}
+
+function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
+  const now = new Date().toISOString();
+  return {
+    id: "wf-complete-guards",
+    type: "full_feature",
+    stage: "idle",
+    status: "active",
+    artifacts: {},
+    stageCompletions: {},
+    derivedWorkflows: [],
+    sessionIds: {},
+    createdAt: now,
+    updatedAt: now,
+    retryCount: 0,
+    maxRetries: 3,
+    ...overrides,
+  };
 }
 
 describe("workflow transition guards", () => {
@@ -141,6 +162,74 @@ describe("workflow transition guards", () => {
     expect(atLimit.error).toContain("retry limit reached (3/3)");
   });
 
+  test("canTransitionTo denies transition when prerequisite stage has no completion record", () => {
+    const result = canTransitionTo(
+      {
+        id: "wf-stage-gate",
+        type: "full_feature",
+        status: "active",
+        stage: "product_drafting",
+        retryCount: 0,
+        maxRetries: 3,
+      },
+      "critic_prd_review",
+      {
+        hasArtifact: () => true,
+        hasStageCompletion: () => false,
+        hasUserApproval: true,
+      },
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain("product_drafting has no completion record");
+  });
+
+  test("canTransitionTo allows transition when prerequisite completion record exists", () => {
+    const completedStages = new Set<WorkflowStage>(["product_drafting"]);
+
+    const result = canTransitionTo(
+      {
+        id: "wf-stage-gate",
+        type: "full_feature",
+        status: "active",
+        stage: "product_drafting",
+        retryCount: 0,
+        maxRetries: 3,
+      },
+      "critic_prd_review",
+      {
+        hasArtifact: () => true,
+        hasStageCompletion: (stage) => completedStages.has(stage),
+        hasUserApproval: true,
+      },
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("canTransitionTo denies inactive workflow transitions", () => {
+    const result = canTransitionTo(
+      {
+        id: "wf-paused",
+        type: "quick_fix",
+        status: "paused",
+        stage: "quick_analysis",
+        retryCount: 0,
+        maxRetries: 3,
+      },
+      "quick_patch",
+      {
+        hasArtifact: () => true,
+        hasStageCompletion: () => true,
+        hasUserApproval: true,
+      },
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.error).toContain("not active");
+  });
+
   test("research_only cannot enter full_feature stages", () => {
     const result = validateTransition(
       input({ workflowType: "research_only", currentStage: "idle", targetStage: "product_drafting" }),
@@ -184,6 +273,52 @@ describe("workflow transition guards", () => {
     expect(getCompletionPolicyForType("research_only")).toEqual({ requiredStage: "research_consolidation" });
     expect(getCompletionPolicyForType("quick_fix")).toEqual({ requiredStage: "quick_verify" });
     expect(getCompletionPolicyForType("full_feature")).toEqual({ requiredStage: "final_review" });
+  });
+
+  test("canCompleteWorkflow denies when required stage has not been reached", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        stage: "quick_patch",
+        stageCompletions: {
+          quick_patch: { stage: "quick_patch", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.error).toContain("has not reached required stage quick_verify");
+  });
+
+  test("canCompleteWorkflow allows quick_fix completion without critic report", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        stage: "quick_verify",
+        stageCompletions: {
+          quick_verify: { stage: "quick_verify", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => false,
+    );
+
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("canCompleteWorkflow allows completion when policy conditions are met", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "full_feature",
+        stage: "final_review",
+        stageCompletions: {
+          final_review: { stage: "final_review", completedAt: new Date().toISOString(), criticPassed: false },
+        },
+      }),
+      () => true,
+    );
+
+    expect(result).toEqual({ allowed: true });
   });
 
   test("cross-type transitions are denied", () => {

@@ -31,6 +31,11 @@ describe("processCriticDecision", () => {
 
     expect(result.newState.stage).toBe("spec_drafting");
     expect(result.newState.artifacts.CRITIC_REPORT).toEqual(["critic-reports/prd.md"]);
+    expect(result.newState.stageCompletions.critic_prd_review).toMatchObject({
+      stage: "critic_prd_review",
+      criticPassed: true,
+      evidence: ["critic-reports/prd.md"],
+    });
   });
 
   test("approved at critic_spec_review transitions to awaiting_user_approval", async () => {
@@ -45,6 +50,10 @@ describe("processCriticDecision", () => {
     }, manager);
 
     expect(result.newState.stage).toBe("awaiting_user_approval");
+    expect(result.newState.stageCompletions.critic_spec_review).toMatchObject({
+      stage: "critic_spec_review",
+      criticPassed: true,
+    });
   });
 
   test("changes_requested increments retry count and transitions back to producer", async () => {

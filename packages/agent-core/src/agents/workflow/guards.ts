@@ -1,5 +1,7 @@
-import type { WorkflowStage, WorkflowType } from "./state";
+import type { WorkflowStage, WorkflowState, WorkflowStatus, WorkflowType } from "./state";
 import {
+  getCompletionPolicyForType,
+  getStagesForType,
   getStagePrerequisitesForType,
   getTransitionsForType,
   isValidTransitionForType,
@@ -15,7 +17,23 @@ export interface TransitionInput {
   retryCount: number;
   maxRetries: number;
   hasArtifact: (kind: string) => boolean;
+  hasStageCompletion?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
+}
+
+export interface TransitionContext {
+  hasArtifact: (kind: string) => boolean;
+  hasStageCompletion: (stage: WorkflowStage) => boolean;
+  hasUserApproval: boolean;
+}
+
+export interface WorkflowTransitionState {
+  id?: string;
+  type: WorkflowType;
+  status: WorkflowStatus;
+  stage: WorkflowStage;
+  retryCount: number;
+  maxRetries: number;
 }
 
 export interface TransitionResult {
@@ -95,6 +113,25 @@ export function validateTransition(input: TransitionInput): TransitionResult {
     );
   }
 
+  if (input.hasStageCompletion) {
+    const missingStage = missingStageCompletionPrerequisite(
+      input.workflowType,
+      input.currentStage,
+      input.targetStage,
+      input.hasStageCompletion,
+    );
+    if (missingStage) {
+      return denied(
+        new WorkflowTransitionError(
+          input.workflowId,
+          input.currentStage,
+          input.targetStage,
+          `Workflow ${input.workflowId} cannot enter ${input.targetStage}: prerequisite stage ${missingStage} has no completion record`,
+        ),
+      );
+    }
+  }
+
   if (input.targetStage === "foreman_executing" && !input.hasUserApproval) {
     return denied(
       new WorkflowTransitionError(
@@ -107,6 +144,93 @@ export function validateTransition(input: TransitionInput): TransitionResult {
   }
 
   return { allowed: true };
+}
+
+export function canTransitionTo(
+  workflow: WorkflowTransitionState,
+  targetStage: WorkflowStage,
+  context: TransitionContext,
+): TransitionResult {
+  if (workflow.status !== "active") {
+    return denied(
+      new WorkflowTransitionError(
+        workflow.id ?? "unknown",
+        workflow.stage,
+        targetStage,
+        `Workflow is not active (status: ${workflow.status})`,
+      ),
+    );
+  }
+
+  return validateTransition({
+    workflowId: workflow.id ?? "unknown",
+    workflowType: workflow.type,
+    currentStage: workflow.stage,
+    targetStage,
+    retryCount: workflow.retryCount,
+    maxRetries: workflow.maxRetries,
+    hasArtifact: context.hasArtifact,
+    hasStageCompletion: context.hasStageCompletion,
+    hasUserApproval: context.hasUserApproval,
+  });
+}
+
+export function canCompleteWorkflow(
+  workflow: WorkflowState,
+  hasArtifact: (kind: string) => boolean,
+): TransitionResult {
+  const policy = getCompletionPolicyForType(workflow.type);
+  const stages = getStagesForType(workflow.type);
+  const requiredStageIndex = stages.indexOf(policy.requiredStage);
+  const currentStageIndex = stages.indexOf(workflow.stage);
+
+  if (currentStageIndex < requiredStageIndex) {
+    return denied(
+      new WorkflowTransitionError(
+        workflow.id,
+        workflow.stage,
+        policy.requiredStage,
+        `Workflow has not reached required stage ${policy.requiredStage} (currently at ${workflow.stage})`,
+      ),
+    );
+  }
+
+  if (!workflow.stageCompletions[policy.requiredStage]) {
+    return denied(
+      new WorkflowTransitionError(
+        workflow.id,
+        workflow.stage,
+        policy.requiredStage,
+        `Required stage ${policy.requiredStage} has no completion record`,
+      ),
+    );
+  }
+
+  const missingArtifacts = (policy.requiredArtifacts ?? []).filter((kind) => !hasArtifact(kind));
+  if (missingArtifacts.length > 0) {
+    return denied(
+      new WorkflowTransitionError(
+        workflow.id,
+        workflow.stage,
+        policy.requiredStage,
+        `Missing required artifact(s) for completion: ${missingArtifacts.join(", ")}`,
+      ),
+    );
+  }
+
+  return { allowed: true };
+}
+
+function missingStageCompletionPrerequisite(
+  workflowType: WorkflowType,
+  currentStage: WorkflowStage,
+  targetStage: WorkflowStage,
+  hasStageCompletion: (stage: WorkflowStage) => boolean,
+): WorkflowStage | undefined {
+  const canAdvanceFromCurrent = getTransitionsForType(workflowType, currentStage).includes(targetStage);
+  if (!canAdvanceFromCurrent || currentStage === "idle") return undefined;
+  if (!hasStageCompletion(currentStage)) return currentStage;
+  return undefined;
 }
 
 function denied(error: Error): TransitionResult {

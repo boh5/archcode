@@ -57,6 +57,7 @@ describe("mocked workflow MVP integration", () => {
 
     await stateManager.create({ id: WORKFLOW_ID, type: "full_feature" });
     await transition(stateManager, "idle", "product_drafting", false);
+    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "product_drafting" });
 
     await artifactManager.write({
       workflowId: WORKFLOW_ID,
@@ -101,6 +102,7 @@ describe("mocked workflow MVP integration", () => {
     });
     const tasksDraft = await artifactManager.read(WORKFLOW_ID, "TASKS.md");
     expect(validateTasksMarkdown(tasksDraft.body).valid).toBe(true);
+    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "spec_drafting" });
     await transition(stateManager, "spec_drafting", "critic_spec_review", false);
 
     await artifactManager.write({
@@ -121,6 +123,7 @@ describe("mocked workflow MVP integration", () => {
     );
     expect(specDecision.newState.stage).toBe("awaiting_user_approval");
 
+    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "awaiting_user_approval" });
     await transition(stateManager, "awaiting_user_approval", "foreman_executing", true);
 
     let currentTasks = (await artifactManager.read(WORKFLOW_ID, "TASKS.md")).body;
@@ -151,6 +154,7 @@ describe("mocked workflow MVP integration", () => {
     }
 
     expect(calculateReadyWave(parseTasksMarkdown(currentTasks))).toEqual([]);
+    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "foreman_executing" });
     await transition(stateManager, "foreman_executing", "final_review", false);
     await artifactManager.write({
       workflowId: WORKFLOW_ID,
@@ -201,9 +205,13 @@ async function transition(
     retryCount: state.retryCount,
     maxRetries: state.maxRetries,
     hasArtifact: (kind: string) => Boolean(state.artifacts[kind as keyof typeof state.artifacts]),
+    hasStageCompletion: (stage: WorkflowStage) => Boolean(state.stageCompletions[stage]),
     hasUserApproval,
   });
 
   expect(result).toEqual({ allowed: true });
+  if (currentStage !== "idle") {
+    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: currentStage });
+  }
   await stateManager.updateStage(WORKFLOW_ID, targetStage);
 }

@@ -57,6 +57,7 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
           retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,
           maxRetries: currentState.maxRetries,
           hasArtifact: (kind: string) => availableArtifacts.has(kind as ArtifactKind),
+          hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
           hasUserApproval: input.hasUserApproval,
         });
         if (!transition.allowed) {
@@ -101,7 +102,7 @@ async function collectAvailableArtifacts(
   artifactManager: WorkflowArtifactManager,
 ): Promise<Set<ArtifactKind>> {
   const available = new Set<ArtifactKind>();
-  for (const kind of ["PRD", "SPEC", "TASKS"] as const) {
+  for (const kind of WorkflowArtifactKindSchema.options) {
     const artifactPath = artifacts[kind];
     if (typeof artifactPath !== "string") continue;
     try {

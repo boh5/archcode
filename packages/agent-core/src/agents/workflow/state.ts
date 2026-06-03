@@ -202,6 +202,24 @@ export class WorkflowStateManager {
     return updated;
   }
 
+  async recordStageCompletion(
+    workflowId: string,
+    record: Omit<StageCompletionRecord, "completedAt">,
+  ): Promise<WorkflowState> {
+    const state = await this.read(workflowId);
+    const completion: StageCompletionRecord = {
+      ...record,
+      completedAt: new Date().toISOString(),
+    };
+    const updated = WorkflowStateSchema.parse({
+      ...state,
+      stageCompletions: { ...state.stageCompletions, [record.stage]: completion },
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
   async incrementRetryCount(workflowId: string): Promise<WorkflowState> {
     const state = await this.read(workflowId);
     const updated = WorkflowStateSchema.parse({
@@ -219,6 +237,17 @@ export class WorkflowStateManager {
       ...state,
       status: "failed",
       lastError,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async complete(workflowId: string): Promise<WorkflowState> {
+    const state = await this.read(workflowId);
+    const updated = WorkflowStateSchema.parse({
+      ...state,
+      status: "completed",
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);

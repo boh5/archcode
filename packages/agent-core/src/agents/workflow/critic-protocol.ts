@@ -43,6 +43,11 @@ export async function processCriticDecision(
   }
 
   if (input.decision === "approved") {
+    await stateManager.recordStageCompletion(input.workflowId, {
+      stage: input.currentStage,
+      criticPassed: true,
+      evidence: input.criticReportPath ? [input.criticReportPath] : undefined,
+    });
     return processApproval(input, stateManager);
   }
 
