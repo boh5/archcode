@@ -3,6 +3,22 @@ import { useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
 import { useSessionStore } from "../../store/session-store";
 
+const STAGE_LABELS: Record<string, string> = {
+  idle: "Idle",
+  product_drafting: "Product",
+  critic_prd_review: "Critic PRD",
+  spec_drafting: "Spec",
+  critic_spec_review: "Critic Spec",
+  awaiting_user_approval: "Approval",
+  foreman_executing: "Foreman",
+  final_review: "Review",
+  researching: "Research",
+  research_consolidation: "Consolidating",
+  quick_analysis: "Analysis",
+  quick_patch: "Patching",
+  quick_verify: "Verifying",
+};
+
 interface ChatHeaderProps {
   slug: string;
   sessionId: string;
@@ -21,15 +37,15 @@ export function ChatHeader({ slug, sessionId, workflowId = "", onToggleDetail }:
   };
 
   const wf = workflow as WorkflowState | null | undefined;
-  const pipelineStage = wf ? (wf.stage ?? null) : null;
+  const stageLabel = wf?.stage ? (STAGE_LABELS[wf.stage] ?? wf.stage) : null;
   const hasStats = stats && (stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0);
 
   return (
     <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
       <div className="flex items-center gap-2.5 min-w-0">
         <span className="font-semibold text-sm text-text-primary truncate">{title ?? "Untitled"}</span>
-        {pipelineStage && (
-          <span className="text-xs text-text-muted whitespace-nowrap">· Pipeline: {pipelineStage}</span>
+        {stageLabel && (
+          <span className="text-xs text-text-muted whitespace-nowrap">· {stageLabel}</span>
         )}
         {hasStats && (
           <span className="text-xs text-text-tertiary whitespace-nowrap">

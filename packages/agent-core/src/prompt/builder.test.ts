@@ -34,6 +34,31 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("file_write");
   });
 
+  test("includes workflow MVP instructions for orchestrator workflow tools", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      allowedTools: [
+        "ask_user",
+        "workflow_create",
+        "workflow_update_stage",
+        "workflow_complete",
+        "workflow_record_completion",
+        "artifact_read",
+        "artifact_write",
+      ],
+    }));
+
+    expect(result).toContain("## Workflow MVP Orchestration");
+    expect(result).toContain("research_only");
+    expect(result).toContain("quick_fix");
+    expect(result).toContain("full_feature");
+    expect(result).toContain("Use workflow_update_stage for every business-stage move");
+    expect(result).toContain("Use workflow_record_completion");
+    expect(result).toContain("Use workflow_complete");
+    expect(result).toContain("Use artifact_write for durable workflow artifacts");
+    expect(result).toContain("Use artifact_read before relying on prior artifacts");
+    expect(result).toContain("derived full_feature workflow");
+  });
+
   test("includes environment section", async () => {
     const result = await buildSystemPrompt(makeCtx());
     expect(result).toContain("## Environment");

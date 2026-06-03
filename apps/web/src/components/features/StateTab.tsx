@@ -1,45 +1,6 @@
 import { useSession, useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
 
-const AGENT_TYPES = [
-  "orchestrator",
-  "product",
-  "spec",
-  "critic",
-  "foreman",
-  "builder",
-  "reviewer",
-  "librarian",
-  "explorer",
-] as const;
-
-type AgentType = (typeof AGENT_TYPES)[number];
-
-const AGENT_COLORS: Record<AgentType, string> = {
-  orchestrator: "text-agent-orchestrator",
-  product: "text-agent-product",
-  spec: "text-agent-spec",
-  critic: "text-agent-critic",
-  foreman: "text-agent-foreman",
-  builder: "text-agent-builder",
-  reviewer: "text-agent-reviewer",
-  librarian: "text-agent-librarian",
-  explorer: "text-agent-explorer",
-};
-
-const DISPLAY_ARTIFACTS = ["PRD", "SPEC", "TASKS"] as const;
-
-type ArtifactKind = (typeof DISPLAY_ARTIFACTS)[number];
-
-type ArtifactStatus = "missing" | "draft" | "pending" | "finalized";
-
-const ARTIFACT_STATUS_COLORS: Record<ArtifactStatus, string> = {
-  missing: "text-text-muted",
-  draft: "text-warning",
-  pending: "text-text-muted",
-  finalized: "text-success",
-};
-
 const STAGE_LABELS: Record<string, string> = {
   idle: "Idle",
   product_drafting: "Product Agent working",
@@ -56,36 +17,68 @@ const STAGE_LABELS: Record<string, string> = {
   quick_verify: "Quick verification",
 };
 
+const WORKFLOW_TYPE_LABELS: Record<string, string> = {
+  research_only: "Research only",
+  quick_fix: "Quick fix",
+  full_feature: "Full feature",
+};
+
+const CORE_ARTIFACTS = ["RESEARCH", "PRD", "SPEC", "TASKS", "HANDOFF_SUMMARY", "INTERACTIONS"] as const;
+const SUPPORTING_DIRS = ["critic-reports", "evidence", "notes"] as const;
+
+type CoreArtifactKind = (typeof CORE_ARTIFACTS)[number];
+
+type ArtifactStatus = "missing" | "draft" | "finalized";
+
+const ARTIFACT_STATUS_COLORS: Record<ArtifactStatus, string> = {
+  missing: "text-text-muted",
+  draft: "text-warning",
+  finalized: "text-success",
+};
+
+const FINALIZATION_STAGES: Record<CoreArtifactKind, string[]> = {
+  RESEARCH: [
+    "research_consolidation",
+    "quick_analysis",
+    "quick_patch",
+    "quick_verify",
+    "critic_prd_review",
+    "spec_drafting",
+    "critic_spec_review",
+    "awaiting_user_approval",
+    "foreman_executing",
+    "final_review",
+  ],
+  PRD: [
+    "critic_prd_review",
+    "spec_drafting",
+    "critic_spec_review",
+    "awaiting_user_approval",
+    "foreman_executing",
+    "final_review",
+  ],
+  SPEC: [
+    "critic_spec_review",
+    "awaiting_user_approval",
+    "foreman_executing",
+    "final_review",
+  ],
+  TASKS: ["foreman_executing", "final_review"],
+  HANDOFF_SUMMARY: [],
+  INTERACTIONS: [],
+};
+
 function getArtifactStatus(
   wf: WorkflowState,
-  kind: ArtifactKind,
+  kind: CoreArtifactKind,
 ): ArtifactStatus {
   const value = wf.artifacts?.[kind];
-  if (!value) return "pending";
-  const finalizationStages: Record<ArtifactKind, string[]> = {
-    PRD: [
-      "critic_prd_review",
-      "spec_drafting",
-      "critic_spec_review",
-      "awaiting_user_approval",
-      "foreman_executing",
-      "final_review",
-    ],
-    SPEC: [
-      "critic_spec_review",
-      "awaiting_user_approval",
-      "foreman_executing",
-      "final_review",
-    ],
-    TASKS: ["foreman_executing", "final_review"],
-  };
+  if (!value) return "missing";
   const stage = wf.stage ?? "idle";
-  if (finalizationStages[kind].includes(stage)) return "finalized";
+  const finalStages = FINALIZATION_STAGES[kind];
+  if (finalStages.length > 0 && finalStages.includes(stage)) return "finalized";
+  if (wf.status === "completed") return "finalized";
   return "draft";
-}
-
-function isValidAgentType(type: string): type is AgentType {
-  return AGENT_TYPES.includes(type as AgentType);
 }
 
 function formatTime(isoString: string): string {
@@ -132,29 +125,6 @@ function StateRow({
   );
 }
 
-function AgentRow({
-  name,
-  agentType,
-  depth,
-  status,
-}: {
-  name: string;
-  agentType: AgentType;
-  depth: number;
-  status: string;
-}) {
-  const colorClass = AGENT_COLORS[agentType] ?? "text-text-secondary";
-  const isActive = status === "working" || status === "running" || status === "researching";
-  return (
-    <div className="flex items-center justify-between py-1 text-xs border-t border-border-subtle first:border-t-0">
-      <span className={`font-medium ${colorClass}`}>{name}</span>
-      <span className={isActive ? "text-success" : "text-text-muted"}>
-        {`depth ${depth} · ${status}`}
-      </span>
-    </div>
-  );
-}
-
 interface StateTabProps {
   slug: string;
   sessionId: string;
@@ -173,130 +143,98 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
   const createdAt = wf?.createdAt;
   const derivedFrom = wf?.derivedFrom ?? null;
   const derivedWorkflows = wf?.derivedWorkflows ?? [];
+  const sessionIds = wf?.sessionIds ?? {};
 
-  const agents = wf
-    ? (() => {
-        const result: Array<{
-          name: string;
-          type: AgentType;
-          depth: number;
-          status: string;
-        }> = [];
+  // No workflow — show minimal state
+  if (!wf) {
+    return (
+      <div className="relative flex flex-col h-full overflow-y-auto p-3.5">
+        <div className="mb-3.5">
+          <SectionLabel>Workflow</SectionLabel>
+          <StateCard>
+            <div className="py-2 text-xs text-text-muted text-center">
+              No workflow active
+            </div>
+          </StateCard>
+        </div>
+      </div>
+    );
+  }
 
-        result.push({
-          name: "Orchestrator",
-          type: "orchestrator",
-          depth: 0,
-          status: stage === "idle" ? "waiting" : "working",
-        });
-
-        const sessionEntries = Object.entries(wf.sessionIds ?? {});
-        for (const [stageName] of sessionEntries) {
-          if (!isValidAgentType(stageName)) continue;
-          const isCurrentStep = wf.stage === stageName;
-          const stageCompleted =
-            wf.status === "completed" ||
-            (wf.stage &&
-              AGENT_TYPES.indexOf(stageName as AgentType) <
-                AGENT_TYPES.indexOf(wf.stage as AgentType));
-          result.push({
-            name: stageName.charAt(0).toUpperCase() + stageName.slice(1),
-            type: stageName as AgentType,
-            depth: 1,
-            status: isCurrentStep
-              ? "working"
-              : stageCompleted
-                ? "completed"
-                : "pending",
-          });
-        }
-
-        return result;
-      })()
-    : [];
+  const sessionEntries = Object.entries(sessionIds);
 
   return (
     <div className="relative flex flex-col h-full overflow-y-auto p-3.5">
       <div className="mb-3.5">
         <SectionLabel>Workflow</SectionLabel>
         <StateCard>
-          {wf ? (
-            <>
-              <StateRow label="ID">
-                <span className="font-mono text-[11px]">
-                  {wf.id.length > 16 ? `${wf.id.slice(0, 16)}…` : wf.id}
-                </span>
-              </StateRow>
-              <StateRow label="Status">
-                <span
-                  className={
-                    status === "active"
-                      ? "text-success"
-                      : status === "failed"
-                        ? "text-error"
-                        : status === "completed"
-                          ? "text-text-primary"
-                          : "text-warning"
-                  }
-                >
-                  {status}
-                </span>
-              </StateRow>
-              <StateRow label="Stage">
-                <span className="text-success">
-                  {STAGE_LABELS[stage] ?? stage}
-                </span>
-              </StateRow>
-              {retryCount > 0 && (
-                <StateRow label="Attempt">
-                  {retryCount}/{maxRetries}
-                </StateRow>
-              )}
-              {createdAt && (
-                <StateRow label="Created">
-                  <span className="text-[11px]">{formatTime(createdAt)}</span>
-                </StateRow>
-              )}
-              {wfType && (
-                <StateRow label="Type">
-                  <span className="text-text-secondary">{wfType}</span>
-                </StateRow>
-              )}
-              {derivedFrom && (
-                <StateRow label="Derived From">
-                  <span className="text-[11px] font-mono">
-                    {derivedFrom.workflowId.length > 16
-                      ? `${derivedFrom.workflowId.slice(0, 16)}…`
-                      : derivedFrom.workflowId}
-                  </span>
-                </StateRow>
-              )}
-              {derivedWorkflows.length > 0 && (
-                <StateRow label="Derived">
-                  <span className="text-[11px]">{derivedWorkflows.length} workflow{derivedWorkflows.length > 1 ? "s" : ""}</span>
-                </StateRow>
-              )}
-            </>
-          ) : (
-            <div className="py-2 text-xs text-text-muted text-center">
-              No workflow active
-            </div>
+          <StateRow label="ID">
+            <span className="font-mono text-[11px]">
+              {wf.id.length > 16 ? `${wf.id.slice(0, 16)}…` : wf.id}
+            </span>
+          </StateRow>
+          <StateRow label="Type">
+            <span className="text-text-secondary">
+              {WORKFLOW_TYPE_LABELS[wfType] ?? wfType}
+            </span>
+          </StateRow>
+          <StateRow label="Status">
+            <span
+              className={
+                status === "active"
+                  ? "text-success"
+                  : status === "failed"
+                    ? "text-error"
+                    : status === "completed"
+                      ? "text-text-primary"
+                      : "text-warning"
+              }
+            >
+              {status}
+            </span>
+          </StateRow>
+          <StateRow label="Stage">
+            <span className="text-success">
+              {STAGE_LABELS[stage] ?? stage}
+            </span>
+          </StateRow>
+          {retryCount > 0 && (
+            <StateRow label="Attempt">
+              {retryCount}/{maxRetries}
+            </StateRow>
+          )}
+          {createdAt && (
+            <StateRow label="Created">
+              <span className="text-[11px]">{formatTime(createdAt)}</span>
+            </StateRow>
+          )}
+          {derivedFrom && (
+            <StateRow label="Derived From">
+              <span className="text-[11px] font-mono">
+                {derivedFrom.workflowId.length > 16
+                  ? `${derivedFrom.workflowId.slice(0, 16)}…`
+                  : derivedFrom.workflowId}
+              </span>
+            </StateRow>
+          )}
+          {derivedWorkflows.length > 0 && (
+            <StateRow label="Derived">
+              <span className="text-[11px]">{derivedWorkflows.length} workflow{derivedWorkflows.length > 1 ? "s" : ""}</span>
+            </StateRow>
           )}
         </StateCard>
       </div>
 
-      {agents.length > 0 && (
+      {sessionEntries.length > 0 && (
         <div className="mb-3.5">
-          <SectionLabel>Active Agents</SectionLabel>
+          <SectionLabel>Participants</SectionLabel>
           <StateCard>
-            {agents.map((agent, i) => (
-              <AgentRow
-                key={`${agent.type}-${i}`}
-                name={agent.name}
-                agentType={agent.type}
-                depth={agent.depth}
-                status={agent.status}
-              />
+            {sessionEntries.map(([role, sid]) => (
+              <StateRow key={role} label={role}>
+                <span className="font-mono text-[11px]">
+                  {sid.length > 12 ? `${sid.slice(0, 12)}…` : sid}
+                </span>
+              </StateRow>
             ))}
           </StateCard>
         </div>
@@ -305,22 +243,32 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
       <div className="mb-3.5">
         <SectionLabel>Artifacts</SectionLabel>
         <StateCard>
-          {wf ? (
-            DISPLAY_ARTIFACTS.map((kind) => {
-              const artifactStatus = getArtifactStatus(wf, kind);
-              return (
-                <StateRow
-                  key={kind}
-                  label={`${kind}.md`}
-                  className={ARTIFACT_STATUS_COLORS[artifactStatus]}
-                >
-                  {artifactStatus}
-                </StateRow>
-              );
-            })
-          ) : (
+          {CORE_ARTIFACTS.map((kind) => {
+            const value = wf.artifacts?.[kind];
+            if (!value) return null;
+            const artifactStatus = getArtifactStatus(wf, kind);
+            return (
+              <StateRow
+                key={kind}
+                label={kind}
+                className={ARTIFACT_STATUS_COLORS[artifactStatus]}
+              >
+                {artifactStatus}
+              </StateRow>
+            );
+          })}
+          {SUPPORTING_DIRS.map((dir) => {
+            const value = wf.artifacts?.[dir];
+            if (!value) return null;
+            return (
+              <StateRow key={dir} label={dir} className="text-text-tertiary">
+                {Array.isArray(value) ? `${value.length} files` : "present"}
+              </StateRow>
+            );
+          })}
+          {Object.keys(wf.artifacts ?? {}).length === 0 && (
             <div className="py-2 text-xs text-text-muted text-center">
-              No artifacts
+              No artifacts yet
             </div>
           )}
         </StateCard>
