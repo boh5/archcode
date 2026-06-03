@@ -9,7 +9,6 @@ import { WorkflowPathError, WorkflowTypeSchema } from "../../../agents/workflow/
 const WorkflowCreateInputSchema = z.strictObject({
   id: z.string().min(1),
   type: WorkflowTypeSchema,
-  orchestratorSessionId: z.string().min(1).optional(),
 });
 
 type WorkflowCreateInput = z.infer<typeof WorkflowCreateInputSchema>;
@@ -22,14 +21,13 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
+      const orchestratorSessionId = ctx.store.getState().sessionId;
       try {
-        const state = input.orchestratorSessionId
-          ? (await createWorkflowWithOrchestrator(
-            { id: input.id, type: input.type, orchestratorSessionId: input.orchestratorSessionId },
-            stateManager,
-            ctx.storeManager,
-          )).workflow
-          : await stateManager.create({ id: input.id, type: input.type });
+        const { workflow: state } = await createWorkflowWithOrchestrator(
+          { id: input.id, type: input.type, orchestratorSessionId },
+          stateManager,
+          ctx.storeManager,
+        );
         emitWorkflowStateChange(ctx.store, state.id, ["stage", "status", "sessionIds"]);
         return JSON.stringify(state, null, 2);
       } catch (error) {

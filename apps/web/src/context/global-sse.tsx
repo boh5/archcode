@@ -78,6 +78,9 @@ export function handleSSEEvent(
         deps.invalidateQueries({
           queryKey: queryKeys.workflow(envelope.slug, envelope.payload.workflowId),
         });
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
       }
       break;
     }

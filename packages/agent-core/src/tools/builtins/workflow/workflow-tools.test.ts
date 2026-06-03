@@ -141,15 +141,19 @@ function workflowEvents(store: StoreApi<SessionStoreState>) {
 describe("workflow builtin tools", () => {
   test("workflow_create and workflow_read round-trip workflow state", async () => {
     const { registry, projectContext } = createWorkflowRegistry();
+    const orchestratorStore = storeManager.create("test-roundtrip", TMP_DIR);
+    const store = createMockStore({ sessionId: "test-roundtrip" });
 
-    const created = await execute(registry, projectContext, "workflow_create", { id: "wf-create", type: "full_feature" });
+    const created = await execute(registry, projectContext, "workflow_create", { id: "wf-create", type: "full_feature" }, store);
     expect(created.isError).toBe(false);
     expect(JSON.parse(created.output)).toMatchObject({
       id: "wf-create",
       type: "full_feature",
       stage: "idle",
       status: "active",
+      sessionIds: { orchestrator: "test-roundtrip" },
     });
+    expect(orchestratorStore.getState().workflowId).toBe("wf-create");
 
     const read = await execute(registry, projectContext, "workflow_read", { workflowId: "wf-create" });
     expect(read.isError).toBe(false);
@@ -159,12 +163,11 @@ describe("workflow builtin tools", () => {
   test("workflow_create links orchestrator session and emits state change", async () => {
     const { registry, projectContext } = createWorkflowRegistry();
     const orchestratorStore = storeManager.create("orchestrator-link", TMP_DIR);
-    const store = createMockStore();
+    const store = createMockStore({ sessionId: "orchestrator-link" });
 
     const created = await execute(registry, projectContext, "workflow_create", {
       id: "wf-linked",
       type: "full_feature",
-      orchestratorSessionId: "orchestrator-link",
     }, store);
 
     expect(created.isError).toBe(false);

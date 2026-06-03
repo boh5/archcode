@@ -228,7 +228,7 @@ describe("handleSSEEvent", () => {
     });
   });
 
-  test("invalidates the targeted workflow query on workflow state change", () => {
+  test("invalidates the targeted workflow and session queries on workflow state change", () => {
     const envelope: GlobalSessionEventEnvelope<WorkflowStateChangeEvent> = {
       type: "event",
       slug: "proj",
@@ -247,9 +247,12 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(2);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "workflows", "workflow-123"],
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "sessions", "session-1"],
     });
   });
 

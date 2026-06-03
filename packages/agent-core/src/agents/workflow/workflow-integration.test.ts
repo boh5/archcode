@@ -348,7 +348,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const store = storeManager.create("sse-session", root);
     const ctx = createContext(root, storeManager, store);
 
-    await createWorkflowCreateTool().execute({ id: "wf-sse", type: "quick_fix", orchestratorSessionId: "sse-session" }, ctx);
+    await createWorkflowCreateTool().execute({ id: "wf-sse", type: "quick_fix" }, ctx);
     await createWorkflowRecordCompletionTool().execute({ workflowId: "wf-sse", stage: "idle" }, ctx);
     await createWorkflowUpdateStageTool().execute({ workflowId: "wf-sse", stage: "quick_analysis", hasUserApproval: false, incrementRetry: false }, ctx);
 
