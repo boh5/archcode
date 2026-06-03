@@ -12,7 +12,7 @@ import {
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { CommandResult } from "../commands/types";
-import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { AvailableArtifactReference, ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
@@ -266,7 +266,7 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: request.prompt,
+        userMessage: buildChildUserMessage(request.prompt, request.available_artifacts),
         agentName: targetDefinition.name,
         origin: "tool_call",
       });
@@ -630,6 +630,31 @@ function appendTerminalReminder(
 function formatStatus(status: SubAgentTerminalStatus): string {
   if (status === "timed_out") return "timed out";
   return status;
+}
+
+function buildChildUserMessage(
+  prompt: string,
+  availableArtifacts: readonly AvailableArtifactReference[] | undefined,
+): string {
+  if (availableArtifacts === undefined || availableArtifacts.length === 0) return prompt;
+
+  const references = availableArtifacts.map(formatArtifactReference).join("\n");
+  return [
+    prompt,
+    "",
+    "Available artifacts:",
+    references,
+    "Use artifact_read before relying on artifact content. The references above identify available artifacts only; their contents are not included in this prompt.",
+  ].join("\n");
+}
+
+function formatArtifactReference(reference: AvailableArtifactReference): string {
+  const locator = reference.path === undefined
+    ? `${reference.workflowId}/${reference.kind ?? "artifact"}`
+    : reference.kind === undefined
+      ? `${reference.workflowId}/${reference.path}`
+      : `${reference.workflowId}/${reference.kind} (${reference.path})`;
+  return reference.description === undefined ? `- ${locator}` : `- ${locator}: ${reference.description}`;
 }
 
 function toAgentResult(store: StoreApi<SessionStoreState>): AgentResult {

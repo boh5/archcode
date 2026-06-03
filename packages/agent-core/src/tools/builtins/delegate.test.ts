@@ -81,6 +81,47 @@ describe("delegate tool", () => {
     }
   });
 
+  it("validates available_artifacts references without requiring content", () => {
+    const parsed = DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "inspect",
+      skills: [],
+      available_artifacts: [
+        { workflowId: "wf_001", kind: "RESEARCH", description: "Research artifact" },
+        { workflowId: "wf_001", path: "notes/context.md" },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "inspect",
+      skills: [],
+      available_artifacts: [{ workflowId: "wf_001", kind: "UNKNOWN" }],
+    }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "inspect",
+      skills: [],
+      available_artifacts: [{ workflowId: "wf_001", kind: "RESEARCH", content: "must not be accepted" }],
+    }).success).toBe(false);
+  });
+
+  it("forwards available_artifacts to child execution", async () => {
+    const executor = new ToolStubExecutor();
+    const available_artifacts = [
+      { workflowId: "wf_001", kind: "RESEARCH" as const, description: "Research artifact" },
+      { workflowId: "wf_001", path: "notes/context.md" },
+    ];
+
+    await executeDelegate(
+      { agent_type: "explore", prompt: "inspect", skills: [], background: false, available_artifacts },
+      makeContext({ startChildExecution: (request) => executor.start(request) }),
+    );
+
+    expect(executor.lastRequest?.available_artifacts).toEqual(available_artifacts);
+  });
+
   it("sync delegation waits and returns a plain formatted result", async () => {
     const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);

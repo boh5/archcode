@@ -86,6 +86,7 @@ export const WorkflowStateSchema = z.strictObject({
 export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
 export type WorkflowType = z.infer<typeof WorkflowTypeSchema>;
 export type WorkflowStatus = z.infer<typeof WorkflowStatusSchema>;
+export type WorkflowArtifactKind = z.infer<typeof WorkflowArtifactKindSchema>;
 export type StageCompletionRecord = z.infer<typeof StageCompletionRecordSchema>;
 export type DerivedFrom = z.infer<typeof DerivedFromSchema>;
 export type DerivedWorkflowEntry = z.infer<typeof DerivedWorkflowEntrySchema>;

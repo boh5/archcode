@@ -85,6 +85,7 @@ interface FakeManagerOptions {
   factory?: AgentFactory;
   childRun?: Promise<AgentResult>;
   childRunStarted?: () => void;
+  childRunMessage?: (message: string) => void;
   requestPermission?: SessionExecutionManagerConfigForTest["requestPermission"];
   requestQuestion?: SessionExecutionManagerConfigForTest["requestQuestion"];
   cleanupDeferredSession?: () => void;
@@ -131,8 +132,9 @@ function createFakeManager(agents: Record<string, MockAgent>, options: FakeManag
     createChildAgent: mock((input: { workspaceRoot: string; sessionId: string; store: MockAgent["store"] }) => {
       const childAgent = {
         store: input.store,
-        run: mock(async (_message: string, runOptions?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
+        run: mock(async (message: string, runOptions?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
           const signal = runOptions instanceof AbortSignal ? runOptions : runOptions?.abort;
+          options.childRunMessage?.(message);
           options.childRunStarted?.();
           signal?.throwIfAborted();
           const result = options.childRun
@@ -537,6 +539,44 @@ describe("SessionExecutionManager", () => {
       background: false,
       status: "completed",
     });
+  });
+
+  test("startChildExecution adds artifact references to child prompt without artifact content", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const artifactBody = "SECRET ARTIFACT BODY MUST NOT APPEAR";
+    let childPrompt = "";
+    const { manager } = createManager({}, {
+      factory: makeFactory(),
+      childRunMessage: (message) => {
+        childPrompt = message;
+      },
+    });
+
+    const handle = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: `inspect without reading content: ${artifactBody}`.replace(artifactBody, "task only"),
+      skills: [],
+      available_artifacts: [
+        { workflowId: "wf_001", kind: "RESEARCH", description: `Research summary, not content: ${artifactBody}`.replace(artifactBody, "available" ) },
+        { workflowId: "wf_001", path: "notes/context.md" },
+      ],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await handle.result;
+
+    expect(childPrompt).toContain("inspect without reading content: task only");
+    expect(childPrompt).toContain("Available artifacts:");
+    expect(childPrompt).toContain("wf_001/RESEARCH");
+    expect(childPrompt).toContain("wf_001/notes/context.md");
+    expect(childPrompt).toContain("Use artifact_read before relying on artifact content");
+    expect(childPrompt).not.toContain(artifactBody);
   });
 
   test("link write failure prevents child creation/start and releases reserved slot", async () => {

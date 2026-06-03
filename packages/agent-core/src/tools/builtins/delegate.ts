@@ -6,8 +6,18 @@ import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import type { ChildExecutionHandle } from "../../delegation/types";
 import type { SessionExecutionRecord } from "@specra/protocol";
+import { WorkflowArtifactKindSchema } from "../../agents/workflow/state";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
+
+export const DelegateAvailableArtifactSchema = z
+  .object({
+    workflowId: z.string().min(1),
+    kind: WorkflowArtifactKindSchema.optional(),
+    path: z.string().min(1).optional(),
+    description: z.string().optional(),
+  })
+  .strict();
 
 export const DelegateInputSchema = z
   .object({
@@ -17,6 +27,7 @@ export const DelegateInputSchema = z
     description: z.string().optional(),
     title: z.string().optional(),
     background: z.boolean().default(false),
+    available_artifacts: z.array(DelegateAvailableArtifactSchema).optional(),
   })
   .strict();
 
@@ -58,6 +69,7 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       targetAgentName: input.agent_type,
       prompt: input.prompt,
       skills: input.skills,
+      available_artifacts: input.available_artifacts,
       title: input.title ?? input.description,
       description: input.description,
       background: input.background ?? false,
@@ -191,7 +203,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later). Output: plain text summary with the child session id and status.`,
+    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later), available_artifacts (optional workflow artifact references only; child must use artifact_read for content). Output: plain text summary with the child session id and status.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),
