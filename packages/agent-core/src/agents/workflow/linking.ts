@@ -1,6 +1,6 @@
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
-import type { CreateWorkflowStateInput, WorkflowState } from "./state";
+import type { CreateDerivedWorkflowInput, CreateWorkflowStateInput, WorkflowState } from "./state";
 import { WorkflowStateManager } from "./state";
 
 export const WORKFLOW_PARTICIPANT_KEYS = ["orchestrator", "product", "spec", "critic", "foreman"] as const;
@@ -63,4 +63,67 @@ export async function createWorkflowWithOrchestrator(
     stateManager,
     storeManager,
   );
+}
+
+export async function createDerivedWorkflowWithOrchestrator(
+  input: CreateDerivedWorkflowInput & { workspaceRoot: string },
+  stateManager: WorkflowStateManager,
+  storeManager: SessionStoreManager,
+): Promise<{
+  source: WorkflowState;
+  workflow: WorkflowState;
+  session: SessionStoreState;
+  handoffSummary: string;
+  handoffSummaryId: string;
+}> {
+  const { workspaceRoot, ...deriveInput } = input;
+  const derived = await stateManager.createDerived(deriveInput);
+  const sessionId = crypto.randomUUID();
+  const store = storeManager.create(sessionId, workspaceRoot);
+
+  store.getState().append({
+    type: "user-message",
+    content: buildDerivedWorkflowInitialMessage(derived),
+  });
+
+  const linked = await linkSessionToWorkflow(
+    derived.derived.id,
+    "orchestrator",
+    sessionId,
+    stateManager,
+    storeManager,
+  );
+
+  return {
+    source: derived.source,
+    workflow: linked.workflow,
+    session: linked.session,
+    handoffSummary: derived.handoffSummary,
+    handoffSummaryId: derived.handoffSummaryId,
+  };
+}
+
+function buildDerivedWorkflowInitialMessage(input: {
+  source: WorkflowState;
+  derived: WorkflowState;
+  handoffSummary: string;
+  handoffSummaryId: string;
+}): string {
+  const artifactRefs = Object.entries(input.source.artifacts)
+    .flatMap(([kind, value]) => {
+      const paths = Array.isArray(value) ? value : [value];
+      return paths.map((path) => `- ${kind}: artifact_read({ workflowId: "${input.source.id}", path: "${path}" })`);
+    });
+
+  return [
+    `Start derived workflow ${input.derived.id} from source workflow ${input.source.id}.`,
+    "",
+    `Handoff summary artifact: ${input.handoffSummaryId}`,
+    "",
+    input.handoffSummary,
+    "## Artifact References",
+    ...(artifactRefs.length > 0 ? artifactRefs : ["- No source artifact references recorded."]),
+    "",
+    "Read source artifacts with artifact_read before delegation. Do not reuse the source workflow session.",
+  ].join("\n");
 }

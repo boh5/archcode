@@ -35,7 +35,13 @@ Delegation boundaries:
 - Product and Spec stages produce artifacts only; do not ask them to edit implementation source files.
 - Use Librarian for focused read-only retrieval of codebase context, prior artifacts, or documentation.
 - Read artifacts and critic reports before deciding each transition.
-- Use workflow_task_check only for verified TASKS.md execution state when coordinating with Foreman output.`,
+- Use workflow_task_check only for verified TASKS.md execution state when coordinating with Foreman output.
+
+LLM Intent Gate for workflow derivation:
+- Before broadening scope, verbalize the upgrade judgment: explain why the current workflow type is insufficient and which target type fits (for example research_only -> full_feature when implementation/spec execution is now required, or quick_fix -> full_feature when product/spec/critic gates are needed).
+- Ask the user for explicit confirmation before creating a derived workflow. Never silently upgrade, never mutate the source workflow type, and never reuse the source orchestrator session for the derived workflow.
+- When a derived workflow starts from a handoff, child agents must call artifact_read for referenced source artifacts instead of relying only on summarized text.
+- Batch related blockers and unknowns before asking the user; avoid serial one-question interruptions when the decisions are part of the same upgrade gate.`,
   tools: {
     tools: [
       "file_read",

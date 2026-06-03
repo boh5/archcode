@@ -310,6 +310,127 @@ describe("workflow routes", () => {
       expect(await res.json()).toEqual({ body: artifactBody });
     });
 
+    test("returns explicit multi-file group artifact by path query", async () => {
+      const { app, project, workspaceRoot } = await createTestApp("artifact-path-query");
+      const workflowId = "wf-path-query";
+
+      const stateManager = new WorkflowStateManager(workspaceRoot);
+      const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
+      await stateManager.create({ id: workflowId, type: "full_feature" });
+      await artifactManager.write({
+        workflowId,
+        kind: "EVIDENCE",
+        path: "evidence/first.txt",
+        content: "first",
+      });
+      await artifactManager.write({
+        workflowId,
+        kind: "EVIDENCE",
+        path: "evidence/second.txt",
+        content: "second",
+      });
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/EVIDENCE?path=${encodeURIComponent("evidence/second.txt")}`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ body: "second" });
+    });
+
+    test("returns supporting notes through path-based artifact route", async () => {
+      const { app, project, workspaceRoot } = await createTestApp("artifact-notes-query");
+      const workflowId = "wf-notes-query";
+
+      const stateManager = new WorkflowStateManager(workspaceRoot);
+      const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
+      await stateManager.create({ id: workflowId, type: "full_feature" });
+      await artifactManager.write({
+        workflowId,
+        path: "notes/intermediate.md",
+        content: "scratch notes",
+      });
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts?path=${encodeURIComponent("notes/intermediate.md")}`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ body: "scratch notes" });
+    });
+
+    test("returns same-project cross-workflow artifact reads", async () => {
+      const { app, project, workspaceRoot } = await createTestApp("artifact-cross-workflow");
+      const stateManager = new WorkflowStateManager(workspaceRoot);
+      const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
+      await stateManager.create({ id: "wf-current", type: "full_feature" });
+      await stateManager.create({ id: "wf-other", type: "full_feature" });
+      await artifactManager.write({
+        workflowId: "wf-other",
+        kind: "PRD",
+        path: "PRD.md",
+        frontmatter: { kind: "PRD" },
+        content: "# Other PRD\n",
+      });
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/wf-other/artifacts?kind=PRD`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ body: "# Other PRD\n" });
+    });
+
+    test("rejects path traversal artifact reads", async () => {
+      const { app, project, workspaceRoot } = await createTestApp("artifact-traversal");
+      const workflowId = "wf-traversal";
+      const stateManager = new WorkflowStateManager(workspaceRoot);
+      await stateManager.create({ id: workflowId, type: "full_feature" });
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts?path=${encodeURIComponent("../outside.md")}`,
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error.code).toBe("BAD_REQUEST");
+      expect(body.error.message).toContain("Invalid artifact path for workflow wf-traversal");
+    });
+
+    test("rejects cross-project artifact reads by project slug isolation", async () => {
+      const first = await createTestApp("artifact-cross-project-a");
+      const secondWorkspace = await makeWorkspace("artifact-cross-project-b");
+      const secondProject = await first.projectRegistry.add({
+        workspaceRoot: secondWorkspace,
+        name: "artifact-cross-project-b",
+      });
+
+      const secondState = new WorkflowStateManager(secondWorkspace);
+      const secondArtifacts = new WorkflowArtifactManager(secondWorkspace, secondState);
+      await secondState.create({ id: "wf-foreign", type: "full_feature" });
+      await secondArtifacts.write({
+        workflowId: "wf-foreign",
+        kind: "PRD",
+        path: "PRD.md",
+        frontmatter: { kind: "PRD" },
+        content: "foreign",
+      });
+
+      const res = await first.app.request(
+        `/api/projects/${first.project.slug}/workflows/wf-foreign/artifacts?kind=PRD`,
+      );
+      const foreignRes = await first.app.request(
+        `/api/projects/${secondProject.slug}/workflows/wf-foreign/artifacts?kind=PRD`,
+      );
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({
+        error: { code: "WORKFLOW_NOT_FOUND", message: "Workflow not found: wf-foreign" },
+      });
+      expect(foreignRes.status).toBe(200);
+      expect(await foreignRes.json()).toEqual({ body: "foreign" });
+    });
+
     test("returns 404 for non-existent workflow", async () => {
       const { app, project } = await createTestApp("missing-workflow-artifact");
       const workflowId = "non-existent-workflow";

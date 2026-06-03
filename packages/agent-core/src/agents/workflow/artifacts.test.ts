@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import {
   ArtifactPathError,
+  SINGLE_FILE_ARTIFACT_PATHS,
   WorkflowArtifactManager,
   WorkflowArtifactWriteInputSchema,
 } from "./artifacts";
@@ -89,13 +90,19 @@ describe("WorkflowArtifactManager", () => {
     expect(state.artifacts.EVIDENCE).toEqual(["evidence/test-output.txt"]);
   });
 
-  test("accepts new single-file workflow artifact paths", async () => {
+  test("accepts all core single-file workflow artifact paths", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     await stateManager.create({ id: "wf-new-kinds", type: "full_feature" });
 
-    for (const kind of ["RESEARCH", "HANDOFF_SUMMARY", "INTERACTIONS"] as const) {
-      const path = `${kind}.md`;
+    const entries = Object.entries(SINGLE_FILE_ARTIFACT_PATHS) as Array<[
+      keyof typeof SINGLE_FILE_ARTIFACT_PATHS,
+      string,
+    ]>;
+
+    expect(entries).toHaveLength(7);
+
+    for (const [kind, path] of entries) {
       await artifacts.write({
         workflowId: "wf-new-kinds",
         kind,
@@ -106,23 +113,70 @@ describe("WorkflowArtifactManager", () => {
 
     const state = await stateManager.read("wf-new-kinds");
     expect(state.artifacts.RESEARCH).toBe("RESEARCH.md");
+    expect(state.artifacts.PRD).toBe("PRD.md");
+    expect(state.artifacts.SPEC).toBe("SPEC.md");
+    expect(state.artifacts.TASKS).toBe("TASKS.md");
+    expect(state.artifacts.RESEARCH).toBe("RESEARCH.md");
     expect(state.artifacts.HANDOFF_SUMMARY).toBe("HANDOFF_SUMMARY.md");
     expect(state.artifacts.INTERACTIONS).toBe("INTERACTIONS.md");
+    expect(state.artifacts.FINAL_REPORT).toBe("FINAL_REPORT.md");
   });
 
-  test("rejects notes paths because notes are not core artifacts", async () => {
+  test("accepts supporting notes paths without recording core artifact metadata", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     await stateManager.create({ id: "wf-notes", type: "full_feature" });
 
-    await expect(
-      artifacts.write({
-        workflowId: "wf-notes",
-        kind: "RESEARCH",
-        path: "notes/intermediate.md",
-        content: "scratch",
-      }),
-    ).rejects.toThrow(ArtifactPathError);
+    const written = await artifacts.write({
+      workflowId: "wf-notes",
+      path: "notes/intermediate.md",
+      content: "scratch",
+    });
+
+    expect(written.path).toBe("notes/intermediate.md");
+    expect(written.state.artifacts).toEqual({});
+
+    const read = await artifacts.read("wf-notes", "notes/intermediate.md");
+    expect(read.body).toBe("scratch");
+  });
+
+  test("reads core artifacts by kind and other workflow artifacts by path", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
+    await stateManager.create({ id: "wf-current", type: "full_feature" });
+    await stateManager.create({ id: "wf-other", type: "full_feature" });
+
+    await artifacts.write({
+      workflowId: "wf-other",
+      kind: "PRD",
+      path: "PRD.md",
+      frontmatter: { kind: "PRD" },
+      content: "# Other PRD\n",
+    });
+    await artifacts.write({
+      workflowId: "wf-other",
+      kind: "EVIDENCE",
+      path: "evidence/run.txt",
+      content: "pass",
+    });
+    await artifacts.write({
+      workflowId: "wf-other",
+      path: "notes/analysis.md",
+      content: "intermediate",
+    });
+
+    expect(await artifacts.readByKind("wf-other", "PRD")).toMatchObject({
+      path: "PRD.md",
+      body: "# Other PRD\n",
+    });
+    expect(await artifacts.read("wf-other", "evidence/run.txt")).toMatchObject({
+      path: "evidence/run.txt",
+      body: "pass",
+    });
+    expect(await artifacts.read("wf-other", "notes/analysis.md")).toMatchObject({
+      path: "notes/analysis.md",
+      body: "intermediate",
+    });
   });
 
   test("rejects PLAN artifact kind and PLAN.md path", async () => {
@@ -139,14 +193,18 @@ describe("WorkflowArtifactManager", () => {
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     await stateManager.create({ id: "wf-plan", type: "full_feature" });
 
-    await expect(
-      artifacts.write({
+    let invalidPlanError: unknown;
+    try {
+      await artifacts.write({
         workflowId: "wf-plan",
         kind: "PRD",
         path: "PLAN.md",
         content: "not allowed",
-      }),
-    ).rejects.toThrow(ArtifactPathError);
+      });
+    } catch (error) {
+      invalidPlanError = error;
+    }
+    expect(invalidPlanError).toBeInstanceOf(ArtifactPathError);
   });
 
   test("rejects traversal paths with a domain path error", async () => {
@@ -154,13 +212,51 @@ describe("WorkflowArtifactManager", () => {
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     await stateManager.create({ id: "wf-outside", type: "full_feature" });
 
-    await expect(
-      artifacts.write({
+    let traversalWriteError: unknown;
+    try {
+      await artifacts.write({
         workflowId: "wf-outside",
         kind: "PRD",
         path: "../outside.md",
         content: "escape",
-      }),
-    ).rejects.toThrow(ArtifactPathError);
+      });
+    } catch (error) {
+      traversalWriteError = error;
+    }
+    expect(traversalWriteError).toBeInstanceOf(ArtifactPathError);
+
+    let traversalReadError: unknown;
+    try {
+      await artifacts.read("wf-outside", "../outside.md");
+    } catch (error) {
+      traversalReadError = error;
+    }
+    expect(traversalReadError).toBeInstanceOf(ArtifactPathError);
+  });
+
+  test("cross-project artifact reads are rejected by construction", async () => {
+    const otherRoot = join(TMP_DIR, "other-project");
+    await mkdir(otherRoot, { recursive: true });
+
+    const sameProjectState = new WorkflowStateManager(TMP_DIR);
+    const sameProjectArtifacts = new WorkflowArtifactManager(TMP_DIR, sameProjectState);
+    const otherProjectState = new WorkflowStateManager(otherRoot);
+    const otherProjectArtifacts = new WorkflowArtifactManager(otherRoot, otherProjectState);
+
+    await otherProjectState.create({ id: "wf-foreign", type: "full_feature" });
+    await otherProjectArtifacts.write({
+      workflowId: "wf-foreign",
+      kind: "PRD",
+      path: "PRD.md",
+      content: "foreign",
+    });
+
+    let crossProjectError: unknown;
+    try {
+      await sameProjectArtifacts.readByKind("wf-foreign", "PRD");
+    } catch (error) {
+      crossProjectError = error;
+    }
+    expect(crossProjectError).toBeInstanceOf(Error);
   });
 });

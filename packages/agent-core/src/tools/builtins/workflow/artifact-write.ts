@@ -21,6 +21,17 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const artifactManager = ctx.projectContext.artifacts;
       try {
+        const currentWorkflowId = ctx.store.getState().workflowId;
+        if (currentWorkflowId !== input.workflowId) {
+          return createToolErrorResult({
+            kind: "workspace",
+            code: "TOOL_ARTIFACT_WRONG_WORKFLOW",
+            message: currentWorkflowId
+              ? `artifact_write can only write to current workflow ${currentWorkflowId}, got ${input.workflowId}`
+              : "artifact_write requires the current session to be linked to a workflow",
+          });
+        }
+
         const before = await readArtifactBeforeWrite(artifactManager, input);
         const result = await artifactManager.write(input);
         return {

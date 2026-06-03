@@ -293,6 +293,8 @@ describe("workflow builtin tools", () => {
     await stateManager.create({ id: "wf-artifact", type: "full_feature" });
     await stateManager.updateStage("wf-artifact", "product_drafting");
     await stateManager.updateStatus("wf-artifact", "paused");
+    const store = createMockStore();
+    store.getState().setWorkflowId("wf-artifact");
 
     const written = await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact",
@@ -300,7 +302,7 @@ describe("workflow builtin tools", () => {
       path: "PRD.md",
       content: "# Product\n",
       frontmatter: { owner: "pm" },
-    });
+    }, store);
     expect(written.isError).toBe(false);
     expect(written.meta?.diffs).toMatchObject({
       version: 1,
@@ -318,7 +320,7 @@ describe("workflow builtin tools", () => {
 
     const read = await execute(registry, projectContext, "artifact_read", {
       workflowId: "wf-artifact",
-      path: "PRD.md",
+      kind: "PRD",
     });
     expect(read.isError).toBe(false);
     expect(JSON.parse(read.output)).toMatchObject({
@@ -331,6 +333,8 @@ describe("workflow builtin tools", () => {
   test("artifact_write includes modified diff metadata for existing text artifacts", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     await stateManager.create({ id: "wf-artifact-modified", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId("wf-artifact-modified");
 
     await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact-modified",
@@ -338,7 +342,7 @@ describe("workflow builtin tools", () => {
       path: "SPEC.md",
       content: "# Spec\n\nBefore\n",
       frontmatter: { kind: "SPEC" },
-    });
+    }, store);
 
     const updated = await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact-modified",
@@ -346,7 +350,7 @@ describe("workflow builtin tools", () => {
       path: "SPEC.md",
       content: "# Spec\n\nAfter\n",
       frontmatter: { kind: "SPEC" },
-    });
+    }, store);
 
     expect(updated.isError).toBe(false);
     expect(updated.output).toContain('"path": "SPEC.md"');
@@ -359,13 +363,15 @@ describe("workflow builtin tools", () => {
   test("artifact_write returns unsupported diff metadata for binary or oversized content", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     await stateManager.create({ id: "wf-artifact-unsupported", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId("wf-artifact-unsupported");
 
     const binary = await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact-unsupported",
       kind: "EVIDENCE",
       path: "evidence/blob.md",
       content: "\0\0\0binary",
-    });
+    }, store);
     expect(binary.isError).toBe(false);
     expect(binary.meta?.diffs).toMatchObject({
       version: 1,
@@ -378,13 +384,46 @@ describe("workflow builtin tools", () => {
       kind: "EVIDENCE",
       path: "evidence/large.md",
       content: "x".repeat(1_000_001),
-    });
+    }, store);
     expect(oversized.isError).toBe(false);
     expect(oversized.meta?.diffs).toMatchObject({
       version: 1,
       files: [],
       unsupportedReason: "too_large",
     });
+  });
+
+  test("artifact_read supports same-project cross-workflow reads while artifact_write stays current-workflow only", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const artifactManager = projectContext.artifacts;
+    await stateManager.create({ id: "wf-current", type: "full_feature" });
+    await stateManager.create({ id: "wf-other", type: "full_feature" });
+    await artifactManager.write({
+      workflowId: "wf-other",
+      kind: "PRD",
+      path: "PRD.md",
+      frontmatter: { kind: "PRD" },
+      content: "# Other\n",
+    });
+
+    const store = createMockStore();
+    store.getState().setWorkflowId("wf-current");
+
+    const read = await execute(registry, projectContext, "artifact_read", {
+      workflowId: "wf-other",
+      kind: "PRD",
+    }, store);
+    expect(read.isError).toBe(false);
+    expect(JSON.parse(read.output)).toMatchObject({ path: "PRD.md", body: "# Other\n" });
+
+    const wrongWorkflowWrite = await execute(registry, projectContext, "artifact_write", {
+      workflowId: "wf-other",
+      kind: "SPEC",
+      path: "SPEC.md",
+      content: "# Wrong\n",
+    }, store);
+    expect(wrongWorkflowWrite.isError).toBe(true);
+    expect(wrongWorkflowWrite.output).toContain("can only write to current workflow wf-current");
   });
 
   test("workflow_task_check toggles only top-level TASKS.md task checkboxes", async () => {

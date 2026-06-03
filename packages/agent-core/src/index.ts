@@ -6,7 +6,13 @@ export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./p
 
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
-export { WorkflowArtifactManager } from "./agents/workflow/artifacts";
+export {
+  ArtifactPathError,
+  SINGLE_FILE_ARTIFACT_PATHS,
+  SingleFileWorkflowArtifactKindSchema,
+  VALID_ARTIFACT_KIND_LIST,
+  WorkflowArtifactManager,
+} from "./agents/workflow/artifacts";
 export {
   DerivedFromSchema,
   DerivedWorkflowEntrySchema,

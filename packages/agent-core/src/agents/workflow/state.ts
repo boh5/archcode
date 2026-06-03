@@ -109,9 +109,25 @@ export interface CreateWorkflowStateInput {
   id: string;
   type: WorkflowType;
   artifacts?: WorkflowState["artifacts"];
+  derivedFrom?: DerivedFrom;
   sessionIds?: Record<string, string>;
   maxRetries?: number;
   lastError?: string;
+}
+
+export interface CreateDerivedWorkflowInput {
+  sourceWorkflowId: string;
+  targetType: WorkflowType;
+  reason: DerivedFrom["reason"];
+  triggerMessageId?: string;
+  id?: string;
+}
+
+export interface CreateDerivedWorkflowResult {
+  source: WorkflowState;
+  derived: WorkflowState;
+  handoffSummary: string;
+  handoffSummaryId: string;
 }
 
 export interface ListWorkflowsOptions {
@@ -137,7 +153,7 @@ export class WorkflowStateManager {
       status: "active",
       artifacts: input.artifacts ?? {},
       stageCompletions: {},
-      derivedFrom: undefined,
+      derivedFrom: input.derivedFrom,
       derivedWorkflows: [],
       sessionIds: input.sessionIds ?? {},
       createdAt: now,
@@ -149,6 +165,51 @@ export class WorkflowStateManager {
 
     await this.write(state);
     return state;
+  }
+
+  async createDerived(input: CreateDerivedWorkflowInput): Promise<CreateDerivedWorkflowResult> {
+    const source = await this.read(input.sourceWorkflowId);
+    if (source.status === "completed" || source.status === "failed") {
+      throw new WorkflowTerminalStateError(source.id, source.status);
+    }
+
+    const triggeredAt = new Date().toISOString();
+    const derivedWorkflowId = input.id ?? crypto.randomUUID();
+    const handoffSummaryId = "HANDOFF_SUMMARY.md";
+    const handoffSummary = buildHandoffSummary({
+      source,
+      targetType: input.targetType,
+      reason: input.reason,
+      triggerMessageId: input.triggerMessageId,
+    });
+
+    const handoffPath = await this.workflowArtifactPath(source.id, handoffSummaryId);
+    await atomicWrite(handoffPath, handoffSummary);
+
+    const sourceUpdated = WorkflowStateSchema.parse({
+      ...source,
+      artifacts: { ...source.artifacts, HANDOFF_SUMMARY: handoffSummaryId },
+      derivedWorkflows: [
+        ...source.derivedWorkflows,
+        { workflowId: derivedWorkflowId, reason: input.reason, createdAt: triggeredAt },
+      ],
+      updatedAt: triggeredAt,
+    });
+    await this.write(sourceUpdated);
+
+    const derived = await this.create({
+      id: derivedWorkflowId,
+      type: input.targetType,
+      derivedFrom: {
+        workflowId: source.id,
+        reason: input.reason,
+        handoffSummaryId,
+        triggeredAt,
+        triggerMessageId: input.triggerMessageId,
+      },
+    });
+
+    return { source: sourceUpdated, derived, handoffSummary, handoffSummaryId };
   }
 
   async read(workflowId: string): Promise<WorkflowState> {
@@ -301,6 +362,16 @@ export class WorkflowStateManager {
     }
   }
 
+  private async workflowArtifactPath(workflowId: string, artifactPath: string): Promise<string> {
+    const workflowRoot = resolve(this.workspaceRoot, ".specra", "workflows", workflowId);
+    try {
+      return await resolveContainedPath(artifactPath, workflowRoot);
+    } catch (error) {
+      if (error instanceof SafePathError) throw new WorkflowPathError(workflowId);
+      throw error;
+    }
+  }
+
   private parseWorkflowState(workflowId: string, content: string): WorkflowState {
     let parsed: unknown;
     try {
@@ -322,6 +393,56 @@ export class WorkflowStateManager {
   private isMissingDirectoryError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
+}
+
+export class WorkflowTerminalStateError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly status: WorkflowStatus,
+  ) {
+    super(`Cannot derive workflow from terminal workflow ${workflowId} with status ${status}`);
+    this.name = "WorkflowTerminalStateError";
+  }
+}
+
+function buildHandoffSummary(input: {
+  source: WorkflowState;
+  targetType: WorkflowType;
+  reason: DerivedFrom["reason"];
+  triggerMessageId?: string;
+}): string {
+  const artifactLines = Object.entries(input.source.artifacts)
+    .flatMap(([kind, value]) => {
+      const paths = Array.isArray(value) ? value : [value];
+      return paths.map((path) => `- ${kind}: ${path}`);
+    });
+  const triggerLine = input.triggerMessageId
+    ? `- Trigger message ID: ${input.triggerMessageId}`
+    : "- Trigger message ID: _not provided_";
+
+  return [
+    `# Handoff Summary for ${input.source.id}`,
+    "",
+    "## Source Workflow",
+    `- Workflow ID: ${input.source.id}`,
+    `- Type: ${input.source.type}`,
+    `- Stage: ${input.source.stage}`,
+    `- Status: ${input.source.status}`,
+    "",
+    "## Derived Workflow Request",
+    `- Target type: ${input.targetType}`,
+    `- Reason: ${input.reason}`,
+    triggerLine,
+    "",
+    "## Key Artifacts Available",
+    ...(artifactLines.length > 0 ? artifactLines : ["- _No artifacts recorded yet._"]),
+    "",
+    "## Instructions for Derived Orchestrator",
+    "- Read referenced artifacts with artifact_read before delegating child agents.",
+    "- Treat this summary as context, not as copied workflow state.",
+    "- Start from idle with a fresh workflow/session and choose the next transition explicitly.",
+    "",
+  ].join("\n");
 }
 
 function logError(error: unknown): { name: string; message: string } {

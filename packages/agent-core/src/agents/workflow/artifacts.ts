@@ -14,7 +14,7 @@ import {
   type WorkflowState,
 } from "./state";
 
-const SINGLE_FILE_ARTIFACT_PATHS = {
+export const SINGLE_FILE_ARTIFACT_PATHS = {
   RESEARCH: "RESEARCH.md",
   PRD: "PRD.md",
   SPEC: "SPEC.md",
@@ -24,12 +24,56 @@ const SINGLE_FILE_ARTIFACT_PATHS = {
   FINAL_REPORT: "FINAL_REPORT.md",
 } as const;
 
+export const SINGLE_FILE_ARTIFACT_KINDS = [
+  "RESEARCH",
+  "PRD",
+  "SPEC",
+  "TASKS",
+  "HANDOFF_SUMMARY",
+  "INTERACTIONS",
+  "FINAL_REPORT",
+] as const;
+
+export const SingleFileWorkflowArtifactKindSchema = z.enum(
+  SINGLE_FILE_ARTIFACT_KINDS,
+);
+
+export type SingleFileWorkflowArtifactKind = z.infer<
+  typeof SingleFileWorkflowArtifactKindSchema
+>;
+
+export const VALID_ARTIFACT_KIND_LIST = WorkflowArtifactKindSchema.options.join(
+  ", ",
+);
+
+const SUPPORTING_ARTIFACT_PREFIXES = ["notes/"] as const;
+
+function isSupportingArtifactPath(artifactPath: string): boolean {
+  return SUPPORTING_ARTIFACT_PREFIXES.some((prefix) => artifactPath.startsWith(prefix));
+}
+
+function shouldAllowPlainArtifactBody(artifactPath: string): boolean {
+  return (
+    isSupportingArtifactPath(artifactPath) ||
+    artifactPath.startsWith("evidence/") ||
+    artifactPath.startsWith("critic-reports/")
+  );
+}
+
 export const WorkflowArtifactWriteInputSchema = z.strictObject({
   workflowId: z.string().min(1),
-  kind: WorkflowArtifactKindSchema,
+  kind: WorkflowArtifactKindSchema.optional(),
   path: z.string().min(1),
   content: z.string(),
   frontmatter: z.record(z.string(), z.string()).optional(),
+}).superRefine((input, ctx) => {
+  if (input.kind || isSupportingArtifactPath(input.path)) return;
+
+  ctx.addIssue({
+    code: "custom",
+    path: ["kind"],
+    message: `kind is required unless path is under notes/. Valid kinds: ${VALID_ARTIFACT_KIND_LIST}`,
+  });
 });
 
 export type WorkflowArtifactWriteInput = z.infer<
@@ -55,7 +99,12 @@ export class ArtifactPathError extends Error {
     public readonly workflowId: string,
     public readonly artifactPath: string,
   ) {
-    super(`Invalid artifact path for workflow ${workflowId}: ${artifactPath}`);
+    super(
+      `Invalid artifact path for workflow ${workflowId}: ${artifactPath}. ` +
+        `Valid kinds: ${VALID_ARTIFACT_KIND_LIST}. ` +
+        "Allowed paths: RESEARCH.md, PRD.md, SPEC.md, TASKS.md, HANDOFF_SUMMARY.md, " +
+        "INTERACTIONS.md, FINAL_REPORT.md, critic-reports/*.md, evidence/*, notes/*",
+    );
     this.name = "ArtifactPathError";
   }
 }
@@ -73,16 +122,19 @@ export class WorkflowArtifactManager {
     const absolutePath = await this.artifactPath(parsed.workflowId, parsed.path);
     this.assertAllowedArtifactPath(parsed.workflowId, parsed.kind, parsed.path);
 
+    const state = await this.stateManager.read(parsed.workflowId);
+
     const content = parsed.frontmatter
       ? formatFrontmatter(parsed.frontmatter, parsed.content)
       : parsed.content;
     await atomicWrite(absolutePath, content);
 
-    const state = await this.stateManager.read(parsed.workflowId);
-    const updated = await this.stateManager.updateArtifacts(
-      parsed.workflowId,
-      this.updateArtifacts(state.artifacts, parsed.kind, parsed.path),
-    );
+    const updated = parsed.kind && !isSupportingArtifactPath(parsed.path)
+      ? await this.stateManager.updateArtifacts(
+          parsed.workflowId,
+          this.updateArtifacts(state.artifacts, parsed.kind, parsed.path),
+        )
+      : state;
 
     return { path: parsed.path, absolutePath, state: updated };
   }
@@ -93,13 +145,22 @@ export class WorkflowArtifactManager {
   ): Promise<WorkflowArtifactReadResult> {
     const absolutePath = await this.artifactPath(workflowId, artifactPath);
     const content = await Bun.file(absolutePath).text();
-    const parsed = parseFrontmatter(content);
+    const parsed = shouldAllowPlainArtifactBody(artifactPath) && !content.trimStart().startsWith("---")
+      ? { frontmatter: {}, body: content }
+      : parseFrontmatter(content);
     return { path: artifactPath, absolutePath, content, ...parsed };
+  }
+
+  async readByKind(
+    workflowId: string,
+    kind: SingleFileWorkflowArtifactKind,
+  ): Promise<WorkflowArtifactReadResult> {
+    return await this.read(workflowId, SINGLE_FILE_ARTIFACT_PATHS[kind]);
   }
 
   private updateArtifacts(
     artifacts: WorkflowState["artifacts"],
-    kind: WorkflowArtifactWriteInput["kind"],
+    kind: NonNullable<WorkflowArtifactWriteInput["kind"]>,
     artifactPath: string,
   ): WorkflowState["artifacts"] {
     if (kind === "CRITIC_REPORT" || kind === "EVIDENCE") {
@@ -116,6 +177,14 @@ export class WorkflowArtifactManager {
     kind: WorkflowArtifactWriteInput["kind"],
     artifactPath: string,
   ): void {
+    if (isSupportingArtifactPath(artifactPath)) {
+      return;
+    }
+
+    if (!kind) {
+      throw new ArtifactPathError(workflowId, artifactPath);
+    }
+
     if (kind in SINGLE_FILE_ARTIFACT_PATHS) {
       if (
         artifactPath !==
