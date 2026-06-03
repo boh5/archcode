@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { SessionSummary, SessionTreeResponse } from "@specra/protocol";
-import { focusedSessionQueryOptions, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import type { SessionSummary, SessionTreeResponse, WorkflowState } from "@specra/protocol";
+import { focusedSessionQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions, workflowQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -24,6 +24,7 @@ describe("web session query contracts", () => {
     const rootSession: SessionSummary = {
       sessionId: "root-session",
       rootSessionId: "root-session",
+      workflowId: "workflow-root",
       title: "Root",
       createdAt: 1_000,
       lastUpdatedAt: 2_000,
@@ -50,6 +51,7 @@ describe("web session query contracts", () => {
         sessionId: "root-session",
         rootSessionId: "root-session",
         parentSessionId: undefined,
+        workflowId: "workflow-root",
         title: "Root",
         createdAt: 1_000,
         updatedAt: 2_000,
@@ -137,5 +139,37 @@ describe("web session query contracts", () => {
       parentSessionId: "root-session",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("workflowQueryOptions fetches the canonical workflow endpoint by workflowId", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const workflow: WorkflowState = {
+      id: "workflow-123",
+      type: "full_feature",
+      stage: "product_drafting",
+      status: "active",
+      sessionIds: { orchestrator: "session-1" },
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/specra/workflows/workflow-123");
+      return jsonResponse({ workflow });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = workflowQueryOptions("specra", "workflow-123");
+    const result = await (opts as unknown as QueryOptionWithFn<WorkflowState>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "specra", "workflows", "workflow-123"]);
+    expect(result).toEqual(workflow);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys.workflow is keyed by workflowId", () => {
+    expect(queryKeys.workflow("specra", "workflow-abc")).toEqual([
+      "projects",
+      "specra",
+      "workflows",
+      "workflow-abc",
+    ]);
   });
 });

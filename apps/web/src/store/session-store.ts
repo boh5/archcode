@@ -171,6 +171,7 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
     case "permission.terminal":
     case "question.request":
     case "question.terminal":
+    case "workflow.state_change":
     case "shutdown":
       return false;
     default:

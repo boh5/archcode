@@ -137,14 +137,14 @@ mock.module("../../api/queries", () => ({
   projectsQueryOptions: () => ({}),
   sessionsQueryOptions: (_slug: string) => ({}),
   sessionQueryOptions: (_slug: string, _sessionId: string) => ({}),
-  workflowQueryOptions: (_slug: string, _sessionId: string) => ({}),
+  workflowQueryOptions: (_slug: string, _workflowId: string) => ({}),
   diffQueryOptions: (_slug: string) => ({}),
   useDirectoryList,
   useDirectorySearch,
   useProjects: () => ({ data: [] }),
   useSessions: (_slug: string) => ({ data: [] }),
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
-  useWorkflow: (_slug: string, _sessionId: string) => ({ data: null }),
+  useWorkflow: (_slug: string, _workflowId: string) => ({ data: null }),
   useDiff: (_slug: string) => ({ data: [] }),
 }));
 

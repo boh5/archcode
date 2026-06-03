@@ -6,6 +6,7 @@ import type {
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
   GlobalSSEShutdownEvent,
+  WorkflowStateChangeEvent,
 } from "@specra/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
 import { parseSSEEvent, handleSSEEvent } from "./global-sse";
@@ -47,6 +48,30 @@ describe("parseSSEEvent", () => {
     const result = parseSSEEvent("event", data);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("event");
+  });
+
+  test("parses workflow state change event payload", () => {
+    const payload: WorkflowStateChangeEvent = {
+      type: "workflow.state_change",
+      workflowId: "workflow-1",
+      changed: ["stage"],
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    };
+    const data = JSON.stringify({
+      type: "event",
+      slug: "p",
+      sessionId: "s",
+      eventId: 1,
+      createdAt: 0,
+      kind: payload.type,
+      payload,
+    });
+
+    const result = parseSSEEvent("event", data);
+
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("event");
+    expect((result as GlobalSessionEventEnvelope).payload).toEqual(payload);
   });
 
   test("parses heartbeat event", () => {
@@ -200,6 +225,31 @@ describe("handleSSEEvent", () => {
       parentSessionId: "parent-session",
       title: "Explore files",
       createdAt: 123,
+    });
+  });
+
+  test("invalidates the targeted workflow query on workflow state change", () => {
+    const envelope: GlobalSessionEventEnvelope<WorkflowStateChangeEvent> = {
+      type: "event",
+      slug: "proj",
+      sessionId: "session-1",
+      eventId: 2,
+      createdAt: Date.now(),
+      kind: "workflow.state_change",
+      payload: {
+        type: "workflow.state_change",
+        workflowId: "workflow-123",
+        changed: ["stage", "status"],
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      },
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "workflows", "workflow-123"],
     });
   });
 

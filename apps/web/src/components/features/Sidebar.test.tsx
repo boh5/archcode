@@ -84,7 +84,7 @@ let createSessionPending = false;
 const useProjects = mock(() => ({ data: projects }));
 const useSessions = mock((_slug: string) => ({ data: sessions }));
 const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: sessionTree }));
-const useWorkflow = mock((_slug: string, _sessionId: string) => ({ data: null }));
+const useWorkflow = mock((_slug: string, _workflowId: string) => ({ data: null }));
 
 let Sidebar: SidebarComponent;
 
@@ -141,7 +141,7 @@ mock.module("../../api/queries", () => ({
   projectsQueryOptions: () => ({}),
   sessionsQueryOptions: (_slug: string) => ({}),
   sessionQueryOptions: (_slug: string, _sessionId: string) => ({}),
-  workflowQueryOptions: (_slug: string, _sessionId: string) => ({}),
+  workflowQueryOptions: (_slug: string, _workflowId: string) => ({}),
   diffQueryOptions: (_slug: string) => ({}),
   useProjects,
   useSessions,

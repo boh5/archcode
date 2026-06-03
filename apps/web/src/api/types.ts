@@ -14,6 +14,7 @@ export type {
   SessionStep,
   SessionTodo,
   WorkflowState,
+  WorkflowStateChangeEvent,
   DiffLineType,
   DiffLine,
   DiffHunk,

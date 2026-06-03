@@ -82,11 +82,11 @@ function Connector({ completed }: { completed: boolean }) {
 
 interface PipelineStepperProps {
   slug: string;
-  sessionId: string;
+  workflowId?: string;
 }
 
-export function PipelineStepper({ slug, sessionId }: PipelineStepperProps) {
-  const { data: workflow } = useWorkflow(slug, sessionId);
+export function PipelineStepper({ slug, workflowId = "" }: PipelineStepperProps) {
+  const { data: workflow } = useWorkflow(slug, workflowId);
 
   if (!workflow) return null;
 

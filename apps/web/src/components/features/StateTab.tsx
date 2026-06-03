@@ -1,4 +1,4 @@
-import { useWorkflow } from "../../api/queries";
+import { useSession, useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
 
 const AGENT_TYPES = [
@@ -161,14 +161,18 @@ interface StateTabProps {
 }
 
 export function StateTab({ slug, sessionId }: StateTabProps) {
-  const { data: workflow } = useWorkflow(slug, sessionId);
+  const { data: session } = useSession(slug, sessionId);
+  const { data: workflow } = useWorkflow(slug, session?.workflowId ?? "");
   const wf = workflow as WorkflowState | null | undefined;
 
   const stage = wf ? (wf.stage ?? "idle") : "idle";
   const status = wf?.status ?? "unknown";
+  const wfType = wf?.type ?? "";
   const retryCount = wf?.retryCount ?? 0;
   const maxRetries = wf?.maxRetries ?? 3;
   const createdAt = wf?.createdAt;
+  const derivedFrom = wf?.derivedFrom ?? null;
+  const derivedWorkflows = wf?.derivedWorkflows ?? [];
 
   const agents = wf
     ? (() => {
@@ -251,6 +255,25 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
               {createdAt && (
                 <StateRow label="Created">
                   <span className="text-[11px]">{formatTime(createdAt)}</span>
+                </StateRow>
+              )}
+              {wfType && (
+                <StateRow label="Type">
+                  <span className="text-text-secondary">{wfType}</span>
+                </StateRow>
+              )}
+              {derivedFrom && (
+                <StateRow label="Derived From">
+                  <span className="text-[11px] font-mono">
+                    {derivedFrom.workflowId.length > 16
+                      ? `${derivedFrom.workflowId.slice(0, 16)}…`
+                      : derivedFrom.workflowId}
+                  </span>
+                </StateRow>
+              )}
+              {derivedWorkflows.length > 0 && (
+                <StateRow label="Derived">
+                  <span className="text-[11px]">{derivedWorkflows.length} workflow{derivedWorkflows.length > 1 ? "s" : ""}</span>
                 </StateRow>
               )}
             </>

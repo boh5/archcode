@@ -6,13 +6,14 @@ import { useSessionStore } from "../../store/session-store";
 interface ChatHeaderProps {
   slug: string;
   sessionId: string;
+  workflowId?: string;
   onToggleDetail: () => void;
 }
 
-export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps) {
+export function ChatHeader({ slug, sessionId, workflowId = "", onToggleDetail }: ChatHeaderProps) {
   const title = useSessionStore(sessionId, (s) => s.title, slug);
   const stats = useSessionStore(sessionId, (s) => s.stats, slug);
-  const { data: workflow } = useWorkflow(slug, sessionId);
+  const { data: workflow } = useWorkflow(slug, workflowId);
   const postCommand = usePostCommand();
 
   const handleCompact = () => {

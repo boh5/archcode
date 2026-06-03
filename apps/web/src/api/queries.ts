@@ -16,7 +16,7 @@ export const queryKeys = {
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
-  workflow: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "workflow"] as const,
+  workflow: (slug: string, workflowId: string) => ["projects", slug, "workflows", workflowId] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
   diff: (slug: string) => ["projects", slug, "diff"] as const,
   directories: {
@@ -74,18 +74,16 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   });
 }
 
-export function workflowQueryOptions(slug: string, sessionId: string) {
+export function workflowQueryOptions(slug: string, workflowId: string) {
   return queryOptions({
-    queryKey: queryKeys.workflow(slug, sessionId),
+    queryKey: queryKeys.workflow(slug, workflowId),
     queryFn: async () => {
-      const response = await apiFetch<{ workflow?: WorkflowState | null } | WorkflowState | null>(
-        `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/workflow`,
+      const response = await apiFetch<{ workflow: WorkflowState }>(
+        `/api/projects/${encodeURIComponent(slug)}/workflows/${encodeURIComponent(workflowId)}`,
       );
-
-      if (!response) return null;
-      return "workflow" in response ? response.workflow ?? null : response;
+      return response.workflow;
     },
-    enabled: slug.length > 0 && sessionId.length > 0,
+    enabled: slug.length > 0 && workflowId.length > 0,
   });
 }
 
@@ -135,8 +133,8 @@ export function useSessionTree(slug: string, rootSessionId: string) {
   return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
 }
 
-export function useWorkflow(slug: string, sessionId: string) {
-  return useQuery(workflowQueryOptions(slug, sessionId));
+export function useWorkflow(slug: string, workflowId: string) {
+  return useQuery(workflowQueryOptions(slug, workflowId));
 }
 
 export function useDiff(slug: string) {
@@ -190,6 +188,7 @@ function normalizeSessionSummary(session: SessionSummary): Session {
     rootSessionId: session.rootSessionId,
     parentSessionId: session.parentSessionId,
     title: session.title,
+    workflowId: session.workflowId,
     createdAt: session.createdAt,
     updatedAt: session.lastUpdatedAt,
     lastUpdatedAt: session.lastUpdatedAt,

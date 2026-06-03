@@ -73,6 +73,12 @@ export function handleSSEEvent(
           createdAt: link.createdAt,
         });
       }
+
+      if (envelope.payload.type === "workflow.state_change") {
+        deps.invalidateQueries({
+          queryKey: queryKeys.workflow(envelope.slug, envelope.payload.workflowId),
+        });
+      }
       break;
     }
     case "heartbeat": {
