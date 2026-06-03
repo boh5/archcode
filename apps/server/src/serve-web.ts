@@ -1,5 +1,15 @@
 import type { MiddlewareHandler } from "hono";
-import { embeddedWebAssets, embeddedIndexPath } from "./web-manifest";
+
+// Lazy-loaded: only imported in production mode when the embedded asset handler is actually used.
+// This avoids requiring web/dist/ to exist during development (bun --hot dev mode).
+let webManifestCache: typeof import("./web-manifest") | null = null;
+
+async function loadWebManifest() {
+  if (!webManifestCache) {
+    webManifestCache = await import("./web-manifest");
+  }
+  return webManifestCache;
+}
 
 const contentTypes = new Map<string, string>([
   [".css", "text/css; charset=utf-8"],
@@ -30,6 +40,8 @@ export function createEmbeddedAssetHandler(): MiddlewareHandler {
       await next();
       return;
     }
+
+    const { embeddedWebAssets, embeddedIndexPath } = await loadWebManifest();
 
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
     const assetPath = embeddedWebAssets.get(normalizedPath);
