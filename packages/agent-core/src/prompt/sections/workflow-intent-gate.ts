@@ -35,7 +35,7 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 ### Intent Gate: Workflow Upgrades
 - Consider a derived full_feature workflow when a research_only workflow now needs implementation/spec execution, or when a quick_fix now needs product/spec/critic gates.
 - Before upgrading, verbalize the upgrade judgment, then use ask_user for explicit confirmation. Never silently upgrade, mutate the source workflow type, or reuse the source orchestrator session.
-- After confirmation, call workflow_create with derivedFrom context that names the source workflow, reason, trigger message when available, and handoff summary artifact.
+- After confirmation, create a derived workflow by calling workflow_create with the target type (e.g., full_feature). The system will create the derived workflow with a derivedFrom link to the source, generate a handoff summary, and start a fresh Orchestrator session.
 - Put the handoff summary plus artifact_read references for source artifacts in the derived session's first user message so the new orchestrator can read prior context before delegation.
 - Batch related blockers and upgrade questions together; avoid serial one-question interruptions when the decisions belong to the same gate.`;
 }

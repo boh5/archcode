@@ -23,7 +23,7 @@ const WORKFLOW_TYPE_LABELS: Record<string, string> = {
   full_feature: "Full feature",
 };
 
-const CORE_ARTIFACTS = ["RESEARCH", "PRD", "SPEC", "TASKS", "HANDOFF_SUMMARY", "INTERACTIONS"] as const;
+const CORE_ARTIFACTS = ["RESEARCH", "PRD", "SPEC", "TASKS", "HANDOFF_SUMMARY", "INTERACTIONS", "FINAL_REPORT"] as const;
 const SUPPORTING_DIRS = ["critic-reports", "evidence", "notes"] as const;
 
 type CoreArtifactKind = (typeof CORE_ARTIFACTS)[number];
@@ -66,6 +66,7 @@ const FINALIZATION_STAGES: Record<CoreArtifactKind, string[]> = {
   TASKS: ["foreman_executing", "final_review"],
   HANDOFF_SUMMARY: [],
   INTERACTIONS: [],
+  FINAL_REPORT: ["final_review"],
 };
 
 function getArtifactStatus(

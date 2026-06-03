@@ -12,6 +12,9 @@ import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
+import { createArtifactReadTool, createArtifactWriteTool, createWorkflowCompleteTool, createWorkflowCreateTool, createWorkflowReadTool, createWorkflowRecordCompletionTool, createWorkflowTaskCheckTool, createWorkflowUpdateStageTool } from "../tools/builtins/workflow";
+import { createMemoryReadTool } from "../tools/builtins/memory-read";
+import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import type { AuditEvent } from "../tools/hooks";
 import { createAuditHook, createExecutionLogger, createOutputTruncator, createRedactionHook } from "../tools/hooks";
 import { REDACTION_MARKER } from "../tools/security";
@@ -379,13 +382,26 @@ describe("registerBuiltinTools", () => {
 
   describe("EXPLORER_READ_ONLY_TOOLS trait integrity", () => {
     it("each listed tool has traits.readOnly === true", () => {
-      const descriptors = createBuiltinToolDescriptors();
+      // Build the same set of descriptors that registerBuiltinTools produces
+      const descriptors = [
+        ...createBuiltinToolDescriptors(),
+        createMemoryReadTool(),
+        createMemoryWriteTool(),
+        createWorkflowCreateTool(),
+        createWorkflowReadTool(),
+        createWorkflowUpdateStageTool(),
+        createWorkflowCompleteTool(),
+        createWorkflowRecordCompletionTool(),
+        createArtifactReadTool(),
+        createArtifactWriteTool(),
+        createWorkflowTaskCheckTool(),
+      ];
       const toolMap = new Map(descriptors.map((d) => [d.name, d]));
       const errors: string[] = [];
 
       for (const toolName of EXPLORER_READ_ONLY_TOOLS) {
         const descriptor = toolMap.get(toolName);
-        expect(descriptor, `${toolName} should exist in builtin descriptors`).toBeDefined();
+        expect(descriptor, `${toolName} should exist in registered descriptors`).toBeDefined();
         if (descriptor && !descriptor.traits.readOnly) {
           errors.push(`${toolName}: readOnly=${descriptor.traits.readOnly}`);
         }
