@@ -9,12 +9,7 @@ import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
 
-class MissingSessionFileError extends Error {
-  code = "ENOENT";
-}
-
 function createTestRuntime(projectRegistry: ProjectRegistry) {
-  const sessionIds = new Set<string>();
   const runtime = {
     projectRegistry,
     mcpManager: undefined,
@@ -23,14 +18,12 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     providerRegistry: undefined,
     warnings: [],
     contextResolver: undefined,
-    createSession: async (workspaceRoot: string) => {
+    createSession: async () => {
       const sessionId = crypto.randomUUID();
-      sessionIds.add(`${workspaceRoot}\0${sessionId}`);
       return { sessionId, createdAt: Date.now(), title: null, messages: [], steps: [], todos: [], reminders: [] };
     },
-    getSessionFile: async (workspaceRoot: string, sessionId: string) => {
-      if (!sessionIds.has(`${workspaceRoot}\0${sessionId}`)) throw new MissingSessionFileError();
-      return { sessionId, createdAt: Date.now(), title: null, messages: [], steps: [], todos: [], reminders: [] };
+    getSessionFile: async () => {
+      throw new Error("not implemented");
     },
     listSessions: async () => [],
     startSessionExecution: () => {
@@ -42,8 +35,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     isSessionExecutionRunning: () => false,
     getSessionExecution: () => undefined,
     subscribeSessionEvents: () => () => undefined,
-    deleteSession: async (workspaceRoot: string, sessionId: string) => {
-      sessionIds.delete(`${workspaceRoot}\0${sessionId}`);
+    deleteSession: async () => {
+      throw new Error("not implemented");
     },
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
@@ -57,7 +50,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     notifyRuntimeShutdown: () => undefined,
   } as unknown as SpecraRuntime;
 
-  return { runtime, sessionIds };
+  return { runtime };
 }
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -70,7 +63,7 @@ async function createTestApp(testName: string) {
   const homeDir = join(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
-  const { runtime, sessionIds } = createTestRuntime(projectRegistry);
+  const { runtime } = createTestRuntime(projectRegistry);
   const workspaceRoot = await makeWorkspace(testName);
   const project = await projectRegistry.add({ workspaceRoot, name: testName });
 
@@ -79,16 +72,7 @@ async function createTestApp(testName: string) {
     project,
     workspaceRoot,
     projectRegistry,
-    sessionIds,
   };
-}
-
-function saveEmptySession(
-  workspaceRoot: string,
-  sessionIds: Set<string>,
-  sessionId: string,
-): void {
-  sessionIds.add(`${workspaceRoot}\0${sessionId}`);
 }
 
 describe("workflow routes", () => {
@@ -101,64 +85,48 @@ describe("workflow routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  describe("GET /api/projects/:slug/sessions/:sessionId/workflow", () => {
-    test("returns the workflow referencing the given session", async () => {
-      const { app, project, workspaceRoot, sessionIds } = await createTestApp("session-workflow-found");
-      const sessionId = "my-session-id";
+  describe("GET /api/projects/:slug/workflows/:workflowId", () => {
+    test("returns the requested workflow", async () => {
+      const { app, project, workspaceRoot } = await createTestApp("workflow-found");
       const workflowId = "wf-1";
-
-      saveEmptySession(workspaceRoot, sessionIds, sessionId);
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       await stateManager.create({
         id: workflowId,
         type: "full_feature",
-        sessionIds: { orchestrator: sessionId },
+        sessionIds: { orchestrator: "session-1" },
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/sessions/${sessionId}/workflow`,
+        `/api/projects/${project.slug}/workflows/${workflowId}`,
       );
 
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.workflow).toBeDefined();
       expect(body.workflow.id).toBe(workflowId);
-      expect(body.workflow.sessionIds).toEqual({ orchestrator: sessionId });
+      expect(body.workflow.sessionIds).toEqual({ orchestrator: "session-1" });
     });
 
-    test("returns 200 with null workflow when session has no matching workflow", async () => {
-      const { app, project, workspaceRoot, sessionIds } = await createTestApp("session-no-workflow");
-      const sessionId = "orphan-session";
-
-      saveEmptySession(workspaceRoot, sessionIds, sessionId);
+    test("returns 404 for non-existent workflow", async () => {
+      const { app, project } = await createTestApp("workflow-not-found");
+      const workflowId = "missing-workflow";
 
       const res = await app.request(
-        `/api/projects/${project.slug}/sessions/${sessionId}/workflow`,
-      );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ workflow: null });
-    });
-
-    test("returns 404 when session does not exist", async () => {
-      const { app, project } = await createTestApp("session-not-exists");
-
-      const res = await app.request(
-        `/api/projects/${project.slug}/sessions/non-existent-session/workflow`,
+        `/api/projects/${project.slug}/workflows/${workflowId}`,
       );
 
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({
-        error: { code: "SESSION_NOT_FOUND", message: "Session not found: non-existent-session" },
+        error: { code: "WORKFLOW_NOT_FOUND", message: `Workflow not found: ${workflowId}` },
       });
     });
 
-    test("returns 404 when project does not exist", async () => {
-      const { app } = await createTestApp("project-not-exists");
+    test("returns 404 for non-existent project slug", async () => {
+      const { app } = await createTestApp("workflow-missing-project");
 
       const res = await app.request(
-        "/api/projects/missing-project/sessions/some-session/workflow",
+        "/api/projects/missing-project/workflows/wf-1",
       );
 
       expect(res.status).toBe(404);
@@ -166,31 +134,38 @@ describe("workflow routes", () => {
         error: { code: "PROJECT_NOT_FOUND", message: "Project not found: missing-project" },
       });
     });
-
-    test("finds workflow via unified sessionIds", async () => {
-      const { app, project, workspaceRoot, sessionIds } = await createTestApp("via-session-ids");
-      const sessionId = "task-session-id";
-      const workflowId = "wf-tasks";
-
-      saveEmptySession(workspaceRoot, sessionIds, sessionId);
-
-      const stateManager = new WorkflowStateManager(workspaceRoot);
-      await stateManager.create({
-        id: workflowId,
-        type: "full_feature",
-        sessionIds: { foreman: sessionId },
-      });
-
-      const res = await app.request(
-        `/api/projects/${project.slug}/sessions/${sessionId}/workflow`,
-      );
-
-      expect(res.status).toBe(200);
-      expect((await res.json()).workflow.id).toBe(workflowId);
-    });
   });
 
   describe("GET /api/projects/:slug/workflows/:workflowId/artifacts/:name", () => {
+    for (const artifact of [
+      { kind: "RESEARCH", body: "# Research\n\nInitial findings." },
+      { kind: "HANDOFF_SUMMARY", body: "# Handoff Summary\n\nContinue from here." },
+      { kind: "INTERACTIONS", body: "# Interactions\n\n- Asked for approval." },
+    ] as const) {
+      test(`returns ${artifact.kind} artifact body`, async () => {
+        const { app, project, workspaceRoot } = await createTestApp(`${artifact.kind.toLowerCase()}-artifact`);
+        const workflowId = `wf-${artifact.kind.toLowerCase()}`;
+
+        const stateManager = new WorkflowStateManager(workspaceRoot);
+        const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
+        await stateManager.create({ id: workflowId, type: "full_feature" });
+        await artifactManager.write({
+          workflowId,
+          kind: artifact.kind,
+          path: `${artifact.kind}.md`,
+          frontmatter: { version: "1" },
+          content: artifact.body,
+        });
+
+        const res = await app.request(
+          `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/${artifact.kind}`,
+        );
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ body: artifact.body });
+      });
+    }
+
     test("returns PRD artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("prd-artifact");
       const workflowId = "wf-prd";
@@ -377,7 +352,7 @@ describe("workflow routes", () => {
       expect(await res.json()).toEqual({
         error: {
           code: "BAD_REQUEST",
-          message: "Invalid artifact name: INVALID. Must be one of PRD, SPEC, TASKS, CRITIC_REPORT, EVIDENCE, FINAL_REPORT",
+          message: "Invalid artifact name: INVALID. Must be one of RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, CRITIC_REPORT, EVIDENCE, FINAL_REPORT",
         },
       });
     });

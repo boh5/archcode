@@ -227,6 +227,28 @@ export class SessionStoreManager {
     return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
   }
 
+  async setWorkflowId(sessionId: string, workflowId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {
+    const store = workspaceRoot === undefined
+      ? this.findLoadedSession(sessionId)
+      : await this.getOrLoad(sessionId, workspaceRoot);
+
+    if (store === undefined) throw new SessionFileNotFoundError(sessionId);
+    store.getState().setWorkflowId(workflowId);
+    return store.getState();
+  }
+
+  private findLoadedSession(sessionId: string): StoreApi<SessionStoreState> | undefined {
+    const direct = this.#registry.get(sessionId);
+    if (direct !== undefined) return direct;
+
+    const suffix = `\0${sessionId}`;
+    for (const [key, store] of this.#registry.entries()) {
+      if (key.endsWith(suffix)) return store;
+    }
+
+    return undefined;
+  }
+
   async resolveRootSessionId(sessionId: string, workspaceRoot: string): Promise<string> {
     const cached = this.#rootIdIndex.get(this.indexKey(sessionId, workspaceRoot));
     if (cached !== undefined) return cached;
@@ -375,6 +397,10 @@ export class SessionStoreManager {
   }
 
   delete(sessionId: string, workspaceRoot?: string, options: { forgetWorkspaceIndex?: boolean } = {}): boolean {
+    // Runtime deletion should unlink named workflow participants before removing
+    // session stores/files. The workflow state manager is project-scoped, so that
+    // cross-resource cleanup is wired by the runtime/execution layer rather than
+    // this store-only registry.
     const removed = this.#registry.delete(this.key(sessionId, workspaceRoot));
     if (workspaceRoot !== undefined) {
       if (options.forgetWorkspaceIndex === true) this.#forgetWorkspaceIndex(workspaceRoot);

@@ -246,6 +246,17 @@ export class WorkflowStateManager {
     return updated;
   }
 
+  async updateSessionIds(workflowId: string, sessionIds: Record<string, string>): Promise<WorkflowState> {
+    const state = await this.read(workflowId);
+    const updated = WorkflowStateSchema.parse({
+      ...state,
+      sessionIds,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
   private async write(state: WorkflowState): Promise<void> {
     const filePath = await this.workflowStatePath(state.id);
     await atomicWrite(filePath, `${JSON.stringify(state, null, 2)}\n`);

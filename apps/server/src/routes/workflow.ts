@@ -5,7 +5,6 @@ import { WorkflowArtifactManager } from "@specra/agent-core";
 import {
   ArtifactNotFoundError,
   BadRequestError,
-  SessionNotFoundError,
   WorkflowNotFoundError,
 } from "../errors";
 import { resolveProject } from "../resolve";
@@ -23,35 +22,26 @@ const SINGLE_FILE_ARTIFACT_PATHS: Partial<Record<string, string>> = {
 export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
   const app = new Hono();
 
-  app.get("/:slug/sessions/:sessionId/workflow", async (c) => {
+  app.get("/:slug/workflows/:workflowId", async (c) => {
     const slug = c.req.param("slug");
-    const sessionId = c.req.param("sessionId");
+    const workflowId = c.req.param("workflowId");
 
-    if (!slug || !sessionId) {
-      throw new BadRequestError("slug and sessionId are required");
+    if (!slug || !workflowId) {
+      throw new BadRequestError("slug and workflowId are required");
     }
 
     const project = await resolveProject(runtime, slug);
-    const workspaceRoot = project.workspaceRoot;
+    const stateManager = new WorkflowStateManager(project.workspaceRoot);
 
     try {
-      await runtime.getSessionFile(workspaceRoot, sessionId);
+      const workflow = await stateManager.read(workflowId);
+      return c.json({ workflow });
     } catch (error) {
-      if (!isMissingFileError(error)) throw error;
-      throw new SessionNotFoundError(sessionId);
-    }
-
-    const stateManager = new WorkflowStateManager(workspaceRoot);
-    const workflows = await stateManager.listWorkflows();
-
-    for (const workflow of workflows) {
-      const allSessionIds = Object.values(workflow.sessionIds);
-      if (allSessionIds.includes(sessionId)) {
-        return c.json({ workflow });
+      if (isMissingFileError(error)) {
+        throw new WorkflowNotFoundError(workflowId);
       }
+      throw error;
     }
-
-    return c.json({ workflow: null });
   });
 
   app.get("/:slug/workflows/:workflowId/artifacts/:name", async (c) => {
