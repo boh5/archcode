@@ -53,6 +53,7 @@ async function processApproval(
   input: CriticDecisionInput,
   stateManager: WorkflowStateManager,
 ): Promise<CriticDecisionResult> {
+  // Critic approvals are currently only part of the full_feature workflow graph.
   if (input.currentStage === "critic_prd_review") {
     const newState = await stateManager.updateStage(input.workflowId, "spec_drafting");
     return { newState, transitionDescription: "critic approved PRD; advancing to SPEC drafting" };
@@ -95,6 +96,7 @@ async function processChangesRequested(
 }
 
 function producerStageFor(input: CriticDecisionInput): WorkflowStage | undefined {
+  // Critic retries are currently only part of the full_feature workflow graph.
   if (input.currentStage === "critic_prd_review") return "product_drafting";
   if (input.currentStage === "critic_spec_review") return "spec_drafting";
   return undefined;

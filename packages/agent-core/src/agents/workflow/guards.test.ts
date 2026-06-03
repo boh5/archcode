@@ -1,21 +1,34 @@
 import { describe, expect, test } from "bun:test";
 
-import type { WorkflowStage } from "./state";
 import {
-  ARTIFACT_PREREQUISITES,
-  LEGAL_STAGE_TRANSITIONS,
   validateTransition,
   WorkflowRetryLimitError,
   WorkflowTransitionError,
-  type ArtifactKind,
   type TransitionInput,
 } from "./guards";
-
-const ALL_STAGES = Object.keys(LEGAL_STAGE_TRANSITIONS) as WorkflowStage[];
+import type { WorkflowStage, WorkflowType } from "./state";
+import {
+  getCompletionPolicyForType,
+  getStagePrerequisitesForType,
+  getTransitionsForType,
+  WORKFLOW_TYPE_REGISTRY,
+  type ArtifactKind,
+} from "./workflow-types";
 
 function input(overrides: Partial<TransitionInput>): TransitionInput {
-  const artifacts = new Set<ArtifactKind>(["RESEARCH", "PRD", "SPEC", "TASKS"]);
+  const artifacts = new Set<ArtifactKind>([
+    "RESEARCH",
+    "PRD",
+    "SPEC",
+    "TASKS",
+    "HANDOFF_SUMMARY",
+    "INTERACTIONS",
+    "CRITIC_REPORT",
+    "EVIDENCE",
+    "FINAL_REPORT",
+  ]);
   return { workflowId: "wf-guards",
+  workflowType: "full_feature",
   currentStage: "idle",
   targetStage: "product_drafting",
   retryCount: 0,
@@ -25,18 +38,21 @@ function input(overrides: Partial<TransitionInput>): TransitionInput {
 }
 
 describe("workflow transition guards", () => {
-  test("allows every legal transition from the transition table", () => {
-    for (const currentStage of ALL_STAGES) {
-      for (const targetStage of LEGAL_STAGE_TRANSITIONS[currentStage]) {
-        const result = validateTransition(input({ currentStage, targetStage }));
-        expect(result, `${currentStage} -> ${targetStage}`).toEqual({ allowed: true });
+  test("allows every legal transition from each workflow type graph", () => {
+    for (const workflowType of Object.keys(WORKFLOW_TYPE_REGISTRY) as WorkflowType[]) {
+      const definition = WORKFLOW_TYPE_REGISTRY[workflowType];
+      for (const currentStage of definition.stages) {
+        for (const targetStage of getTransitionsForType(workflowType, currentStage)) {
+          const result = validateTransition(input({ workflowType, currentStage, targetStage }));
+          expect(result, `${workflowType}: ${currentStage} -> ${targetStage}`).toEqual({ allowed: true });
+        }
       }
     }
   });
 
-  test("rejects transitions not present in the transition table", () => {
+  test("rejects transitions not present in the selected workflow type graph", () => {
     const result = validateTransition(
-      input({ currentStage: "idle", targetStage: "foreman_executing" }),
+      input({ workflowType: "full_feature", currentStage: "idle", targetStage: "foreman_executing" }),
     );
 
     expect(result.allowed).toBe(false);
@@ -47,13 +63,14 @@ describe("workflow transition guards", () => {
   test("requires PRD before entering critic_prd_review", () => {
     const result = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "product_drafting",
         targetStage: "critic_prd_review",
         hasArtifact: () => false,
       }),
     );
 
-    expect(ARTIFACT_PREREQUISITES.critic_prd_review).toEqual(["PRD"]);
+    expect(getStagePrerequisitesForType("full_feature", "critic_prd_review")).toEqual(["PRD"]);
     expect(result.allowed).toBe(false);
     expect(result.errorName).toBe("WorkflowTransitionError");
     expect(result.error).toContain("missing required artifact(s): PRD");
@@ -62,17 +79,19 @@ describe("workflow transition guards", () => {
   test("requires SPEC and valid TASKS before critic_spec_review approval path", () => {
     const onlySpec = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "spec_drafting",
         targetStage: "critic_spec_review",
         hasArtifact: (kind: string) => kind === "SPEC",
       }),
     );
-    expect(ARTIFACT_PREREQUISITES.critic_spec_review).toEqual(["SPEC", "TASKS"]);
+    expect(getStagePrerequisitesForType("full_feature", "critic_spec_review")).toEqual(["SPEC", "TASKS"]);
     expect(onlySpec.allowed).toBe(false);
     expect(onlySpec.error).toContain("TASKS");
 
     const approval = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "critic_spec_review",
         targetStage: "awaiting_user_approval",
         hasArtifact: (kind: string) => kind === "SPEC" || kind === "TASKS",
@@ -84,6 +103,7 @@ describe("workflow transition guards", () => {
   test("requires user approval before entering foreman_executing", () => {
     const result = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "awaiting_user_approval",
         targetStage: "foreman_executing",
         hasUserApproval: false,
@@ -98,6 +118,7 @@ describe("workflow transition guards", () => {
   test("allows critic review retries below maxRetries and hard-fails at maxRetries", () => {
     const belowLimit = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "product_drafting",
         targetStage: "critic_prd_review",
         retryCount: 2,
@@ -108,6 +129,7 @@ describe("workflow transition guards", () => {
 
     const atLimit = validateTransition(
       input({
+        workflowType: "full_feature",
         currentStage: "product_drafting",
         targetStage: "critic_prd_review",
         retryCount: 3,
@@ -119,15 +141,79 @@ describe("workflow transition guards", () => {
     expect(atLimit.error).toContain("retry limit reached (3/3)");
   });
 
+  test("research_only cannot enter full_feature stages", () => {
+    const result = validateTransition(
+      input({ workflowType: "research_only", currentStage: "idle", targetStage: "product_drafting" }),
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain("research_only");
+    expect(getTransitionsForType("research_only", "idle")).toEqual(["researching"]);
+  });
+
+  test("quick_fix cannot enter full_feature stages", () => {
+    const result = validateTransition(
+      input({ workflowType: "quick_fix", currentStage: "idle", targetStage: "product_drafting" }),
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain("quick_fix");
+    expect(getTransitionsForType("quick_fix", "idle")).toEqual(["quick_analysis"]);
+  });
+
+  test("full_feature follows its approved graph", () => {
+    const approvedPath: Array<[WorkflowStage, WorkflowStage]> = [
+      ["idle", "product_drafting"],
+      ["product_drafting", "critic_prd_review"],
+      ["critic_prd_review", "spec_drafting"],
+      ["spec_drafting", "critic_spec_review"],
+      ["critic_spec_review", "awaiting_user_approval"],
+      ["awaiting_user_approval", "foreman_executing"],
+      ["foreman_executing", "final_review"],
+    ];
+
+    for (const [currentStage, targetStage] of approvedPath) {
+      const result = validateTransition(input({ workflowType: "full_feature", currentStage, targetStage }));
+      expect(result, `${currentStage} -> ${targetStage}`).toEqual({ allowed: true });
+    }
+  });
+
+  test("each workflow type has the expected completion policy", () => {
+    expect(getCompletionPolicyForType("research_only")).toEqual({ requiredStage: "research_consolidation" });
+    expect(getCompletionPolicyForType("quick_fix")).toEqual({ requiredStage: "quick_verify" });
+    expect(getCompletionPolicyForType("full_feature")).toEqual({ requiredStage: "final_review" });
+  });
+
+  test("cross-type transitions are denied", () => {
+    const crossTypeTransitions: Array<[WorkflowType, WorkflowStage, WorkflowStage]> = [
+      ["research_only", "researching", "quick_patch"],
+      ["research_only", "research_consolidation", "final_review"],
+      ["quick_fix", "quick_analysis", "spec_drafting"],
+      ["quick_fix", "quick_verify", "research_consolidation"],
+      ["full_feature", "product_drafting", "research_consolidation"],
+      ["full_feature", "foreman_executing", "quick_verify"],
+    ];
+
+    for (const [workflowType, currentStage, targetStage] of crossTypeTransitions) {
+      const result = validateTransition(input({ workflowType, currentStage, targetStage }));
+      expect(result.allowed, `${workflowType}: ${currentStage} -> ${targetStage}`).toBe(false);
+      expect(result.errorName).toBe("WorkflowTransitionError");
+    }
+  });
+
   test("does not expose complete or failed as legal business stages", () => {
-    expect(Object.keys(LEGAL_STAGE_TRANSITIONS)).not.toContain("complete");
-    expect(Object.keys(LEGAL_STAGE_TRANSITIONS)).not.toContain("failed");
-    expect(Object.values(LEGAL_STAGE_TRANSITIONS).flat()).not.toContain("complete");
-    expect(Object.values(LEGAL_STAGE_TRANSITIONS).flat()).not.toContain("failed");
+    for (const definition of Object.values(WORKFLOW_TYPE_REGISTRY)) {
+      expect(definition.stages).not.toContain("complete" as WorkflowStage);
+      expect(definition.stages).not.toContain("failed" as WorkflowStage);
+      expect(Object.values(definition.transitions).flat()).not.toContain("complete");
+      expect(Object.values(definition.transitions).flat()).not.toContain("failed");
+    }
 
     for (const targetStage of ["complete", "failed"] as const) {
       const result = validateTransition(
-        input({ targetStage: targetStage as WorkflowStage }),
+        input({ workflowType: "full_feature", targetStage: targetStage as WorkflowStage }),
       );
       expect(result.allowed).toBe(false);
       expect(result.errorName).toBe("WorkflowTransitionError");

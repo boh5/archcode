@@ -51,6 +51,7 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
         const availableArtifacts = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
         const transition = validateTransition({
           workflowId: input.workflowId,
+          workflowType: currentState.type,
           currentStage: currentState.stage,
           targetStage: input.stage as WorkflowStage,
           retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,

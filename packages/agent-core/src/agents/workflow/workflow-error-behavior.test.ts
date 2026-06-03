@@ -147,6 +147,7 @@ describe("workflow error and partial failure behavior", () => {
 
     const result = validateTransition({
       workflowId: "wf-user-reject",
+      workflowType: current.type,
       currentStage: current.stage,
       targetStage: "foreman_executing",
       retryCount: current.retryCount,

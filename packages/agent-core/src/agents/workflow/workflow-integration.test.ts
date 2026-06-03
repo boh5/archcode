@@ -195,6 +195,7 @@ async function transition(
 
   const result = validateTransition({
     workflowId: WORKFLOW_ID,
+    workflowType: state.type,
     currentStage,
     targetStage,
     retryCount: state.retryCount,
