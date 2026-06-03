@@ -179,6 +179,17 @@ export function canCompleteWorkflow(
   workflow: WorkflowState,
   hasArtifact: (kind: string) => boolean,
 ): TransitionResult {
+  if (workflow.status !== "active") {
+    return denied(
+      new WorkflowTransitionError(
+        workflow.id,
+        workflow.stage,
+        "completed" as WorkflowStage,
+        `Cannot complete workflow with status "${workflow.status}". Only active workflows can be completed.`,
+      ),
+    );
+  }
+
   const policy = getCompletionPolicyForType(workflow.type);
   const stages = getStagesForType(workflow.type);
   const requiredStageIndex = stages.indexOf(policy.requiredStage);

@@ -24,7 +24,11 @@ const WORKFLOW_TYPE_LABELS: Record<string, string> = {
 };
 
 const CORE_ARTIFACTS = ["RESEARCH", "PRD", "SPEC", "TASKS", "HANDOFF_SUMMARY", "INTERACTIONS", "FINAL_REPORT"] as const;
-const SUPPORTING_DIRS = ["critic-reports", "evidence", "notes"] as const;
+const SUPPORTING_DIRS = ["CRITIC_REPORT", "EVIDENCE"] as const;
+const SUPPORTING_DIR_LABELS: Record<string, string> = {
+  CRITIC_REPORT: "Critic reports",
+  EVIDENCE: "Evidence",
+};
 
 type CoreArtifactKind = (typeof CORE_ARTIFACTS)[number];
 
@@ -262,7 +266,7 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
             const value = wf.artifacts?.[dir];
             if (!value) return null;
             return (
-              <StateRow key={dir} label={dir} className="text-text-tertiary">
+              <StateRow key={dir} label={SUPPORTING_DIR_LABELS[dir] ?? dir} className="text-text-tertiary">
                 {Array.isArray(value) ? `${value.length} files` : "present"}
               </StateRow>
             );

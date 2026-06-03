@@ -291,6 +291,60 @@ describe("workflow transition guards", () => {
     expect(result.error).toContain("has not reached required stage quick_verify");
   });
 
+  test("canCompleteWorkflow denies failed workflows", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        status: "failed",
+        stage: "quick_verify",
+        stageCompletions: {
+          quick_verify: { stage: "quick_verify", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain('Cannot complete workflow with status "failed"');
+  });
+
+  test("canCompleteWorkflow denies paused workflows", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        status: "paused",
+        stage: "quick_verify",
+        stageCompletions: {
+          quick_verify: { stage: "quick_verify", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain('Cannot complete workflow with status "paused"');
+  });
+
+  test("canCompleteWorkflow denies already-completed workflows", () => {
+    const result = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        status: "completed",
+        stage: "quick_verify",
+        stageCompletions: {
+          quick_verify: { stage: "quick_verify", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain('Cannot complete workflow with status "completed"');
+  });
+
   test("canCompleteWorkflow allows quick_fix completion without critic report", () => {
     const result = canCompleteWorkflow(
       workflowState({

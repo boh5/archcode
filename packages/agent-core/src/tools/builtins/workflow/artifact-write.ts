@@ -10,6 +10,7 @@ import {
   WorkflowArtifactWriteInputSchema,
   type WorkflowArtifactWriteInput,
 } from "../../../agents/workflow/artifacts";
+import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError } from "../../../agents/workflow/state";
 
 export function createArtifactWriteTool(): AnyToolDescriptor {
@@ -34,6 +35,7 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
 
         const before = await readArtifactBeforeWrite(artifactManager, input);
         const result = await artifactManager.write(input);
+        emitWorkflowStateChange(ctx.store, input.workflowId, ["artifacts"]);
         return {
           output: JSON.stringify(result, null, 2),
           isError: false,
