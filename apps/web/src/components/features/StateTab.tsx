@@ -49,8 +49,11 @@ const STAGE_LABELS: Record<string, string> = {
   awaiting_user_approval: "Awaiting approval",
   foreman_executing: "Foreman executing",
   final_review: "Final review",
-  complete: "Complete",
-  failed: "Failed",
+  researching: "Researching",
+  research_consolidation: "Research consolidation",
+  quick_analysis: "Quick analysis",
+  quick_patch: "Quick patch",
+  quick_verify: "Quick verification",
 };
 
 function getArtifactStatus(
@@ -67,18 +70,16 @@ function getArtifactStatus(
       "awaiting_user_approval",
       "foreman_executing",
       "final_review",
-      "complete",
     ],
     SPEC: [
       "critic_spec_review",
       "awaiting_user_approval",
       "foreman_executing",
       "final_review",
-      "complete",
     ],
-    TASKS: ["foreman_executing", "final_review", "complete"],
+    TASKS: ["foreman_executing", "final_review"],
   };
-  const stage = wf.stage ?? wf.currentStep ?? "idle";
+  const stage = wf.stage ?? "idle";
   if (finalizationStages[kind].includes(stage)) return "finalized";
   return "draft";
 }
@@ -163,7 +164,7 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
   const { data: workflow } = useWorkflow(slug, sessionId);
   const wf = workflow as WorkflowState | null | undefined;
 
-  const stage = wf ? (wf.currentStep ?? wf.stage ?? "idle") : "idle";
+  const stage = wf ? (wf.stage ?? "idle") : "idle";
   const status = wf?.status ?? "unknown";
   const retryCount = wf?.retryCount ?? 0;
   const maxRetries = wf?.maxRetries ?? 3;
@@ -188,12 +189,12 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
         const sessionEntries = Object.entries(wf.sessionIds ?? {});
         for (const [stageName] of sessionEntries) {
           if (!isValidAgentType(stageName)) continue;
-          const isCurrentStep = wf.currentStep === stageName;
+          const isCurrentStep = wf.stage === stageName;
           const stageCompleted =
             wf.status === "completed" ||
-            (wf.currentStep &&
+            (wf.stage &&
               AGENT_TYPES.indexOf(stageName as AgentType) <
-                AGENT_TYPES.indexOf(wf.currentStep as AgentType));
+                AGENT_TYPES.indexOf(wf.stage as AgentType));
           result.push({
             name: stageName.charAt(0).toUpperCase() + stageName.slice(1),
             type: stageName as AgentType,
@@ -203,17 +204,6 @@ export function StateTab({ slug, sessionId }: StateTabProps) {
               : stageCompleted
                 ? "completed"
                 : "pending",
-          });
-        }
-
-        const taskEntries = Object.entries(wf.taskSessionIds ?? {});
-        for (const [taskName] of taskEntries) {
-          if (!isValidAgentType(taskName)) continue;
-          result.push({
-            name: taskName.charAt(0).toUpperCase() + taskName.slice(1),
-            type: taskName as AgentType,
-            depth: 2,
-            status: "researching",
           });
         }
 

@@ -313,6 +313,8 @@ export interface QuestionRequestEvent {
   type: "question.request";
   questionId: string;
   question: string;
+  questionType?: "decision" | "approval" | "clarification";
+  context?: Record<string, unknown>;
 }
 
 export interface QuestionTerminalEvent {
@@ -320,6 +322,13 @@ export interface QuestionTerminalEvent {
   questionId: string;
   status: "resolved" | "denied" | "timeout" | "cancelled";
   answer?: string;
+}
+
+export interface WorkflowStateChangeEvent {
+  type: "workflow.state_change";
+  workflowId: string;
+  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "sessionIds" | "derivedWorkflows">;
+  updatedAt: string;
 }
 
 export interface ShutdownEvent {
@@ -333,6 +342,7 @@ export type SessionEventPayload =
   | PermissionTerminalEvent
   | QuestionRequestEvent
   | QuestionTerminalEvent
+  | WorkflowStateChangeEvent
   | ShutdownEvent;
 
 export interface TextPart {
@@ -489,6 +499,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   agentName?: string | null;
   title?: string | null;
+  workflowId?: string;
   createdAt: number;
   lastUpdatedAt?: number;
 }
@@ -524,6 +535,7 @@ export interface Session {
   sessionId?: string;
   rootSessionId: string;
   title?: string | null;
+  workflowId?: string;
   createdAt: number;
   updatedAt?: number;
   lastUpdatedAt?: number;
@@ -540,13 +552,29 @@ export interface Session {
 
 export interface WorkflowState {
   id: string;
+  type: "research_only" | "quick_fix" | "full_feature" | string;
+  stage: string;
   status: "active" | "paused" | "completed" | "failed" | string;
   sessionIds: Record<string, string>;
-  taskSessionIds: Record<string, string>;
-  currentStep?: string;
-  stage?: string;
   artifacts?: Record<string, string | string[] | undefined>;
-  roleSessionIds?: Record<string, string>;
+  stageCompletions?: Record<string, {
+    stage: string;
+    completedAt: string;
+    criticPassed?: boolean;
+    evidence?: string[];
+  }>;
+  derivedFrom?: {
+    workflowId: string;
+    reason: "upgrade" | "branch" | string;
+    handoffSummaryId?: string;
+    triggeredAt: string;
+    triggerMessageId?: string;
+  };
+  derivedWorkflows?: Array<{
+    workflowId: string;
+    reason: "upgrade" | "branch" | string;
+    createdAt: string;
+  }>;
   createdAt?: string;
   updatedAt?: string;
   retryCount?: number;

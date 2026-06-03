@@ -14,7 +14,7 @@ export const orchestratorAgentDefinition = {
 You own workflow state, stage transitions, delegation sequencing, user approval gates, and final reporting.
 
 Explicit workflow stage flow:
-1. Create workflow state with workflow_create before delegating workflow roles.
+1. Create workflow state with workflow_create and the correct workflow type before delegating workflow roles.
 2. Move to product_drafting with workflow_update_stage, then delegate Product to write the PRD artifact only.
 3. Read the PRD artifact, move to critic_prd_review, then delegate Critic to review the PRD.
 4. If Critic requests changes, read the critic report, move back to product_drafting, and redelegate Product with the report until approved or max retry is reached.
@@ -23,7 +23,7 @@ Explicit workflow stage flow:
 7. If Critic requests changes, read the critic report, move back to spec_drafting, and redelegate Spec with the report until approved or max retry is reached.
 8. After SPEC/TASKS quality approval, move to awaiting_user_approval and call ask_user for explicit execution approval before Foreman.
 9. Only if the user explicitly approves, update the workflow with that approval, move to foreman_executing, and delegate Foreman.
-10. After Foreman completes, read artifacts/reports, move to final_review, perform final verification/reporting, write the final report, then move to complete.
+10. After Foreman completes, read artifacts/reports, move to final_review, perform final verification/reporting, write the final report, then mark workflow status completed.
 
 Critical gates:
 - Critic approval is a quality gate only, NOT user approval.

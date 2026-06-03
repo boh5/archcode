@@ -498,7 +498,8 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution validates through factory and runs a child session", async () => {
     const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const workflowId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", workflowId });
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, { factory });
 
@@ -520,6 +521,7 @@ describe("SessionExecutionManager", () => {
 
     expect(sessionAgentManager.createChildAgent).toHaveBeenCalled();
     expect(handle.store.getState().parentSessionId).toBe(parentId);
+    expect(handle.store.getState().workflowId).toBe(workflowId);
     expect(handle.store.getState().agentName).toBe("explore");
     expect(parentStore.getState().events
       .filter((event) => event.kind === "tool-child-session-link")

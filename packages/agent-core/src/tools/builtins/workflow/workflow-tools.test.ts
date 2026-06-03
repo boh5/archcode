@@ -119,10 +119,11 @@ describe("workflow builtin tools", () => {
   test("workflow_create and workflow_read round-trip workflow state", async () => {
     const { registry, projectContext } = createWorkflowRegistry();
 
-    const created = await execute(registry, projectContext, "workflow_create", { id: "wf-create" });
+    const created = await execute(registry, projectContext, "workflow_create", { id: "wf-create", type: "full_feature" });
     expect(created.isError).toBe(false);
     expect(JSON.parse(created.output)).toMatchObject({
       id: "wf-create",
+      type: "full_feature",
       stage: "idle",
       status: "active",
     });
@@ -134,7 +135,7 @@ describe("workflow builtin tools", () => {
 
   test("workflow_update_stage mutates stage with guarded transitions only", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-stage" });
+    await stateManager.create({ id: "wf-stage", type: "full_feature" });
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: "wf-stage",
@@ -164,7 +165,7 @@ describe("workflow builtin tools", () => {
 
   test("artifact_write and artifact_read use artifact manager without changing stage or status", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact" });
+    await stateManager.create({ id: "wf-artifact", type: "full_feature" });
     await stateManager.updateStage("wf-artifact", "product_drafting");
     await stateManager.updateStatus("wf-artifact", "paused");
 
@@ -204,7 +205,7 @@ describe("workflow builtin tools", () => {
 
   test("artifact_write includes modified diff metadata for existing text artifacts", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact-modified" });
+    await stateManager.create({ id: "wf-artifact-modified", type: "full_feature" });
 
     await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact-modified",
@@ -232,7 +233,7 @@ describe("workflow builtin tools", () => {
 
   test("artifact_write returns unsupported diff metadata for binary or oversized content", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact-unsupported" });
+    await stateManager.create({ id: "wf-artifact-unsupported", type: "full_feature" });
 
     const binary = await execute(registry, projectContext, "artifact_write", {
       workflowId: "wf-artifact-unsupported",
@@ -263,7 +264,7 @@ describe("workflow builtin tools", () => {
 
   test("workflow_task_check toggles only top-level TASKS.md task checkboxes", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-tasks" });
+    await stateManager.create({ id: "wf-tasks", type: "full_feature" });
     await artifactManager.write({
       workflowId: "wf-tasks",
       kind: "TASKS",
@@ -286,7 +287,7 @@ describe("workflow builtin tools", () => {
 
   test("workflow_task_check rejects nested checkboxes, unknown ids, and non-TASKS targets", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-reject" });
+    await stateManager.create({ id: "wf-reject", type: "full_feature" });
     await artifactManager.write({
       workflowId: "wf-reject",
       kind: "TASKS",

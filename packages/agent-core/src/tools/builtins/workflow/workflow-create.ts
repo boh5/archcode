@@ -2,10 +2,11 @@ import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
-import { WorkflowPathError } from "../../../agents/workflow/state";
+import { WorkflowPathError, WorkflowTypeSchema } from "../../../agents/workflow/state";
 
 const WorkflowCreateInputSchema = z.strictObject({
   id: z.string().min(1),
+  type: WorkflowTypeSchema,
 });
 
 type WorkflowCreateInput = z.infer<typeof WorkflowCreateInputSchema>;
@@ -19,7 +20,7 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
     execute: async (input: WorkflowCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
       try {
-        const state = await stateManager.create({ id: input.id });
+        const state = await stateManager.create({ id: input.id, type: input.type });
         return JSON.stringify(state, null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {

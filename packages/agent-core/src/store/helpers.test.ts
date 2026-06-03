@@ -185,6 +185,7 @@ type PersistedSessionState = Pick<
   | "childSessionLinks"
   | "rootSessionId"
   | "parentSessionId"
+  | "workflowId"
 >;
 
 function persistedState(
@@ -198,6 +199,7 @@ function persistedState(
   rootSessionId?: string,
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
+  workflowId: string | undefined = undefined,
 ): PersistedSessionState {
   return {
     sessionId,
@@ -213,6 +215,7 @@ function persistedState(
     childSessionLinks,
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
+    workflowId,
   };
 }
 
@@ -312,6 +315,21 @@ describe("session transcript serialization", () => {
     expect(summaries[0]?.rootSessionId).toBe(rootSessionId);
     expect(summaries[0]?.agentName).toBe("orchestrator");
     expect(summaries[0]?.parentSessionId).toBeUndefined();
+  });
+
+  test("listSessionSummaries includes workflowId when present", async () => {
+    const sessionId = uniqueSessionId("workflow-summary");
+    const workflowId = crypto.randomUUID();
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(sessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], workflowId),
+      TMP_DIR,
+    );
+
+    const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toMatchObject({ sessionId, workflowId });
   });
 
   test("scanDescendants returns child session to root session mappings", async () => {
@@ -443,6 +461,42 @@ describe("session transcript serialization", () => {
     expect(parsed.parentSessionId).toBe(parentSessionId);
     expect(loaded.getState().rootSessionId).toBe(rootSessionId);
     expect(loaded.getState().parentSessionId).toBe(parentSessionId);
+  });
+
+  test("save/load serializes workflowId when set", async () => {
+    const sessionId = uniqueSessionId("workflow-roundtrip");
+    const workflowId = crypto.randomUUID();
+    const state = persistedState(
+      sessionId,
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      sampleReminders(),
+      undefined,
+      undefined,
+      [],
+      workflowId,
+    );
+
+    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    expect(parsed.workflowId).toBe(workflowId);
+    expect(loaded.getState().workflowId).toBe(workflowId);
+  });
+
+  test("save omits workflowId when undefined", async () => {
+    const sessionId = uniqueSessionId("workflow-undefined");
+
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+
+    expect("workflowId" in parsed).toBe(false);
   });
 
   test("loaded store preserves methods and can continue appending", async () => {

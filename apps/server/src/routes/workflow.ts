@@ -11,9 +11,12 @@ import {
 import { resolveProject } from "../resolve";
 
 const SINGLE_FILE_ARTIFACT_PATHS: Partial<Record<string, string>> = {
+  RESEARCH: "RESEARCH.md",
   PRD: "PRD.md",
   SPEC: "SPEC.md",
   TASKS: "TASKS.md",
+  HANDOFF_SUMMARY: "HANDOFF_SUMMARY.md",
+  INTERACTIONS: "INTERACTIONS.md",
   FINAL_REPORT: "FINAL_REPORT.md",
 };
 
@@ -42,10 +45,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
     const workflows = await stateManager.listWorkflows();
 
     for (const workflow of workflows) {
-      const allSessionIds = [
-        ...Object.values(workflow.sessionIds),
-        ...Object.values(workflow.taskSessionIds),
-      ];
+      const allSessionIds = Object.values(workflow.sessionIds);
       if (allSessionIds.includes(sessionId)) {
         return c.json({ workflow });
       }
@@ -66,7 +66,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
     const parsed = WorkflowArtifactKindSchema.safeParse(name);
     if (!parsed.success) {
       throw new BadRequestError(
-        `Invalid artifact name: ${name}. Must be one of PRD, SPEC, TASKS, CRITIC_REPORT, EVIDENCE, FINAL_REPORT`,
+        `Invalid artifact name: ${name}. Must be one of ${WorkflowArtifactKindSchema.options.join(", ")}`,
       );
     }
     const kind = parsed.data;

@@ -60,6 +60,9 @@ export function createMockStore(
     setParentSessionId: (parentSessionId) => {
       state.parentSessionId = parentSessionId;
     },
+    setWorkflowId: (workflowId) => {
+      state.workflowId = workflowId;
+    },
     toModelMessages: () => [],
   };
 

@@ -252,6 +252,7 @@ export const SessionFileSchema = z.strictObject({
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
+  workflowId: z.string().optional(),
   eventCursor: z.number().optional(),
 });
 
@@ -261,6 +262,7 @@ export interface SessionSummary {
   sessionId: string;
   rootSessionId: string;
   parentSessionId?: string;
+  workflowId?: string;
   agentName?: string | null;
   title?: string | null;
   createdAt: number;
@@ -272,7 +274,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "reminders" | "childSessionLinks" | "parentSessionId"
+  "reminders" | "childSessionLinks" | "parentSessionId" | "workflowId"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -320,6 +322,7 @@ async function saveSessionTranscript(
     childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
+    ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -373,6 +376,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
+    ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
   };
 }
 
@@ -390,6 +394,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
           sessionId: parsed.sessionId,
           rootSessionId: parsed.rootSessionId,
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+          ...(parsed.workflowId === undefined ? {} : { workflowId: parsed.workflowId }),
           agentName: parsed.agentName,
           title: parsed.title ?? null,
           createdAt: parsed.createdAt,

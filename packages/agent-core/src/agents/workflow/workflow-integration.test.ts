@@ -55,7 +55,7 @@ describe("mocked workflow MVP integration", () => {
     const delegateBuilder = mock(async () => ({ ok: true, evidencePath: "evidence/T1-builder.md" }));
     const delegateReviewer = mock(async () => ({ ok: true, evidencePath: "evidence/T2-reviewer.md" }));
 
-    await stateManager.create({ id: WORKFLOW_ID });
+    await stateManager.create({ id: WORKFLOW_ID, type: "full_feature" });
     await transition(stateManager, "idle", "product_drafting", false);
 
     await artifactManager.write({
@@ -159,14 +159,13 @@ describe("mocked workflow MVP integration", () => {
       frontmatter: { owner: "foreman", status: "complete" },
       content: "# Final Report\n\nWorkflow completed with mocked builder and reviewer outputs.",
     });
-    await transition(stateManager, "final_review", "complete", false);
     await stateManager.updateStatus(WORKFLOW_ID, "completed");
 
     const finalState = await stateManager.read(WORKFLOW_ID);
     const discovered = await stateManager.listWorkflows({ status: "completed" });
     const finalTasks = parseTasksMarkdown((await artifactManager.read(WORKFLOW_ID, "TASKS.md")).body);
 
-    expect(finalState.stage).toBe("complete");
+    expect(finalState.stage).toBe("final_review");
     expect(finalState.status).toBe("completed");
     expect(discovered.map((workflow) => workflow.id)).toContain(WORKFLOW_ID);
     expect(finalState.artifacts.PRD).toBe("PRD.md");

@@ -31,6 +31,7 @@ export interface SessionStoreManagerOptions {
 export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
+  readonly workflowId?: string;
   readonly agentName?: string;
   readonly title?: string;
 }
@@ -81,6 +82,7 @@ export class SessionStoreManager {
     const persistWorkspaceRoot = workspaceRoot ?? "__test__";
     const rootSessionId = options.rootSessionId ?? sessionId;
     const parentSessionId = options.parentSessionId;
+    const workflowId = options.workflowId;
     let store: StoreApi<SessionStoreState>;
 
     const persist = () => {
@@ -122,6 +124,7 @@ export class SessionStoreManager {
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
+      workflowId,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -170,6 +173,10 @@ export class SessionStoreManager {
         const current = get().parentSessionId;
         if (current !== undefined) return; // Identity is immutable after creation
         set({ parentSessionId });
+        persist();
+      },
+      setWorkflowId: (workflowId: string | undefined) => {
+        set({ workflowId });
         persist();
       },
       toModelMessages: (): ModelMessage[] =>
@@ -330,6 +337,7 @@ export class SessionStoreManager {
       const store = this.create(sessionId, workspaceRoot, {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
+        workflowId: parsed.workflowId,
         agentName: parsed.agentName,
         ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
       });
@@ -348,6 +356,7 @@ export class SessionStoreManager {
         childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
+        workflowId: parsed.workflowId,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
@@ -502,6 +511,7 @@ function toSessionSummary(file: SessionFile): SessionSummary {
     sessionId: file.sessionId,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
+    ...(file.workflowId === undefined ? {} : { workflowId: file.workflowId }),
     agentName: file.agentName,
     title: file.title ?? null,
     createdAt: file.createdAt,

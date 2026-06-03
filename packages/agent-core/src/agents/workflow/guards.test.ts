@@ -14,7 +14,7 @@ import {
 const ALL_STAGES = Object.keys(LEGAL_STAGE_TRANSITIONS) as WorkflowStage[];
 
 function input(overrides: Partial<TransitionInput>): TransitionInput {
-  const artifacts = new Set<ArtifactKind>(["PRD", "SPEC", "TASKS"]);
+  const artifacts = new Set<ArtifactKind>(["RESEARCH", "PRD", "SPEC", "TASKS"]);
   return { workflowId: "wf-guards",
   currentStage: "idle",
   targetStage: "product_drafting",
@@ -119,19 +119,18 @@ describe("workflow transition guards", () => {
     expect(atLimit.error).toContain("retry limit reached (3/3)");
   });
 
-  test("allows any stage to transition to failed", () => {
-    for (const currentStage of ALL_STAGES) {
+  test("does not expose complete or failed as legal business stages", () => {
+    expect(Object.keys(LEGAL_STAGE_TRANSITIONS)).not.toContain("complete");
+    expect(Object.keys(LEGAL_STAGE_TRANSITIONS)).not.toContain("failed");
+    expect(Object.values(LEGAL_STAGE_TRANSITIONS).flat()).not.toContain("complete");
+    expect(Object.values(LEGAL_STAGE_TRANSITIONS).flat()).not.toContain("failed");
+
+    for (const targetStage of ["complete", "failed"] as const) {
       const result = validateTransition(
-        input({
-          currentStage,
-          targetStage: "failed",
-          retryCount: 99,
-          maxRetries: 0,
-          hasArtifact: () => false,
-          hasUserApproval: false,
-        }),
+        input({ targetStage: targetStage as WorkflowStage }),
       );
-      expect(result, `${currentStage} -> failed`).toEqual({ allowed: true });
+      expect(result.allowed).toBe(false);
+      expect(result.errorName).toBe("WorkflowTransitionError");
     }
   });
 
@@ -139,12 +138,12 @@ describe("workflow transition guards", () => {
     const transitionError = new WorkflowTransitionError(
       "wf-errors",
       "idle",
-      "complete",
+      "final_review",
     );
     expect(transitionError.name).toBe("WorkflowTransitionError");
     expect(transitionError.workflowId).toBe("wf-errors");
     expect(transitionError.currentStage).toBe("idle");
-    expect(transitionError.targetStage).toBe("complete");
+    expect(transitionError.targetStage).toBe("final_review");
 
     const retryError = new WorkflowRetryLimitError(
       "wf-errors",

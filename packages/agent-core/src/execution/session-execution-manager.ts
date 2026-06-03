@@ -77,6 +77,7 @@ interface SessionExecutionManagerConfig {
     options?: {
       readonly rootSessionId?: string;
       readonly parentSessionId?: string;
+      readonly workflowId?: string;
       readonly agentName?: string;
       readonly title?: string;
     },
@@ -242,6 +243,7 @@ export class SessionExecutionManager {
       childStore = this.#config.createSessionStore(childSessionId, workspaceRoot, {
         rootSessionId: parentState.rootSessionId ?? request.parentSessionId,
         parentSessionId: request.parentSessionId,
+        workflowId: parentState.workflowId,
         agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
       });

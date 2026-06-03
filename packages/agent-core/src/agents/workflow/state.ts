@@ -12,6 +12,11 @@ import { silentLogger } from "../../logger";
 
 export const WorkflowStageSchema = z.enum([
   "idle",
+  "researching",
+  "research_consolidation",
+  "quick_analysis",
+  "quick_patch",
+  "quick_verify",
   "product_drafting",
   "critic_prd_review",
   "spec_drafting",
@@ -19,29 +24,55 @@ export const WorkflowStageSchema = z.enum([
   "awaiting_user_approval",
   "foreman_executing",
   "final_review",
-  "complete",
-  "failed",
 ]);
+
+export const WorkflowTypeSchema = z.enum(["research_only", "quick_fix", "full_feature"]);
 
 export const WorkflowStatusSchema = z.enum(["active", "paused", "completed", "failed"]);
 
 export const WorkflowArtifactKindSchema = z.enum([
+  "RESEARCH",
   "PRD",
   "SPEC",
   "TASKS",
+  "HANDOFF_SUMMARY",
+  "INTERACTIONS",
   "CRITIC_REPORT",
   "EVIDENCE",
   "FINAL_REPORT",
 ]);
 
+export const StageCompletionRecordSchema = z.strictObject({
+  stage: WorkflowStageSchema,
+  completedAt: z.string(),
+  criticPassed: z.boolean().optional(),
+  evidence: z.array(z.string()).optional(),
+});
+
+export const DerivedFromSchema = z.strictObject({
+  workflowId: z.string().min(1),
+  reason: z.enum(["upgrade", "branch"]),
+  handoffSummaryId: z.string().optional(),
+  triggeredAt: z.string(),
+  triggerMessageId: z.string().optional(),
+});
+
+export const DerivedWorkflowEntrySchema = z.strictObject({
+  workflowId: z.string().min(1),
+  reason: z.enum(["upgrade", "branch"]),
+  createdAt: z.string(),
+});
+
 export const WorkflowStateSchema = z.strictObject({
   id: z.string().min(1),
+  type: WorkflowTypeSchema,
   stage: WorkflowStageSchema,
   status: WorkflowStatusSchema,
   artifacts: z.partialRecord(WorkflowArtifactKindSchema, z.union([z.string(), z.array(z.string())])).default({}),
-  roleSessionIds: z.record(z.string(), z.string()).default({}),
+  stageCompletions: z.partialRecord(WorkflowStageSchema, StageCompletionRecordSchema).default({}),
+  derivedFrom: DerivedFromSchema.optional(),
+  derivedWorkflows: z.array(DerivedWorkflowEntrySchema).default([]),
   sessionIds: z.record(z.string(), z.string()).default({}),
-  taskSessionIds: z.record(z.string(), z.string()).default({}),
   createdAt: z.string(),
   updatedAt: z.string(),
   retryCount: z.number().int().nonnegative().default(0),
@@ -50,7 +81,11 @@ export const WorkflowStateSchema = z.strictObject({
 });
 
 export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
+export type WorkflowType = z.infer<typeof WorkflowTypeSchema>;
 export type WorkflowStatus = z.infer<typeof WorkflowStatusSchema>;
+export type StageCompletionRecord = z.infer<typeof StageCompletionRecordSchema>;
+export type DerivedFrom = z.infer<typeof DerivedFromSchema>;
+export type DerivedWorkflowEntry = z.infer<typeof DerivedWorkflowEntrySchema>;
 export type WorkflowState = z.infer<typeof WorkflowStateSchema>;
 
 export class WorkflowPathError extends Error {
@@ -72,10 +107,9 @@ export class WorkflowStateError extends Error {
 
 export interface CreateWorkflowStateInput {
   id: string;
+  type: WorkflowType;
   artifacts?: WorkflowState["artifacts"];
-  roleSessionIds?: Record<string, string>;
   sessionIds?: Record<string, string>;
-  taskSessionIds?: Record<string, string>;
   maxRetries?: number;
   lastError?: string;
 }
@@ -98,12 +132,14 @@ export class WorkflowStateManager {
     const now = new Date().toISOString();
     const state = WorkflowStateSchema.parse({
       id: input.id,
+      type: input.type,
       stage: "idle",
       status: "active",
       artifacts: input.artifacts ?? {},
-      roleSessionIds: input.roleSessionIds ?? {},
+      stageCompletions: {},
+      derivedFrom: undefined,
+      derivedWorkflows: [],
       sessionIds: input.sessionIds ?? {},
-      taskSessionIds: input.taskSessionIds ?? {},
       createdAt: now,
       updatedAt: now,
       retryCount: 0,
@@ -181,7 +217,6 @@ export class WorkflowStateManager {
     const state = await this.read(workflowId);
     const updated = WorkflowStateSchema.parse({
       ...state,
-      stage: "failed",
       status: "failed",
       lastError,
       updatedAt: new Date().toISOString(),

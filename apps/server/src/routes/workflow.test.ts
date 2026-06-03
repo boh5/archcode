@@ -112,6 +112,7 @@ describe("workflow routes", () => {
       const stateManager = new WorkflowStateManager(workspaceRoot);
       await stateManager.create({
         id: workflowId,
+        type: "full_feature",
         sessionIds: { orchestrator: sessionId },
       });
 
@@ -166,8 +167,8 @@ describe("workflow routes", () => {
       });
     });
 
-    test("finds workflow via taskSessionIds as well", async () => {
-      const { app, project, workspaceRoot, sessionIds } = await createTestApp("via-tasksession-ids");
+    test("finds workflow via unified sessionIds", async () => {
+      const { app, project, workspaceRoot, sessionIds } = await createTestApp("via-session-ids");
       const sessionId = "task-session-id";
       const workflowId = "wf-tasks";
 
@@ -176,7 +177,8 @@ describe("workflow routes", () => {
       const stateManager = new WorkflowStateManager(workspaceRoot);
       await stateManager.create({
         id: workflowId,
-        taskSessionIds: { foreman: sessionId },
+        type: "full_feature",
+        sessionIds: { foreman: sessionId },
       });
 
       const res = await app.request(
@@ -196,7 +198,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "PRD",
@@ -220,7 +222,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "SPEC",
@@ -244,7 +246,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "TASKS",
@@ -268,7 +270,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "FINAL_REPORT",
@@ -292,7 +294,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "CRITIC_REPORT",
@@ -316,7 +318,7 @@ describe("workflow routes", () => {
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
       await artifactManager.write({
         workflowId,
         kind: "EVIDENCE",
@@ -352,7 +354,7 @@ describe("workflow routes", () => {
       const workflowId = "wf-no-artifact";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
-      await stateManager.create({ id: workflowId });
+      await stateManager.create({ id: workflowId, type: "full_feature" });
 
       const res = await app.request(
         `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/PRD`,

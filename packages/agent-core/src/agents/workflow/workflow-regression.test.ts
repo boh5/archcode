@@ -37,9 +37,12 @@ describe("workflow regression hardening", () => {
     const artifactKinds = WorkflowArtifactKindSchema.options;
 
     expect(artifactKinds).toEqual([
+      "RESEARCH",
       "PRD",
       "SPEC",
       "TASKS",
+      "HANDOFF_SUMMARY",
+      "INTERACTIONS",
       "CRITIC_REPORT",
       "EVIDENCE",
       "FINAL_REPORT",

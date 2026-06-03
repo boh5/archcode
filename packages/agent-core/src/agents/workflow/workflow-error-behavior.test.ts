@@ -82,17 +82,17 @@ afterAll(async () => {
 describe("workflow error and partial failure behavior", () => {
   test("Product timeout leaves workflow failed with lastError", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
-    await stateManager.create({ id: "wf-product-timeout" });
+    await stateManager.create({ id: "wf-product-timeout", type: "full_feature" });
     await stateManager.updateStage("wf-product-timeout", "product_drafting");
 
     const failed = await stateManager.fail("wf-product-timeout", "Product timeout");
 
-    expect(failed.stage).toBe("failed");
+    expect(failed.stage).toBe("product_drafting");
     expect(failed.status).toBe("failed");
     expect(failed.lastError).toBe("Product timeout");
     const persisted = await stateManager.read("wf-product-timeout");
     expect(persisted).toMatchObject({
-      stage: "failed",
+      stage: "product_drafting",
       status: "failed",
       lastError: "Product timeout",
     });
@@ -101,7 +101,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Critic rejection hard-fails workflow and preserves critic report path", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-critic-reject" });
+    await stateManager.create({ id: "wf-critic-reject", type: "full_feature" });
     await stateManager.updateStage("wf-critic-reject", "product_drafting");
     await artifacts.write({
       workflowId: "wf-critic-reject",
@@ -126,7 +126,7 @@ describe("workflow error and partial failure behavior", () => {
       criticReportPath: "critic-reports/prd-rejected.md",
     }, stateManager);
 
-    expect(result.newState.stage).toBe("failed");
+    expect(result.newState.stage).toBe("critic_prd_review");
     expect(result.newState.status).toBe("failed");
     expect(result.newState.lastError).toContain("Critic rejected");
     expect(result.newState.lastError).toContain("critic-reports/prd-rejected.md");
@@ -139,6 +139,7 @@ describe("workflow error and partial failure behavior", () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     await stateManager.create({
       id: "wf-user-reject",
+      type: "full_feature",
       artifacts: { SPEC: "SPEC.md", TASKS: "TASKS.md" },
     });
     await stateManager.updateStage("wf-user-reject", "awaiting_user_approval");
@@ -163,7 +164,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Foreman partial wave failure preserves unchecked tasks and successful evidence", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-partial-wave" });
+    await stateManager.create({ id: "wf-partial-wave", type: "full_feature" });
     await artifacts.write({
       workflowId: "wf-partial-wave",
       kind: "TASKS",
@@ -206,7 +207,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Builder failure plus Reviewer rejection preserves evidence and leaves task unchecked", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-reviewer-reject" });
+    await stateManager.create({ id: "wf-reviewer-reject", type: "full_feature" });
     await artifacts.write({
       workflowId: "wf-reviewer-reject",
       kind: "TASKS",
@@ -249,7 +250,7 @@ describe("workflow error and partial failure behavior", () => {
   test("corrupt artifact read returns a named error without crashing unrelated reads", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-corrupt-artifact" });
+    await stateManager.create({ id: "wf-corrupt-artifact", type: "full_feature" });
     const written = await artifacts.write({
       workflowId: "wf-corrupt-artifact",
       kind: "PRD",

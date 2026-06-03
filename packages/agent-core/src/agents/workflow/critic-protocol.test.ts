@@ -19,7 +19,7 @@ afterAll(async () => {
 describe("processCriticDecision", () => {
   test("approved at critic_prd_review transitions to spec_drafting", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-prd-approved" });
+    await manager.create({ id: "wf-prd-approved", type: "full_feature" });
     await manager.updateStage("wf-prd-approved", "critic_prd_review");
 
     const result = await processCriticDecision({
@@ -35,7 +35,7 @@ describe("processCriticDecision", () => {
 
   test("approved at critic_spec_review transitions to awaiting_user_approval", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-spec-approved" });
+    await manager.create({ id: "wf-spec-approved", type: "full_feature" });
     await manager.updateStage("wf-spec-approved", "critic_spec_review");
 
     const result = await processCriticDecision({
@@ -49,7 +49,7 @@ describe("processCriticDecision", () => {
 
   test("changes_requested increments retry count and transitions back to producer", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-change", maxRetries: 3 });
+    await manager.create({ id: "wf-change", type: "full_feature", maxRetries: 3 });
     await manager.updateStage("wf-change", "critic_prd_review");
 
     const result = await processCriticDecision({
@@ -64,7 +64,7 @@ describe("processCriticDecision", () => {
 
   test("changes_requested at max retries transitions to failed", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-max", maxRetries: 1 });
+    await manager.create({ id: "wf-max", type: "full_feature", maxRetries: 1 });
     await manager.updateStage("wf-max", "critic_spec_review");
 
     const result = await processCriticDecision({
@@ -74,7 +74,7 @@ describe("processCriticDecision", () => {
       criticReportPath: "critic-reports/spec.md",
     }, manager);
 
-    expect(result.newState.stage).toBe("failed");
+    expect(result.newState.stage).toBe("critic_spec_review");
     expect(result.newState.status).toBe("failed");
     expect(result.newState.retryCount).toBe(1);
     expect(result.newState.lastError).toContain("retry limit");
@@ -83,7 +83,7 @@ describe("processCriticDecision", () => {
 
   test("rejected transitions to failed with error message", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-rejected" });
+    await manager.create({ id: "wf-rejected", type: "full_feature" });
     await manager.updateStage("wf-rejected", "critic_prd_review");
 
     const result = await processCriticDecision({
@@ -93,7 +93,7 @@ describe("processCriticDecision", () => {
       criticReportPath: "critic-reports/rejected.md",
     }, manager);
 
-    expect(result.newState.stage).toBe("failed");
+    expect(result.newState.stage).toBe("critic_prd_review");
     expect(result.newState.status).toBe("failed");
     expect(result.newState.lastError).toContain("Critic rejected");
     expect(result.newState.lastError).toContain("critic-reports/rejected.md");
@@ -101,7 +101,7 @@ describe("processCriticDecision", () => {
 
   test("approved does not bypass user approval for foreman_executing", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-no-bypass" });
+    await manager.create({ id: "wf-no-bypass", type: "full_feature" });
     await manager.updateStage("wf-no-bypass", "critic_spec_review");
 
     const result = await processCriticDecision({

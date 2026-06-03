@@ -57,7 +57,7 @@ describe("buildRoleSection", () => {
     expect(result).toContain("Critic to review SPEC/TASKS");
     expect(result).toContain("delegate Foreman");
     expect(result).toContain("final verification/reporting");
-    expect(result).toContain("move to complete");
+    expect(result).toContain("mark workflow status completed");
   });
 
   test("orchestrator role prompt requires ask_user before Foreman", () => {

@@ -17,7 +17,7 @@ function getStepState(
   workflow: WorkflowState,
   stepKey: string,
 ): StepState {
-  const currentStep = workflow.currentStep ?? workflow.stage;
+  const currentStep = workflow.stage;
   if (!currentStep) return "pending";
 
   // Map workflow step names to pipeline step keys

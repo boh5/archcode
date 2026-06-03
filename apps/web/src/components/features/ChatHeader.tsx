@@ -20,7 +20,7 @@ export function ChatHeader({ slug, sessionId, onToggleDetail }: ChatHeaderProps)
   };
 
   const wf = workflow as WorkflowState | null | undefined;
-  const pipelineStage = wf ? (wf.currentStep ?? wf.stage ?? null) : null;
+  const pipelineStage = wf ? (wf.stage ?? null) : null;
   const hasStats = stats && (stats.messages.total > 0 || stats.tools.calls > 0 || stats.usage.totalTokens > 0);
 
   return (

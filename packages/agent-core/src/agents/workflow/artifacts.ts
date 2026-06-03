@@ -15,9 +15,12 @@ import {
 } from "./state";
 
 const SINGLE_FILE_ARTIFACT_PATHS = {
+  RESEARCH: "RESEARCH.md",
   PRD: "PRD.md",
   SPEC: "SPEC.md",
   TASKS: "TASKS.md",
+  HANDOFF_SUMMARY: "HANDOFF_SUMMARY.md",
+  INTERACTIONS: "INTERACTIONS.md",
   FINAL_REPORT: "FINAL_REPORT.md",
 } as const;
 

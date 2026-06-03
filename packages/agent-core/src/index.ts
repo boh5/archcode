@@ -7,7 +7,20 @@ export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./p
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
 export { WorkflowArtifactManager } from "./agents/workflow/artifacts";
-export { WorkflowArtifactKindSchema, WorkflowStateManager } from "./agents/workflow/state";
+export {
+  DerivedFromSchema,
+  DerivedWorkflowEntrySchema,
+  StageCompletionRecordSchema,
+  WorkflowArtifactKindSchema,
+  WorkflowStateManager,
+  WorkflowTypeSchema,
+} from "./agents/workflow/state";
+export type {
+  DerivedFrom,
+  DerivedWorkflowEntry,
+  StageCompletionRecord,
+  WorkflowType,
+} from "./agents/workflow/state";
 
 export type { CommandResult } from "./commands/types";
 export { SessionExecutionManager } from "./execution";

@@ -1,6 +1,6 @@
 import type { WorkflowStage } from "./state";
 
-export type ArtifactKind = "PRD" | "SPEC" | "TASKS";
+export type ArtifactKind = "RESEARCH" | "PRD" | "SPEC" | "TASKS";
 
 export interface TransitionInput {
   workflowId: string;
@@ -46,16 +46,19 @@ export class WorkflowRetryLimitError extends Error {
 }
 
 export const LEGAL_STAGE_TRANSITIONS = {
-  idle: ["product_drafting", "failed"],
-  product_drafting: ["critic_prd_review", "failed"],
-  critic_prd_review: ["product_drafting", "spec_drafting", "failed"],
-  spec_drafting: ["critic_spec_review", "failed"],
-  critic_spec_review: ["spec_drafting", "awaiting_user_approval", "failed"],
-  awaiting_user_approval: ["foreman_executing", "failed"],
-  foreman_executing: ["final_review", "failed"],
-  final_review: ["complete", "failed"],
-  complete: ["failed"],
-  failed: ["failed"],
+  idle: ["product_drafting", "researching", "quick_analysis"],
+  researching: ["research_consolidation"],
+  research_consolidation: [],
+  quick_analysis: ["quick_patch"],
+  quick_patch: ["quick_verify"],
+  quick_verify: [],
+  product_drafting: ["critic_prd_review"],
+  critic_prd_review: ["product_drafting", "spec_drafting"],
+  spec_drafting: ["critic_spec_review"],
+  critic_spec_review: ["spec_drafting", "awaiting_user_approval"],
+  awaiting_user_approval: ["foreman_executing"],
+  foreman_executing: ["final_review"],
+  final_review: [],
 } as const satisfies Record<WorkflowStage, readonly WorkflowStage[]>;
 
 export const ARTIFACT_PREREQUISITES = {
@@ -67,8 +70,11 @@ export const ARTIFACT_PREREQUISITES = {
   awaiting_user_approval: ["SPEC", "TASKS"],
   foreman_executing: ["SPEC", "TASKS"],
   final_review: [],
-  complete: [],
-  failed: [],
+  researching: [],
+  research_consolidation: ["RESEARCH"],
+  quick_analysis: [],
+  quick_patch: [],
+  quick_verify: [],
 } as const satisfies Record<WorkflowStage, readonly ArtifactKind[]>;
 
 const CRITIC_REVIEW_STAGES = new Set<WorkflowStage>([
@@ -83,8 +89,6 @@ export function validateTransition(input: TransitionInput): TransitionResult {
       new WorkflowTransitionError(input.workflowId, input.currentStage, input.targetStage),
     );
   }
-
-  if (input.targetStage === "failed") return { allowed: true };
 
   if (CRITIC_REVIEW_STAGES.has(input.targetStage) && input.retryCount >= input.maxRetries) {
     return denied(

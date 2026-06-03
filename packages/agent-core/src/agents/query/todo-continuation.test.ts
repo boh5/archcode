@@ -299,6 +299,7 @@ function stateWith(overrides: Partial<SessionStoreState>): SessionStoreState {
   append: () => {},
   setTitle: () => {},
   setParentSessionId: () => {},
+  setWorkflowId: () => {},
   toModelMessages: () => [], ...overrides,  };
 }
 

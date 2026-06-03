@@ -24,7 +24,7 @@ describe("WorkflowArtifactManager", () => {
   test("writes PRD.md, records metadata, and preserves stage and status", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-prd" });
+    await stateManager.create({ id: "wf-prd", type: "full_feature" });
     await stateManager.updateStage("wf-prd", "product_drafting");
     await stateManager.updateStatus("wf-prd", "paused");
 
@@ -50,7 +50,7 @@ describe("WorkflowArtifactManager", () => {
   test("round-trips frontmatter using shared helpers", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-frontmatter" });
+    await stateManager.create({ id: "wf-frontmatter", type: "full_feature" });
 
     await artifacts.write({
       workflowId: "wf-frontmatter",
@@ -68,7 +68,7 @@ describe("WorkflowArtifactManager", () => {
   test("accepts critic reports and evidence artifact paths", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-multi" });
+    await stateManager.create({ id: "wf-multi", type: "full_feature" });
 
     await artifacts.write({
       workflowId: "wf-multi",
@@ -89,6 +89,42 @@ describe("WorkflowArtifactManager", () => {
     expect(state.artifacts.EVIDENCE).toEqual(["evidence/test-output.txt"]);
   });
 
+  test("accepts new single-file workflow artifact paths", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
+    await stateManager.create({ id: "wf-new-kinds", type: "full_feature" });
+
+    for (const kind of ["RESEARCH", "HANDOFF_SUMMARY", "INTERACTIONS"] as const) {
+      const path = `${kind}.md`;
+      await artifacts.write({
+        workflowId: "wf-new-kinds",
+        kind,
+        path,
+        content: `# ${kind}\n`,
+      });
+    }
+
+    const state = await stateManager.read("wf-new-kinds");
+    expect(state.artifacts.RESEARCH).toBe("RESEARCH.md");
+    expect(state.artifacts.HANDOFF_SUMMARY).toBe("HANDOFF_SUMMARY.md");
+    expect(state.artifacts.INTERACTIONS).toBe("INTERACTIONS.md");
+  });
+
+  test("rejects notes paths because notes are not core artifacts", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
+    await stateManager.create({ id: "wf-notes", type: "full_feature" });
+
+    await expect(
+      artifacts.write({
+        workflowId: "wf-notes",
+        kind: "RESEARCH",
+        path: "notes/intermediate.md",
+        content: "scratch",
+      }),
+    ).rejects.toThrow(ArtifactPathError);
+  });
+
   test("rejects PLAN artifact kind and PLAN.md path", async () => {
     expect(() =>
       WorkflowArtifactWriteInputSchema.parse({
@@ -101,7 +137,7 @@ describe("WorkflowArtifactManager", () => {
 
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-plan" });
+    await stateManager.create({ id: "wf-plan", type: "full_feature" });
 
     await expect(
       artifacts.write({
@@ -116,7 +152,7 @@ describe("WorkflowArtifactManager", () => {
   test("rejects traversal paths with a domain path error", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    await stateManager.create({ id: "wf-outside" });
+    await stateManager.create({ id: "wf-outside", type: "full_feature" });
 
     await expect(
       artifacts.write({

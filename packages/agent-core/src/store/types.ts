@@ -89,6 +89,7 @@ export interface SessionStoreState {
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
+  workflowId?: string;
 
   // Running state
   executionCount: number;
@@ -120,6 +121,7 @@ export interface SessionStoreState {
   append: (event: SessionEventPayload) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
+  setWorkflowId: (workflowId: string | undefined) => void;
   toModelMessages: () => ModelMessage[];
 }
 
