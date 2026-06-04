@@ -406,4 +406,61 @@ describe("ToolCard", () => {
     expect(text).toContain("🔌");
     expect(text).toContain("context7/search");
   });
+
+  test("error tool with unknownResult renders warning styling instead of error", () => {
+    const part = makeError({
+      toolName: "bash",
+      input: { description: "Run command", command: "make build" },
+      errorMessage: "Tool execution result unknown: execution was interrupted",
+      meta: { unknownResult: true },
+    });
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    expect(text).toContain("⚠");
+    expect(text).toContain("unknown");
+    expect(text).toContain("Result unknown");
+    const warningEls = findAllWithClass(el, "bg-warning-muted");
+    expect(warningEls.length).toBeGreaterThan(0);
+    const warningTextEls = findAllWithClass(el, "text-warning");
+    expect(warningTextEls.length).toBeGreaterThan(0);
+  });
+
+  test("error tool without unknownResult renders normal error styling", () => {
+    const part = makeError({
+      toolName: "bash",
+      input: { description: "Bad command", command: "exit 1" },
+      errorMessage: "Command failed",
+    });
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    expect(text).toContain("✗");
+    expect(text).toContain("error");
+    expect(text).not.toContain("unknown");
+    const errorEls = findAllWithClass(el, "bg-error-muted");
+    expect(errorEls.length).toBeGreaterThan(0);
+  });
+
+  test("error tool with unknownResult shows warning message", () => {
+    const part = makeError({
+      toolName: "file_edit",
+      input: { filePath: "/src/app.ts" },
+      errorMessage: "Tool execution result unknown: execution was interrupted",
+      meta: { unknownResult: true },
+    });
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    expect(text).toContain("⚠ Result unknown");
+    expect(text).toContain("execution was interrupted before completion");
+  });
+
+  test("error tool without unknownResult does not show warning message", () => {
+    const part = makeError({
+      toolName: "bash",
+      input: { description: "Bad command", command: "exit 1" },
+      errorMessage: "Command failed",
+    });
+    const el = ToolCard({ part });
+    const text = textContent(el);
+    expect(text).not.toContain("Result unknown");
+  });
 });

@@ -22,6 +22,7 @@ import type {
   ToolChildSessionLinkStatus,
 } from "@specra/protocol";
 import { TOOL_DELEGATE } from "@specra/protocol";
+import { RecoveryNotice } from "./RecoveryNotice";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 
@@ -181,16 +182,36 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSession
   return <DelegationCard {...delegationProps} />;
 }
 
+function InterruptedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[11px] font-medium bg-warning-muted text-warning border border-warning/20">
+      ⚠ Response was interrupted
+    </span>
+  );
+}
+
 export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSessionLinks }: { part: SessionPart; projectSlug: string; focusStoreSessionId: string; childSessionLinks: ToolChildSessionLink[] }) {
   switch (part.type) {
-    case "text":
+    case "text": {
+      const meta = part.meta as Record<string, unknown> | undefined;
+      const isInterrupted = meta?.interrupted === true;
       return (
         <div className="text-[13.5px] leading-relaxed text-text-primary">
+          {isInterrupted && <InterruptedBadge />}
           <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
         </div>
       );
-    case "reasoning":
-      return <ReasoningBlock part={part} />;
+    }
+    case "reasoning": {
+      const meta = part.meta as Record<string, unknown> | undefined;
+      const isInterrupted = meta?.interrupted === true;
+      return (
+        <div>
+          {isInterrupted && <InterruptedBadge />}
+          <ReasoningBlock part={part} />
+        </div>
+      );
+    }
     case "tool":
       if (part.toolName === TOOL_DELEGATE) {
         return <DelegateToolCard part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
@@ -200,6 +221,8 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
       return <SystemNoticeBlock part={part} />;
     case "compaction":
       return <CompactionBlock />;
+    case "recovery-notice":
+      return <RecoveryNotice part={part} />;
     default:
       return null;
   }

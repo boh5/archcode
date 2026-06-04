@@ -45,8 +45,11 @@ export function ToolCard({ part }: ToolCardProps) {
   const [isLong, setIsLong] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
 
-  const config = STATUS_CONFIG[part.state];
-  const nameClass = NAME_CLASS[part.state];
+  const isUnknownResult = part.state === "error" && (part.meta as Record<string, unknown> | undefined)?.unknownResult === true;
+  const config = isUnknownResult
+    ? { icon: "⚠", bgClass: "bg-warning-muted", textClass: "text-warning" }
+    : STATUS_CONFIG[part.state];
+  const nameClass = isUnknownResult ? "text-warning" : NAME_CLASS[part.state];
   const summary = getToolSummary(part.toolName, "input" in part ? part.input : undefined);
 
   const outputText =
@@ -67,6 +70,8 @@ export function ToolCard({ part }: ToolCardProps) {
 
   const invalidMessage =
     "input" in part ? getToolInvalidInputMessage(part.toolName, part.input) : null;
+
+  const statusLabel = isUnknownResult ? "unknown" : STATUS_LABEL[part.state];
 
   // ─── Long-output detection ───
 
@@ -134,7 +139,7 @@ export function ToolCard({ part }: ToolCardProps) {
         {summary.secondary && (
           <span className="text-[11px] text-text-muted truncate hidden sm:inline">{summary.secondary}</span>
         )}
-        <span className="ml-auto text-[11px] text-text-muted">{STATUS_LABEL[part.state]}</span>
+        <span className="ml-auto text-[11px] text-text-muted">{statusLabel}</span>
         {isLong && (
           <span
             className="text-text-muted text-[10px] transition-transform duration-150"
@@ -164,6 +169,12 @@ export function ToolCard({ part }: ToolCardProps) {
         </div>
       )}
 
+      {isUnknownResult && (
+        <div className="border-t border-border-subtle px-2.5 py-1.5">
+          <span className="text-[11px] text-warning">⚠ Result unknown — execution was interrupted before completion</span>
+        </div>
+      )}
+
       {diffFiles && diffFiles.length > 0 && (
         <div className="border-t border-border-subtle">
           <DiffView files={diffFiles} defaultExpanded={false} />
@@ -177,7 +188,7 @@ export function ToolCard({ part }: ToolCardProps) {
             className={`font-mono text-[11.5px] leading-relaxed bg-bg-elevated p-1.5 rounded-sm border border-border-subtle whitespace-pre-wrap break-all overflow-x-auto ${
               isLong && !expanded ? "overflow-y-auto" : ""
             } ${
-              part.state === "completed" ? "text-success" : part.state === "error" ? "text-error" : "text-text-secondary"
+              isUnknownResult ? "text-warning" : part.state === "completed" ? "text-success" : part.state === "error" ? "text-error" : "text-text-secondary"
             }`}
             style={isLong && !expanded ? { maxHeight: "calc(8.125em + 0.75rem + 2px)" } : undefined}
           >
