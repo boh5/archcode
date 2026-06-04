@@ -234,6 +234,33 @@ describe("reduceStreamEvent", () => {
     expect(tool.attemptId).toBe("attempt-1");
   });
 
+  test("late result after unknown-result settlement is ignored so side effects are not replayed", () => {
+    const interrupted = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-unknown-late" },
+      { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
+      {
+        type: "tool-attempt",
+        toolCallId: "call-1",
+        toolName: "file_write",
+        attemptId: "attempt-1",
+        timestamp: 99,
+        destructive: true,
+      },
+      { type: "execution-end", status: "interrupted" },
+    ]);
+
+    const afterLateResult = applyEvents(interrupted, [
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "late write", isError: false },
+    ]);
+
+    const tool = partOfType(onlyMessage(afterLateResult.messages), "tool");
+    expect(tool.state).toBe("error");
+    if (tool.state !== "error") throw new Error("Expected error tool");
+    expect(tool.meta).toEqual({ unknownResult: true });
+    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
+    expect(afterLateResult.stats.tools).toEqual(interrupted.stats.tools);
+  });
+
   test("completed tool result is preserved across later recovery settlement", () => {
     const state = applyEvents(createProjection(), [
       { type: "execution-start", executionId: "run-completed" },

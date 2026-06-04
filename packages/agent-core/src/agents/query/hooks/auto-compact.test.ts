@@ -443,6 +443,21 @@ describe("createAutoCompactHook", () => {
     expect(mockCommitCompact).not.toHaveBeenCalled();
   });
 
+  test("auto compact treats final LLM retry failure as non-fatal and records one circuit failure", async () => {
+    const result = createAutoCompactHook(silentLogger);
+    const store = createMockStore({
+      steps: [{ id: "step-1", step: 1, startedAt: Date.now(), usage: { promptTokens: 80_000 } }],
+      messages: Array.from({ length: COMPACT_MIN_NEW_MESSAGES }, () => makeStoredMessage()),
+      toModelMessages: () => [],
+    });
+    mockCompact.mockRejectedValueOnce(new Error("compact.summarize failed after 3 attempts: temporary eof"));
+
+    await result.hook(createContext({ store, modelInfo: createMockModelInfo() as never }));
+
+    expect(result.circuitBreaker.failureCount).toBe(1);
+    expect(mockCommitCompact).not.toHaveBeenCalled();
+  });
+
   test("circuit breaker recordSuccess on compact success", async () => {
     const result = createAutoCompactHook(silentLogger);
     const store = createMockStore({

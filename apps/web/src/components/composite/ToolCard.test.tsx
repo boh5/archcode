@@ -453,6 +453,20 @@ describe("ToolCard", () => {
     expect(text).toContain("execution was interrupted before completion");
   });
 
+  test("unknown-result warning preserves original error message for operator context", () => {
+    const part = makeError({
+      toolName: "file_write",
+      input: { filePath: "/src/app.ts" },
+      errorMessage: "Tool execution result unknown: execution was interrupted",
+      meta: { unknownResult: true },
+    });
+
+    const text = textContent(ToolCard({ part }));
+
+    expect(text).toContain("Tool execution result unknown: execution was interrupted");
+    expect(text).toContain("Result unknown");
+  });
+
   test("error tool without unknownResult does not show warning message", () => {
     const part = makeError({
       toolName: "bash",

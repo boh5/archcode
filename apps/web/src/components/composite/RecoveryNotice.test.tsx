@@ -96,6 +96,14 @@ describe("RecoveryNotice", () => {
     expect(text).toContain("rate_limit");
   });
 
+  test("scheduled status accepts nextRetryAt without changing recovery metadata", () => {
+    const part = makeRecoveryNotice({ status: "scheduled", nextRetryAt: Date.now() + 30000 });
+    const el = RecoveryNotice({ part });
+    const text = textContent(el);
+    expect(text).toContain("Scheduled retry");
+    expect(text).toContain("attempt 1");
+  });
+
   test("retrying status renders retrying label with spin animation", () => {
     const part = makeRecoveryNotice({ status: "retrying", attempt: 2 });
     const el = RecoveryNotice({ part });

@@ -895,6 +895,29 @@ describe("settleIncompleteState behavior", () => {
     expect(reasoning.completedAt).toBeGreaterThan(0);
     expect(message.completedAt).toBeGreaterThan(0);
   });
+
+  test("interrupted execution settles attempted effectful tool as unknown-result", () => {
+    const store = createFreshStore("unknown-result-store");
+    store.getState().append({ type: "execution-start", executionId: "run" });
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { filePath: "a.ts" } });
+    store.getState().append({
+      type: "tool-attempt",
+      toolCallId: "call-1",
+      toolName: "file_write",
+      attemptId: "attempt-1",
+      timestamp: 99,
+      destructive: true,
+    });
+
+    store.getState().append({ type: "execution-end", status: "interrupted" });
+
+    const tool = toolPart(onlyMessage(store.getState().messages));
+    expect(tool.state).toBe("error");
+    if (tool.state !== "error") throw new Error("Expected error tool");
+    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
+    expect(tool.meta).toEqual({ unknownResult: true });
+    expect(tool.attemptId).toBe("attempt-1");
+  });
 });
 
 describe("steps and errors", () => {

@@ -306,6 +306,24 @@ describe("createMemoryExtractionTask", () => {
     }
   });
 
+  test("bounded memory retry final failure is non-blocking and not chat-visible", async () => {
+    const roots = makeMemoryRoots("retry-final-failure");
+    await setupDirs(roots);
+    mockGenerateText.mockRejectedValue(new Error("provider unavailable"));
+    const logger = createMockLogger();
+    const now = Date.now();
+    const store = storeManager.create(crypto.randomUUID());
+    store.setState({ messages: makeUserMessages(5, "A".repeat(300), now) });
+
+    await createMemoryExtractionTask(store, roots).run(makeTaskContext(store, { logger }));
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(store.getState().messages).toHaveLength(5);
+    expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
+    expect(await new MemoryFileManager(roots).listTopics()).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith("memory.extraction.llm.failed", expect.objectContaining({ error: expect.any(Error) }));
+  });
+
   test("handles LlmSchemaValidationError gracefully", async () => {
     const roots = makeMemoryRoots("validation-error");
     await setupDirs(roots);

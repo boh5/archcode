@@ -297,6 +297,33 @@ describe("createTitleGenerationTask", () => {
     }
   });
 
+  test("bounded title retry final failure is non-blocking and not chat-visible", async () => {
+    mockGenerateText.mockRejectedValue(new Error("provider timeout"));
+
+    const now = Date.now();
+    const store = storeManager.create(crypto.randomUUID());
+    store.setState({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{ type: "text", id: crypto.randomUUID(), text: "Please title this", createdAt: now, completedAt: now }],
+          createdAt: now,
+          completedAt: now,
+        },
+      ],
+    });
+    const logger = createMockLogger();
+
+    await createTitleGenerationTask(store).run(makeTaskContext(store, { logger }));
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(store.getState().title).toBeNull();
+    expect(store.getState().messages).toHaveLength(1);
+    expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
+    expect(logger.warn).toHaveBeenCalledWith("title.generation.failed", expect.objectContaining({ error: expect.any(Error) }));
+  });
+
   test("does nothing when user message has no text parts", async () => {
     const now = Date.now();
     const store = storeManager.create(crypto.randomUUID());

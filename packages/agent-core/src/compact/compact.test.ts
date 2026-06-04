@@ -982,6 +982,36 @@ describe("compact", () => {
     }
   });
 
+  test("short retry exhaustion wraps summary failure without committing compact state", async () => {
+    const streamText = mock(() => {
+      throw new Error("temporary eof");
+    });
+    setLlmAdapterForTest({ streamText: streamText as unknown as typeof import("ai").streamText });
+
+    const messages: StoredMessage[] = [
+      makeUserMessage("u1", "First message"),
+      makeAssistantMessage("a1", "First response"),
+      makeUserMessage("u2", "Second message"),
+      makeAssistantMessage("a2", "Second response"),
+      makeUserMessage("u3", "Third message"),
+      makeAssistantMessage("a3", "Third response"),
+      makeUserMessage("u4", "Fourth message"),
+      makeAssistantMessage("a4", "Fourth response"),
+      makeUserMessage("u5", "Fifth message"),
+      makeAssistantMessage("a5", "Fifth response"),
+      makeUserMessage("u6", "Sixth message (incomplete)"),
+    ];
+
+    try {
+      await compact(makeInput(messages));
+      expect.unreachable("Should have thrown CompactError after short retry exhaustion");
+    } catch (e) {
+      expect(e).toBeInstanceOf(CompactError);
+      expect((e as CompactError).reason).toContain("compact.summarize failed after 3 attempts");
+    }
+    expect(streamText).toHaveBeenCalledTimes(3);
+  });
+
   // -------------------------------------------------------------------------
   // Whitespace-only summary from model throws CompactError
   // -------------------------------------------------------------------------
