@@ -84,7 +84,7 @@ packages/agent-core/src/
 ├── agents/errors.ts            # NoModelsConfiguredError, AgentRunningError, SubAgentError, ConcurrentLimitError, DepthLimitError, etc.
 ├── agents/model-resolver.ts    # Resolves provider:modelId + variant → AI SDK model instance
 ├── agents/tool-filter.ts       # Depth-aware tool filtering for explorer sub-agents
-├── agents/query/               # streamText + tool execution cycle (max 50 steps), doom detection
+├── agents/query/               # runLlmStream + tool execution cycle (max 50 steps), doom detection
 ├── agents/query/loop-hooks.ts  # 4 hook points: beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation
 ├── agents/workflow/            # Workflow state machine, artifacts, permissions, critic protocol, foreman wave, guards, tasks format
@@ -100,10 +100,10 @@ packages/agent-core/src/
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
 ├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
 ├── commands/                   # CommandRegistry + /compact command
-├── compact/                    # 3-phase pipeline: selectPrefix → pruneOutputs → summarize (streamText). Circuit breaker + token estimation
+├── compact/                    # 3-phase pipeline: selectPrefix → pruneOutputs → summarize (managed LLM stream). Circuit breaker + token estimation
 ├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
 ├── lsp/                        # LspClientPool (acquire/release, idle timeout, crash detection), StdioLspTransport, auto-installer, 18 language servers, 50+ ext mappings
-├── llm/                        # llmObject<T>(): generateText + forced tool call + Zod validation → typed result
+├── llm/                        # Managed LLM runtime: runLlmStream/runLlmText/runLlmObject, retry/recovery, adapter test seam
 ├── projects/                   # ProjectRegistry + ProjectContextResolver for multi-project workspace isolation
 ├── prompt/                     # buildSystemPrompt(): Identity → Guidelines → Tools → Environment → Memory → Project(AGENTS.md)
 ├── mcp/                        # Built-in servers (context7, grep.app, exa) + HTTP discovery → ToolDescriptors
@@ -177,6 +177,9 @@ partitionToolCalls → globalGuards (memory-index-guard) → tool guards (worksp
 - `agents.<agentName>.options` overrides the selected model and variant options. Merge order is shallow: model `options` → selected `variants[variant]` → agent `options`.
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
+- LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
+- `.specra.json` `maxRetries` is an AI SDK option, not Specra-managed recovery configuration. Managed calls force AI SDK `maxRetries: 0` so Specra owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
+- Retry constants are internal v1 implementation details. There is no `.specra.json` recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
 
 Minimal example:
 ```json
@@ -249,7 +252,7 @@ Both implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, 
 **Query loop lifecycle:**
 ```
 beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-inject-reminder)
-  → streamText → consumeFullStream → afterStepEnd (todo-continuation)
+  → runLlmStream → consumeFullStream → afterStepEnd (todo-continuation)
   → executeToolCalls (doom detection → partition → guards → execute)
 → afterLoopEnd (todo-continuation, transcript-save, memory-extraction, memory-consolidation)
 ```
@@ -284,11 +287,11 @@ Zustand vanilla store per agent session. `append(StreamEvent)` → `reduceStream
 
 ## Context Compaction
 
-Auto-compact at `contextTokens ≥ limit × 0.75` + ≥ 5 new messages. 3-phase: `selectCompactablePrefix` (preserve current + 2 last rounds) → `pruneToolOutputs` (persist to disk) → `summarizePrefix` (streamText structured summary). Circuit breaker (3 failures). Also `/compact` command. Token estimation: `TOKEN_CHARS_RATIO=4`, `parseStepUsage()` normalizes AI SDK/OpenAI/Anthropic/Google formats.
+Auto-compact at `contextTokens ≥ limit × 0.75` + ≥ 5 new messages. 3-phase: `selectCompactablePrefix` (preserve current + 2 last rounds) → `pruneToolOutputs` (persist to disk) → `summarizePrefix` (managed LLM stream structured summary). Circuit breaker (3 failures). Also `/compact` command. Token estimation: `TOKEN_CHARS_RATIO=4`, `parseStepUsage()` normalizes AI SDK/OpenAI/Anthropic/Google formats. Emergency context-overflow compact automation is not part of the current LLM recovery refactor.
 
 ## Memory System
 
-Project: `.specra/memory/`, User: `~/.specra/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `llmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: `prompt/sections/memory.ts` reads + truncates + wraps in `<specra-memory-context>` XML. `memory_write` rejects secrets.
+Project: `.specra/memory/`, User: `~/.specra/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: `prompt/sections/memory.ts` reads + truncates + wraps in `<specra-memory-context>` XML. `memory_write` rejects secrets.
 
 ## LSP Integration
 
@@ -330,8 +333,7 @@ HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.specr
 
 ## Testing Patterns
 
-- Mock `streamText`: `__setStreamTextForTest(fn)` from `packages/agent-core/src/agents/query/loop.ts`
-- Mock `generateText`: `__setGenerateTextForTest(fn)` from `packages/agent-core/src/llm/llm-object.ts`
+- Mock LLM calls through `setLlmAdapterForTest()` from `packages/agent-core/src/llm`; do not reintroduce `__setStreamTextForTest`, `__setGenerateTextForTest`, or public `llmObject()` aliases.
 - Mock LSP: `__setLspClientForTest`, `__setLspClientPoolForTest`, `__setLspTransportForTest` from `packages/agent-core/src/lsp/` respective modules
 - Mock sessions dir: `__setSessionsDirForTest(dir)` from `packages/agent-core/src/store/sessions-dir.ts`
 - Test stores: `createSessionStore(randomUUID())`. Empty registry: `createRegistry([])`

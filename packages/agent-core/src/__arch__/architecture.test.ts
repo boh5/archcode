@@ -182,6 +182,27 @@ function findProductionTextViolations(files: string[], patterns: RegExp[]): Viol
   return violations;
 }
 
+function findManagedLlmImportViolations(files: string[]): Violation[] {
+  const violations: Violation[] = [];
+  const managedImportRegex = /\bimport\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+["']ai["']/g;
+  const managedRuntimeApis = /\b(streamText|generateText)\b/;
+
+  for (const file of files) {
+    const relativeFile = normalize(relative(projectRoot, file));
+    if (relativeFile.startsWith("packages/agent-core/src/llm/")) continue;
+
+    const source = stripComments(readFileSync(file, "utf8"));
+    for (const match of source.matchAll(managedImportRegex)) {
+      const namedImports = match[1] ?? "";
+      if (managedRuntimeApis.test(namedImports)) {
+        violations.push({ file: relativeFile, importPath: "{ streamText | generateText } from ai" });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function findProductionFiles(scopeDir: string): string[] {
   return findTsFiles(join(projectRoot, scopeDir));
 }
@@ -349,6 +370,17 @@ describe("monorepo package boundaries", () => {
   });
 
   describe("session stats and sub-agent guardrails", () => {
+    test("only the LLM runtime imports AI SDK stream/text execution APIs", () => {
+      expectNoViolations(
+        findManagedLlmImportViolations([
+          ...findProductionFiles("apps/server/src"),
+          ...findProductionFiles("apps/web/src"),
+          ...findProductionFiles("packages/agent-core/src"),
+          ...findProductionFiles("packages/protocol/src"),
+        ]),
+      );
+    });
+
     test("AgentFactory stays free of store, bridge, and execution manager lifecycle ownership", () => {
       expectNoViolations(
         findProductionTextViolations([join(projectRoot, "packages/agent-core/src/agents/factory.ts")], [

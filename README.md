@@ -163,11 +163,21 @@ AI SDK-style camelCase option names. Unknown fields are rejected to prevent typo
 | `frequencyPenalty` | number | Frequency penalty (-2–2) |
 | `stopSequences` | string[] | Sequences that stop generation |
 | `seed` | number | Deterministic sampling seed |
-| `maxRetries` | number | Maximum retry attempts |
+| `maxRetries` | number | AI SDK provider-call retry hint only; Specra-managed LLM runtime calls force this to `0` and run their own recovery path |
 | `timeout` | number | Request timeout in milliseconds |
 | `providerOptions` | object | Provider-specific settings (e.g., `{ "openai": { "reasoningEffort": "high" } }`) |
 
 > **Note:** Do **not** use snake_case names like `top_p` or `maxTokens`. They will be rejected by validation.
+
+#### LLM Retry and Recovery Boundary
+
+Specra routes model execution through `packages/agent-core/src/llm/` (`runLlmStream`, `runLlmText`, and `runLlmObject`). Application code outside that runtime must not import `streamText` or `generateText` directly from `"ai"`; architecture tests enforce this boundary.
+
+`maxRetries` in `.specra.json` remains an AI SDK-style model option, but it is **not** Specra's managed retry mechanism. Managed LLM calls intentionally pass `maxRetries: 0` to the AI SDK so Specra owns retry classification, recovery notices, interrupted-output handling, and durable session state.
+
+This matters for streaming: AI SDK `maxRetries` only applies before a successful response is established. It cannot recover failures that happen inside an HTTP 200 streaming response body, such as EOF, truncated SSE, or stream parser failures after partial output has already arrived. Specra handles those cases at the runtime/query-loop layer instead.
+
+Retry constants are internal v1 implementation details. There is currently **no** `.specra.json` recovery retry configuration, and the config schema must not grow retry fields until that behavior is intentionally productized. Existing auto-compaction behavior is preserved; automated emergency compaction specifically for context-overflow recovery is a follow-up and out of scope for the current refactor.
 
 ### Variants
 
@@ -245,13 +255,14 @@ packages/agent-core/src/provider/                  # Provider registry & ModelIn
 packages/agent-core/src/agents/definitions/        # AgentDefinition records for orchestrator, explore, and workflow roles
 packages/agent-core/src/agents/factory.ts          # Agent creation and delegation through ConfiguredAgent
 packages/agent-core/src/agents/model-resolver.ts   # Agent → model + resolved options (fail-fast)
-packages/agent-core/src/agents/query/loop.ts       # streamText + tool execution cycle (max 50 steps)
+packages/agent-core/src/agents/query/loop.ts       # runLlmStream + tool execution cycle (max 50 steps)
 packages/agent-core/src/projects/                  # Multi-project registry and per-workspace context resolver
 apps/server/src/                                   # Hono REST + SSE server with auth, CORS, errors, lifecycle
 apps/web/                                          # Vite + React + Tailwind frontend
 packages/agent-core/src/compact/                   # 3-phase context compaction pipeline
 packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
 packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
+packages/agent-core/src/llm/                       # Managed LLM runtime boundary, retry/recovery, adapter test seam
 packages/agent-core/src/tools/                     # 21 builtin tools with guard/hook pipeline
 ```
 
@@ -275,5 +286,4 @@ bun test             # Run tests (via Turborepo)
 - Test runner: `bun:test`. Import from `"bun:test"`. Use `mock()` not `jest.fn()`.
 - Custom errors: test `err.name` and constructor fields.
 - All Zod schemas use `.strict()`.
-- Mock `streamText`: `__setStreamTextForTest(fn)` from `agents/query/loop.ts`
-- Mock `generateText`: `__setGenerateTextForTest(fn)` from `llm/llm-object.ts`
+- Mock LLM calls through `setLlmAdapterForTest()` from `packages/agent-core/src/llm`; do not use per-module AI SDK seams.
