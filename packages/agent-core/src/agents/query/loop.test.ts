@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ModelMessage, streamText as aiStreamText } from "ai";
+import type { ModelMessage } from "ai";
 import type { StoreApi } from "zustand";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
@@ -21,6 +21,8 @@ import { maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { MissingProjectContextError } from "../errors";
+
+type StreamTextFn = typeof import("ai").streamText;
 
 type MockChunk =
   | { type: "text-delta"; text: string }
@@ -169,7 +171,7 @@ function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOption
 function createMockStreamText(rounds: MockRound[]) {
   let index = 0;
 
-  const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+  const fn = mock((_: Parameters<StreamTextFn>[0]) => {
     const round = rounds[index++];
     if (!round) throw new Error("No more mock rounds");
 
@@ -189,7 +191,7 @@ function createMockStreamText(rounds: MockRound[]) {
     };
   });
 
-  setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+  setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
   return fn;
 }
 
@@ -237,7 +239,7 @@ function streamCallMessages(fn: ReturnType<typeof createMockStreamText>, callInd
   return args.messages as ModelMessage[];
 }
 
-function streamCallOptions(fn: ReturnType<typeof createMockStreamText>, callIndex: number): Parameters<typeof aiStreamText>[0] {
+function streamCallOptions(fn: ReturnType<typeof createMockStreamText>, callIndex: number): Parameters<StreamTextFn>[0] {
   const args = fn.mock.calls[callIndex]?.[0];
   if (!args) throw new Error("Expected streamText options");
   return args;
@@ -277,7 +279,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   test("sets running flags during streamText after execution-start and step-start", async () => {
     const store = createStore();
     const snapshots: Array<Pick<SessionStoreState, "isRunning" | "isStreamingModel">> = [];
-    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+    const fn = mock((_: Parameters<StreamTextFn>[0]) => {
       snapshots.push({
         isRunning: store.getState().isRunning,
         isStreamingModel: store.getState().isStreamingModel,
@@ -292,7 +294,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         toolCalls: Promise.resolve([]),
       };
     });
-    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+    setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
     await runQueryLoop(makeOptions({ store }), "Question");
 
@@ -1190,7 +1192,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     test("afterLoopEnd fires from finally on failure", async () => {
       const store = createStore();
       const statuses: Array<unknown> = [];
-      setLlmAdapterForTest({ streamText: mock(() => { throw new Error("model failed"); }) as unknown as typeof aiStreamText });
+      setLlmAdapterForTest({ streamText: mock(() => { throw new Error("model failed"); }) as unknown as StreamTextFn });
 
       const result = await runQueryLoop(
         makeOptions({
@@ -1431,7 +1433,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const fn = mock(() => {
       throw new Error("model unavailable");
     });
-    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+    setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
@@ -1540,7 +1542,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
   test("partial-output recovery waits before retrying", async () => {
     const callTimes: number[] = [];
-    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+    const fn = mock((_: Parameters<StreamTextFn>[0]) => {
       callTimes.push(Date.now());
       const callIndex = callTimes.length;
       return {
@@ -1557,7 +1559,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         toolCalls: Promise.resolve([]),
       };
     });
-    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+    setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
     await runQueryLoop(makeOptions(), "Hi");
 
@@ -1569,7 +1571,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const store = createStore();
     const events = captureEvents(store);
     let callIndex = 0;
-    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+    const fn = mock((_: Parameters<StreamTextFn>[0]) => {
       callIndex++;
       if (callIndex === 1) {
         return {
@@ -1585,7 +1587,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       }
       throw new Error("invalid api key");
     });
-    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+    setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
     await runQueryLoop(makeOptions({ store }), "Hi");
 
@@ -2279,7 +2281,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   });
 
   test("preserves setLlmAdapterForTest streamText mock pattern", async () => {
-    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => ({
+    const fn = mock((_: Parameters<StreamTextFn>[0]) => ({
       fullStream: (async function* () {
         yield { type: "text-delta", text: "custom" };
       })(),
@@ -2288,7 +2290,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       text: Promise.resolve("custom"),
       toolCalls: Promise.resolve([]),
     }));
-    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+    setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
 
     const result = await runQueryLoop(makeOptions(), "Hi");
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ModelMessage, streamText as aiStreamText } from "ai";
+import type { ModelMessage } from "ai";
 import { z } from "zod";
 import type { ModelInfo } from "../../provider/model";
 import { SkillService } from "../../skills";
@@ -12,6 +12,8 @@ import { createTestProjectContext } from "../../tools/test-project-context";
 import { setLlmAdapterForTest } from "../../llm";
 import type { QueryLoopOptions } from "./types";
 import { runQueryLoop } from "./loop";
+
+type StreamTextFn = typeof import("ai").streamText;
 
 type MockChunk =
   | { type: "text-delta"; text: string }
@@ -82,7 +84,7 @@ function captureEvents(store: ReturnType<typeof createStore>): SessionEventPaylo
 
 function createMockStreamText(rounds: MockRound[]) {
   let index = 0;
-  const fn = mock((opts: Parameters<typeof aiStreamText>[0]) => {
+  const fn = mock((opts: Parameters<StreamTextFn>[0]) => {
     void opts;
     const round = rounds[index++];
     if (!round) throw new Error("No more mock rounds");
@@ -101,7 +103,7 @@ function createMockStreamText(rounds: MockRound[]) {
       toolResults: Promise.resolve([]),
     };
   });
-  setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+  setLlmAdapterForTest({ streamText: fn as unknown as StreamTextFn });
   return fn;
 }
 

@@ -184,7 +184,7 @@ function findProductionTextViolations(files: string[], patterns: RegExp[]): Viol
 
 function findManagedLlmImportViolations(files: string[]): Violation[] {
   const violations: Violation[] = [];
-  const managedImportRegex = /\bimport\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+["']ai["']/g;
+  const managedImportRegex = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s+from\s+["']ai["']/g;
   const managedRuntimeApis = /\b(streamText|generateText)\b/;
 
   for (const file of files) {

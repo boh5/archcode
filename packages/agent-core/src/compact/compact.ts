@@ -250,26 +250,27 @@ async function summarizePrefix(
     throw new CompactError("No messages to summarize after trimming");
   }
 
-  const result = await withLlmRetry(
-    async () => runLlmStream({
-      model,
-      messages: messagesToSummarize,
-      system: COMPACT_SYSTEM_PROMPT,
-      abortSignal: abort,
-      modelOptions,
-    }),
+  const summary = await withLlmRetry(
+    async () => {
+      const result = runLlmStream({
+        model,
+        messages: messagesToSummarize,
+        system: COMPACT_SYSTEM_PROMPT,
+        abortSignal: abort,
+        modelOptions,
+      });
+      const text = await result.text;
+      if (!text || text.trim().length === 0) {
+        throw new CompactError("Summarizer returned empty summary");
+      }
+      return text.trim();
+    },
     "compact.summarize",
     undefined,
     { abortSignal: abort },
   );
 
-  const summary = await result.text;
-
-  if (!summary || summary.trim().length === 0) {
-    throw new CompactError("Summarizer returned empty summary");
-  }
-
-  return summary.trim();
+  return summary;
 }
 
 function estimateTokensFromModelMessages(messages: import("ai").ModelMessage[]): number {
