@@ -202,6 +202,8 @@ function renderPart(part: StoredPart, input: BackgroundOutputInput): string {
       return `### Compaction\n${part.summary}`;
     case "system-notice":
       return `### System notice\n${part.notice}`;
+    case "recovery-notice":
+      return `### Recovery notice\n${part.message}`;
   }
 }
 
