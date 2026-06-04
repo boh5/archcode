@@ -258,6 +258,58 @@ describe("reduceStreamEvent", () => {
     expect(tool.meta?.unknownResult).toBeUndefined();
   });
 
+  test("interrupted execution marks incomplete text and reasoning as discarded context", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-interrupted" },
+      { type: "text-start" },
+      { type: "text-delta", text: "partial assistant truth" },
+      { type: "reasoning-start" },
+      { type: "reasoning-delta", text: "partial hidden thought" },
+      { type: "execution-end", status: "interrupted" },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    const text = partOfType(message, "text");
+    const reasoning = partOfType(message, "reasoning");
+    expect(text).toMatchObject({
+      text: "partial assistant truth",
+      completedAt: 123456789,
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(reasoning).toMatchObject({
+      text: "partial hidden thought",
+      completedAt: 123456789,
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+  });
+
+  test("failed execution marks incomplete text as discarded context", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-failed" },
+      { type: "text-start" },
+      { type: "text-delta", text: "partial before failure" },
+      { type: "execution-end", status: "failed", error: "stream failed" },
+    ]);
+
+    expect(partOfType(onlyMessage(state.messages), "text").meta).toEqual({
+      interrupted: true,
+      discardedFromContext: true,
+    });
+  });
+
+  test("completed execution finalizes incomplete text without discarding it", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-completed" },
+      { type: "text-start" },
+      { type: "text-delta", text: "late but accepted" },
+      { type: "execution-end", status: "completed" },
+    ]);
+
+    const text = partOfType(onlyMessage(state.messages), "text");
+    expect(text.completedAt).toBe(123456789);
+    expect(text.meta).toBeUndefined();
+  });
+
   test("creates a tool child session link", () => {
     const link = makeChildSessionLink();
 

@@ -1,13 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { generateText } from "ai";
 import { storeManager } from "../../store/store";
 import { createSessionStore } from "../../store/store";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
-import { __setGenerateTextForTest } from "./title-generation";
+import { setLlmAdapterForTest } from "../../llm";
 import { __setSessionsDirForTest } from "../../store/sessions-dir";
 
 const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation");
@@ -69,7 +68,7 @@ async function waitForPersistedSession(
 
 describe("createTitleGenerationTask", () => {
   beforeEach(async () => {
-    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    setLlmAdapterForTest({ generateText: mockGenerateText as unknown as typeof import("ai").generateText });
     mockGenerateText.mockReset();
     mockGenerateText.mockImplementation(
       async () => ({ text: "Short test title" }),
@@ -79,7 +78,7 @@ describe("createTitleGenerationTask", () => {
   });
 
   afterEach(() => {
-    __setGenerateTextForTest(generateText as unknown as typeof generateText);
+    setLlmAdapterForTest(undefined);
     __setSessionsDirForTest(undefined);
   });
 
@@ -233,7 +232,7 @@ describe("createTitleGenerationTask", () => {
       frequencyPenalty: 0.1,
       stopSequences: ["\n"],
       seed: 11,
-      maxRetries: 1,
+      maxRetries: 0,
       timeout: 5000,
       providerOptions,
     });

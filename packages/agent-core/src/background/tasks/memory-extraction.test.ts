@@ -5,8 +5,7 @@ import { storeManager } from "../../store/store";
 import type { StoredMessage } from "../../store/types";
 import type { MemoryRoots } from "../../memory/types";
 import { MemoryFileManager } from "../../memory/file-manager";
-import { __setGenerateTextForTest } from "../../llm";
-import { generateText } from "ai";
+import { setLlmAdapterForTest } from "../../llm";
 import { createMemoryExtractionTask, filterMessagesForExtraction } from "./memory-extraction";
 import { buildMemoryManifest } from "../../memory/manifest";
 import type { ModelInfo } from "../../provider/model";
@@ -119,7 +118,7 @@ function makeToolMessage(toolName: string, output: string, now: number): StoredM
 
 describe("createMemoryExtractionTask", () => {
   beforeEach(async () => {
-    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    setLlmAdapterForTest({ generateText: mockGenerateText as unknown as typeof import("ai").generateText });
     mockGenerateText.mockReset();
     mockGenerateText.mockImplementation(async () =>
       makeGenerateTextResult({
@@ -139,7 +138,7 @@ describe("createMemoryExtractionTask", () => {
   });
 
   afterEach(async () => {
-    __setGenerateTextForTest(generateText as unknown as typeof generateText);
+    setLlmAdapterForTest(undefined);
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -818,6 +817,22 @@ describe("createMemoryExtractionTask", () => {
     expect(filtered).toHaveLength(1);
     expect(filtered[0].role).toBe("user");
     expect((filtered[0].parts[0] as { text: string }).text).toBe("user text");
+  });
+
+  test("filterMessagesForExtraction skips interrupted user text so memory cannot learn discarded partial context", () => {
+    const now = Date.now();
+    const interrupted = makeUserMessage("INTERRUPTED_TEXT_SHOULD_NOT_APPEAR", now);
+    const text = interrupted.parts[0];
+    if (text.type !== "text") throw new Error("Expected text part");
+    text.meta = { interrupted: true, discardedFromContext: true };
+
+    const filtered = filterMessagesForExtraction([
+      interrupted,
+      makeUserMessage("safe text", now + 1),
+    ]);
+
+    expect(JSON.stringify(filtered)).not.toContain("INTERRUPTED_TEXT_SHOULD_NOT_APPEAR");
+    expect(JSON.stringify(filtered)).toContain("safe text");
   });
 
   test("uses name directly from LLM result (no prefix stripping needed)", async () => {

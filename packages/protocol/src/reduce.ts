@@ -73,7 +73,7 @@ export function reduceStreamEvent(
       const executions = settleCurrentExecution(state.executions ?? [], state.currentExecutionId, event, timestamp);
 
       return {
-        messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp),
+        messages: settleIncompleteState(state.messages, state.currentAssistantMessageId, timestamp, event.status),
         stats,
         executions,
         executionCount: executions.length,
@@ -763,15 +763,30 @@ function settleIncompleteState(
   messages: SessionMessage[],
   currentAssistantMessageId: string | undefined,
   timestamp: number,
+  executionStatus: ExecutionEndEvent["status"],
 ): SessionMessage[] {
+  const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
+
   return messages.map((message) => {
     const parts: SessionPart[] = message.parts.map((part): SessionPart => {
       if (part.type === "text" && part.completedAt === undefined) {
-        return { ...part, completedAt: timestamp };
+        return shouldDiscardPartialModelOutput
+          ? {
+              ...part,
+              completedAt: timestamp,
+              meta: { ...(part.meta ?? {}), interrupted: true, discardedFromContext: true },
+            }
+          : { ...part, completedAt: timestamp };
       }
 
       if (part.type === "reasoning" && part.completedAt === undefined) {
-        return { ...part, completedAt: timestamp };
+        return shouldDiscardPartialModelOutput
+          ? {
+              ...part,
+              completedAt: timestamp,
+              meta: { ...(part.meta ?? {}), interrupted: true, discardedFromContext: true },
+            }
+          : { ...part, completedAt: timestamp };
       }
 
       if (part.type === "system-notice" && part.completedAt === undefined) {

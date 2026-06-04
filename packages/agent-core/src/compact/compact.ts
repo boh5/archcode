@@ -1,10 +1,10 @@
-import { streamText as aiStreamText } from "ai";
-import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { StoreApi } from "zustand";
 import type { ModelCallOptions } from "../config/provider";
 import type { Logger } from "../logger";
 import type { SessionStoreState, StoredMessage } from "../store/types";
+import { runLlmStream } from "../llm";
+import { withLlmRetry } from "../llm/retry";
 import { toModelMessagesFromStoredMessages } from "../store/projection";
 import { persistToolOutput } from "../tools/persist-output";
 import { COMPACT_MIN_NEW_MESSAGES } from "./token-estimation";
@@ -72,20 +72,6 @@ References to tool outputs that have been persisted to disk (shown as "[Output t
 Any errors, failed attempts, or issues encountered.
 
 Be thorough but concise. Preserve all important context that would be needed to continue the conversation effectively. Do NOT include any content from the current incomplete user message — it will be preserved verbatim in the tail.`;
-
-// ---------------------------------------------------------------------------
-// _streamText override for testing
-// ---------------------------------------------------------------------------
-
-let _streamText: typeof aiStreamText = aiStreamText;
-
-type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions"> & {
-  providerOptions?: ProviderOptions;
-};
-
-export function __setStreamTextForTest(fn: typeof aiStreamText): void {
-  _streamText = fn;
-}
 
 // ---------------------------------------------------------------------------
 // Phase 1: Select compactable prefix
@@ -264,13 +250,16 @@ async function summarizePrefix(
     throw new CompactError("No messages to summarize after trimming");
   }
 
-  const result = _streamText({
-    model,
-    ...pickModelCallOptions(modelOptions),
-    system: COMPACT_SYSTEM_PROMPT,
-    messages: messagesToSummarize,
-    abortSignal: abort,
-  });
+  const result = await withLlmRetry(
+    async () => runLlmStream({
+      model,
+      messages: messagesToSummarize,
+      system: COMPACT_SYSTEM_PROMPT,
+      abortSignal: abort,
+      modelOptions,
+    }),
+    "compact.summarize",
+  );
 
   const summary = await result.text;
 
@@ -279,38 +268,6 @@ async function summarizePrefix(
   }
 
   return summary.trim();
-}
-
-function pickModelCallOptions(modelOptions: ModelCallOptions | undefined): SafeModelCallOptions | undefined {
-  if (!modelOptions) return undefined;
-
-  const {
-    maxOutputTokens,
-    temperature,
-    topP,
-    topK,
-    presencePenalty,
-    frequencyPenalty,
-    stopSequences,
-    seed,
-    maxRetries,
-    timeout,
-    providerOptions,
-  } = modelOptions;
-
-  return {
-    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-    ...(temperature !== undefined ? { temperature } : {}),
-    ...(topP !== undefined ? { topP } : {}),
-    ...(topK !== undefined ? { topK } : {}),
-    ...(presencePenalty !== undefined ? { presencePenalty } : {}),
-    ...(frequencyPenalty !== undefined ? { frequencyPenalty } : {}),
-    ...(stopSequences !== undefined ? { stopSequences } : {}),
-    ...(seed !== undefined ? { seed } : {}),
-    ...(maxRetries !== undefined ? { maxRetries } : {}),
-    ...(timeout !== undefined ? { timeout } : {}),
-    ...(providerOptions !== undefined ? { providerOptions: providerOptions as ProviderOptions } : {}),
-  };
 }
 
 function estimateTokensFromModelMessages(messages: import("ai").ModelMessage[]): number {

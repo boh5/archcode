@@ -16,7 +16,8 @@ import type { ToolRegistry } from "../../tools/registry";
 import { silentLogger } from "../../logger";
 import { createMockLogger } from "../../logger.test-helper";
 import { createAutoInjectReminderHook } from "./hooks/auto-inject-reminder";
-import { __setStreamTextForTest, maybeHandleCommand, runQueryLoop } from "./loop";
+import { setLlmAdapterForTest } from "../../llm/adapter";
+import { maybeHandleCommand, runQueryLoop } from "./loop";
 import type { BeforeModelBuildContext } from "./loop-hooks";
 import { DOOM_LOOP_MESSAGE, type QueryLoopOptions } from "./types";
 import { MissingProjectContextError } from "../errors";
@@ -47,6 +48,10 @@ interface MockRound {
   text?: string | Promise<string>;
   toolCalls?: MockToolCall[] | Promise<MockToolCall[]>;
   fullStreamError?: Error;
+}
+
+function retryableError(message = "network timeout"): Error {
+  return new Error(message);
 }
 
 const dummyModel = {
@@ -172,10 +177,10 @@ function createMockStreamText(rounds: MockRound[]) {
 
     return {
       fullStream: (async function* () {
-        if (round.fullStreamError) throw round.fullStreamError;
         for (const chunk of chunks) {
           yield chunk;
         }
+        if (round.fullStreamError) throw round.fullStreamError;
       })(),
       finishReason: Promise.resolve(round.finishReason ?? "stop"),
       usage: Promise.resolve(round.usage ?? { totalTokens: 1 }),
@@ -184,7 +189,7 @@ function createMockStreamText(rounds: MockRound[]) {
     };
   });
 
-  __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+  setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
   return fn;
 }
 
@@ -287,7 +292,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
         toolCalls: Promise.resolve([]),
       };
     });
-    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
 
     await runQueryLoop(makeOptions({ store }), "Question");
 
@@ -559,7 +564,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
   test("destructive tool records attempt before executor side effects", async () => {
     const store = createStore();
     const events = captureEvents(store);
-    const executor = mock(async () => {
+    const executor = mock(async (_input: z.infer<typeof testToolSchema>, _ctx: ToolExecutionContext) => {
       expect(events.some((event) => event.type === "tool-attempt" && event.toolCallId === "tc-1")).toBe(true);
       return "mutated";
     });
@@ -574,7 +579,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     await runQueryLoop(
       makeOptions({
         store,
-        toolRegistry: createPermissionBranchRegistry(async () => executor()),
+        toolRegistry: createPermissionBranchRegistry(async (_name, input, ctx) => executor(input, ctx)),
         allowedTools: ["destructiveTool"],
       }),
       "Mutate",
@@ -1185,7 +1190,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     test("afterLoopEnd fires from finally on failure", async () => {
       const store = createStore();
       const statuses: Array<unknown> = [];
-      __setStreamTextForTest(mock(() => { throw new Error("model failed"); }) as unknown as typeof aiStreamText);
+      setLlmAdapterForTest({ streamText: mock(() => { throw new Error("model failed"); }) as unknown as typeof aiStreamText });
 
       const result = await runQueryLoop(
         makeOptions({
@@ -1401,15 +1406,20 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       const logger = createMockLogger();
       createMockStreamText([{ text: "ok" }]);
 
-      await expect(runQueryLoop(
-        makeOptions({
-          logger,
-          hooks: {
-            afterLoopEnd: [async () => { throw new DOMException("cancelled", "AbortError"); }],
-          },
-        }),
-        "Hi",
-      )).rejects.toMatchObject({ name: "AbortError" });
+      try {
+        await runQueryLoop(
+          makeOptions({
+            logger,
+            hooks: {
+              afterLoopEnd: [async () => { throw new DOMException("cancelled", "AbortError"); }],
+            },
+          }),
+          "Hi",
+        );
+        throw new Error("Expected AbortError");
+      } catch (error) {
+        expect(error).toMatchObject({ name: "AbortError" });
+      }
 
       expect(logger.warn).not.toHaveBeenCalled();
       expect(logger.error).not.toHaveBeenCalled();
@@ -1421,7 +1431,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const fn = mock(() => {
       throw new Error("model unavailable");
     });
-    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
@@ -1452,6 +1462,126 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     expect(result.text).toBe("");
     expect(store.getState().steps[0]).toMatchObject({ step: 0, error: "usage failed" });
+  });
+
+  test("zero-output retry is bounded and internal before success", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamFn = createMockStreamText([
+      { fullStreamError: retryableError() },
+      { fullStreamError: retryableError() },
+      { text: "recovered" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result.text).toBe("recovered");
+    expect(streamFn).toHaveBeenCalledTimes(3);
+    const retryEvents = events.filter((event) => event.type === "llm-retry");
+    expect(retryEvents).toEqual([
+      expect.objectContaining({ scope: "short", visibility: "internal", attempt: 1 }),
+      expect.objectContaining({ scope: "short", visibility: "internal", attempt: 2 }),
+    ]);
+    expect(assistantMessages(store)).toHaveLength(1);
+    expect(lastAssistant(store).parts).toEqual([
+      expect.objectContaining({ type: "text", text: "recovered" }),
+    ]);
+  });
+
+  test("zero-output retry escalates to session-visible continuous retry after short attempts", async () => {
+    const abortController = new AbortController();
+    const store = createStore();
+    const events = captureEvents(store);
+    store.setState({
+      append: ((append) => (event) => {
+        append(event);
+        if (event.type === "llm-retry" && event.scope === "session") abortController.abort();
+      })(store.getState().append),
+    });
+    createMockStreamText([
+      { fullStreamError: retryableError() },
+      { fullStreamError: retryableError() },
+      { fullStreamError: retryableError() },
+      { fullStreamError: retryableError() },
+    ]);
+
+    const started = performance.now();
+    await runQueryLoop(makeOptions({ store, abort: abortController.signal }), "Hi");
+
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(events.filter((event) => event.type === "llm-retry" && event.scope === "short")).toHaveLength(3);
+    expect(events.some((event) => event.type === "llm-retry" && event.scope === "session" && event.visibility === "session")).toBe(true);
+    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(1);
+  });
+
+  test("partial-output recovery marks interrupted text and continues without replay", async () => {
+    const store = createStore();
+    const streamFn = createMockStreamText([
+      {
+        chunks: [{ type: "text-delta", text: "partial" }],
+        fullStreamError: retryableError(),
+      },
+      { text: "final" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result.text).toBe("final");
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(streamCallMessages(streamFn, 1))).not.toContain('"text":"partial"');
+    expect(JSON.stringify(streamCallMessages(streamFn, 1))).toContain("interrupted-response-recovery");
+    const textParts = lastAssistant(store).parts.filter((part) => part.type === "text");
+    expect(textParts).toEqual([
+      expect.objectContaining({ text: "partial", meta: expect.objectContaining({ interrupted: true, discardedFromContext: true }) }),
+      expect.objectContaining({ text: "final" }),
+    ]);
+    expect(lastAssistant(store).parts.some((part) => part.type === "recovery-notice" && part.status === "recovered")).toBe(true);
+  });
+
+  test("recoverable attempts close streaming but keep execution running until terminal end", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const snapshots: Array<Pick<SessionStoreState, "isRunning" | "isStreamingModel">> = [];
+    store.setState({
+      append: ((append) => (event) => {
+        append(event);
+        if (event.type === "llm-retry") {
+          snapshots.push({
+            isRunning: store.getState().isRunning,
+            isStreamingModel: store.getState().isStreamingModel,
+          });
+        }
+      })(store.getState().append),
+    });
+    createMockStreamText([{ fullStreamError: retryableError() }, { text: "ok" }]);
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(snapshots).toEqual([{ isRunning: true, isStreamingModel: false }]);
+    expect(events.filter((event) => event.type === "execution-end")).toHaveLength(1);
+  });
+
+  test("recovery attempts do not run afterStepEnd or afterLoopEnd until terminal recovery", async () => {
+    const store = createStore();
+    const calls: string[] = [];
+    createMockStreamText([
+      { fullStreamError: retryableError() },
+      { fullStreamError: retryableError() },
+      { text: "ok" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        hooks: {
+          afterStepEnd: [async () => { calls.push("step"); }],
+          afterLoopEnd: [async () => { calls.push("loop"); }],
+        },
+      }),
+      "Hi",
+    );
+
+    expect(calls).toEqual(["step", "loop"]);
   });
 
   test("passes systemPrompt to streamText", async () => {
@@ -1541,7 +1671,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       frequencyPenalty: 0.2,
       stopSequences: ["STOP"],
       seed: 99,
-      maxRetries: 4,
+      maxRetries: 0,
       timeout: 10_000,
       providerOptions,
     });
@@ -2086,7 +2216,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
-  test("preserves __setStreamTextForTest mock pattern", async () => {
+  test("preserves setLlmAdapterForTest streamText mock pattern", async () => {
     const fn = mock((_: Parameters<typeof aiStreamText>[0]) => ({
       fullStream: (async function* () {
         yield { type: "text-delta", text: "custom" };
@@ -2096,7 +2226,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       text: Promise.resolve("custom"),
       toolCalls: Promise.resolve([]),
     }));
-    __setStreamTextForTest(fn as unknown as typeof aiStreamText);
+    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
 
     const result = await runQueryLoop(makeOptions(), "Hi");
 
@@ -2364,7 +2494,7 @@ describe("runQueryLoop abort handling", () => {
 
 describe("runQueryLoop tool-input-resolved event", () => {
   beforeEach(() => {
-    __setStreamTextForTest(undefined as unknown as typeof aiStreamText);
+    setLlmAdapterForTest(undefined);
   });
 
   const defaultsToolSchema = z.object({

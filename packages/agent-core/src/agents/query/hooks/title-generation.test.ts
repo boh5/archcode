@@ -1,12 +1,11 @@
 import { afterAll, afterEach, describe, expect, mock, test, beforeEach } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { generateText } from "ai";
 import { storeManager } from "../../../store/store";
 import { createTitleGenerationHook } from "./title-generation";
 import type { BeforeModelCallContext } from "../loop-hooks";
 import type { ModelInfo } from "../../../provider/model";
-import { __setGenerateTextForTest } from "../../../background/tasks/title-generation";
+import { setLlmAdapterForTest } from "../../../llm";
 import { __setSessionsDirForTest } from "../../../store/sessions-dir";
 import { silentLogger } from "../../../logger";
 
@@ -48,13 +47,13 @@ describe("createTitleGenerationHook", () => {
     mockDispatch.mockImplementation(() => {});
     mockGenerateText.mockReset();
     mockGenerateText.mockImplementation(async () => ({ text: "Hook title" }));
-    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    setLlmAdapterForTest({ generateText: mockGenerateText as unknown as typeof import("ai").generateText });
     await mkdir(TEST_TMP, { recursive: true });
     __setSessionsDirForTest(() => TEST_TMP);
   });
 
   afterEach(() => {
-    __setGenerateTextForTest(generateText as unknown as typeof generateText);
+    setLlmAdapterForTest(undefined);
     __setSessionsDirForTest(undefined);
   });
 

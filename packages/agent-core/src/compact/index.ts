@@ -11,7 +11,6 @@ export {
   CompactError,
   compact,
   commitCompact,
-  __setStreamTextForTest,
 } from "./compact";
 
 export type { CompactInput, CompactResult } from "./compact";

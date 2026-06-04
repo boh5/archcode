@@ -3,11 +3,11 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { silentLogger } from "../logger";
 import type { StoredMessage } from "../store/types";
 import { storeManager } from "../store/store";
+import { setLlmAdapterForTest } from "../llm";
 import {
   CompactError,
   type CompactInput,
   type CompactResult,
-  __setStreamTextForTest,
   commitCompact,
   compact,
 } from "./compact";
@@ -16,36 +16,37 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-let mockStreamTextFn: typeof import("ai").streamText;
-
 function createMockStreamText(respondWith: string) {
   const text = respondWith;
-  mockStreamTextFn = mock(() => ({
-    text: Promise.resolve(text),
-    fullStream: (async function* () {
-      yield { type: "text-delta", text: text };
-    })(),
-    finishReason: Promise.resolve("stop"),
-    usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
-    toolCalls: Promise.resolve([]),
-    toolResults: Promise.resolve([]),
-  })) as unknown as typeof import("ai").streamText;
-  __setStreamTextForTest(mockStreamTextFn);
+  setLlmAdapterForTest({
+    streamText: mock(() => ({
+      text: Promise.resolve(text),
+      fullStream: (async function* () {
+        yield { type: "text-delta", text: text };
+      })(),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+      toolCalls: Promise.resolve([]),
+      toolResults: Promise.resolve([]),
+    })) as unknown as typeof import("ai").streamText,
+  });
 }
 
 function createMockStreamTextThatThrows(error: Error) {
-  mockStreamTextFn = mock(() => {
-    throw error;
-  }) as unknown as typeof import("ai").streamText;
-  __setStreamTextForTest(mockStreamTextFn);
+  setLlmAdapterForTest({
+    streamText: mock(() => {
+      throw error;
+    }) as unknown as typeof import("ai").streamText,
+  });
 }
 
 function createMockStreamTextThatAborts() {
-  mockStreamTextFn = mock(() => {
-    const error = new DOMException("Aborted", "AbortError");
-    throw error;
-  }) as unknown as typeof import("ai").streamText;
-  __setStreamTextForTest(mockStreamTextFn);
+  setLlmAdapterForTest({
+    streamText: mock(() => {
+      const error = new DOMException("Aborted", "AbortError");
+      throw error;
+    }) as unknown as typeof import("ai").streamText,
+  });
 }
 
 function makeUserMessage(id: string, text: string): StoredMessage {
@@ -185,7 +186,7 @@ function makeInput(messages: StoredMessage[], overrides?: Partial<CompactInput>)
 
 describe("compact", () => {
   beforeEach(() => {
-    __setStreamTextForTest(undefined as unknown as typeof import("ai").streamText);
+    setLlmAdapterForTest(undefined);
   });
 
   // -------------------------------------------------------------------------
@@ -487,21 +488,21 @@ describe("compact", () => {
   test("summarizer prompt isolation: compact summary call uses compact-specific minimal system prompt", async () => {
     let capturedSystemPrompt: string | undefined;
 
-    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
-      capturedSystemPrompt = opts.system as string | undefined;
-      return {
-        text: Promise.resolve("## Current Objective\nTest objective"),
-        fullStream: (async function* () {
-          yield { type: "text-delta", text: "## Current Objective\nTest objective" };
-        })(),
-        finishReason: Promise.resolve("stop"),
-        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-      };
-    }) as unknown as typeof import("ai").streamText;
-
-    __setStreamTextForTest(mockStreamTextFn);
+    setLlmAdapterForTest({
+      streamText: mock((opts: Record<string, unknown>) => {
+        capturedSystemPrompt = opts.system as string | undefined;
+        return {
+          text: Promise.resolve("## Current Objective\nTest objective"),
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "## Current Objective\nTest objective" };
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+          toolCalls: Promise.resolve([]),
+          toolResults: Promise.resolve([]),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    });
 
     const messages: StoredMessage[] = [
       makeUserMessage("u1", "First message"),
@@ -752,21 +753,21 @@ describe("compact", () => {
   test("summary call has no tools (tools denied during summarization)", async () => {
     let capturedOptions: Record<string, unknown> = {};
 
-    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
-      capturedOptions = opts;
-      return {
-        text: Promise.resolve("## Current Objective\nTest"),
-        fullStream: (async function* () {
-          yield { type: "text-delta", text: "## Current Objective\nTest" };
-        })(),
-        finishReason: Promise.resolve("stop"),
-        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-      };
-    }) as unknown as typeof import("ai").streamText;
-
-    __setStreamTextForTest(mockStreamTextFn);
+    setLlmAdapterForTest({
+      streamText: mock((opts: Record<string, unknown>) => {
+        capturedOptions = opts;
+        return {
+          text: Promise.resolve("## Current Objective\nTest"),
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "## Current Objective\nTest" };
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+          toolCalls: Promise.resolve([]),
+          toolResults: Promise.resolve([]),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    });
 
     const messages: StoredMessage[] = [
       makeUserMessage("u1", "First message"),
@@ -792,21 +793,21 @@ describe("compact", () => {
     let capturedOptions: Record<string, unknown> = {};
     const providerOptions = { openai: { reasoningEffort: "medium" } };
 
-    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
-      capturedOptions = opts;
-      return {
-        text: Promise.resolve("## Current Objective\nTest"),
-        fullStream: (async function* () {
-          yield { type: "text-delta", text: "## Current Objective\nTest" };
-        })(),
-        finishReason: Promise.resolve("stop"),
-        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-      };
-    }) as unknown as typeof import("ai").streamText;
-
-    __setStreamTextForTest(mockStreamTextFn);
+    setLlmAdapterForTest({
+      streamText: mock((opts: Record<string, unknown>) => {
+        capturedOptions = opts;
+        return {
+          text: Promise.resolve("## Current Objective\nTest"),
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "## Current Objective\nTest" };
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+          toolCalls: Promise.resolve([]),
+          toolResults: Promise.resolve([]),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    });
 
     const messages: StoredMessage[] = [
       makeUserMessage("u1", "First message"),
@@ -845,21 +846,21 @@ describe("compact", () => {
     let capturedOptions: Record<string, unknown> = {};
     const providerOptions = { compact: { mode: "summary" } };
 
-    mockStreamTextFn = mock((opts: Record<string, unknown>) => {
-      capturedOptions = opts;
-      return {
-        text: Promise.resolve("## Current Objective\nTest"),
-        fullStream: (async function* () {
-          yield { type: "text-delta", text: "## Current Objective\nTest" };
-        })(),
-        finishReason: Promise.resolve("stop"),
-        usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-      };
-    }) as unknown as typeof import("ai").streamText;
-
-    __setStreamTextForTest(mockStreamTextFn);
+    setLlmAdapterForTest({
+      streamText: mock((opts: Record<string, unknown>) => {
+        capturedOptions = opts;
+        return {
+          text: Promise.resolve("## Current Objective\nTest"),
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "## Current Objective\nTest" };
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ promptTokens: 100, completionTokens: 50 }),
+          toolCalls: Promise.resolve([]),
+          toolResults: Promise.resolve([]),
+        };
+      }) as unknown as typeof import("ai").streamText,
+    });
 
     const messages: StoredMessage[] = [
       makeUserMessage("u1", "First message"),
@@ -916,7 +917,7 @@ describe("compact", () => {
       frequencyPenalty: 0.3,
       stopSequences: ["END"],
       seed: 7,
-      maxRetries: 1,
+      maxRetries: 0,
       timeout: 15_000,
       providerOptions,
     });

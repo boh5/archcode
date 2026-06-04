@@ -315,6 +315,53 @@ describe("SessionStoreManager", () => {
     });
   });
 
+  test("load reconciliation marks interrupted partial text visible but excluded from model context", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(
+      {
+        sessionId: id,
+        createdAt: 1000,
+        agentName: "orchestrator",
+        title: null,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "text",
+                id: "text-1",
+                text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
+                createdAt: 1001,
+              },
+            ],
+            createdAt: 1001,
+            executionId: "run-1",
+          },
+        ],
+        steps: [],
+        stats: createEmptySessionStats(),
+        executions: [{ id: "run-1", startedAt: 1000, status: "running" }],
+        todos: [],
+        childSessionLinks: [],
+        rootSessionId: id,
+      },
+      TMP_DIR,
+    );
+
+    const loaded = await manager.getOrLoad(id, TMP_DIR);
+    const text = loaded.getState().messages[0]?.parts[0];
+    expect(text).toMatchObject({
+      type: "text",
+      text: "PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(JSON.stringify(loaded.getState().toModelMessages())).toContain("previous assistant response was interrupted");
+    expect(JSON.stringify(loaded.getState().toModelMessages())).not.toContain("PARTIAL_LOAD_TEXT_SHOULD_NOT_PROJECT");
+    expect(loaded.getState().executions[0]).toMatchObject({ status: "interrupted" });
+  });
+
   test("persists completed tool results and does not downgrade them on restart", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();

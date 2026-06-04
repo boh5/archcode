@@ -3,7 +3,7 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelInfo } from "../provider/model";
 import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
-import { __setStreamTextForTest } from "../compact/compact";
+import { setLlmAdapterForTest } from "../llm";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
 import type { ModelCallOptions } from "../config";
 import { createCompactCommand } from "./compact";
@@ -66,8 +66,8 @@ function createBreaker(): CircuitBreaker & { reset: ReturnType<typeof mock> } {
 }
 
 beforeEach(() => {
-  __setStreamTextForTest(
-    mock(() => ({
+  setLlmAdapterForTest({
+    streamText: mock(() => ({
       text: Promise.resolve("## Current Objective\nSummarized"),
       fullStream: (async function* () {})(),
       finishReason: Promise.resolve("stop"),
@@ -75,7 +75,7 @@ beforeEach(() => {
       toolCalls: Promise.resolve([]),
       toolResults: Promise.resolve([]),
     })) as unknown as typeof import("ai").streamText,
-  );
+  });
 });
 
 describe("createCompactCommand", () => {
@@ -102,8 +102,8 @@ describe("createCompactCommand", () => {
   test("passes context modelOptions into compact summary call", async () => {
     let capturedOptions: Record<string, unknown> = {};
     const providerOptions = { openai: { reasoningEffort: "high" } };
-    __setStreamTextForTest(
-      mock((opts: Record<string, unknown>) => {
+    setLlmAdapterForTest({
+      streamText: mock((opts: Record<string, unknown>) => {
         capturedOptions = opts;
         return {
           text: Promise.resolve("## Current Objective\nSummarized"),
@@ -114,7 +114,7 @@ describe("createCompactCommand", () => {
           toolResults: Promise.resolve([]),
         };
       }) as unknown as typeof import("ai").streamText,
-    );
+    });
     const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
 
@@ -170,8 +170,8 @@ describe("createCompactCommand", () => {
 
   test("returns busy message while compaction is already in progress", async () => {
     let resolveSummary!: (summary: string) => void;
-    __setStreamTextForTest(
-      mock(() => ({
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
         text: new Promise<string>((resolve) => {
           resolveSummary = resolve;
         }),
@@ -181,7 +181,7 @@ describe("createCompactCommand", () => {
         toolCalls: Promise.resolve([]),
         toolResults: Promise.resolve([]),
       })) as unknown as typeof import("ai").streamText,
-    );
+    });
     const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
@@ -196,11 +196,11 @@ describe("createCompactCommand", () => {
   });
 
   test("returns failure message and clears busy guard on error", async () => {
-    __setStreamTextForTest(
-      mock(() => {
+    setLlmAdapterForTest({
+      streamText: mock(() => {
         throw new Error("model down");
       }) as unknown as typeof import("ai").streamText,
-    );
+    });
     const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
     const descriptor = createCompactCommand(store, modelInfo);
@@ -208,7 +208,7 @@ describe("createCompactCommand", () => {
     const failed = await descriptor.handler({ store, modelInfo });
     const retry = await descriptor.handler({ store, modelInfo });
 
-    expect(failed).toEqual({ success: false, message: "Compact failed: Compact failed: Summary generation failed: model down" });
+    expect(failed).toEqual({ success: false, message: "Compact failed: Compact failed: Summary generation failed: compact.summarize failed after 1 attempt: model down" });
     expect(retry.message).not.toBe("Compact already in progress");
   });
 });

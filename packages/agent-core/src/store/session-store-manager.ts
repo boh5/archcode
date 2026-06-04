@@ -17,11 +17,13 @@ import { toModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
 import { __hasSessionsDirOverrideForTest, getRootSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
+  type ReasoningPart,
   type SessionEventEnvelope,
   type SessionEventPayload,
   type SessionStoreState,
   type StreamEvent,
   type PendingInteraction,
+  type TextPart,
   MAX_EVENTS,
 } from "./types";
 
@@ -700,6 +702,17 @@ function reconcileInterruptedSessionFile(file: SessionFile): SessionFile {
   const messages = file.messages.map((message) => {
     let messageChanged = false;
     const parts = message.parts.map((part) => {
+      if ((part.type === "text" || part.type === "reasoning") && part.completedAt === undefined) {
+        changed = true;
+        messageChanged = true;
+        const partial = part as TextPart | ReasoningPart;
+        return {
+          ...partial,
+          completedAt: now,
+          meta: { ...(partial.meta ?? {}), interrupted: true, discardedFromContext: true },
+        };
+      }
+
       if (
         part.type !== "tool"
         || (part.state !== "pending" && part.state !== "running")

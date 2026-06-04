@@ -417,6 +417,8 @@ export interface TextPart {
   text: string;
   createdAt: number;
   completedAt?: number;
+  /** Set when a partial model stream was persisted for UI/history but must not be trusted as completed context. */
+  meta?: Record<string, unknown>;
 }
 
 export interface ReasoningPart {
@@ -425,6 +427,8 @@ export interface ReasoningPart {
   text: string;
   createdAt: number;
   completedAt?: number;
+  /** Set when partial reasoning was persisted for UI/history but must not be trusted as completed context. */
+  meta?: Record<string, unknown>;
 }
 
 export interface PendingToolPart {

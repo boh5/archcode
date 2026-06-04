@@ -1,8 +1,5 @@
-import { streamText as aiStreamText } from "ai";
 import type { StreamTextResult, ToolSet } from "ai";
-import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand";
-import type { ModelCallOptions } from "../../config/provider";
 import type { Logger } from "../../logger";
 import type { ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
@@ -11,22 +8,51 @@ import { partitionToolCalls } from "../../tools/concurrency/partition";
 import { DOOM_LOOP_MESSAGE, type NormalizedToolCall, type QueryLoopOptions, type QueryLoopResult } from "./types";
 import { redactValue } from "../../tools/security";
 import { MissingProjectContextError } from "../errors";
+import { classifyLlmError, runLlmStream } from "../../llm";
+import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
 
 const DEFAULT_MAX_STEPS = 50;
-
-let _streamText: typeof aiStreamText = aiStreamText;
-
-type SafeModelCallOptions = Omit<ModelCallOptions, "providerOptions"> & {
-  providerOptions?: ProviderOptions;
-};
-
-export function __setStreamTextForTest(fn: typeof aiStreamText) {
-  _streamText = fn;
-}
+const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
+const SESSION_RETRY_INITIAL_DELAY_MS = 2_000;
+const SESSION_RETRY_FACTOR = 2;
+const SESSION_RETRY_MAX_DELAY_MS = 30_000;
 
 type TextStreamPart = StreamTextResult<ToolSet, never>["fullStream"] extends AsyncIterable<infer Part>
   ? Part
   : never;
+type AnyStreamTextResult = StreamTextResult<any, never>;
+
+type HookList<T> = Array<(ctx: T) => Promise<void>> | undefined;
+
+interface ModelAttemptOptions {
+  step: number;
+  store: StoreApi<SessionStoreState>;
+  modelInfo: QueryLoopOptions["modelInfo"];
+  modelOptions: QueryLoopOptions["modelOptions"];
+  systemPrompt: QueryLoopOptions["systemPrompt"];
+  toolRegistry: ToolRegistry;
+  allowedTools: readonly string[];
+  abort: AbortSignal;
+  logger: Logger;
+  sessionId: string;
+  agentName: string | undefined;
+  beforeModelBuild: HookList<BeforeModelBuildContext>;
+  beforeModelCall: HookList<BeforeModelCallContext>;
+}
+
+type ModelAttemptResult =
+  | {
+      outcome: "success";
+      result: AnyStreamTextResult;
+    }
+  | {
+      outcome: "retry";
+      error: unknown;
+      errorKind: string;
+      message: string;
+      hadDurableOutput: boolean;
+      recoveryAttempt: number;
+    };
 
 type ToolCallArray = Array<{
   toolCallId: string;
@@ -58,6 +84,73 @@ class DoomTracker {
   }
 }
 
+async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttemptResult> {
+  const {
+    step,
+    store,
+    modelInfo,
+    modelOptions,
+    systemPrompt,
+    toolRegistry,
+    allowedTools,
+    abort,
+    logger,
+    sessionId,
+    agentName,
+    beforeModelBuild,
+    beforeModelCall,
+  } = options;
+
+  store.getState().append({ type: "step-start", step });
+
+  try {
+    await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
+    const messages = store.getState().toModelMessages();
+    await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions, abort, messages }, logger, { sessionId, agentName });
+    const resolved = toolRegistry.resolveForAgent(allowedTools);
+
+    const result = runLlmStream({
+      model: modelInfo.model,
+      modelOptions,
+      messages,
+      abortSignal: abort,
+      ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
+      ...(systemPrompt ? { system: systemPrompt } : {}),
+    });
+
+    await consumeFullStream(result.fullStream as AsyncIterable<TextStreamPart>, store, abort);
+    return { outcome: "success", result: result as AnyStreamTextResult };
+  } catch (err) {
+    const classification = classifyLlmError(err);
+    const hadDurableOutput = hasCurrentStepDurableOutput(store);
+    const retryable = classification.retryable && !abort.aborted;
+    const message = errorMessage(err);
+
+    store.getState().append({
+      type: "step-end",
+      step,
+      finishReason: retryable ? "interrupted" : "error",
+    });
+
+    if (hadDurableOutput) {
+      markCurrentAssistantPartialOutputInterrupted(store);
+    }
+
+    if (!retryable) {
+      throw err;
+    }
+
+    return {
+      outcome: "retry",
+      error: err,
+      errorKind: classification.kind,
+      message,
+      hadDurableOutput,
+      recoveryAttempt: countRecoveryAttempts(store, step) + 1,
+    };
+  }
+}
+
 export async function runQueryLoop(
   options: QueryLoopOptions,
   userMessage: string,
@@ -86,6 +179,9 @@ export async function runQueryLoop(
   let lastText = "";
   let failed = false;
   let runEndStatus: ExecutionEndEvent["status"] = "completed";
+  let recoveredFromFailure = false;
+  let zeroOutputShortAttempt = 0;
+  let sessionRetryAttempt = 0;
   const doomTracker = new DoomTracker();
 
   if (!store.getState().isRunning) {
@@ -107,22 +203,90 @@ export async function runQueryLoop(
     while (steps < maxSteps) {
       if (abort.aborted) break;
 
-      store.getState().append({ type: "step-start", step: steps });
-      await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
-      const messages = store.getState().toModelMessages();
-      await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, messages }, logger, { sessionId, agentName });
-      const resolved = toolRegistry.resolveForAgent(allowedTools);
-
-      const result = _streamText({
-        model: modelInfo.model,
-        ...pickModelCallOptions(options.modelOptions),
-        messages,
-        abortSignal: abort,
-        ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
-        ...(systemPrompt ? { system: systemPrompt } : {}),
+      const attempt = await runModelAttempt({
+        step: steps,
+        store,
+        modelInfo,
+        modelOptions: options.modelOptions,
+        systemPrompt,
+        toolRegistry,
+        allowedTools,
+        abort,
+        logger,
+        sessionId,
+        agentName,
+        beforeModelBuild,
+        beforeModelCall,
       });
 
-      await consumeFullStream(result.fullStream, store, abort);
+      if (attempt.outcome === "retry") {
+        recoveredFromFailure = true;
+        if (attempt.hadDurableOutput) {
+          zeroOutputShortAttempt = 0;
+          sessionRetryAttempt = 0;
+          store.getState().append({
+            type: "llm-retry",
+            scope: "session",
+            visibility: "session",
+            profile: "partial-output-recovery",
+            attempt: attempt.recoveryAttempt,
+            errorKind: attempt.errorKind,
+            message: `Model stream was interrupted after partial output. Continuing with recovery attempt ${attempt.recoveryAttempt}.`,
+            nextRetryAt: Date.now(),
+            stepId: `step-${steps}`,
+          });
+          continue;
+        }
+
+        if (zeroOutputShortAttempt < ZERO_OUTPUT_SHORT_ATTEMPTS) {
+          zeroOutputShortAttempt++;
+          store.getState().append({
+            type: "llm-retry",
+            scope: "short",
+            visibility: "internal",
+            profile: "zero-output-short",
+            attempt: zeroOutputShortAttempt,
+            errorKind: attempt.errorKind,
+            message: `Zero-output model attempt failed: ${attempt.message}`,
+            stepId: `step-${steps}`,
+          });
+          continue;
+        }
+
+        sessionRetryAttempt++;
+        const delayMs = computeSessionRetryDelayMs(sessionRetryAttempt, attempt.error);
+        const nextRetryAt = Date.now() + delayMs;
+        store.getState().append({
+          type: "llm-retry",
+          scope: "session",
+          visibility: "session",
+          profile: "zero-output-session",
+          attempt: sessionRetryAttempt,
+          errorKind: attempt.errorKind,
+          message: `Model request is still failing before output. Retrying in ${Math.ceil(delayMs / 1000)}s: ${attempt.message}`,
+          nextRetryAt,
+          stepId: `step-${steps}`,
+        });
+        await sleepAbortable(delayMs, abort);
+        continue;
+      }
+
+      const { result } = attempt;
+
+      if (recoveredFromFailure) {
+        store.getState().append({
+          type: "llm-recovery",
+          scope: sessionRetryAttempt > 0 ? "session" : "short",
+          visibility: sessionRetryAttempt > 0 || zeroOutputShortAttempt === 0 ? "session" : "internal",
+          profile: sessionRetryAttempt > 0 ? "zero-output-session" : zeroOutputShortAttempt > 0 ? "zero-output-short" : "partial-output-recovery",
+          attempt: Math.max(sessionRetryAttempt, zeroOutputShortAttempt, 1),
+          message: "Model stream recovered and resumed.",
+          stepId: `step-${steps}`,
+        });
+        recoveredFromFailure = false;
+        zeroOutputShortAttempt = 0;
+        sessionRetryAttempt = 0;
+      }
 
       if (abort.aborted) break;
 
@@ -203,38 +367,6 @@ export async function runQueryLoop(
     }
     await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus }, logger, { sessionId, agentName });
   }
-}
-
-function pickModelCallOptions(modelOptions: QueryLoopOptions["modelOptions"]): SafeModelCallOptions | undefined {
-  if (!modelOptions) return undefined;
-
-  const {
-    maxOutputTokens,
-    temperature,
-    topP,
-    topK,
-    presencePenalty,
-    frequencyPenalty,
-    stopSequences,
-    seed,
-    maxRetries,
-    timeout,
-    providerOptions,
-  } = modelOptions;
-
-  return {
-    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
-    ...(temperature !== undefined ? { temperature } : {}),
-    ...(topP !== undefined ? { topP } : {}),
-    ...(topK !== undefined ? { topK } : {}),
-    ...(presencePenalty !== undefined ? { presencePenalty } : {}),
-    ...(frequencyPenalty !== undefined ? { frequencyPenalty } : {}),
-    ...(stopSequences !== undefined ? { stopSequences } : {}),
-    ...(seed !== undefined ? { seed } : {}),
-    ...(maxRetries !== undefined ? { maxRetries } : {}),
-    ...(timeout !== undefined ? { timeout } : {}),
-    ...(providerOptions !== undefined ? { providerOptions: providerOptions as ProviderOptions } : {}),
-  };
 }
 
 export async function maybeHandleCommand(
@@ -356,6 +488,100 @@ async function consumeFullStream(
     if (textOpen) store.getState().append({ type: "text-end" });
     if (reasoningOpen) store.getState().append({ type: "reasoning-end" });
   }
+}
+
+function hasCurrentStepDurableOutput(store: StoreApi<SessionStoreState>): boolean {
+  const currentAssistantId = store.getState().currentAssistantMessageId;
+  if (!currentAssistantId) return false;
+  const message = store.getState().messages.find((candidate) => candidate.id === currentAssistantId);
+  if (!message) return false;
+
+  return message.parts.some((part) => {
+    if (part.type === "text" || part.type === "reasoning") return part.text.length > 0;
+    if (part.type === "recovery-notice" || part.type === "system-notice" || part.type === "compaction") return false;
+    return true;
+  });
+}
+
+function markCurrentAssistantPartialOutputInterrupted(store: StoreApi<SessionStoreState>): void {
+  const currentAssistantId = store.getState().currentAssistantMessageId;
+  if (!currentAssistantId) return;
+
+  store.setState((state) => ({
+    messages: state.messages.map((message) => {
+      if (message.id !== currentAssistantId) return message;
+
+      return {
+        ...message,
+        parts: message.parts.map((part) => {
+          if (part.type === "text" || part.type === "reasoning") {
+            if (part.text.length === 0) return part;
+            return {
+              ...part,
+              meta: {
+                ...(part.meta ?? {}),
+                interrupted: true,
+                discardedFromContext: true,
+              },
+            };
+          }
+          return part;
+        }),
+      };
+    }),
+  }));
+}
+
+function countRecoveryAttempts(store: StoreApi<SessionStoreState>, step: number): number {
+  const stepId = `step-${step}`;
+  return store.getState().events.filter((event) =>
+    (event.payload.type === "llm-retry" || event.payload.type === "llm-recovery") && event.payload.stepId === stepId,
+  ).length;
+}
+
+function computeSessionRetryDelayMs(attempt: number, error: unknown): number {
+  const retryAfterMs = getRetryAfterMs(error);
+  if (retryAfterMs !== undefined) return Math.min(retryAfterMs, SESSION_RETRY_MAX_DELAY_MS);
+  const exponential = SESSION_RETRY_INITIAL_DELAY_MS * SESSION_RETRY_FACTOR ** Math.max(0, attempt - 1);
+  return Math.min(exponential, SESSION_RETRY_MAX_DELAY_MS);
+}
+
+function getRetryAfterMs(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  const headers = record.headers;
+  const candidates = [record.retryAfter, record.retryAfterMs];
+  if (headers && typeof headers === "object") {
+    const headerRecord = headers as Record<string, unknown> & { get?: (name: string) => unknown };
+    candidates.push(headerRecord["retry-after"], headerRecord["Retry-After"], headerRecord.get?.("retry-after"));
+  }
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate > 1_000 ? candidate : candidate * 1_000;
+    }
+    if (typeof candidate === "string") {
+      const seconds = Number(candidate);
+      if (Number.isFinite(seconds)) return seconds * 1_000;
+      const dateMs = Date.parse(candidate);
+      if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+    }
+  }
+
+  return undefined;
+}
+
+async function sleepAbortable(ms: number, abort: AbortSignal): Promise<void> {
+  if (ms <= 0 || abort.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timeout);
+      abort.removeEventListener("abort", done);
+      resolve();
+    }
+    abort.addEventListener("abort", done, { once: true });
+  });
 }
 
 async function executeToolCalls(

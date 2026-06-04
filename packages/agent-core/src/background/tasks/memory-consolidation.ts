@@ -2,7 +2,7 @@ import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import { MemoryConsolidationResultSchema } from "../../memory/schemas";
 import { MemoryFileManager, parseIndex } from "../../memory/file-manager";
 import { DEFAULT_MAX_INDEX_LINES } from "../../memory/constants";
-import { llmObject, LlmSchemaValidationError } from "../../llm";
+import { runLlmObject, LlmSchemaValidationError } from "../../llm";
 
 export function createMemoryConsolidationTask(
   memoryRoots: { project: string; user: string },
@@ -36,7 +36,7 @@ export function createMemoryConsolidationTask(
         .join("\n");
 
       try {
-        const result = await llmObject({
+        const result = await runLlmObject({
           model: ctx.modelInfo.model,
           modelOptions: ctx.modelOptions,
           schema: MemoryConsolidationResultSchema,

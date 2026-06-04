@@ -6,7 +6,7 @@ import type { MemoryExtractionResult } from "../../memory/schemas";
 import { MemoryExtractionResultSchema } from "../../memory/schemas";
 import { MemoryFileManager } from "../../memory/file-manager";
 import { toModelMessagesFromStoredMessages } from "../../store/projection";
-import { llmObject, LlmSchemaValidationError, LlmObjectError } from "../../llm";
+import { runLlmObject, LlmSchemaValidationError, LlmObjectError } from "../../llm";
 import {
   MIN_MESSAGES_FOR_EXTRACTION,
   MIN_CONTENT_LENGTH_FOR_EXTRACTION,
@@ -42,6 +42,7 @@ export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMe
     for (const part of message.parts) {
       if (part.type === "text") {
         if (message.role !== "user") continue;
+        if (part.meta?.interrupted === true || part.meta?.discardedFromContext === true) continue;
         parts.push({
           ...part,
           text: part.text.slice(0, 4000),
@@ -165,7 +166,7 @@ export function createMemoryExtractionTask(
       // --- Call LLM ------------------------------------------------------------
       let result: MemoryExtractionResult;
       try {
-        result = await llmObject({
+        result = await runLlmObject({
           model: ctx.modelInfo.model,
           modelOptions: ctx.modelOptions,
           schema: MemoryExtractionResultSchema,

@@ -10,13 +10,14 @@ function nextId(prefix: string): string {
   return `${prefix}-${idCounter}`;
 }
 
-function textPart(text: string, completed = true): StoredPart {
+function textPart(text: string, completed = true, meta?: Record<string, unknown>): StoredPart {
   return {
     type: "text",
     id: nextId("text"),
     text,
     createdAt: idCounter,
     ...(completed ? { completedAt: idCounter + 1 } : {}),
+    ...(meta ? { meta } : {}),
   };
 }
 
@@ -198,6 +199,37 @@ describe("toModelMessagesFromStoredMessages", () => {
     const messages = [storedMessage("assistant", [textPart("partial", false)])];
 
     expect(toModelMessagesFromStoredMessages(messages)).toEqual([]);
+  });
+
+  test("omits interrupted assistant text and adds a recovery marker without leaked partial text", () => {
+    const messages = [
+      storedMessage("user", [textPart("please continue")]),
+      storedMessage("assistant", [
+        textPart("PARTIAL_ASSISTANT_SHOULD_NOT_APPEAR", true, { interrupted: true, discardedFromContext: true }),
+      ]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(projected).toHaveLength(2);
+    expect(projected[0]).toEqual({ role: "user", content: "please continue" });
+    expect(projected[1]?.role).toBe("system");
+    expect(JSON.stringify(projected)).toContain("previous assistant response was interrupted");
+    expect(JSON.stringify(projected)).not.toContain("PARTIAL_ASSISTANT_SHOULD_NOT_APPEAR");
+  });
+
+  test("omits text marked discardedFromContext even when not explicitly interrupted", () => {
+    const messages = [
+      storedMessage("assistant", [
+        textPart("discarded", true, { discardedFromContext: true }),
+        textPart("safe"),
+      ]),
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages);
+
+    expect(JSON.stringify(projected)).not.toContain("discarded");
+    expect(JSON.stringify(projected)).toContain("safe");
   });
 
   test("omits an assistant message with only incomplete parts", () => {

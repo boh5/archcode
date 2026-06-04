@@ -14,7 +14,7 @@ import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS, MAX_SUB_AGENT_DEPTH } from 
 import { ConfiguredAgent } from "./configured-agent";
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
-import { __setStreamTextForTest } from "./query/loop";
+import { setLlmAdapterForTest } from "../llm/adapter";
 import { MissingProjectContextError } from "./errors";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
@@ -119,7 +119,7 @@ function setupMockStreamText(text = "ok") {
     usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
   }));
 
-  __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+  setLlmAdapterForTest({ streamText: fn as unknown as typeof import("ai").streamText });
   return fn;
 }
 
@@ -148,7 +148,7 @@ function setupToolCallStreamText(toolName: string, input: Record<string, unknown
     };
   });
 
-  __setStreamTextForTest(fn as unknown as typeof import("ai").streamText);
+  setLlmAdapterForTest({ streamText: fn as unknown as typeof import("ai").streamText });
   return fn;
 }
 
@@ -211,11 +211,7 @@ describe("ConfiguredAgent", () => {
   });
 
   afterEach(() => {
-    __setStreamTextForTest(
-      (() => {
-        throw new Error("streamText not mocked");
-      }) as unknown as typeof import("ai").streamText,
-    );
+    setLlmAdapterForTest(undefined);
   });
 
   afterAll(async () => {

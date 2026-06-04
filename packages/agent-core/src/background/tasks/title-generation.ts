@@ -1,14 +1,7 @@
-import { generateText as aiGenerateText } from "ai";
-import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { SessionStoreState, TextPart } from "../../store/types";
-
-let _generateText: typeof aiGenerateText = aiGenerateText;
-
-export function __setGenerateTextForTest(fn: typeof aiGenerateText) {
-  _generateText = fn;
-}
+import { runLlmText } from "../../llm";
 
 export function createTitleGenerationTask(
   store: StoreApi<SessionStoreState>,
@@ -31,42 +24,10 @@ export function createTitleGenerationTask(
       if (!text) return;
 
       try {
-        const result = await _generateText({
+        const result = await runLlmText({
           model: ctx.modelInfo.model,
           prompt: `Generate a concise session title (3-8 words) based on this user message: ${text}`,
-          ...(ctx.modelOptions?.maxOutputTokens !== undefined
-            ? { maxOutputTokens: ctx.modelOptions.maxOutputTokens }
-            : {}),
-          ...(ctx.modelOptions?.temperature !== undefined
-            ? { temperature: ctx.modelOptions.temperature }
-            : {}),
-          ...(ctx.modelOptions?.topP !== undefined
-            ? { topP: ctx.modelOptions.topP }
-            : {}),
-          ...(ctx.modelOptions?.topK !== undefined
-            ? { topK: ctx.modelOptions.topK }
-            : {}),
-          ...(ctx.modelOptions?.presencePenalty !== undefined
-            ? { presencePenalty: ctx.modelOptions.presencePenalty }
-            : {}),
-          ...(ctx.modelOptions?.frequencyPenalty !== undefined
-            ? { frequencyPenalty: ctx.modelOptions.frequencyPenalty }
-            : {}),
-          ...(ctx.modelOptions?.stopSequences !== undefined
-            ? { stopSequences: ctx.modelOptions.stopSequences }
-            : {}),
-          ...(ctx.modelOptions?.seed !== undefined
-            ? { seed: ctx.modelOptions.seed }
-            : {}),
-          ...(ctx.modelOptions?.maxRetries !== undefined
-            ? { maxRetries: ctx.modelOptions.maxRetries }
-            : {}),
-          ...(ctx.modelOptions?.timeout !== undefined
-            ? { timeout: ctx.modelOptions.timeout }
-            : {}),
-          ...(ctx.modelOptions?.providerOptions !== undefined
-            ? { providerOptions: ctx.modelOptions.providerOptions as ProviderOptions }
-            : {}),
+          modelOptions: ctx.modelOptions,
         });
         const title = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 50);
 

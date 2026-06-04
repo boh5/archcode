@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import type { StoredMessage } from "./types";
+import type { StoredMessage, StoredPart } from "./types";
 import { redactValue } from "../tools/security";
 
 export type ProjectionMode = "model" | "full-history";
@@ -7,6 +7,9 @@ export type ProjectionMode = "model" | "full-history";
 export interface ProjectionOptions {
   mode?: ProjectionMode;
 }
+
+const INTERRUPTION_RECOVERY_MARKER =
+  "<interrupted-response-recovery>\nThe previous assistant response was interrupted. Its partial assistant text was preserved in session history for visibility only and was intentionally omitted from this model context. Do not treat the omitted partial text as completed assistant output; continue from the user's latest request and, if needed, recover by restating only verified context.\n</interrupted-response-recovery>";
 
 export function toModelMessagesFromStoredMessages(
   messages: StoredMessage[],
@@ -34,7 +37,7 @@ export function toModelMessagesFromStoredMessages(
           content += `<compact-summary>\n${part.summary}\n</compact-summary>`;
           continue;
         }
-        if (part.type === "text" && part.completedAt !== undefined) {
+        if (part.type === "text" && part.completedAt !== undefined && !isDiscardedFromContext(part)) {
           content += part.text;
         }
       }
@@ -54,7 +57,9 @@ export function toModelMessagesFromStoredMessages(
         if (part.type === "system-notice" || part.type === "recovery-notice") continue;
 
         if (part.type === "text") {
-          if (part.completedAt !== undefined) {
+          if (isDiscardedFromContext(part)) {
+            pushRecoveryMarker(modelMessages);
+          } else if (part.completedAt !== undefined) {
             assistantContent.push({ type: "text", text: part.text });
           }
           continue;
@@ -115,7 +120,9 @@ export function toModelMessagesFromStoredMessages(
 
     for (const part of message.parts) {
       if (part.type === "text") {
-        if (part.completedAt !== undefined) {
+        if (isDiscardedFromContext(part)) {
+          pushRecoveryMarker(modelMessages);
+        } else if (part.completedAt !== undefined) {
           assistantContent.push({ type: "text", text: part.text });
         }
 
@@ -171,4 +178,15 @@ export function toModelMessagesFromStoredMessages(
   }
 
   return modelMessages;
+}
+
+function isDiscardedFromContext(part: StoredPart): boolean {
+  if (part.type !== "text" && part.type !== "reasoning") return false;
+  return part.meta?.interrupted === true || part.meta?.discardedFromContext === true;
+}
+
+function pushRecoveryMarker(modelMessages: ModelMessage[]): void {
+  const latest = modelMessages.at(-1);
+  if (latest?.role === "system" && latest.content === INTERRUPTION_RECOVERY_MARKER) return;
+  modelMessages.push({ role: "system", content: INTERRUPTION_RECOVERY_MARKER });
 }

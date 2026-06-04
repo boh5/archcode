@@ -89,7 +89,7 @@ function allPartVariantsMessage(): StoredMessage {
     executionId: "run-all",
     parts: [
       { type: "text", id: "text-complete", text: "done", createdAt: 201, completedAt: 202 },
-      { type: "text", id: "text-incomplete", text: "streaming", createdAt: 203 },
+      { type: "text", id: "text-incomplete", text: "streaming", createdAt: 203, meta: { interrupted: true, discardedFromContext: true } },
       { type: "reasoning", id: "reasoning-complete", text: "because", createdAt: 204, completedAt: 205 },
       { type: "tool", state: "pending", id: "tool-pending", toolCallId: "call-pending", toolName: "read", createdAt: 206 },
       { type: "tool", state: "running", id: "tool-running", toolCallId: "call-running", toolName: "bash", input: { cmd: "pwd" }, createdAt: 207, startedAt: 208 },
@@ -415,7 +415,20 @@ describe("session transcript serialization", () => {
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
-    expect(loaded.getState().messages).toEqual(messages);
+    const [loadedMessage] = loaded.getState().messages;
+    expect(loadedMessage).toBeDefined();
+    expect(loadedMessage!.parts[1]).toMatchObject({
+      type: "text",
+      id: "text-incomplete",
+      text: "streaming",
+      createdAt: 203,
+      completedAt: expect.any(Number),
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect({ ...loadedMessage, parts: [loadedMessage!.parts[0], ...loadedMessage!.parts.slice(2)] }).toEqual({
+      ...messages[0],
+      parts: [messages[0]!.parts[0], ...messages[0]!.parts.slice(2)],
+    });
   });
 
   test("loaded store resets transient state to safe defaults", async () => {

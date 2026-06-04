@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createMemoryConsolidationTask } from "./memory-consolidation";
-import { __setGenerateTextForTest } from "../../llm";
-import { generateText, Output, type GenerateTextResult, type ToolSet } from "ai";
+import { setLlmAdapterForTest } from "../../llm";
 import type { ModelInfo } from "../../provider/model";
 import type { BackgroundTaskContext } from "../types";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -11,7 +10,7 @@ import { createMockLogger } from "../../logger.test-helper";
 import { silentLogger } from "../../logger";
 import { storeManager } from "../../store/store";
 
-type MockGenerateTextResult = GenerateTextResult<ToolSet, Output.Output>;
+type MockGenerateTextResult = { text: string; toolCalls: Array<{ type: string; toolCallId: string; toolName: string; input: unknown }> };
 
 function makeGenerateTextResult(
   input: unknown = {
@@ -58,14 +57,14 @@ const tmpDir = resolve(import.meta.dir, "__test_tmp__");
 
 describe("createMemoryConsolidationTask", () => {
   beforeEach(async () => {
-    __setGenerateTextForTest(mockGenerateText as unknown as typeof generateText);
+    setLlmAdapterForTest({ generateText: mockGenerateText as unknown as typeof import("ai").generateText });
     mockGenerateText.mockReset();
     mockGenerateText.mockImplementation(async () => makeGenerateTextResult());
     await mkdir(tmpDir, { recursive: true });
   });
 
   afterEach(async () => {
-    __setGenerateTextForTest(generateText as unknown as typeof generateText);
+    setLlmAdapterForTest(undefined);
     await rm(tmpDir, { recursive: true, force: true });
   });
 

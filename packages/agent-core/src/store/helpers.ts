@@ -135,6 +135,7 @@ const TextPartSchema = z.strictObject({
   text: z.string(),
   createdAt: z.number(),
   completedAt: z.number().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const ReasoningPartSchema = z.strictObject({
@@ -143,6 +144,7 @@ const ReasoningPartSchema = z.strictObject({
   text: z.string(),
   createdAt: z.number(),
   completedAt: z.number().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const PendingToolPartSchema = z.strictObject({
@@ -332,6 +334,7 @@ export function getAssistantText(messages: StoredMessage[]): string {
 
     for (const part of message.parts) {
       if (part.type === "text" && part.completedAt !== undefined) {
+        if (part.meta?.interrupted === true || part.meta?.discardedFromContext === true) continue;
         text += part.text;
       }
     }
