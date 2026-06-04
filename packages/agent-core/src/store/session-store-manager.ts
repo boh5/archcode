@@ -110,6 +110,11 @@ export class SessionStoreManager {
       if (
         event.type === "user-message"
         || event.type === "execution-end"
+        || event.type === "tool-attempt"
+        || event.type === "tool-result"
+        || event.type === "llm-retry"
+        || event.type === "llm-recovery"
+        || event.type === "llm-recovery-failed"
         || event.type === "tool-child-session-link"
         || event.type === "question.request"
         || event.type === "question.terminal"
@@ -406,9 +411,9 @@ export class SessionStoreManager {
         currentExecutionId: undefined,
         currentAssistantMessageId: undefined,
         readSnapshots: new Map(),
-        events: [],
+        events: parsed.events ?? [],
         eventOffset: 0,
-        nextEventId: 0,
+        nextEventId: nextEventIdFromEvents(parsed.events ?? []),
       });
       this.#registerRootSessionId(parsed.sessionId, workspaceRoot, parsed.rootSessionId);
 
@@ -534,6 +539,11 @@ function reduceStoreEvent(
 
 function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
   return !event.type.includes(".") && event.type !== "shutdown";
+}
+
+function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
+  const latest = events.at(-1);
+  return latest === undefined ? 0 : latest.id + 1;
 }
 
 function upsertPendingInteraction(
@@ -687,7 +697,33 @@ function reconcileInterruptedSessionFile(file: SessionFile): SessionFile {
       error: link.error ?? "Child execution interrupted by restart",
     };
   });
-  return changed ? { ...file, executions, childSessionLinks } : file;
+  const messages = file.messages.map((message) => {
+    let messageChanged = false;
+    const parts = message.parts.map((part) => {
+      if (
+        part.type !== "tool"
+        || (part.state !== "pending" && part.state !== "running")
+        || part.attemptId === undefined
+      ) {
+        return part;
+      }
+
+      changed = true;
+      messageChanged = true;
+      return {
+        ...part,
+        state: "error" as const,
+        input: "input" in part ? part.input : undefined,
+        startedAt: "startedAt" in part ? part.startedAt : now,
+        endedAt: now,
+        errorMessage: "Tool execution result unknown: execution was interrupted",
+        meta: { unknownResult: true },
+      };
+    });
+
+    return messageChanged ? { ...message, parts, completedAt: message.completedAt ?? now } : message;
+  });
+  return changed ? { ...file, executions, childSessionLinks, messages } : file;
 }
 
 function pushDiagnostic(

@@ -3,6 +3,7 @@ import type {
   CompletedToolPart,
   ErrorToolPart,
   ReasoningPart,
+  RecoveryNoticePart,
   RunningToolPart,
   SessionMessage,
   SessionPart,
@@ -13,7 +14,6 @@ import type {
   SystemNoticePart,
   ToolChildSessionLink,
   TextPart,
-  ToolInputResolvedEvent,
   ToolPart,
   ExecutionEndEvent,
 } from "./types";
@@ -354,6 +354,28 @@ export function reduceStreamEvent(
       };
     }
 
+    case "tool-attempt": {
+      const location = findToolPartByCallId(
+        state.messages,
+        state.currentAssistantMessageId,
+        event.toolCallId,
+      );
+
+      if (!location) return {};
+
+      const existing = getToolPartAtLocation(state.messages, location.messageId, location.partId);
+      if (!existing || existing.state === "completed" || existing.state === "error") return {};
+
+      return {
+        messages: updateMessagePart(
+          state.messages,
+          location.messageId,
+          location.partId,
+          (part) => part.type === "tool" ? withToolAttempt(part, event) : part,
+        ),
+      };
+    }
+
     case "tool-result": {
       const location = findToolPartByCallId(
         state.messages,
@@ -495,6 +517,68 @@ export function reduceStreamEvent(
           },
         ],
       };
+    }
+
+    case "llm-retry": {
+      if (event.visibility === "internal") return {};
+
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      const status = event.nextRetryAt === undefined || event.nextRetryAt <= timestamp ? "retrying" : "scheduled";
+      return upsertRecoveryNoticePart(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        {
+          type: "recovery-notice",
+          id: recoveryNoticeId(event, ctx),
+          status,
+          message: event.message,
+          attempt: event.attempt,
+          ...(event.nextRetryAt === undefined ? {} : { nextRetryAt: event.nextRetryAt }),
+          errorKind: event.errorKind,
+          createdAt: timestamp,
+        },
+        assistant.stats,
+      );
+    }
+
+    case "llm-recovery": {
+      if (event.visibility === "internal") return {};
+
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      return upsertRecoveryNoticePart(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        {
+          type: "recovery-notice",
+          id: recoveryNoticeId(event, ctx),
+          status: "recovered",
+          message: event.message,
+          attempt: event.attempt,
+          ...(event.errorKind === undefined ? {} : { errorKind: event.errorKind }),
+          createdAt: timestamp,
+          completedAt: timestamp,
+        },
+        assistant.stats,
+      );
+    }
+
+    case "llm-recovery-failed": {
+      const assistant = ensureCurrentAssistantMessage(state, timestamp, ctx);
+      return upsertRecoveryNoticePart(
+        assistant.messages,
+        assistant.currentAssistantMessageId,
+        {
+          type: "recovery-notice",
+          id: recoveryNoticeId(event, ctx),
+          status: "failed",
+          message: event.message,
+          attempt: event.attempt,
+          errorKind: event.errorKind,
+          createdAt: timestamp,
+          completedAt: timestamp,
+        },
+        assistant.stats,
+      );
     }
 
     case "compact": {
@@ -694,12 +778,20 @@ function settleIncompleteState(
         return { ...part, completedAt: timestamp };
       }
 
+      if (part.type === "recovery-notice" && part.completedAt === undefined) {
+        return { ...part, completedAt: timestamp };
+      }
+
       if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {
+        const hasAttempt = part.attemptId !== undefined;
         const errorPart: ErrorToolPart = {
           ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),
           state: "error",
-          errorMessage: "Execution ended before tool result",
+          errorMessage: hasAttempt
+            ? "Tool execution result unknown: execution was interrupted"
+            : "Execution ended before tool result",
           endedAt: timestamp,
+          ...(hasAttempt ? { meta: { unknownResult: true } } : {}),
         };
 
         return errorPart;
@@ -726,7 +818,7 @@ function settleIncompleteState(
 }
 
 function isIncompletePart(part: SessionPart): boolean {
-  if (part.type === "text" || part.type === "reasoning" || part.type === "system-notice") {
+  if (part.type === "text" || part.type === "reasoning" || part.type === "system-notice" || part.type === "recovery-notice") {
     return part.completedAt === undefined;
   }
 
@@ -887,6 +979,50 @@ function appendReasoningPart(
   };
 }
 
+function upsertRecoveryNoticePart(
+  messages: SessionMessage[],
+  messageId: string,
+  nextPart: RecoveryNoticePart,
+  stats?: SessionStats,
+): Partial<SessionProjection> {
+  let found = false;
+  const updatedMessages = messages.map((message) => {
+    if (message.id !== messageId) return message;
+
+    const parts = message.parts.map((part) => {
+      if (part.type !== "recovery-notice" || part.id !== nextPart.id) return part;
+      found = true;
+      const { nextRetryAt: _oldNextRetryAt, completedAt: _oldCompletedAt, errorKind: oldErrorKind, ...basePart } = part;
+      const errorKind = nextPart.errorKind ?? oldErrorKind;
+      return {
+        ...basePart,
+        status: nextPart.status,
+        message: nextPart.message,
+        attempt: nextPart.attempt,
+        ...(nextPart.nextRetryAt === undefined ? {} : { nextRetryAt: nextPart.nextRetryAt }),
+        ...(errorKind === undefined ? {} : { errorKind }),
+        ...(nextPart.completedAt === undefined ? {} : { completedAt: nextPart.completedAt }),
+      } satisfies RecoveryNoticePart;
+    });
+
+    return { ...message, parts };
+  });
+
+  return {
+    messages: found ? updatedMessages : appendPartToMessage(messages, messageId, nextPart),
+    currentAssistantMessageId: messageId,
+    ...(stats ? { stats } : {}),
+  };
+}
+
+function recoveryNoticeId(
+  event: { stepId?: string; messageId?: string; toolCallId?: string; scope: string },
+  ctx: ReduceContext,
+): string {
+  const relatedId = event.toolCallId ?? event.messageId ?? event.stepId;
+  return relatedId === undefined ? ctx.generateId() : `recovery:${event.scope}:${relatedId}`;
+}
+
 function toRunningToolPart(
   part: ToolPart,
   input: unknown,
@@ -901,6 +1037,21 @@ function toRunningToolPart(
     input,
     createdAt: part.createdAt,
     startedAt: "startedAt" in part ? part.startedAt : timestamp,
+    ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),
+    ...(part.attemptTimestamp !== undefined ? { attemptTimestamp: part.attemptTimestamp } : {}),
+    ...(part.attemptDestructive !== undefined ? { attemptDestructive: part.attemptDestructive } : {}),
+  };
+}
+
+function withToolAttempt(
+  part: ToolPart,
+  event: Extract<StreamEvent, { type: "tool-attempt" }>,
+): ToolPart {
+  return {
+    ...part,
+    attemptId: event.attemptId,
+    attemptTimestamp: event.timestamp,
+    attemptDestructive: event.destructive,
   };
 }
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
-import type { SessionStoreState, StoredMessage } from "./types";
+import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
 
 const NormalizedUsageSchema = z.strictObject({
@@ -152,6 +152,9 @@ const PendingToolPartSchema = z.strictObject({
   toolCallId: z.string(),
   toolName: z.string(),
   createdAt: z.number(),
+  attemptId: z.string().optional(),
+  attemptTimestamp: z.number().optional(),
+  attemptDestructive: z.boolean().optional(),
 });
 
 const RunningToolPartSchema = z.strictObject({
@@ -163,6 +166,9 @@ const RunningToolPartSchema = z.strictObject({
   input: z.unknown(),
   createdAt: z.number(),
   startedAt: z.number(),
+  attemptId: z.string().optional(),
+  attemptTimestamp: z.number().optional(),
+  attemptDestructive: z.boolean().optional(),
 });
 
 const CompletedToolPartSchema = z.strictObject({
@@ -177,6 +183,9 @@ const CompletedToolPartSchema = z.strictObject({
   startedAt: z.number(),
   endedAt: z.number(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  attemptId: z.string().optional(),
+  attemptTimestamp: z.number().optional(),
+  attemptDestructive: z.boolean().optional(),
 });
 
 const ErrorToolPartSchema = z.strictObject({
@@ -191,6 +200,9 @@ const ErrorToolPartSchema = z.strictObject({
   startedAt: z.number(),
   endedAt: z.number(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  attemptId: z.string().optional(),
+  attemptTimestamp: z.number().optional(),
+  attemptDestructive: z.boolean().optional(),
 });
 
 const ToolPartSchema = z.discriminatedUnion("state", [
@@ -216,12 +228,25 @@ const SystemNoticePartSchema = z.strictObject({
   completedAt: z.number().optional(),
 });
 
+const RecoveryNoticePartSchema = z.strictObject({
+  type: z.literal("recovery-notice"),
+  id: z.string(),
+  status: z.enum(["scheduled", "retrying", "recovered", "failed"]),
+  message: z.string(),
+  attempt: z.number(),
+  nextRetryAt: z.number().optional(),
+  errorKind: z.string().optional(),
+  createdAt: z.number(),
+  completedAt: z.number().optional(),
+});
+
 const StoredPartSchema = z.discriminatedUnion("type", [
   TextPartSchema,
   ReasoningPartSchema,
   ToolPartSchema,
   CompactionPartSchema,
   SystemNoticePartSchema,
+  RecoveryNoticePartSchema,
 ]);
 
 const StoredMessageSchema = z.strictObject({
@@ -245,6 +270,13 @@ const StepInfoSchema = z.strictObject({
   error: z.string().optional(),
 });
 
+const SessionEventEnvelopeSchema = z.strictObject({
+  id: z.number(),
+  createdAt: z.number(),
+  kind: z.string(),
+  payload: z.unknown(),
+}).transform((value) => value as SessionEventEnvelope);
+
 export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
@@ -254,6 +286,7 @@ export const SessionFileSchema = z.strictObject({
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
   executions: z.array(SessionExecutionRecordSchema),
+  events: z.array(SessionEventEnvelopeSchema).optional(),
   todos: z.array(StoredTodoSchema)
     .refine(
       (todos) => todos.filter((todo) => todo.status === "in_progress").length <= 1,
@@ -288,7 +321,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "workflowId"
+  "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "workflowId" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -336,6 +369,7 @@ async function saveSessionTranscript(
     reminders: state.reminders ?? [],
     childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
+    ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
   };
@@ -391,6 +425,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
+    ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
   };

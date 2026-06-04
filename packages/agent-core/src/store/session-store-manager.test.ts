@@ -283,6 +283,71 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().childSessionLinks).toEqual([link]);
   });
 
+  test("persists tool attempts and reconciles missing effectful results as unknown", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+
+    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
+    store.getState().append({
+      type: "tool-attempt",
+      toolCallId: "call-1",
+      toolName: "file_write",
+      attemptId: "attempt-1",
+      timestamp: 123,
+      destructive: true,
+    });
+
+    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("attempt-1"));
+    expect(JSON.stringify(raw)).toContain("attempt-1");
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    const tool = loaded.getState().messages[0]?.parts[0];
+    expect(tool).toMatchObject({
+      type: "tool",
+      state: "error",
+      toolCallId: "call-1",
+      errorMessage: "Tool execution result unknown: execution was interrupted",
+      meta: { unknownResult: true },
+    });
+  });
+
+  test("persists completed tool results and does not downgrade them on restart", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+
+    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append({ type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } });
+    store.getState().append({
+      type: "tool-attempt",
+      toolCallId: "call-1",
+      toolName: "file_write",
+      attemptId: "attempt-1",
+      timestamp: 123,
+      destructive: true,
+    });
+    store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false });
+
+    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    const tool = loaded.getState().messages[0]?.parts[0];
+    expect(tool).toMatchObject({
+      type: "tool",
+      state: "completed",
+      toolCallId: "call-1",
+      output: "written",
+      attemptId: "attempt-1",
+    });
+    expect(JSON.stringify(tool)).not.toContain("unknownResult");
+  });
+
   test("getSessionFile() finds a child session through lazy descendant scan", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();

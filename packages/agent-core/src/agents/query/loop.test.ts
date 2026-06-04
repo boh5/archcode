@@ -556,6 +556,62 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     });
   });
 
+  test("destructive tool records attempt before executor side effects", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const executor = mock(async () => {
+      expect(events.some((event) => event.type === "tool-attempt" && event.toolCallId === "tc-1")).toBe(true);
+      return "mutated";
+    });
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-1", toolName: "destructiveTool", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: createPermissionBranchRegistry(async () => executor()),
+        allowedTools: ["destructiveTool"],
+      }),
+      "Mutate",
+    );
+
+    expect(executor).toHaveBeenCalledTimes(1);
+    const attempt = events.find((event) => event.type === "tool-attempt");
+    expect(attempt).toMatchObject({
+      type: "tool-attempt",
+      toolCallId: "tc-1",
+      toolName: "destructiveTool",
+      destructive: true,
+    });
+    if (!attempt || attempt.type !== "tool-attempt") throw new Error("Expected tool-attempt event");
+    expect(typeof attempt.attemptId).toBe("string");
+    expect(typeof attempt.timestamp).toBe("number");
+  });
+
+  test("read-only tool does not record attempt", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-read", toolName: "echo", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({ store, toolRegistry: createTestRegistry(), allowedTools: ["echo"] }),
+      "Read",
+    );
+
+    expect(events.some((event) => event.type === "tool-attempt")).toBe(false);
+  });
+
   test("missing tool descriptor stores error result", async () => {
     const store = createStore();
     createMockStreamText([

@@ -139,6 +139,15 @@ export interface ToolInputResolvedEvent {
   input: unknown;
 }
 
+export interface ToolAttemptEvent {
+  type: "tool-attempt";
+  toolCallId: string;
+  toolName: string;
+  attemptId: string;
+  timestamp: number;
+  destructive: boolean;
+}
+
 export interface ToolResultEvent {
   type: "tool-result";
   toolCallId: string;
@@ -221,6 +230,49 @@ export interface LoopErrorEvent {
   error: string;
 }
 
+export type LlmRecoveryScope = "short" | "session";
+export type LlmRecoveryVisibility = "internal" | "session";
+
+export interface LlmRetryEvent {
+  type: "llm-retry";
+  scope: LlmRecoveryScope;
+  visibility: LlmRecoveryVisibility;
+  profile?: string;
+  attempt: number;
+  errorKind: string;
+  message: string;
+  nextRetryAt?: number;
+  stepId?: string;
+  messageId?: string;
+  toolCallId?: string;
+}
+
+export interface LlmRecoveryEvent {
+  type: "llm-recovery";
+  scope: LlmRecoveryScope;
+  visibility: LlmRecoveryVisibility;
+  profile?: string;
+  errorKind?: string;
+  attempt: number;
+  message: string;
+  stepId?: string;
+  messageId?: string;
+  toolCallId?: string;
+}
+
+export interface LlmRecoveryFailedEvent {
+  type: "llm-recovery-failed";
+  scope: "session";
+  visibility: "session";
+  profile?: string;
+  attempt: number;
+  errorKind: string;
+  message: string;
+  stepId?: string;
+  messageId?: string;
+  toolCallId?: string;
+}
+
 export type StreamEvent =
   | ExecutionStartEvent
   | ExecutionEndEvent
@@ -235,6 +287,7 @@ export type StreamEvent =
   | ToolInputStartEvent
   | ToolCallEvent
   | ToolInputResolvedEvent
+  | ToolAttemptEvent
   | ToolResultEvent
   | ToolChildSessionLinkEvent
   | TodoWriteEvent
@@ -243,6 +296,9 @@ export type StreamEvent =
   | StepStartEvent
   | StepEndEvent
   | LoopErrorEvent
+  | LlmRetryEvent
+  | LlmRecoveryEvent
+  | LlmRecoveryFailedEvent
   | CompactEvent;
 
 export const MAX_EVENTS = 10000;
@@ -378,6 +434,9 @@ export interface PendingToolPart {
   toolCallId: string;
   toolName: string;
   createdAt: number;
+  attemptId?: string;
+  attemptTimestamp?: number;
+  attemptDestructive?: boolean;
 }
 
 export interface RunningToolPart {
@@ -389,6 +448,9 @@ export interface RunningToolPart {
   input: unknown;
   createdAt: number;
   startedAt: number;
+  attemptId?: string;
+  attemptTimestamp?: number;
+  attemptDestructive?: boolean;
 }
 
 export interface CompletedToolPart {
@@ -403,6 +465,9 @@ export interface CompletedToolPart {
   startedAt: number;
   endedAt: number;
   meta?: Record<string, unknown>;
+  attemptId?: string;
+  attemptTimestamp?: number;
+  attemptDestructive?: boolean;
 }
 
 export interface ErrorToolPart {
@@ -416,7 +481,11 @@ export interface ErrorToolPart {
   createdAt: number;
   startedAt: number;
   endedAt: number;
+  /** Set meta.unknownResult=true when an attempted effectful tool was interrupted before a durable result. */
   meta?: Record<string, unknown>;
+  attemptId?: string;
+  attemptTimestamp?: number;
+  attemptDestructive?: boolean;
 }
 
 export type ToolPart = PendingToolPart | RunningToolPart | CompletedToolPart | ErrorToolPart;
@@ -437,7 +506,19 @@ export interface SystemNoticePart {
   completedAt?: number;
 }
 
-export type SessionPart = TextPart | ReasoningPart | ToolPart | CompactionPart | SystemNoticePart;
+export interface RecoveryNoticePart {
+  type: "recovery-notice";
+  id: string;
+  status: "scheduled" | "retrying" | "recovered" | "failed";
+  message: string;
+  attempt: number;
+  nextRetryAt?: number;
+  errorKind?: string;
+  createdAt: number;
+  completedAt?: number;
+}
+
+export type SessionPart = TextPart | ReasoningPart | ToolPart | CompactionPart | SystemNoticePart | RecoveryNoticePart;
 
 export interface SessionMessage {
   id: string;
@@ -557,6 +638,7 @@ export interface Session {
   childSessionLinks?: ToolChildSessionLink[];
   stats?: SessionStats;
   executions?: SessionExecutionRecord[];
+  events?: SessionEventEnvelope[];
   parentSessionId?: string;
   eventCursor?: number;
 }
@@ -628,6 +710,8 @@ export interface ToolDiffMetadata {
 }
 
 export interface ToolResultMeta {
+  /** True when an effectful tool attempt was durably recorded but execution stopped before a result was known. */
+  unknownResult?: boolean;
   diffs?: ToolDiffMetadata;
   [key: string]: unknown;
 }

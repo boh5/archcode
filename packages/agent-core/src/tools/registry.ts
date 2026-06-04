@@ -197,6 +197,16 @@ export class ToolRegistry {
           }
         }
 
+        if (isEffectfulTool(descriptor)) {
+          ctx.onToolAttempt?.({
+            attemptId: crypto.randomUUID(),
+            toolCallId: toolCall.toolCallId,
+            toolName: descriptor.name,
+            timestamp: Date.now(),
+            destructive: descriptor.traits.destructive,
+          });
+        }
+
         try {
           const output = await descriptor.execute(currentInput, ctx);
           result = normalizeExecuteOutput(output);
@@ -463,6 +473,10 @@ function createDenyResult(
 
 function isAllowedTool(ctx: ToolExecutionContext, name: string): boolean {
   return ctx.allowedTools.has(name);
+}
+
+function isEffectfulTool(descriptor: AnyToolDescriptor): boolean {
+  return descriptor.traits.destructive || !descriptor.traits.readOnly;
 }
 
 export class ResolvedToolSet {

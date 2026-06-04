@@ -436,6 +436,16 @@ async function executeToolCalls(
                 input: redactedInput,
               });
             },
+            onToolAttempt(attempt) {
+              store.getState().append({
+                type: "tool-attempt",
+                toolCallId: attempt.toolCallId,
+                toolName: attempt.toolName,
+                attemptId: attempt.attemptId,
+                timestamp: attempt.timestamp,
+                destructive: attempt.destructive,
+              });
+            },
           });
           const result = await registry.execute(toolCall, ctx);
           appendToolResult(store, toolCall, result.output, result.isError, result.meta);
@@ -479,6 +489,16 @@ async function executeToolCalls(
             toolCallId: toolCall.toolCallId,
             toolName: toolCall.toolName,
             input: redactedInput,
+          });
+        },
+        onToolAttempt(attempt) {
+          store.getState().append({
+            type: "tool-attempt",
+            toolCallId: attempt.toolCallId,
+            toolName: attempt.toolName,
+            attemptId: attempt.attemptId,
+            timestamp: attempt.timestamp,
+            destructive: attempt.destructive,
           });
         },
       });

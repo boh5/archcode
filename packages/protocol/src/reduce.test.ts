@@ -191,6 +191,73 @@ describe("reduceStreamEvent", () => {
     expect(state.stats.tools).toEqual({ calls: 1, completed: 1, failed: 0 });
   });
 
+  test("records effectful tool attempt metadata on running tool part", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
+      {
+        type: "tool-attempt",
+        toolCallId: "call-1",
+        toolName: "file_write",
+        attemptId: "attempt-1",
+        timestamp: 99,
+        destructive: true,
+      },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("running");
+    expect(tool.attemptId).toBe("attempt-1");
+    expect(tool.attemptTimestamp).toBe(99);
+    expect(tool.attemptDestructive).toBe(true);
+  });
+
+  test("missing result after recorded attempt settles as unknown-result error", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-unknown" },
+      { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
+      {
+        type: "tool-attempt",
+        toolCallId: "call-1",
+        toolName: "file_write",
+        attemptId: "attempt-1",
+        timestamp: 99,
+        destructive: true,
+      },
+      { type: "execution-end", status: "interrupted" },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("error");
+    if (tool.state !== "error") throw new Error("Expected error tool");
+    expect(tool.errorMessage).toBe("Tool execution result unknown: execution was interrupted");
+    expect(tool.meta).toEqual({ unknownResult: true });
+    expect(tool.attemptId).toBe("attempt-1");
+  });
+
+  test("completed tool result is preserved across later recovery settlement", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-completed" },
+      { type: "tool-call", toolCallId: "call-1", toolName: "file_write", input: { path: "a.ts" } },
+      {
+        type: "tool-attempt",
+        toolCallId: "call-1",
+        toolName: "file_write",
+        attemptId: "attempt-1",
+        timestamp: 99,
+        destructive: true,
+      },
+      { type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false },
+      { type: "execution-end", status: "interrupted" },
+      { type: "execution-end", status: "interrupted" },
+    ]);
+
+    const tool = partOfType(onlyMessage(state.messages), "tool");
+    expect(tool.state).toBe("completed");
+    if (tool.state !== "completed") throw new Error("Expected completed tool");
+    expect(tool.output).toBe("written");
+    expect(tool.meta?.unknownResult).toBeUndefined();
+  });
+
   test("creates a tool child session link", () => {
     const link = makeChildSessionLink();
 
@@ -705,5 +772,199 @@ describe("reduceStreamEvent", () => {
     const tool = partOfType(onlyMessage(state.messages), "tool");
     if (tool.state === "pending") throw new Error("Expected running or settled tool");
     expect(tool.input).toEqual({ path: "a.ts" });
+  });
+
+  test("internal llm retry events are audit-only and do not create session parts", () => {
+    const event: StreamEvent = {
+      type: "llm-retry",
+      scope: "short",
+      visibility: "internal",
+      profile: "short",
+      attempt: 1,
+      errorKind: "network",
+      message: "retrying internally",
+      nextRetryAt: 123456999,
+      stepId: "step-1",
+    };
+
+    expect(JSON.parse(JSON.stringify(event))).toEqual(event);
+    const state = applyEvents(createProjection(), [event]);
+
+    expect(state.messages).toEqual([]);
+    expect(state.stats.messages).toEqual({ user: 0, assistant: 0, total: 0 });
+  });
+
+  test("session-visible llm retry creates a recovery notice part", () => {
+    const state = applyEvents(createProjection(), [
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        profile: "session",
+        attempt: 2,
+        errorKind: "rate-limit",
+        message: "retry scheduled",
+        nextRetryAt: 123457000,
+        stepId: "step-1",
+      },
+    ]);
+
+    const notice = partOfType(onlyMessage(state.messages), "recovery-notice");
+    expect(notice).toMatchObject({
+      id: "recovery:session:step-1",
+      status: "scheduled",
+      message: "retry scheduled",
+      attempt: 2,
+      nextRetryAt: 123457000,
+      errorKind: "rate-limit",
+      createdAt: 123456789,
+    });
+    expect(notice.completedAt).toBeUndefined();
+  });
+
+  test("session-visible recovery transitions a notice to recovered", () => {
+    const state = applyEvents(createProjection(), [
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "retrying now",
+        stepId: "step-1",
+      },
+      {
+        type: "llm-recovery",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        message: "recovered",
+        stepId: "step-1",
+      },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    const notices = message.parts.filter((part) => part.type === "recovery-notice");
+    expect(notices).toHaveLength(1);
+    const notice = partOfType(message, "recovery-notice");
+    expect(notice).toMatchObject({
+      id: "recovery:session:step-1",
+      status: "recovered",
+      message: "recovered",
+      attempt: 1,
+      errorKind: "network",
+      completedAt: 123456789,
+    });
+  });
+
+  test("session-visible recovery failure transitions a notice to failed", () => {
+    const state = applyEvents(createProjection(), [
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 3,
+        errorKind: "overloaded",
+        message: "retrying",
+        toolCallId: "tool-1",
+      },
+      {
+        type: "llm-recovery-failed",
+        scope: "session",
+        visibility: "session",
+        attempt: 3,
+        errorKind: "overloaded",
+        message: "recovery failed",
+        toolCallId: "tool-1",
+      },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    expect(message.parts.filter((part) => part.type === "recovery-notice")).toHaveLength(1);
+    expect(partOfType(message, "recovery-notice")).toMatchObject({
+      id: "recovery:session:tool-1",
+      status: "failed",
+      message: "recovery failed",
+      attempt: 3,
+      errorKind: "overloaded",
+      completedAt: 123456789,
+    });
+  });
+
+  test("retry and recovery events are serializable and replay-safe", () => {
+    const events: StreamEvent[] = [
+      { type: "execution-start", executionId: "run-retry" },
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "retrying",
+        nextRetryAt: 123457000,
+        messageId: "message-1",
+      },
+      {
+        type: "llm-recovery",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        message: "recovered",
+        messageId: "message-1",
+      },
+    ];
+    const replayedEvents = JSON.parse(JSON.stringify(events)) as StreamEvent[];
+
+    expect(applyEvents(createProjection(), replayedEvents)).toEqual(applyEvents(createProjection(), events));
+  });
+
+  test("recoverable attempts do not end execution and loop errors remain after recovery", () => {
+    const state = applyEvents(createProjection({ currentExecutionId: "run-recover" }), [
+      { type: "step-start", step: 0 },
+      { type: "loop-error", step: 0, error: "transient stream error" },
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "retrying",
+        stepId: "step-1",
+      },
+      {
+        type: "llm-recovery",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        message: "recovered",
+        stepId: "step-1",
+      },
+    ]);
+
+    expect(state.isRunning).toBe(false);
+    expect(state.executions).toEqual([]);
+    expect(onlyStep(state.steps).error).toBe("transient stream error");
+    expect(partOfType(onlyMessage(state.messages), "recovery-notice").status).toBe("recovered");
+  });
+
+  test("execution-end completes in-flight recovery notices", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "execution-start", executionId: "run-notice" },
+      {
+        type: "llm-retry",
+        scope: "session",
+        visibility: "session",
+        attempt: 1,
+        errorKind: "network",
+        message: "retrying",
+        stepId: "step-1",
+      },
+      { type: "execution-end", status: "completed" },
+    ]);
+
+    expect(partOfType(onlyMessage(state.messages), "recovery-notice")).toMatchObject({
+      status: "retrying",
+      completedAt: 123456789,
+    });
   });
 });

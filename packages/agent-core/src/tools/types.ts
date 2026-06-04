@@ -23,6 +23,14 @@ export interface ToolExecutionResult {
   meta?: Record<string, unknown>;
 }
 
+export interface ToolAttemptMetadata {
+  attemptId: string;
+  toolCallId: string;
+  toolName: string;
+  timestamp: number;
+  destructive: boolean;
+}
+
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -50,6 +58,8 @@ export interface ToolExecutionContext {
   currentDepth?: number;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
   onInputResolved?: (redactedInput: unknown) => void;
+  /** Called immediately before an effectful tool's execute() can perform side effects. */
+  onToolAttempt?: (attempt: ToolAttemptMetadata) => void;
 }
 
 type ToolExecutionContextInput = Omit<ToolExecutionContext, "workspaceRoot">;

@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import type { CompactionPart, StoredMessage } from "./types";
+import type { StoredMessage } from "./types";
 import { redactValue } from "../tools/security";
 
 export type ProjectionMode = "model" | "full-history";
@@ -47,17 +47,15 @@ export function toModelMessagesFromStoredMessages(
     }
 
     if (mode === "full-history") {
-      let hasContent = false;
       const assistantContent: Extract<ModelMessage, { role: "assistant" }>["content"] = [];
       const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
       for (const part of message.parts) {
-        if (part.type === "system-notice") continue;
+        if (part.type === "system-notice" || part.type === "recovery-notice") continue;
 
         if (part.type === "text") {
           if (part.completedAt !== undefined) {
             assistantContent.push({ type: "text", text: part.text });
-            hasContent = true;
           }
           continue;
         }
@@ -83,7 +81,6 @@ export function toModelMessagesFromStoredMessages(
             toolName: part.toolName,
             output: { type: "text", value: part.output },
           });
-          hasContent = true;
         }
 
         if (part.state === "error") {
@@ -99,7 +96,6 @@ export function toModelMessagesFromStoredMessages(
             toolName: part.toolName,
             output: { type: "error-text", value: part.errorMessage },
           });
-          hasContent = true;
         }
       }
 
@@ -130,7 +126,7 @@ export function toModelMessagesFromStoredMessages(
         continue;
       }
 
-      if (part.type === "compaction" || part.type === "system-notice") {
+      if (part.type === "compaction" || part.type === "system-notice" || part.type === "recovery-notice") {
         continue;
       }
 

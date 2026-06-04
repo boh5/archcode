@@ -7,6 +7,7 @@ import type {
   GlobalSSEShutdownEvent,
   GlobalSessionEventEnvelope,
   TextDeltaEvent,
+  ToolAttemptEvent,
 } from "./types";
 
 function serializeRoundTrip<T>(value: T): T {
@@ -109,5 +110,18 @@ describe("global SSE wire protocol types", () => {
       "lagged",
       "shutdown",
     ]);
+  });
+
+  test("tool-attempt events are serializable and replay-safe", () => {
+    const event: ToolAttemptEvent = {
+      type: "tool-attempt",
+      toolCallId: "call-1",
+      toolName: "file_write",
+      attemptId: "attempt-1",
+      timestamp: 123,
+      destructive: true,
+    };
+
+    expect(serializeRoundTrip(event)).toEqual(event);
   });
 });
