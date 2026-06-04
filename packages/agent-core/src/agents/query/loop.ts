@@ -132,10 +132,6 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       finishReason: retryable ? "interrupted" : "error",
     });
 
-    if (hadDurableOutput) {
-      markCurrentAssistantPartialOutputInterrupted(store);
-    }
-
     if (!retryable) {
       throw err;
     }
@@ -182,6 +178,7 @@ export async function runQueryLoop(
   let recoveredFromFailure = false;
   let zeroOutputShortAttempt = 0;
   let sessionRetryAttempt = 0;
+  let lastRecoveryAttempt = 0;
   const doomTracker = new DoomTracker();
 
   if (!store.getState().isRunning) {
@@ -201,7 +198,16 @@ export async function runQueryLoop(
     }
 
     while (steps < maxSteps) {
-      if (abort.aborted) break;
+      if (abort.aborted) {
+        appendRecoveryFailedIfNeeded(store, abort.reason ?? new DOMException("Aborted", "AbortError"), {
+          steps,
+          recoveredFromFailure,
+          sessionRetryAttempt,
+          zeroOutputShortAttempt,
+          lastRecoveryAttempt,
+        });
+        break;
+      }
 
       const attempt = await runModelAttempt({
         step: steps,
@@ -221,9 +227,12 @@ export async function runQueryLoop(
 
       if (attempt.outcome === "retry") {
         recoveredFromFailure = true;
+        lastRecoveryAttempt = attempt.recoveryAttempt;
         if (attempt.hadDurableOutput) {
           zeroOutputShortAttempt = 0;
           sessionRetryAttempt = 0;
+          const delayMs = computeSessionRetryDelayMs(attempt.recoveryAttempt, attempt.error);
+          const nextRetryAt = Date.now() + delayMs;
           store.getState().append({
             type: "llm-retry",
             scope: "session",
@@ -232,14 +241,16 @@ export async function runQueryLoop(
             attempt: attempt.recoveryAttempt,
             errorKind: attempt.errorKind,
             message: `Model stream was interrupted after partial output. Continuing with recovery attempt ${attempt.recoveryAttempt}.`,
-            nextRetryAt: Date.now(),
+            nextRetryAt,
             stepId: `step-${steps}`,
           });
+          await sleepAbortable(delayMs, abort);
           continue;
         }
 
         if (zeroOutputShortAttempt < ZERO_OUTPUT_SHORT_ATTEMPTS) {
           zeroOutputShortAttempt++;
+          lastRecoveryAttempt = zeroOutputShortAttempt;
           store.getState().append({
             type: "llm-retry",
             scope: "short",
@@ -254,6 +265,7 @@ export async function runQueryLoop(
         }
 
         sessionRetryAttempt++;
+        lastRecoveryAttempt = sessionRetryAttempt;
         const delayMs = computeSessionRetryDelayMs(sessionRetryAttempt, attempt.error);
         const nextRetryAt = Date.now() + delayMs;
         store.getState().append({
@@ -286,9 +298,19 @@ export async function runQueryLoop(
         recoveredFromFailure = false;
         zeroOutputShortAttempt = 0;
         sessionRetryAttempt = 0;
+        lastRecoveryAttempt = 0;
       }
 
-      if (abort.aborted) break;
+      if (abort.aborted) {
+        appendRecoveryFailedIfNeeded(store, abort.reason ?? new DOMException("Aborted", "AbortError"), {
+          steps,
+          recoveredFromFailure,
+          sessionRetryAttempt,
+          zeroOutputShortAttempt,
+          lastRecoveryAttempt,
+        });
+        break;
+      }
 
       const finishReason = await result.finishReason;
       const usage = await result.usage;
@@ -351,6 +373,13 @@ export async function runQueryLoop(
       type: "loop-error",
       step: steps,
       error: errorMessage(err),
+    });
+    appendRecoveryFailedIfNeeded(store, err, {
+      steps,
+      recoveredFromFailure,
+      sessionRetryAttempt,
+      zeroOutputShortAttempt,
+      lastRecoveryAttempt,
     });
     return { text: lastText, steps };
   } finally {
@@ -503,40 +532,46 @@ function hasCurrentStepDurableOutput(store: StoreApi<SessionStoreState>): boolea
   });
 }
 
-function markCurrentAssistantPartialOutputInterrupted(store: StoreApi<SessionStoreState>): void {
-  const currentAssistantId = store.getState().currentAssistantMessageId;
-  if (!currentAssistantId) return;
-
-  store.setState((state) => ({
-    messages: state.messages.map((message) => {
-      if (message.id !== currentAssistantId) return message;
-
-      return {
-        ...message,
-        parts: message.parts.map((part) => {
-          if (part.type === "text" || part.type === "reasoning") {
-            if (part.text.length === 0) return part;
-            return {
-              ...part,
-              meta: {
-                ...(part.meta ?? {}),
-                interrupted: true,
-                discardedFromContext: true,
-              },
-            };
-          }
-          return part;
-        }),
-      };
-    }),
-  }));
-}
-
 function countRecoveryAttempts(store: StoreApi<SessionStoreState>, step: number): number {
   const stepId = `step-${step}`;
   return store.getState().events.filter((event) =>
     (event.payload.type === "llm-retry" || event.payload.type === "llm-recovery") && event.payload.stepId === stepId,
   ).length;
+}
+
+function appendRecoveryFailedIfNeeded(
+  store: StoreApi<SessionStoreState>,
+  err: unknown,
+  attempts: {
+    steps: number;
+    recoveredFromFailure: boolean;
+    sessionRetryAttempt: number;
+    zeroOutputShortAttempt: number;
+    lastRecoveryAttempt: number;
+  },
+): void {
+  if (!hasRecoveryAttempts(attempts)) return;
+
+  const classification = classifyLlmError(err);
+  const message = errorMessage(err);
+  store.getState().append({
+    type: "llm-recovery-failed",
+    scope: "session",
+    visibility: "session",
+    attempt: Math.max(attempts.sessionRetryAttempt, attempts.zeroOutputShortAttempt, attempts.lastRecoveryAttempt, 1),
+    errorKind: classification.kind,
+    message: `Recovery failed: ${message}`,
+    stepId: `step-${attempts.steps}`,
+  });
+}
+
+function hasRecoveryAttempts(attempts: {
+  recoveredFromFailure: boolean;
+  sessionRetryAttempt: number;
+  zeroOutputShortAttempt: number;
+  lastRecoveryAttempt: number;
+}): boolean {
+  return attempts.recoveredFromFailure || attempts.sessionRetryAttempt > 0 || attempts.zeroOutputShortAttempt > 0 || attempts.lastRecoveryAttempt > 0;
 }
 
 function computeSessionRetryDelayMs(attempt: number, error: unknown): number {

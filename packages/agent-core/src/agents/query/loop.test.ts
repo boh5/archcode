@@ -50,8 +50,8 @@ interface MockRound {
   fullStreamError?: Error;
 }
 
-function retryableError(message = "network timeout"): Error {
-  return new Error(message);
+function retryableError(message = "network timeout", retryAfterMs?: number): Error {
+  return retryAfterMs === undefined ? new Error(message) : Object.assign(new Error(message), { retryAfterMs });
 }
 
 const dummyModel = {
@@ -1519,7 +1519,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     const streamFn = createMockStreamText([
       {
         chunks: [{ type: "text-delta", text: "partial" }],
-        fullStreamError: retryableError(),
+        fullStreamError: retryableError("network timeout", 0.001),
       },
       { text: "final" },
     ]);
@@ -1536,6 +1536,68 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect.objectContaining({ text: "final" }),
     ]);
     expect(lastAssistant(store).parts.some((part) => part.type === "recovery-notice" && part.status === "recovered")).toBe(true);
+  });
+
+  test("partial-output recovery waits before retrying", async () => {
+    const callTimes: number[] = [];
+    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+      callTimes.push(Date.now());
+      const callIndex = callTimes.length;
+      return {
+        fullStream: (async function* () {
+          if (callIndex === 1) {
+            yield { type: "text-delta", text: "partial" };
+            throw retryableError("network timeout", 0.025);
+          }
+          yield { type: "text-delta", text: "final" };
+        })(),
+        finishReason: Promise.resolve("stop"),
+        usage: Promise.resolve({ totalTokens: 1 }),
+        text: Promise.resolve(callIndex === 1 ? "partial" : "final"),
+        toolCalls: Promise.resolve([]),
+      };
+    });
+    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+
+    await runQueryLoop(makeOptions(), "Hi");
+
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(callTimes[1]! - callTimes[0]!).toBeGreaterThanOrEqual(20);
+  });
+
+  test("emits recovery-failed after non-retryable failure following recovery attempts", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    let callIndex = 0;
+    const fn = mock((_: Parameters<typeof aiStreamText>[0]) => {
+      callIndex++;
+      if (callIndex === 1) {
+        return {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "partial" };
+            throw retryableError("network timeout", 0.001);
+          })(),
+          finishReason: Promise.resolve("stop"),
+          usage: Promise.resolve({ totalTokens: 1 }),
+          text: Promise.resolve("partial"),
+          toolCalls: Promise.resolve([]),
+        };
+      }
+      throw new Error("invalid api key");
+    });
+    setLlmAdapterForTest({ streamText: fn as unknown as typeof aiStreamText });
+
+    await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      scope: "session",
+      visibility: "session",
+      attempt: 1,
+      message: "Recovery failed: invalid api key",
+      stepId: "step-0",
+    }));
+    expect(lastAssistant(store).parts.some((part) => part.type === "recovery-notice" && part.status === "failed")).toBe(true);
   });
 
   test("recoverable attempts close streaming but keep execution running until terminal end", async () => {

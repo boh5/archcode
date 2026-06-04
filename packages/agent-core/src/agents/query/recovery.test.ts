@@ -30,7 +30,9 @@ interface MockRound {
   fullStreamFactory?: () => AsyncIterable<MockChunk>;
 }
 
-const retryableEof = (message = "stream EOF") => new Error(message);
+const retryableEof = (message = "stream EOF", retryAfterMs?: number) => retryAfterMs === undefined
+  ? new Error(message)
+  : Object.assign(new Error(message), { retryAfterMs });
 
 const dummyModelInfo = {
   model: { modelId: "mock-model", provider: "mock-provider" },
@@ -177,7 +179,7 @@ describe("query loop LLM stream recovery", () => {
     const store = createStore();
     const events = captureEvents(store);
     const streamFn = createMockStreamText([
-      { chunks: [{ type: "text-delta", text: "PARTIAL_SHOULD_NOT_REPLAY" }], fullStreamError: retryableEof("EOF truncated body") },
+      { chunks: [{ type: "text-delta", text: "PARTIAL_SHOULD_NOT_REPLAY" }], fullStreamError: retryableEof("EOF truncated body", 0.001) },
       { text: "Recovered continuation" },
     ]);
 
@@ -206,7 +208,7 @@ describe("query loop LLM stream recovery", () => {
       }),
     ]);
     createMockStreamText([
-      { chunks: [{ type: "tool-input-start", id: "tc-pending", toolName: "echo" }], fullStreamError: retryableEof("tool input only") },
+      { chunks: [{ type: "tool-input-start", id: "tc-pending", toolName: "echo" }], fullStreamError: retryableEof("tool input only", 0.001) },
       { text: "Recovered" },
     ]);
 
@@ -264,7 +266,7 @@ describe("query loop LLM stream recovery", () => {
     ]);
     createMockStreamText([
       { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-done", toolName: "writeThing", input: {} }] },
-      { chunks: [{ type: "text-delta", text: "partial after tool" }], fullStreamError: retryableEof("later eof") },
+      { chunks: [{ type: "text-delta", text: "partial after tool" }], fullStreamError: retryableEof("later eof", 0.001) },
       { text: "Recovered final" },
     ]);
 
@@ -296,6 +298,13 @@ describe("query loop LLM stream recovery", () => {
 
     expect(Date.now() - started).toBeLessThan(1500);
     expect(store.getState().executions.at(-1)?.status).toBe("aborted");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      scope: "session",
+      visibility: "session",
+      errorKind: "abort",
+      message: expect.stringContaining("Recovery failed:"),
+    }));
   });
 
   test("continuous session retry is uncapped while delay is capped and next retry time is emitted", async () => {
@@ -332,7 +341,7 @@ describe("query loop LLM stream recovery", () => {
     createMockStreamText([
       { fullStreamError: retryableEof("eof-1") },
       { fullStreamError: retryableEof("eof-2") },
-      { chunks: [{ type: "text-delta", text: "partial" }], fullStreamError: retryableEof("partial eof") },
+      { chunks: [{ type: "text-delta", text: "partial" }], fullStreamError: retryableEof("partial eof", 0.001) },
       { text: "Recovered" },
     ]);
 

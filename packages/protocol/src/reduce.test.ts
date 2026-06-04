@@ -337,6 +337,32 @@ describe("reduceStreamEvent", () => {
     expect(text.meta).toBeUndefined();
   });
 
+  test("interrupted step marks completed text and reasoning as discarded context", () => {
+    const state = applyEvents(createProjection({ currentExecutionId: "run-step-interrupted" }), [
+      { type: "step-start", step: 0 },
+      { type: "text-start" },
+      { type: "text-delta", text: "partial answer" },
+      { type: "text-end" },
+      { type: "reasoning-start" },
+      { type: "reasoning-delta", text: "partial reasoning" },
+      { type: "reasoning-end" },
+      { type: "step-end", step: 0, finishReason: "interrupted" },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    expect(partOfType(message, "text")).toMatchObject({
+      text: "partial answer",
+      completedAt: 123456789,
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(partOfType(message, "reasoning")).toMatchObject({
+      text: "partial reasoning",
+      completedAt: 123456789,
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(onlyStep(state.steps).finishReason).toBe("interrupted");
+  });
+
   test("creates a tool child session link", () => {
     const link = makeChildSessionLink();
 

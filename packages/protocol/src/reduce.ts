@@ -473,6 +473,9 @@ export function reduceStreamEvent(
       const hasOpenStep = state.steps.some(
         (step) => step.step === event.step && step.executionId === state.currentExecutionId && !step.completedAt,
       );
+      const messages = event.finishReason === "interrupted"
+        ? markCurrentAssistantModelOutputInterrupted(state.messages, state.currentAssistantMessageId, timestamp)
+        : state.messages;
       return {
         isStreamingModel: false,
         steps: state.steps.map((step) =>
@@ -485,6 +488,7 @@ export function reduceStreamEvent(
               }
             : step,
         ),
+        messages,
         ...(hasOpenStep ? { stats: incrementStepCompleted(state.stats, usage) } : {}),
       };
     }
@@ -830,6 +834,40 @@ function settleIncompleteState(
       ...(shouldCompleteMessage ? { completedAt: timestamp } : {}),
     };
   });
+}
+
+function markCurrentAssistantModelOutputInterrupted(
+  messages: SessionMessage[],
+  currentAssistantMessageId: string | undefined,
+  timestamp: number,
+): SessionMessage[] {
+  if (!currentAssistantMessageId) return messages;
+
+  let changed = false;
+  const nextMessages = messages.map((message) => {
+    if (message.id !== currentAssistantMessageId) return message;
+
+    const parts = message.parts.map((part): SessionPart => {
+      if ((part.type !== "text" && part.type !== "reasoning") || part.text.length === 0) {
+        return part;
+      }
+
+      if (part.meta?.interrupted === true && part.meta?.discardedFromContext === true && part.completedAt !== undefined) {
+        return part;
+      }
+
+      changed = true;
+      return {
+        ...part,
+        completedAt: part.completedAt ?? timestamp,
+        meta: { ...(part.meta ?? {}), interrupted: true, discardedFromContext: true },
+      };
+    });
+
+    return parts === message.parts ? message : { ...message, parts };
+  });
+
+  return changed ? nextMessages : messages;
 }
 
 function isIncompletePart(part: SessionPart): boolean {
