@@ -259,6 +259,8 @@ async function summarizePrefix(
       modelOptions,
     }),
     "compact.summarize",
+    undefined,
+    { abortSignal: abort },
   );
 
   const summary = await result.text;

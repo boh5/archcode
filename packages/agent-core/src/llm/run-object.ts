@@ -27,7 +27,7 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       },
       toolChoice: { type: "tool", toolName },
       ...pickModelCallOptions(input.modelOptions),
-    }), "LLM object generation");
+    }), "LLM object generation", undefined, { abortSignal: input.abortSignal });
 
     try {
       return parseObjectResult(result.toolCalls, toolName, input.schema);
