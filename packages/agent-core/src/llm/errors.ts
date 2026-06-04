@@ -28,17 +28,20 @@ export class LlmSchemaValidationError extends Error {
 }
 
 /**
- * Reserved for mapping AI SDK retry exhaustion once llmObject owns retry handling.
- * Today the AI SDK manages maxRetries internally and surfaces provider errors directly.
+ * Thrown when Specra-managed retry handling exhausts all attempts.
  */
 export class LlmMaxRetriesError extends Error {
   public readonly cause: Error | undefined;
+  public readonly attempts: number;
+  public readonly retryable: boolean;
 
   constructor(
-    { message, cause }: { message: string; cause?: Error },
+    { message, cause, attempts, retryable }: { message: string; cause?: Error; attempts?: number; retryable?: boolean },
   ) {
     super(message);
     this.name = "LlmMaxRetriesError";
     this.cause = cause;
+    this.attempts = attempts ?? 0;
+    this.retryable = retryable ?? false;
   }
 }
