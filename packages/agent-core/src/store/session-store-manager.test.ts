@@ -395,6 +395,90 @@ describe("SessionStoreManager", () => {
     expect(JSON.stringify(tool)).not.toContain("unknownResult");
   });
 
+  test("persists loop-error in session JSON file", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    const errorMsg = "Loop terminated due to terminal failure";
+
+    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
+
+    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
+    expect(JSON.stringify(raw)).toContain(errorMsg);
+  });
+
+  test("restarted SessionStoreManager reloads loop error in steps", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    const errorMsg = "model crashed in step 0";
+
+    store.getState().append({ type: "execution-start", executionId: "run-1" });
+    store.getState().append({ type: "step-start", step: 0 });
+    store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
+
+    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
+
+    const restarted = new SessionStoreManager({ logger: silentLogger });
+    const loaded = await restarted.getOrLoad(id, TMP_DIR);
+    const stepWithError = loaded.getState().steps.find((s) => s.error !== undefined);
+    expect(stepWithError).toBeDefined();
+    expect(stepWithError!.error).toBe(errorMsg);
+  });
+
+  test("recovery-notice part with statusCode reloads correctly", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(
+      {
+        sessionId: id,
+        createdAt: 1000,
+        agentName: "orchestrator",
+        title: null,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "recovery-notice",
+                id: "recovery:session:step-1",
+                status: "failed",
+                message: "Model result finalization failed: model not found",
+                attempt: 0,
+                errorKind: "config",
+                statusCode: 422,
+                createdAt: 1001,
+                completedAt: 1002,
+              },
+            ],
+            createdAt: 1001,
+            completedAt: 1002,
+          },
+        ],
+        steps: [],
+        stats: createEmptySessionStats(),
+        executions: [],
+        todos: [],
+        childSessionLinks: [],
+        rootSessionId: id,
+      },
+      TMP_DIR,
+    );
+
+    const loaded = await manager.getOrLoad(id, TMP_DIR);
+
+    expect(loaded.getState().messages[0]?.parts[0]).toMatchObject({
+      type: "recovery-notice",
+      status: "failed",
+      statusCode: 422,
+    });
+  });
+
   test("getSessionFile() finds a child session through lazy descendant scan", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();

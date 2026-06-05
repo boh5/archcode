@@ -996,6 +996,53 @@ describe("reduceStreamEvent", () => {
     });
   });
 
+  test("llm-recovery-failed with attempt 0 creates a failed recovery-notice part", () => {
+    const state = applyEvents(createProjection(), [
+      {
+        type: "llm-recovery-failed",
+        scope: "session",
+        visibility: "session",
+        attempt: 0,
+        errorKind: "auth",
+        message: "Model call failed: provider auth failed",
+        stepId: "step-1",
+      },
+    ]);
+
+    const message = onlyMessage(state.messages);
+    expect(message.parts.filter((part) => part.type === "recovery-notice")).toHaveLength(1);
+    expect(partOfType(message, "recovery-notice")).toMatchObject({
+      status: "failed",
+      attempt: 0,
+      errorKind: "auth",
+      message: "Model call failed: provider auth failed",
+      completedAt: 123456789,
+    });
+  });
+
+  test("llm-recovery-failed with statusCode passes it to recovery-notice part", () => {
+    const state = applyEvents(createProjection(), [
+      {
+        type: "llm-recovery-failed",
+        scope: "session",
+        visibility: "session",
+        attempt: 0,
+        errorKind: "config",
+        statusCode: 422,
+        message: "Model result finalization failed: model not found",
+        stepId: "step-1",
+      },
+    ]);
+
+    expect(partOfType(onlyMessage(state.messages), "recovery-notice")).toMatchObject({
+      status: "failed",
+      attempt: 0,
+      errorKind: "config",
+      statusCode: 422,
+      message: "Model result finalization failed: model not found",
+    });
+  });
+
   test("retry and recovery events are serializable and replay-safe", () => {
     const events: StreamEvent[] = [
       { type: "execution-start", executionId: "run-retry" },

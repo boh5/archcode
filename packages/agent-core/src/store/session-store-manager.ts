@@ -120,6 +120,7 @@ export class SessionStoreManager {
         || event.type === "tool-child-session-link"
         || event.type === "question.request"
         || event.type === "question.terminal"
+        || event.type === "loop-error"
       ) persist();
     };
 

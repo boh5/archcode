@@ -44,6 +44,13 @@ type ModelAttemptResult =
   | {
       outcome: "success";
       result: AnyStreamTextResult;
+      streamError?: unknown;
+    }
+  | {
+      outcome: "terminal";
+      error: unknown;
+      errorKind: string;
+      message: string;
     }
   | {
       outcome: "retry";
@@ -118,8 +125,8 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       ...(systemPrompt ? { system: systemPrompt } : {}),
     });
 
-    await consumeFullStream(result.fullStream as AsyncIterable<TextStreamPart>, store, abort);
-    return { outcome: "success", result: result as AnyStreamTextResult };
+    const { streamError } = await consumeFullStream(result.fullStream as AsyncIterable<TextStreamPart>, store, abort);
+    return { outcome: "success", result: result as AnyStreamTextResult, streamError };
   } catch (err) {
     const classification = classifyLlmError(err);
     const hadDurableOutput = hasCurrentStepDurableOutput(store);
@@ -132,8 +139,17 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
       finishReason: retryable ? "interrupted" : "error",
     });
 
-    if (!retryable) {
+    if (classification.kind === "abort") {
       throw err;
+    }
+
+    if (!retryable) {
+      return {
+        outcome: "terminal",
+        error: err,
+        errorKind: classification.kind,
+        message,
+      };
     }
 
     return {
@@ -199,7 +215,9 @@ export async function runQueryLoop(
 
     while (steps < maxSteps) {
       if (abort.aborted) {
-        appendRecoveryFailedIfNeeded(store, abort.reason ?? new DOMException("Aborted", "AbortError"), {
+        const err = abort.reason ?? new DOMException("Aborted", "AbortError");
+        const classification = classifyLlmError(err);
+        appendTerminalLlmFailureNotice(store, err, classification.kind, {
           steps,
           recoveredFromFailure,
           sessionRetryAttempt,
@@ -283,7 +301,26 @@ export async function runQueryLoop(
         continue;
       }
 
+      if (attempt.outcome === "terminal") {
+        store.getState().append({
+          type: "loop-error",
+          step: steps,
+          error: attempt.message,
+        });
+        appendTerminalLlmFailureNotice(store, attempt.error, attempt.errorKind, {
+          steps,
+          recoveredFromFailure,
+          sessionRetryAttempt,
+          zeroOutputShortAttempt,
+          lastRecoveryAttempt,
+        }, { terminalNoRetry: true });
+        failed = true;
+        runEndStatus = "failed";
+        return { text: lastText, steps };
+      }
+
       const { result } = attempt;
+      const streamError = attempt.streamError;
 
       if (recoveredFromFailure) {
         store.getState().append({
@@ -302,7 +339,9 @@ export async function runQueryLoop(
       }
 
       if (abort.aborted) {
-        appendRecoveryFailedIfNeeded(store, abort.reason ?? new DOMException("Aborted", "AbortError"), {
+        const err = abort.reason ?? new DOMException("Aborted", "AbortError");
+        const classification = classifyLlmError(err);
+        appendTerminalLlmFailureNotice(store, err, classification.kind, {
           steps,
           recoveredFromFailure,
           sessionRetryAttempt,
@@ -312,16 +351,34 @@ export async function runQueryLoop(
         break;
       }
 
-      const finishReason = await result.finishReason;
-      const usage = await result.usage;
-      lastText = await result.text;
+      let finishReason: string;
+      let usage: unknown;
+      try {
+        finishReason = await result.finishReason;
+        usage = await result.usage;
+        lastText = await result.text;
+      } catch (err) {
+        appendPostStreamTerminalFailure(store, preferStreamError(streamError, err), steps, "result");
+        markCurrentAssistantModelOutputDiscardedFromContext(store);
+        failed = true;
+        runEndStatus = "failed";
+        return { text: lastText, steps };
+      }
 
       store.getState().append({ type: "step-end", step: steps, finishReason, usage });
       await runHooks("afterStepEnd", afterStepEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort }, logger, { sessionId, agentName });
 
       if (finishReason !== "tool-calls") break;
 
-      const toolCalls = await result.toolCalls;
+      let toolCalls: ToolCallArray;
+      try {
+        toolCalls = await result.toolCalls;
+      } catch (err) {
+        appendPostStreamTerminalFailure(store, preferStreamError(streamError, err), steps, "toolCalls");
+        failed = true;
+        runEndStatus = "failed";
+        return { text: lastText, steps };
+      }
       if (abort.aborted) break;
       if (resolvedWorkspaceRoot === undefined) {
         resolvedWorkspaceRoot = options.projectContext.project.workspaceRoot;
@@ -374,7 +431,8 @@ export async function runQueryLoop(
       step: steps,
       error: errorMessage(err),
     });
-    appendRecoveryFailedIfNeeded(store, err, {
+    const classification = classifyLlmError(err);
+    appendTerminalLlmFailureNotice(store, err, classification.kind, {
       steps,
       recoveredFromFailure,
       sessionRetryAttempt,
@@ -468,13 +526,19 @@ async function consumeFullStream(
   fullStream: AsyncIterable<TextStreamPart>,
   store: StoreApi<SessionStoreState>,
   abort?: AbortSignal,
-): Promise<void> {
+): Promise<{ streamError?: unknown }> {
   let textOpen = false;
   let reasoningOpen = false;
+  let streamError: unknown;
 
   try {
     for await (const chunk of fullStream) {
       if (abort?.aborted) break;
+
+      if (chunk.type === "error") {
+        streamError = chunk.error;
+        continue;
+      }
 
       if (chunk.type === "text-delta") {
         if (!textOpen) {
@@ -517,6 +581,18 @@ async function consumeFullStream(
     if (textOpen) store.getState().append({ type: "text-end" });
     if (reasoningOpen) store.getState().append({ type: "reasoning-end" });
   }
+
+  return { streamError };
+}
+
+function preferStreamError(streamError: unknown, fallback: unknown): unknown {
+  if (streamError != null) {
+    const streamClass = classifyLlmError(streamError);
+    const fallbackClass = classifyLlmError(fallback);
+    if (streamClass.statusCode !== undefined || streamClass.kind !== "unknown") return streamError;
+    if (fallbackClass.kind !== "unknown") return fallback;
+  }
+  return fallback;
 }
 
 function hasCurrentStepDurableOutput(store: StoreApi<SessionStoreState>): boolean {
@@ -539,9 +615,10 @@ function countRecoveryAttempts(store: StoreApi<SessionStoreState>, step: number)
   ).length;
 }
 
-function appendRecoveryFailedIfNeeded(
+function appendTerminalLlmFailureNotice(
   store: StoreApi<SessionStoreState>,
   err: unknown,
+  errorKind: string,
   attempts: {
     steps: number;
     recoveredFromFailure: boolean;
@@ -549,19 +626,91 @@ function appendRecoveryFailedIfNeeded(
     zeroOutputShortAttempt: number;
     lastRecoveryAttempt: number;
   },
+  options: { terminalNoRetry?: boolean; profile?: string; message?: string } = {},
 ): void {
-  if (!hasRecoveryAttempts(attempts)) return;
+  const hadRecoveryAttempts = hasRecoveryAttempts(attempts);
+  if (errorKind === "abort" && !hadRecoveryAttempts) return;
+  if (!hadRecoveryAttempts && options.terminalNoRetry !== true) return;
 
+  const message = options.message ?? errorMessage(err);
   const classification = classifyLlmError(err);
-  const message = errorMessage(err);
+  const recoveryExhausted = hadRecoveryAttempts;
   store.getState().append({
     type: "llm-recovery-failed",
     scope: "session",
     visibility: "session",
-    attempt: Math.max(attempts.sessionRetryAttempt, attempts.zeroOutputShortAttempt, attempts.lastRecoveryAttempt, 1),
-    errorKind: classification.kind,
-    message: `Recovery failed: ${message}`,
+    profile: recoveryExhausted ? "recovery-exhausted" : options.profile ?? "terminal-failure",
+    attempt: recoveryExhausted ? Math.max(attempts.sessionRetryAttempt, attempts.zeroOutputShortAttempt, attempts.lastRecoveryAttempt, 1) : 0,
+    errorKind,
+    statusCode: classification.statusCode,
+    message: recoveryExhausted ? `Recovery failed: ${message}` : options.message ?? `Model call failed: ${message}`,
     stepId: `step-${attempts.steps}`,
+  });
+}
+
+function appendPostStreamTerminalFailure(
+  store: StoreApi<SessionStoreState>,
+  err: unknown,
+  step: number,
+  kind: "result" | "toolCalls",
+): void {
+  const message = errorMessage(err);
+  const classification = classifyLlmError(err);
+
+  if (isStepOpen(store, step)) {
+    store.getState().append({ type: "step-end", step, finishReason: "error" });
+  }
+
+  store.getState().append({
+    type: "loop-error",
+    step,
+    error: message,
+  });
+
+  appendTerminalLlmFailureNotice(store, err, classification.kind, {
+    steps: step,
+    recoveredFromFailure: false,
+    sessionRetryAttempt: 0,
+    zeroOutputShortAttempt: 0,
+    lastRecoveryAttempt: 0,
+  }, {
+    terminalNoRetry: true,
+    profile: "post-stream-terminal",
+    message: `${kind === "toolCalls" ? "Model tool call" : "Model result"} finalization failed: ${message}`,
+  });
+}
+
+function isStepOpen(store: StoreApi<SessionStoreState>, step: number): boolean {
+  const currentExecutionId = store.getState().currentExecutionId;
+  return store.getState().steps.some((candidate) =>
+    candidate.step === step && candidate.executionId === currentExecutionId && candidate.completedAt === undefined,
+  );
+}
+
+function markCurrentAssistantModelOutputDiscardedFromContext(store: StoreApi<SessionStoreState>): void {
+  const currentAssistantMessageId = store.getState().currentAssistantMessageId;
+  if (!currentAssistantMessageId) return;
+
+  store.setState((state) => {
+    let changed = false;
+    const messages = state.messages.map((message) => {
+      if (message.id !== currentAssistantMessageId) return message;
+
+      const parts = message.parts.map((part) => {
+        if ((part.type !== "text" && part.type !== "reasoning") || part.text.length === 0) return part;
+        if (part.meta?.interrupted === true && part.meta?.discardedFromContext === true) return part;
+
+        changed = true;
+        return {
+          ...part,
+          meta: { ...(part.meta ?? {}), interrupted: true, discardedFromContext: true },
+        };
+      });
+
+      return changed ? { ...message, parts } : message;
+    });
+
+    return changed ? { messages } : {};
   });
 }
 

@@ -19,7 +19,8 @@ type MockChunk =
   | { type: "text-delta"; text: string }
   | { type: "reasoning-delta"; text: string }
   | { type: "tool-input-start"; id: string; toolName: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown };
+  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | { type: "error"; error: unknown };
 
 interface MockRound {
   chunks?: MockChunk[];
@@ -138,6 +139,97 @@ beforeEach(() => {
 });
 
 describe("query loop LLM stream recovery", () => {
+  test("first-attempt non-retryable model error emits terminal failure notice", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamFn = createMockStreamText([
+      { throwBeforeOutput: Object.assign(new Error("Unauthorized"), { status: 401 }) },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Auth failure");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(streamFn).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      scope: "session",
+      visibility: "session",
+      profile: "terminal-failure",
+      attempt: 0,
+      errorKind: "auth",
+      statusCode: 401,
+      message: expect.stringContaining("Model call failed: Unauthorized"),
+    }));
+    expect(store.getState().executions.at(-1)).toMatchObject({ status: "failed", error: "Execution failed" });
+  });
+
+  test("terminal failure notice includes statusCode from classification", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      { throwBeforeOutput: Object.assign(new Error("Invalid API key"), { statusCode: 401 }) },
+    ]);
+
+    await runQueryLoop(makeOptions({ store }), "Auth failure");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      errorKind: "auth",
+      statusCode: 401,
+      message: expect.stringContaining("Invalid API key"),
+    }));
+  });
+
+  test("zero-prior-recovery abort does not emit terminal model-failure notice", async () => {
+    const store = createStore();
+    const abort = new AbortController();
+    const events = captureEvents(store);
+    abort.abort(new DOMException("User cancelled", "AbortError"));
+
+    await runQueryLoop(makeOptions({ store, abort: abort.signal }), "Abort immediately");
+
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      message: expect.stringContaining("Model call failed:"),
+    }));
+    expect(events.filter((event) => event.type === "llm-recovery-failed")).toHaveLength(0);
+    expect(store.getState().executions.at(-1)?.status).toBe("aborted");
+  });
+
+  test("generic outer-catch failures are not labeled as model-call failures", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const registry = createRegistry([
+      defineTool({
+        name: "explode",
+        description: "Explode outside registry handling",
+        inputSchema,
+        traits: { readOnly: true, destructive: false, concurrencySafe: false },
+        execute: async () => "unreachable",
+      }),
+    ]);
+    registry.execute = mock(async () => {
+      throw new Error("tool executor escaped");
+    }) as typeof registry.execute;
+    createMockStreamText([
+      { finishReason: "tool-calls", chunks: [{ type: "tool-call", toolCallId: "tc-explode", toolName: "explode", input: {} }] },
+    ]);
+
+    await runQueryLoop(makeOptions({ store, toolRegistry: registry, allowedTools: ["explode"] }), "Use tool");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "loop-error",
+      error: "tool executor escaped",
+    }));
+    expect(store.getState().executions.at(-1)).toMatchObject({ status: "failed", error: "Execution failed" });
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      message: expect.stringContaining("Model call failed:"),
+    }));
+  });
+
   test("streamText throws before output retries internally and succeeds without chat-visible notice", async () => {
     const store = createStore();
     const events = captureEvents(store);

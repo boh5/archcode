@@ -578,6 +578,7 @@ export function reduceStreamEvent(
           message: event.message,
           attempt: event.attempt,
           errorKind: event.errorKind,
+          statusCode: event.statusCode,
           createdAt: timestamp,
           completedAt: timestamp,
         },
@@ -1045,8 +1046,9 @@ function upsertRecoveryNoticePart(
     const parts = message.parts.map((part) => {
       if (part.type !== "recovery-notice" || part.id !== nextPart.id) return part;
       found = true;
-      const { nextRetryAt: _oldNextRetryAt, completedAt: _oldCompletedAt, errorKind: oldErrorKind, ...basePart } = part;
+      const { nextRetryAt: _oldNextRetryAt, completedAt: _oldCompletedAt, errorKind: oldErrorKind, statusCode: oldStatusCode, ...basePart } = part;
       const errorKind = nextPart.errorKind ?? oldErrorKind;
+      const statusCode = nextPart.statusCode ?? oldStatusCode;
       return {
         ...basePart,
         status: nextPart.status,
@@ -1054,6 +1056,7 @@ function upsertRecoveryNoticePart(
         attempt: nextPart.attempt,
         ...(nextPart.nextRetryAt === undefined ? {} : { nextRetryAt: nextPart.nextRetryAt }),
         ...(errorKind === undefined ? {} : { errorKind }),
+        ...(statusCode === undefined ? {} : { statusCode }),
         ...(nextPart.completedAt === undefined ? {} : { completedAt: nextPart.completedAt }),
       } satisfies RecoveryNoticePart;
     });

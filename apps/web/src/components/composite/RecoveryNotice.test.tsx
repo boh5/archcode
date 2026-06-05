@@ -167,6 +167,37 @@ describe("RecoveryNotice", () => {
     expect(text).not.toContain("attempt 0");
   });
 
+  test("failed status with attempt 0 renders terminal message and hides attempt", () => {
+    const part = makeRecoveryNotice({
+      status: "failed",
+      attempt: 0,
+      errorKind: "auth",
+      message: "Model call failed: provider auth failed",
+      completedAt: Date.now(),
+    });
+    const el = RecoveryNotice({ part });
+    const text = textContent(el);
+    expect(text).toContain("Recovery failed");
+    expect(text).toContain("Model call failed: provider auth failed");
+    expect(text).not.toContain("attempt 0");
+    const errorEls = findAllWithClass(el, "bg-error-muted");
+    expect(errorEls.length).toBeGreaterThan(0);
+  });
+
+  test("failed status with statusCode renders status code badge", () => {
+    const part = makeRecoveryNotice({
+      status: "failed",
+      statusCode: 422,
+      errorKind: "config",
+      message: "Model call failed: model not found",
+      completedAt: Date.now(),
+    });
+    const el = RecoveryNotice({ part });
+    const text = textContent(el);
+    expect(text).toContain("422");
+    expect(text).toContain("config");
+  });
+
   test("hides errorKind when undefined", () => {
     const part = makeRecoveryNotice({ status: "scheduled", errorKind: undefined });
     const el = RecoveryNotice({ part });

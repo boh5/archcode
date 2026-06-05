@@ -238,6 +238,7 @@ const RecoveryNoticePartSchema = z.strictObject({
   attempt: z.number(),
   nextRetryAt: z.number().optional(),
   errorKind: z.string().optional(),
+  statusCode: z.number().optional(),
   createdAt: z.number(),
   completedAt: z.number().optional(),
 });

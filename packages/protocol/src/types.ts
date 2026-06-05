@@ -268,6 +268,7 @@ export interface LlmRecoveryFailedEvent {
   attempt: number;
   errorKind: string;
   message: string;
+  statusCode?: number;
   stepId?: string;
   messageId?: string;
   toolCallId?: string;
@@ -518,6 +519,7 @@ export interface RecoveryNoticePart {
   attempt: number;
   nextRetryAt?: number;
   errorKind?: string;
+  statusCode?: number;
   createdAt: number;
   completedAt?: number;
 }

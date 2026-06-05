@@ -100,6 +100,11 @@ export function RecoveryNotice({ part }: RecoveryNoticeProps) {
             {part.errorKind}
           </span>
         )}
+        {part.statusCode != null && (
+          <span className="text-[11px] text-text-muted font-mono px-1 py-0.5 bg-bg-overlay rounded">
+            {part.statusCode}
+          </span>
+        )}
         {countdown !== null && (
           <span className="text-[11px] text-text-muted">
             retry in {countdown}

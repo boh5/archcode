@@ -1451,8 +1451,82 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     expect(store.getState().steps[0]).toMatchObject({ step: 0, error: "stream broke" });
   });
 
-  test("usage rejection is caught and recorded", async () => {
+  test("finishReason rejection emits visible terminal failure and exits failed", async () => {
     const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      {
+        finishReason: Promise.reject(new Error("finish metadata unavailable")),
+      },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(store.getState().steps[0]).toMatchObject({
+      step: 0,
+      finishReason: "error",
+      error: "finish metadata unavailable",
+      completedAt: expect.any(Number),
+    });
+    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      profile: "post-stream-terminal",
+      message: "Model result finalization failed: finish metadata unavailable",
+      stepId: "step-0",
+    }));
+    expect(lastAssistant(store).parts).toContainEqual(expect.objectContaining({
+      type: "recovery-notice",
+      status: "failed",
+      message: "Model result finalization failed: finish metadata unavailable",
+      attempt: 0,
+    }));
+    expect(events.map((event) => event.type).filter((type) => ["step-end", "loop-error", "llm-recovery-failed"].includes(type))).toEqual([
+      "step-end",
+      "loop-error",
+      "llm-recovery-failed",
+    ]);
+  });
+
+  test("captures stream error chunk and uses it for post-stream failure", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamError = Object.assign(new Error("model not found: glm-5.2"), { statusCode: 422 });
+    const finalizationError = Object.assign(new Error("No output generated"), { name: "NoOutputGeneratedError" });
+    createMockStreamText([
+      {
+        chunks: [{ type: "error", error: streamError }],
+        finishReason: Promise.reject(finalizationError),
+      },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      profile: "post-stream-terminal",
+      statusCode: 422,
+      message: expect.stringContaining("model not found"),
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      message: expect.stringContaining("No output generated"),
+    }));
+    expect(lastAssistant(store).parts).toContainEqual(expect.objectContaining({
+      type: "recovery-notice",
+      status: "failed",
+      statusCode: 422,
+      message: expect.stringContaining("model not found"),
+    }));
+  });
+
+  test("usage rejection emits visible terminal failure and exits failed", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
     createMockStreamText([
       {
         text: "partial",
@@ -1462,8 +1536,111 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
 
     const result = await runQueryLoop(makeOptions({ store }), "Hi");
 
-    expect(result.text).toBe("");
-    expect(store.getState().steps[0]).toMatchObject({ step: 0, error: "usage failed" });
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(store.getState().steps[0]).toMatchObject({
+      step: 0,
+      finishReason: "error",
+      error: "usage failed",
+      completedAt: expect.any(Number),
+    });
+    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      profile: "post-stream-terminal",
+      message: "Model result finalization failed: usage failed",
+      stepId: "step-0",
+    }));
+    expect(lastAssistant(store).parts).toContainEqual(expect.objectContaining({
+      type: "recovery-notice",
+      status: "failed",
+      message: "Model result finalization failed: usage failed",
+      attempt: 0,
+    }));
+  });
+
+  test("text rejection after streamed text leaves partial visible but discarded from future model context", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    createMockStreamText([
+      {
+        chunks: [{ type: "text-delta", text: "partial visible" }],
+        text: Promise.reject(new Error("text finalization failed")),
+      },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      profile: "post-stream-terminal",
+      message: "Model result finalization failed: text finalization failed",
+      stepId: "step-0",
+    }));
+
+    const textPart = lastAssistant(store).parts.find((part) => part.type === "text");
+    expect(textPart).toMatchObject({
+      type: "text",
+      text: "partial visible",
+      meta: { interrupted: true, discardedFromContext: true },
+    });
+    expect(JSON.stringify(store.getState().toModelMessages())).not.toContain("partial visible");
+    expect(JSON.stringify(store.getState().toModelMessages())).toContain("interrupted-response-recovery");
+  });
+
+  test("toolCalls rejection after tool-calls emits visible terminal failure and does not execute tools", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const executor = mock(async () => "should not run");
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-finalize", toolName: "echo", input: { message: "hi" } }],
+        toolCalls: Promise.reject(new Error("toolCalls finalize failed")),
+      },
+    ]);
+
+    const result = await runQueryLoop(
+      makeOptions({ store, toolRegistry: createTestRegistry(executor), allowedTools: ["echo"] }),
+      "Hi",
+    );
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(executor).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === "step-end")).toEqual([
+      expect.objectContaining({ type: "step-end", step: 0, finishReason: "tool-calls" }),
+    ]);
+    expect(store.getState().steps[0]).toMatchObject({
+      step: 0,
+      finishReason: "tool-calls",
+      error: "toolCalls finalize failed",
+      completedAt: expect.any(Number),
+    });
+    expect(events.find((event): event is ExecutionEndEvent => event.type === "execution-end")?.status).toBe("failed");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      attempt: 0,
+      profile: "post-stream-terminal",
+      message: "Model tool call finalization failed: toolCalls finalize failed",
+      stepId: "step-0",
+    }));
+    expect(lastAssistant(store).parts).toEqual([
+      expect.objectContaining({
+        type: "tool",
+        toolCallId: "tc-finalize",
+        state: "error",
+        errorMessage: "Execution ended before tool result",
+      }),
+      expect.objectContaining({
+        type: "recovery-notice",
+        status: "failed",
+        message: "Model tool call finalization failed: toolCalls finalize failed",
+        attempt: 0,
+      }),
+    ]);
   });
 
   test("zero-output retry is bounded and internal before success", async () => {
