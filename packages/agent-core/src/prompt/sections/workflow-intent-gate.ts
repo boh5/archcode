@@ -17,15 +17,17 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 - quick_fix stages: idle -> quick_analysis -> quick_patch -> quick_verify.
 - full_feature stages: idle -> product_drafting -> critic_prd_review -> spec_drafting -> critic_spec_review -> awaiting_user_approval -> foreman_executing -> final_review.
 - Read current state with workflow_read and read relevant artifacts with artifact_read before deciding a transition.
+- You MUST record the current stage as completed with workflow_record_completion before advancing forward. The transition guard rejects forward moves from stages with no completion record.
+- For all critic outcomes (approved, changes_requested, rejected), use the criticDecision parameter in workflow_update_stage. The stage field is required but ignored when criticDecision is provided — pass the current stage as a placeholder.
 
 ### Stage completion records
-- Use workflow_record_completion when a stage's required work has actually been verified, including critic approvals, research consolidation, quick verification, and final review.
-- Record completions before moving into downstream gated stages when the graph requires prior-stage evidence.
+- You MUST record the current stage as completed with workflow_record_completion before advancing forward. The transition guard rejects forward moves from stages with no completion record.
 - Do not record a completion from intent alone; it must be backed by artifacts, delegate results, tests, or explicit approval as appropriate.
 
 ### Artifacts
 - Use artifact_write for durable workflow artifacts: RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT, critic reports, evidence, and notes.
 - Use artifact_read before relying on prior artifacts or referenced source-workflow artifacts. Child agents must also call artifact_read for referenced artifacts instead of relying only on summarized text.
+- CRITIC_REPORT and EVIDENCE are multi-file artifacts. Use the path parameter to read them (e.g., path: "critic-reports/report.md"), not the kind parameter. The kind parameter only works for single-file artifact types.
 - Do not pass hidden artifact bodies through delegation prompts; pass references and require explicit artifact_read.
 
 ### Completion

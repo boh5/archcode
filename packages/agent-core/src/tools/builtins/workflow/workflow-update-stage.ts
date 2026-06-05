@@ -31,7 +31,7 @@ type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
 export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_update_stage",
-    description: "Update workflow stage. This is the only workflow tool that mutates stage/status.",
+    description: "Update workflow stage. You MUST record completion of the current stage with workflow_record_completion before advancing forward. For all critic outcomes (approved, changes_requested, rejected), use the criticDecision parameter — the stage field is required but ignored when criticDecision is provided.",
     inputSchema: WorkflowUpdateStageInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {

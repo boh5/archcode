@@ -436,7 +436,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     await artifactManager.write({ workflowId: "wf-errors", kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
     const missingCompletion = validateTransition({ workflowId: "wf-errors", workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: () => false, hasUserApproval: false });
     expect(missingCompletion.allowed).toBe(false);
-    expect(missingCompletion.error).toContain("prerequisite stage product_drafting has no completion record");
+    expect(missingCompletion.error).toContain("record completion for product_drafting");
 
     const prematureComplete = canCompleteWorkflow(await stateManager.read("wf-errors"), () => true);
     expect(prematureComplete.allowed).toBe(false);

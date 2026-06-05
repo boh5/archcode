@@ -52,7 +52,7 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("quick_fix");
     expect(result).toContain("full_feature");
     expect(result).toContain("Use workflow_update_stage for every business-stage move");
-    expect(result).toContain("Use workflow_record_completion");
+    expect(result).toContain("record the current stage as completed with workflow_record_completion");
     expect(result).toContain("Use workflow_complete");
     expect(result).toContain("Use artifact_write for durable workflow artifacts");
     expect(result).toContain("Use artifact_read before relying on prior artifacts");

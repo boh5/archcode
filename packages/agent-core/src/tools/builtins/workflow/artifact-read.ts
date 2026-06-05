@@ -4,20 +4,34 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import {
   ArtifactPathError,
+  SINGLE_FILE_ARTIFACT_KINDS,
+  SingleFileWorkflowArtifactKind,
   SingleFileWorkflowArtifactKindSchema,
   VALID_ARTIFACT_KIND_LIST,
 } from "../../../agents/workflow/artifacts";
+import { WorkflowArtifactKindSchema } from "../../../agents/workflow/state";
+
+const SINGLE_FILE_KIND_SET: ReadonlySet<string> = new Set(SINGLE_FILE_ARTIFACT_KINDS);
 
 const ArtifactReadInputSchema = z.strictObject({
   workflowId: z.string().min(1),
-  kind: SingleFileWorkflowArtifactKindSchema.optional(),
+  kind: WorkflowArtifactKindSchema.optional(),
   path: z.string().min(1).optional(),
 }).superRefine((input, ctx) => {
+  if (input.kind && !SINGLE_FILE_KIND_SET.has(input.kind)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["kind"],
+      message: `${input.kind} is a multi-file artifact kind and cannot be read by kind. Use the path parameter instead (e.g., path: "critic-reports/report.md" for CRITIC_REPORT, path: "evidence/builder-output.md" for EVIDENCE). Single-file kinds: ${SingleFileWorkflowArtifactKindSchema.options.join(", ")}`,
+    });
+    return;
+  }
+
   if (input.kind || input.path) return;
 
   ctx.addIssue({
     code: "custom",
-    message: `Either kind or path is required. Core kind must be one of: ${SingleFileWorkflowArtifactKindSchema.options.join(", ")}. All artifact kinds: ${VALID_ARTIFACT_KIND_LIST}`,
+    message: `Either kind or path is required. Single-file kinds (for kind param): ${SingleFileWorkflowArtifactKindSchema.options.join(", ")}. For CRITIC_REPORT and EVIDENCE (multi-file), use the path parameter instead (e.g., path: "critic-reports/report.md"). All artifact kinds: ${VALID_ARTIFACT_KIND_LIST}`,
   });
 });
 
@@ -26,15 +40,23 @@ type ArtifactReadInput = z.infer<typeof ArtifactReadInputSchema>;
 export function createArtifactReadTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_read",
-    description: "Read a same-project workflow artifact by workflow id plus either a core single-file kind or contained artifact path.",
+    description: "Read a same-project workflow artifact by workflow id plus either a single-file kind or a contained artifact path. CRITIC_REPORT and EVIDENCE are multi-file artifacts — use the path parameter (e.g., path: 'critic-reports/report.md') instead of kind.",
     inputSchema: ArtifactReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (input: ArtifactReadInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const artifactManager = ctx.projectContext.artifacts;
       try {
-        const artifact = input.kind
-          ? await artifactManager.readByKind(input.workflowId, input.kind)
-          : await artifactManager.read(input.workflowId, input.path as string);
+        const kind = input.kind;
+        if (kind && !SINGLE_FILE_KIND_SET.has(kind)) {
+          return createToolErrorResult({
+            kind: "workspace",
+            code: "TOOL_SCHEMA_INVALID_INPUT",
+            message: `${kind} cannot be read by kind. Use the path parameter instead.`,
+          });
+        }
+        const artifact = kind
+            ? await artifactManager.readByKind(input.workflowId, kind as SingleFileWorkflowArtifactKind)
+            : await artifactManager.read(input.workflowId, input.path as string);
         return JSON.stringify(artifact, null, 2);
       } catch (error) {
         if (error instanceof ArtifactPathError) {

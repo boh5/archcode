@@ -162,7 +162,7 @@ describe("workflow transition guards", () => {
     expect(atLimit.error).toContain("retry limit reached (3/3)");
   });
 
-  test("canTransitionTo denies transition when prerequisite stage has no completion record", () => {
+  test("denies forward transition when current stage has no completion record", () => {
     const result = canTransitionTo(
       {
         id: "wf-stage-gate",
@@ -182,7 +182,35 @@ describe("workflow transition guards", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.errorName).toBe("WorkflowTransitionError");
-    expect(result.error).toContain("product_drafting has no completion record");
+    expect(result.error).toContain("record completion for product_drafting");
+  });
+
+  test("allows backward retry transition without current stage completion record", () => {
+    const backwardTransitions: Array<[WorkflowType, WorkflowStage, WorkflowStage]> = [
+      ["full_feature", "critic_prd_review", "product_drafting"],
+      ["full_feature", "critic_spec_review", "spec_drafting"],
+    ];
+
+    for (const [workflowType, currentStage, targetStage] of backwardTransitions) {
+      const result = canTransitionTo(
+        {
+          id: "wf-retry",
+          type: workflowType,
+          status: "active",
+          stage: currentStage,
+          retryCount: 0,
+          maxRetries: 3,
+        },
+        targetStage,
+        {
+          hasArtifact: () => true,
+          hasStageCompletion: () => false,
+          hasUserApproval: true,
+        },
+      );
+
+      expect(result.allowed, `${workflowType}: ${currentStage} -> ${targetStage}`).toBe(true);
+    }
   });
 
   test("canTransitionTo allows transition when prerequisite completion record exists", () => {

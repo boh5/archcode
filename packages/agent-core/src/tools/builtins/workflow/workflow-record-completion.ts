@@ -17,7 +17,7 @@ type WorkflowRecordCompletionInput = z.infer<typeof WorkflowRecordCompletionInpu
 export function createWorkflowRecordCompletionTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_record_completion",
-    description: "Record completion metadata for a workflow stage.",
+    description: "Record completion metadata for a workflow stage. You MUST call this before advancing forward with workflow_update_stage. The transition guard rejects forward moves from stages with no completion record.",
     inputSchema: WorkflowRecordCompletionInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowRecordCompletionInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {

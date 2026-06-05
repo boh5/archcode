@@ -126,7 +126,7 @@ export function validateTransition(input: TransitionInput): TransitionResult {
           input.workflowId,
           input.currentStage,
           input.targetStage,
-          `Workflow ${input.workflowId} cannot enter ${input.targetStage}: prerequisite stage ${missingStage} has no completion record`,
+          `Workflow ${input.workflowId} cannot enter ${input.targetStage}: record completion for ${missingStage} with workflow_record_completion before advancing`,
         ),
       );
     }
@@ -232,6 +232,20 @@ export function canCompleteWorkflow(
   return { allowed: true };
 }
 
+function isBackwardTransition(
+  workflowType: WorkflowType,
+  currentStage: WorkflowStage,
+  targetStage: WorkflowStage,
+): boolean {
+  const stages = getStagesForType(workflowType);
+  const currentIndex = stages.indexOf(currentStage);
+  const targetIndex = stages.indexOf(targetStage);
+  // Only recognize backward when both stages exist in the ordered list and
+  // the target comes before the current. Unknown stages (-1) are NOT treated
+  // as backward — they fall through to the normal completion check.
+  return currentIndex >= 0 && targetIndex >= 0 && targetIndex < currentIndex;
+}
+
 function missingStageCompletionPrerequisite(
   workflowType: WorkflowType,
   currentStage: WorkflowStage,
@@ -240,6 +254,9 @@ function missingStageCompletionPrerequisite(
 ): WorkflowStage | undefined {
   const canAdvanceFromCurrent = getTransitionsForType(workflowType, currentStage).includes(targetStage);
   if (!canAdvanceFromCurrent || currentStage === "idle") return undefined;
+  // Backward transitions (critic retries) don't require current-stage completion —
+  // the whole point of going back is that the current stage wasn't satisfactorily completed.
+  if (isBackwardTransition(workflowType, currentStage, targetStage)) return undefined;
   if (!hasStageCompletion(currentStage)) return currentStage;
   return undefined;
 }
