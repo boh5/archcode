@@ -4,6 +4,7 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError, WorkflowStageSchema, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowRecordCompletionInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema,
@@ -22,6 +23,9 @@ export function createWorkflowRecordCompletionTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowRecordCompletionInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
+      const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "workflow_record_completion");
+      if (guardResult) return guardResult;
+
       try {
         const state = await stateManager.recordStageCompletion(input.workflowId, {
           stage: input.stage,

@@ -5,6 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { canCompleteWorkflow } from "../../../agents/workflow/guards";
 import { WorkflowArtifactKindSchema, WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowCompleteInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema,
@@ -21,6 +22,9 @@ export function createWorkflowCompleteTool(): AnyToolDescriptor {
     execute: async (input: WorkflowCompleteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
       const artifactManager = ctx.projectContext.artifacts;
+      const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "workflow_complete");
+      if (guardResult) return guardResult;
+
       try {
         const currentState = await stateManager.read(input.workflowId);
         const availableArtifacts = new Set<string>();

@@ -5,6 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { ArtifactPathError } from "../../../agents/workflow/artifacts";
 import { toggleTaskCheckbox } from "../../../agents/workflow/tasks-format";
 import { WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const TASKS_ARTIFACT_PATH = "TASKS.md";
 
@@ -25,6 +26,9 @@ export function createWorkflowTaskCheckTool(): AnyToolDescriptor {
     execute: async (input: WorkflowTaskCheckInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
       const artifactManager = ctx.projectContext.artifacts;
+      const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "workflow_task_check");
+      if (guardResult) return guardResult;
+
       try {
         const state = await stateManager.read(input.workflowId);
         if (state.artifacts.TASKS !== undefined && state.artifacts.TASKS !== TASKS_ARTIFACT_PATH) {

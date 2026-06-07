@@ -337,11 +337,13 @@ describe("workflow builtin tools", () => {
   test("workflow_update_stage mutates stage with guarded transitions only", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_stage = await stateManager.create({ title: "Stage Test", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_stage.id);
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage.id,
       stage: "product_drafting",
-    });
+    }, store);
     expect(updated.isError).toBe(false);
     expect(JSON.parse(updated.output)).toMatchObject({
       id: wf_stage.id,
@@ -352,22 +354,23 @@ describe("workflow builtin tools", () => {
     const invalid = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage.id,
       stage: "not_a_stage",
-    });
+    }, store);
     expect(invalid.isError).toBe(true);
     expect(inferToolErrorKindFromResult(invalid)).toBe("schema");
 
     const denied = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage.id,
       stage: "foreman_executing",
-    });
+    }, store);
     expect(denied.isError).toBe(true);
     expect(denied.output).toContain("WorkflowTransitionError");
   });
 
   test("workflow_update_stage emits state change after mutation", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const store = createMockStore();
     const wf_stage_event = await stateManager.create({ title: "Stage Event", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_stage_event.id);
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage_event.id,
@@ -384,8 +387,9 @@ describe("workflow builtin tools", () => {
 
   test("workflow_record_completion persists completion record and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const store = createMockStore();
     const wf_completion_record = await stateManager.create({ title: "Completion Record", type: "quick_fix" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_completion_record.id);
 
     const recorded = await execute(registry, projectContext, "workflow_record_completion", {
       workflowId: wf_completion_record.id,
@@ -411,10 +415,12 @@ describe("workflow builtin tools", () => {
   test("workflow_complete denies before completion policy is satisfied", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_complete_denied = await stateManager.create({ title: "Complete Denied", type: "quick_fix" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_complete_denied.id);
 
     const denied = await execute(registry, projectContext, "workflow_complete", {
       workflowId: wf_complete_denied.id,
-    });
+    }, store);
 
     expect(denied.isError).toBe(true);
     expect(denied.output).toContain("WorkflowTransitionError");
@@ -423,10 +429,11 @@ describe("workflow builtin tools", () => {
 
   test("workflow_complete checks policy, completes workflow, and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const store = createMockStore();
     const wf_complete = await stateManager.create({ title: "Complete Test", type: "quick_fix" });
     await stateManager.updateStage(wf_complete.id, "quick_verify");
     await stateManager.recordStageCompletion(wf_complete.id, { stage: "quick_verify" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_complete.id);
 
     const completed = await execute(registry, projectContext, "workflow_complete", {
       workflowId: wf_complete.id,
@@ -581,11 +588,149 @@ describe("workflow builtin tools", () => {
     }, store);
     expect(wrongWorkflowWrite.isError).toBe(true);
     expect(wrongWorkflowWrite.output).toContain(`can only write to current workflow ${wf_current.id}`);
+    expect(wrongWorkflowWrite.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+  });
+
+  test("workflow_read supports same-project cross-workflow reads", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_current = await stateManager.create({ title: "Current Workflow", type: "full_feature" });
+    const wf_other = await stateManager.create({ title: "Other Workflow", type: "full_feature" });
+
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_current.id);
+
+    const read = await execute(registry, projectContext, "workflow_read", {
+      workflowId: wf_other.id,
+    }, store);
+    expect(read.isError).toBe(false);
+    expect(JSON.parse(read.output)).toMatchObject({ id: wf_other.id, title: "Other Workflow" });
+  });
+
+  test("mutating tools reject wrong workflow with TOOL_WORKFLOW_WRONG_WORKFLOW", async () => {
+    const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
+    const wf_current = await stateManager.create({ title: "Current", type: "full_feature" });
+    const wf_other = await stateManager.create({ title: "Other", type: "full_feature" });
+    await artifactManager.write({
+      workflowId: wf_current.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      frontmatter: { kind: "TASKS" },
+      content: VALID_TASKS,
+    });
+
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_current.id);
+
+    const updateStage = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_other.id,
+      stage: "product_drafting",
+    }, store);
+    expect(updateStage.isError).toBe(true);
+    expect(updateStage.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(updateStage.output).toContain(`can only write to current workflow ${wf_current.id}`);
+    expect(updateStage.output).toContain(wf_other.id);
+
+    const recordCompletion = await execute(registry, projectContext, "workflow_record_completion", {
+      workflowId: wf_other.id,
+      stage: "idle",
+    }, store);
+    expect(recordCompletion.isError).toBe(true);
+    expect(recordCompletion.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(recordCompletion.output).toContain(wf_current.id);
+    expect(recordCompletion.output).toContain(wf_other.id);
+
+    const complete = await execute(registry, projectContext, "workflow_complete", {
+      workflowId: wf_other.id,
+    }, store);
+    expect(complete.isError).toBe(true);
+    expect(complete.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(complete.output).toContain(wf_current.id);
+    expect(complete.output).toContain(wf_other.id);
+
+    const taskCheck = await execute(registry, projectContext, "workflow_task_check", {
+      workflowId: wf_other.id,
+      taskId: "T1",
+      checked: true,
+    }, store);
+    expect(taskCheck.isError).toBe(true);
+    expect(taskCheck.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(taskCheck.output).toContain(wf_current.id);
+    expect(taskCheck.output).toContain(wf_other.id);
+
+    const artifactWrite = await execute(registry, projectContext, "artifact_write", {
+      workflowId: wf_other.id,
+      kind: "PRD",
+      path: "PRD.md",
+      content: "# Wrong\n",
+    }, store);
+    expect(artifactWrite.isError).toBe(true);
+    expect(artifactWrite.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(artifactWrite.output).toContain(wf_current.id);
+    expect(artifactWrite.output).toContain(wf_other.id);
+  });
+
+  test("mutating tools reject when session has no current workflowId", async () => {
+    const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Orphan", type: "full_feature" });
+    await artifactManager.write({
+      workflowId: wf.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      frontmatter: { kind: "TASKS" },
+      content: VALID_TASKS,
+    });
+
+    const store = createMockStore();
+
+    const updateStage = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf.id,
+      stage: "product_drafting",
+    }, store);
+    expect(updateStage.isError).toBe(true);
+    expect(updateStage.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(updateStage.output).toContain("requires the current session to be linked to a workflow");
+    expect(updateStage.output).toContain(wf.id);
+
+    const recordCompletion = await execute(registry, projectContext, "workflow_record_completion", {
+      workflowId: wf.id,
+      stage: "idle",
+    }, store);
+    expect(recordCompletion.isError).toBe(true);
+    expect(recordCompletion.output).toContain("requires the current session to be linked to a workflow");
+    expect(recordCompletion.output).toContain(wf.id);
+
+    const complete = await execute(registry, projectContext, "workflow_complete", {
+      workflowId: wf.id,
+    }, store);
+    expect(complete.isError).toBe(true);
+    expect(complete.output).toContain("requires the current session to be linked to a workflow");
+    expect(complete.output).toContain(wf.id);
+
+    const taskCheck = await execute(registry, projectContext, "workflow_task_check", {
+      workflowId: wf.id,
+      taskId: "T1",
+      checked: true,
+    }, store);
+    expect(taskCheck.isError).toBe(true);
+    expect(taskCheck.output).toContain("requires the current session to be linked to a workflow");
+    expect(taskCheck.output).toContain(wf.id);
+
+    const artifactWrite = await execute(registry, projectContext, "artifact_write", {
+      workflowId: wf.id,
+      kind: "PRD",
+      path: "PRD.md",
+      content: "# Wrong\n",
+    }, store);
+    expect(artifactWrite.isError).toBe(true);
+    expect(artifactWrite.output).toContain("requires the current session to be linked to a workflow");
+    expect(artifactWrite.output).toContain(wf.id);
   });
 
   test("workflow_task_check toggles only top-level TASKS.md task checkboxes", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
     const wf_tasks = await stateManager.create({ title: "Task List", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_tasks.id);
     await artifactManager.write({
       workflowId: wf_tasks.id,
       kind: "TASKS",
@@ -598,7 +743,7 @@ describe("workflow builtin tools", () => {
       workflowId: wf_tasks.id,
       taskId: "T1",
       checked: true,
-    });
+    }, store);
     expect(result.isError).toBe(false);
 
     const tasks = await artifactManager.read(wf_tasks.id, "TASKS.md");
@@ -609,6 +754,8 @@ describe("workflow builtin tools", () => {
   test("workflow_task_check rejects nested checkboxes, unknown ids, and non-TASKS targets", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
     const wf_reject = await stateManager.create({ title: "Reject Test", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_reject.id);
     await artifactManager.write({
       workflowId: wf_reject.id,
       kind: "TASKS",
@@ -621,7 +768,7 @@ describe("workflow builtin tools", () => {
       workflowId: wf_reject.id,
       taskId: "Tool toggles tasks",
       checked: true,
-    });
+    }, store);
     expect(nested.isError).toBe(true);
     expect(nested.output).toContain("Unknown task id");
 
@@ -629,7 +776,7 @@ describe("workflow builtin tools", () => {
       workflowId: wf_reject.id,
       taskId: "T9",
       checked: true,
-    });
+    }, store);
     expect(unknown.isError).toBe(true);
     expect(unknown.output).toContain("Unknown task id");
 
@@ -638,7 +785,7 @@ describe("workflow builtin tools", () => {
       workflowId: wf_reject.id,
       taskId: "T1",
       checked: true,
-    });
+    }, store);
     expect(nonTasks.isError).toBe(true);
     expect(nonTasks.output).toContain("only supports TASKS.md");
   });

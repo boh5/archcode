@@ -12,6 +12,7 @@ import {
 } from "../../../agents/workflow/artifacts";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError } from "../../../agents/workflow/state";
+import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
@@ -21,18 +22,10 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const artifactManager = ctx.projectContext.artifacts;
-      try {
-        const currentWorkflowId = ctx.store.getState().workflowId;
-        if (currentWorkflowId !== input.workflowId) {
-          return createToolErrorResult({
-            kind: "workspace",
-            code: "TOOL_ARTIFACT_WRONG_WORKFLOW",
-            message: currentWorkflowId
-              ? `artifact_write can only write to current workflow ${currentWorkflowId}, got ${input.workflowId}`
-              : "artifact_write requires the current session to be linked to a workflow",
-          });
-        }
+      const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "artifact_write");
+      if (guardResult) return guardResult;
 
+      try {
         const before = await readArtifactBeforeWrite(artifactManager, input);
         const result = await artifactManager.write(input);
         emitWorkflowStateChange(ctx.store, input.workflowId, ["artifacts"]);

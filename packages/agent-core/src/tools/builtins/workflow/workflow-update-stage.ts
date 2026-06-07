@@ -17,6 +17,7 @@ import {
   type WorkflowStage,
 } from "../../../agents/workflow/state";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
+import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema,
@@ -38,6 +39,9 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
     execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
       const artifactManager = ctx.projectContext.artifacts;
+      const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "workflow_update_stage");
+      if (guardResult) return guardResult;
+
       try {
         const currentState = await stateManager.read(input.workflowId);
         if (input.criticDecision) {
