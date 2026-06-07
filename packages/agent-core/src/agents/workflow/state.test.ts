@@ -355,6 +355,7 @@ describe("WorkflowStateManager", () => {
       triggerMessageId: "msg-42",
     });
 
+    expect(result.derived.id).not.toBe(source.id);
     expect(result.source).toMatchObject({
       id: source.id,
       type: "research_only",
@@ -378,9 +379,16 @@ describe("WorkflowStateManager", () => {
     });
     expect(result.derived.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(result.handoffSummary).toContain("Source Workflow");
-    expect(result.handoffSummary).toContain("- Type: research_only");
-    expect(result.handoffSummary).toContain("- Stage: research_consolidation");
-    expect(result.handoffSummary).toContain("- Status: active");
+    expect(result.handoffSummary).toContain(`Workflow ID: ${source.id}`);
+    expect(result.handoffSummary).toContain("Title: Source");
+    expect(result.handoffSummary).toContain("Type: research_only");
+    expect(result.handoffSummary).toContain("Stage: research_consolidation");
+    expect(result.handoffSummary).toContain("Status: active");
+    expect(result.handoffSummary).toContain("Derived Workflow");
+    expect(result.handoffSummary).toContain(`Workflow ID: ${result.derived.id}`);
+    expect(result.handoffSummary).toContain("Title: Upgrade to full feature");
+    expect(result.handoffSummary).toContain("Type: full_feature");
+    expect(result.handoffSummary).toContain("Derived Workflow Request");
     expect(result.handoffSummary).toContain("- RESEARCH: RESEARCH.md");
     expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", source.id, "HANDOFF_SUMMARY.md")).text()).toBe(result.handoffSummary);
     expect(await manager.read(source.id)).toEqual(result.source);

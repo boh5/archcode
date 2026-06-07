@@ -116,7 +116,9 @@ function buildDerivedWorkflowInitialMessage(input: {
     });
 
   return [
-    `Start derived workflow ${input.derived.id} from source workflow ${input.source.id}.`,
+    `You are now the orchestrator for derived workflow ${input.derived.id} titled "${input.derived.title}".`,
+    "",
+    `Source workflow: ${input.source.id} titled "${input.source.title}"`,
     "",
     `Handoff summary artifact: ${input.handoffSummaryId}`,
     "",

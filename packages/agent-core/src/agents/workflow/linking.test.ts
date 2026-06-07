@@ -159,7 +159,8 @@ describe("workflow session linking", () => {
     expect(result.workflow.sessionIds.orchestrator).not.toBe("source-session");
     expect(result.session.sessionId).toBe(result.workflow.sessionIds.orchestrator);
     expect(result.session.messages[0]).toMatchObject({ role: "user" });
-    expect(JSON.stringify(result.session.messages[0])).toContain("Start derived workflow");
+    expect(JSON.stringify(result.session.messages[0])).toContain("derived workflow");
+    expect(JSON.stringify(result.session.messages[0])).toContain('titled \\"Derived from source\\"');
     expect(JSON.stringify(result.session.messages[0])).toContain("artifact_read");
 
     const sourceState = await stateManager.read(source.workflow.id);

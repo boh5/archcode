@@ -136,7 +136,6 @@ export interface CreateDerivedWorkflowInput {
   targetType: WorkflowType;
   reason: DerivedFrom["reason"];
   triggerMessageId?: string;
-  id?: string;
   eventStore?: StoreApi<SessionStoreState>;
 }
 
@@ -193,15 +192,6 @@ export class WorkflowStateManager {
 
     const triggeredAt = new Date().toISOString();
     const handoffSummaryId = "HANDOFF_SUMMARY.md";
-    const handoffSummary = buildHandoffSummary({
-      source,
-      targetType: input.targetType,
-      reason: input.reason,
-      triggerMessageId: input.triggerMessageId,
-    });
-
-    const handoffPath = await this.workflowArtifactPath(source.id, handoffSummaryId);
-    await atomicWrite(handoffPath, handoffSummary);
 
     const derived = await this.create({
       title: input.title,
@@ -215,14 +205,22 @@ export class WorkflowStateManager {
       },
     });
 
-    const derivedWorkflowId = derived.id;
+    const handoffSummary = buildHandoffSummary({
+      source,
+      derived,
+      reason: input.reason,
+      triggerMessageId: input.triggerMessageId,
+    });
+
+    const handoffPath = await this.workflowArtifactPath(source.id, handoffSummaryId);
+    await atomicWrite(handoffPath, handoffSummary);
 
     const sourceUpdated = WorkflowStateSchema.parse({
       ...source,
       artifacts: { ...source.artifacts, HANDOFF_SUMMARY: handoffSummaryId },
       derivedWorkflows: [
         ...source.derivedWorkflows,
-        { workflowId: derivedWorkflowId, reason: input.reason, createdAt: triggeredAt },
+        { workflowId: derived.id, reason: input.reason, createdAt: triggeredAt },
       ],
       updatedAt: triggeredAt,
     });
@@ -437,7 +435,7 @@ export class WorkflowTerminalStateError extends Error {
 
 function buildHandoffSummary(input: {
   source: WorkflowState;
-  targetType: WorkflowType;
+  derived: WorkflowState;
   reason: DerivedFrom["reason"];
   triggerMessageId?: string;
 }): string {
@@ -451,16 +449,21 @@ function buildHandoffSummary(input: {
     : "- Trigger message ID: _not provided_";
 
   return [
-    `# Handoff Summary for ${input.source.id}`,
+    `# Handoff Summary`,
     "",
     "## Source Workflow",
     `- Workflow ID: ${input.source.id}`,
+    `- Title: ${input.source.title}`,
     `- Type: ${input.source.type}`,
     `- Stage: ${input.source.stage}`,
     `- Status: ${input.source.status}`,
     "",
+    "## Derived Workflow",
+    `- Workflow ID: ${input.derived.id}`,
+    `- Title: ${input.derived.title}`,
+    `- Type: ${input.derived.type}`,
+    "",
     "## Derived Workflow Request",
-    `- Target type: ${input.targetType}`,
     `- Reason: ${input.reason}`,
     triggerLine,
     "",

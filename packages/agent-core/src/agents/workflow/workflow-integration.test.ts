@@ -308,7 +308,13 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(result.session.workflowId).toBe(result.workflow.id);
     expect(result.workflow.sessionIds.orchestrator).toBe(result.session.sessionId);
     expect(result.session.messages[0]?.parts[0]).toMatchObject({ type: "text" });
-    expect(result.session.messages[0]?.parts[0]?.type === "text" ? result.session.messages[0].parts[0].text : "").toContain('artifact_read({ workflowId: "' + source.workflow.id + '", path: "RESEARCH.md" })');
+
+    const initialMessageText = result.session.messages[0]?.parts[0]?.type === "text" ? result.session.messages[0].parts[0].text : "";
+    expect(initialMessageText).toContain(`derived workflow ${result.workflow.id}`);
+    expect(initialMessageText).toContain(`titled "Derived from source"`);
+    expect(initialMessageText).toContain(`Source workflow: ${source.workflow.id}`);
+    expect(initialMessageText).toContain(`titled "wf-source"`);
+    expect(initialMessageText).toContain('artifact_read({ workflowId: "' + source.workflow.id + '", path: "RESEARCH.md" })');
   });
 
   test("artifact manager reads artifacts across workflow contexts by workflow id", async () => {
