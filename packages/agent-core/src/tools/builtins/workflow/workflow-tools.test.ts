@@ -176,6 +176,7 @@ describe("workflow builtin tools", () => {
     const created = await execute(registry, projectContext, "workflow_create", { title: "wf-create", type: "full_feature" }, store);
     expect(created.isError).toBe(false);
     const createdState = JSON.parse(created.output);
+    expect(createdState.title).toBe("wf-create");
     expect(createdState).toMatchObject({
       type: "full_feature",
       stage: "idle",
@@ -209,6 +210,119 @@ describe("workflow builtin tools", () => {
       workflowId: createdState.id,
       changed: ["stage", "status", "sessionIds"],
     });
+  });
+
+  test("workflow_create rejects caller-provided id at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "test",
+      type: "full_feature",
+      id: "00000000-0000-0000-0000-000000000001",
+    });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+  });
+
+  test("workflow_create rejects empty title at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "",
+      type: "full_feature",
+    });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+  });
+
+  test("workflow_create rejects whitespace-only title at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "   ",
+      type: "full_feature",
+    });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+  });
+
+  test("workflow_create blocks creation when current workflow is active", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "existing-active", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, sessionId: "test-active" });
+
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "new-one",
+      type: "full_feature",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(wf.id);
+    expect(result.output).toContain("active");
+    expect(result.output).toContain("existing-active");
+    expect(result.output).toContain("full_feature");
+    expect(result.output).toContain("Continue the existing workflow");
+  });
+
+  test("workflow_create blocks creation when current workflow is paused", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "paused-wf", type: "quick_fix" });
+    await stateManager.updateStatus(wf.id, "paused");
+    const store = createMockStore({ workflowId: wf.id, sessionId: "test-paused" });
+
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "another",
+      type: "full_feature",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(wf.id);
+    expect(result.output).toContain("paused");
+    expect(result.output).toContain("paused-wf");
+    expect(result.output).toContain("Continue the existing workflow");
+  });
+
+  test("workflow_create allows creation when current workflow is completed", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "completed-wf", type: "full_feature" });
+    await stateManager.complete(wf.id);
+    const orchestratorStore = storeManager.create("test-completed", TMP_DIR);
+    const store = createMockStore({ workflowId: wf.id, sessionId: "test-completed" });
+
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "after-completed",
+      type: "quick_fix",
+    }, store);
+
+    expect(result.isError).toBe(false);
+    const createdState = JSON.parse(result.output);
+    expect(createdState.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(createdState.id).not.toBe(wf.id);
+    expect(createdState.title).toBe("after-completed");
+    expect(createdState.type).toBe("quick_fix");
+    expect(createdState.stage).toBe("idle");
+    expect(createdState.status).toBe("active");
+    expect(orchestratorStore.getState().workflowId).toBe(createdState.id);
+  });
+
+  test("workflow_create allows creation when current workflow is failed", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "failed-wf", type: "full_feature" });
+    await stateManager.updateStatus(wf.id, "failed");
+    const orchestratorStore = storeManager.create("test-failed", TMP_DIR);
+    const store = createMockStore({ workflowId: wf.id, sessionId: "test-failed" });
+
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "after-failed",
+      type: "research_only",
+    }, store);
+
+    expect(result.isError).toBe(false);
+    const createdState = JSON.parse(result.output);
+    expect(createdState.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(createdState.id).not.toBe(wf.id);
+    expect(createdState.title).toBe("after-failed");
+    expect(createdState.type).toBe("research_only");
+    expect(createdState.stage).toBe("idle");
+    expect(createdState.status).toBe("active");
+    expect(orchestratorStore.getState().workflowId).toBe(createdState.id);
   });
 
   test("workflow_update_stage mutates stage with guarded transitions only", async () => {
