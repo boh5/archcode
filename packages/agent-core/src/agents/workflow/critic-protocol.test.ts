@@ -19,11 +19,11 @@ afterAll(async () => {
 describe("processCriticDecision", () => {
   test("approved at critic_prd_review transitions to spec_drafting", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-prd-approved", type: "full_feature" });
-    await manager.updateStage("wf-prd-approved", "critic_prd_review");
+    const wf = await manager.create({ title: "wf-prd-approved", type: "full_feature" });
+    await manager.updateStage(wf.id, "critic_prd_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-prd-approved",
+      workflowId: wf.id,
       decision: "approved",
       currentStage: "critic_prd_review",
       criticReportPath: "critic-reports/prd.md",
@@ -40,11 +40,11 @@ describe("processCriticDecision", () => {
 
   test("approved at critic_spec_review transitions to awaiting_user_approval", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-spec-approved", type: "full_feature" });
-    await manager.updateStage("wf-spec-approved", "critic_spec_review");
+    const wf = await manager.create({ title: "wf-spec-approved", type: "full_feature" });
+    await manager.updateStage(wf.id, "critic_spec_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-spec-approved",
+      workflowId: wf.id,
       decision: "approved",
       currentStage: "critic_spec_review",
     }, manager);
@@ -58,11 +58,11 @@ describe("processCriticDecision", () => {
 
   test("changes_requested increments retry count and transitions back to producer", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-change", type: "full_feature", maxRetries: 3 });
-    await manager.updateStage("wf-change", "critic_prd_review");
+    const wf = await manager.create({ title: "wf-change", type: "full_feature", maxRetries: 3 });
+    await manager.updateStage(wf.id, "critic_prd_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-change",
+      workflowId: wf.id,
       decision: "changes_requested",
       currentStage: "critic_prd_review",
     }, manager);
@@ -73,11 +73,11 @@ describe("processCriticDecision", () => {
 
   test("changes_requested at max retries transitions to failed", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-max", type: "full_feature", maxRetries: 1 });
-    await manager.updateStage("wf-max", "critic_spec_review");
+    const wf = await manager.create({ title: "wf-max", type: "full_feature", maxRetries: 1 });
+    await manager.updateStage(wf.id, "critic_spec_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-max",
+      workflowId: wf.id,
       decision: "changes_requested",
       currentStage: "critic_spec_review",
       criticReportPath: "critic-reports/spec.md",
@@ -92,11 +92,11 @@ describe("processCriticDecision", () => {
 
   test("rejected transitions to failed with error message", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-rejected", type: "full_feature" });
-    await manager.updateStage("wf-rejected", "critic_prd_review");
+    const wf = await manager.create({ title: "wf-rejected", type: "full_feature" });
+    await manager.updateStage(wf.id, "critic_prd_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-rejected",
+      workflowId: wf.id,
       decision: "rejected",
       currentStage: "critic_prd_review",
       criticReportPath: "critic-reports/rejected.md",
@@ -110,11 +110,11 @@ describe("processCriticDecision", () => {
 
   test("approved does not bypass user approval for foreman_executing", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-no-bypass", type: "full_feature" });
-    await manager.updateStage("wf-no-bypass", "critic_spec_review");
+    const wf = await manager.create({ title: "wf-no-bypass", type: "full_feature" });
+    await manager.updateStage(wf.id, "critic_spec_review");
 
     const result = await processCriticDecision({
-      workflowId: "wf-no-bypass",
+      workflowId: wf.id,
       decision: "approved",
       currentStage: "critic_spec_review",
     }, manager);

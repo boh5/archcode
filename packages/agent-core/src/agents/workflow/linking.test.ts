@@ -27,11 +27,11 @@ afterAll(async () => {
 describe("workflow session linking", () => {
   test("links a session as orchestrator and persists the session workflow id", async () => {
     const { stateManager, storeManager } = createManagers();
-    await stateManager.create({ id: "wf-orchestrator", type: "full_feature" });
+    const wf_orchestrator = await stateManager.create({ title: "wf-orchestrator", type: "full_feature" });
     const store = storeManager.create("session-orchestrator", TMP_DIR);
 
     const linked = await linkSessionToWorkflow(
-      "wf-orchestrator",
+      wf_orchestrator.id,
       "orchestrator",
       "session-orchestrator",
       stateManager,
@@ -39,27 +39,27 @@ describe("workflow session linking", () => {
     );
 
     expect(linked.workflow.sessionIds).toEqual({ orchestrator: "session-orchestrator" });
-    expect(linked.session.workflowId).toBe("wf-orchestrator");
-    expect(store.getState().workflowId).toBe("wf-orchestrator");
-    await expect(stateManager.read("wf-orchestrator")).resolves.toMatchObject({
+    expect(linked.session.workflowId).toBe(wf_orchestrator.id);
+    expect(store.getState().workflowId).toBe(wf_orchestrator.id);
+    await expect(stateManager.read(wf_orchestrator.id)).resolves.toMatchObject({
       sessionIds: { orchestrator: "session-orchestrator" },
     });
     await expect(storeManager.getSessionFile(TMP_DIR, "session-orchestrator")).resolves.toMatchObject({
-      workflowId: "wf-orchestrator",
+      workflowId: wf_orchestrator.id,
     });
   });
 
   test("links first-class role participants with stable keys", async () => {
     const { stateManager, storeManager } = createManagers();
-    await stateManager.create({ id: "wf-roles", type: "full_feature" });
+    const wf_roles = await stateManager.create({ title: "wf-roles", type: "full_feature" });
 
     for (const key of WORKFLOW_PARTICIPANT_KEYS) {
       const sessionId = `session-${key}`;
       storeManager.create(sessionId, TMP_DIR);
-      await linkSessionToWorkflow("wf-roles", key, sessionId, stateManager, storeManager);
+      await linkSessionToWorkflow(wf_roles.id, key, sessionId, stateManager, storeManager);
     }
 
-    const workflow = await stateManager.read("wf-roles");
+    const workflow = await stateManager.read(wf_roles.id);
     expect(workflow.sessionIds).toEqual({
       orchestrator: "session-orchestrator",
       product: "session-product",
@@ -68,28 +68,28 @@ describe("workflow session linking", () => {
       foreman: "session-foreman",
     });
     for (const key of WORKFLOW_PARTICIPANT_KEYS) {
-      expect(storeManager.get(`session-${key}`, TMP_DIR)?.getState().workflowId).toBe("wf-roles");
+      expect(storeManager.get(`session-${key}`, TMP_DIR)?.getState().workflowId).toBe(wf_roles.id);
     }
   });
 
   test("unlinks a participant without clearing the session workflow id", async () => {
     const { stateManager, storeManager } = createManagers();
-    await stateManager.create({ id: "wf-unlink", type: "quick_fix" });
+    const wf_unlink = await stateManager.create({ title: "wf-unlink", type: "quick_fix" });
     storeManager.create("session-product", TMP_DIR);
-    await linkSessionToWorkflow("wf-unlink", "product", "session-product", stateManager, storeManager);
+    await linkSessionToWorkflow(wf_unlink.id, "product", "session-product", stateManager, storeManager);
 
-    const workflow = await unlinkSessionFromWorkflow("wf-unlink", "product", stateManager);
+    const workflow = await unlinkSessionFromWorkflow(wf_unlink.id, "product", stateManager);
 
     expect(workflow.sessionIds).toEqual({});
-    expect(storeManager.get("session-product", TMP_DIR)?.getState().workflowId).toBe("wf-unlink");
-    await expect(stateManager.read("wf-unlink")).resolves.toMatchObject({ sessionIds: {} });
+    expect(storeManager.get("session-product", TMP_DIR)?.getState().workflowId).toBe(wf_unlink.id);
+    await expect(stateManager.read(wf_unlink.id)).resolves.toMatchObject({ sessionIds: {} });
   });
 
   test("child sessions inherit workflow id but are not added to workflow session ids", async () => {
     const { stateManager, storeManager } = createManagers();
-    await stateManager.create({ id: "wf-child", type: "full_feature" });
+    const wf_child = await stateManager.create({ title: "wf-child", type: "full_feature" });
     const parent = storeManager.create("session-parent", TMP_DIR);
-    await linkSessionToWorkflow("wf-child", "orchestrator", "session-parent", stateManager, storeManager);
+    await linkSessionToWorkflow(wf_child.id, "orchestrator", "session-parent", stateManager, storeManager);
 
     const parentState = parent.getState();
     const child = storeManager.create("session-child", TMP_DIR, {
@@ -99,8 +99,8 @@ describe("workflow session linking", () => {
       agentName: "explore",
     });
 
-    expect(child.getState().workflowId).toBe("wf-child");
-    await expect(stateManager.read("wf-child")).resolves.toMatchObject({
+    expect(child.getState().workflowId).toBe(wf_child.id);
+    await expect(stateManager.read(wf_child.id)).resolves.toMatchObject({
       sessionIds: { orchestrator: "session-parent" },
     });
   });
@@ -111,7 +111,7 @@ describe("workflow session linking", () => {
 
     const result = await createWorkflowWithOrchestrator(
       {
-        id: "wf-create",
+        title: "wf-create",
         type: "research_only",
         orchestratorSessionId: "session-create",
         artifacts: { RESEARCH: "RESEARCH.md" },
@@ -121,20 +121,18 @@ describe("workflow session linking", () => {
     );
 
     expect(result.workflow).toMatchObject({
-      id: "wf-create",
       type: "research_only",
       artifacts: { RESEARCH: "RESEARCH.md" },
       sessionIds: { orchestrator: "session-create" },
     });
-    expect(result.session.workflowId).toBe("wf-create");
   });
 
   test("creates a derived workflow with a fresh orchestrator session and handoff message", async () => {
     const { stateManager, storeManager } = createManagers();
     storeManager.create("source-session", TMP_DIR);
-    await createWorkflowWithOrchestrator(
+    const source = await createWorkflowWithOrchestrator(
       {
-        id: "wf-source-derived-link",
+        title: "source-derive",
         type: "research_only",
         orchestratorSessionId: "source-session",
         artifacts: { RESEARCH: "RESEARCH.md" },
@@ -145,36 +143,35 @@ describe("workflow session linking", () => {
 
     const result = await createDerivedWorkflowWithOrchestrator(
       {
-        sourceWorkflowId: "wf-source-derived-link",
+        sourceWorkflowId: source.workflow.id,
+        title: "Derived from source",
         targetType: "full_feature",
         reason: "upgrade",
         triggerMessageId: "msg-upgrade",
-        id: "wf-derived-link",
         workspaceRoot: TMP_DIR,
       },
       stateManager,
       storeManager,
     );
 
-    expect(result.workflow.id).toBe("wf-derived-link");
+    expect(result.workflow.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(result.workflow.sessionIds.orchestrator).toBeDefined();
     expect(result.workflow.sessionIds.orchestrator).not.toBe("source-session");
-    expect(result.session.workflowId).toBe("wf-derived-link");
     expect(result.session.sessionId).toBe(result.workflow.sessionIds.orchestrator);
     expect(result.session.messages[0]).toMatchObject({ role: "user" });
-    expect(JSON.stringify(result.session.messages[0])).toContain("Start derived workflow wf-derived-link");
+    expect(JSON.stringify(result.session.messages[0])).toContain("Start derived workflow");
     expect(JSON.stringify(result.session.messages[0])).toContain("artifact_read");
 
-    const source = await stateManager.read("wf-source-derived-link");
-    expect(source.type).toBe("research_only");
-    expect(source.sessionIds.orchestrator).toBe("source-session");
-    expect(source.derivedWorkflows).toEqual([{
-      workflowId: "wf-derived-link",
+    const sourceState = await stateManager.read(source.workflow.id);
+    expect(sourceState.type).toBe("research_only");
+    expect(sourceState.sessionIds.orchestrator).toBe("source-session");
+    expect(sourceState.derivedWorkflows).toEqual([{
+      workflowId: result.workflow.id,
       reason: "upgrade",
-      createdAt: source.derivedWorkflows[0]?.createdAt,
+      createdAt: sourceState.derivedWorkflows[0]?.createdAt,
     }]);
     await expect(storeManager.getSessionFile(TMP_DIR, result.session.sessionId)).resolves.toMatchObject({
-      workflowId: "wf-derived-link",
+      workflowId: result.workflow.id,
     });
   });
 

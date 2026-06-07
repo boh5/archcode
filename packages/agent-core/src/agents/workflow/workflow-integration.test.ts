@@ -32,7 +32,6 @@ import { SessionExecutionManager } from "../../execution/session-execution-manag
 import type { AgentDefinition } from "../factory-types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "workflow-integration");
-const WORKFLOW_ID = "wf-mvp-integration";
 
 const TASKS_MARKDOWN = `# TASKS
 
@@ -73,21 +72,21 @@ describe("mocked workflow MVP integration", () => {
     const delegateBuilder = mock(async () => ({ ok: true, evidencePath: "evidence/T1-builder.md" }));
     const delegateReviewer = mock(async () => ({ ok: true, evidencePath: "evidence/T2-reviewer.md" }));
 
-    await stateManager.create({ id: WORKFLOW_ID, type: "full_feature" });
-    await transition(stateManager, "idle", "product_drafting", false);
-    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "product_drafting" });
+    const createdWf = await stateManager.create({ title: "integration test", type: "full_feature" });
+    await transition(stateManager, createdWf.id, "idle", "product_drafting", false);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "product_drafting" });
 
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "PRD",
       path: "PRD.md",
       frontmatter: { owner: "product", status: "draft" },
       content: "# PRD\n\nShip a mocked MVP workflow integration path.",
     });
-    await transition(stateManager, "product_drafting", "critic_prd_review", false);
+    await transition(stateManager, createdWf.id, "product_drafting", "critic_prd_review", false);
 
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "CRITIC_REPORT",
       path: "critic-reports/prd.md",
       frontmatter: { reviewer: "critic", decision: "approved" },
@@ -95,7 +94,7 @@ describe("mocked workflow MVP integration", () => {
     });
     const prdDecision = await processCriticDecision(
       {
-        workflowId: WORKFLOW_ID,
+        workflowId: createdWf.id,
         decision: "approved",
         currentStage: "critic_prd_review",
         criticReportPath: "critic-reports/prd.md",
@@ -105,26 +104,26 @@ describe("mocked workflow MVP integration", () => {
     expect(prdDecision.newState.stage).toBe("spec_drafting");
 
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "SPEC",
       path: "SPEC.md",
       frontmatter: { owner: "spec", status: "draft" },
       content: "# SPEC\n\nImplement the mocked path using workflow managers directly.",
     });
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "TASKS",
       path: "TASKS.md",
       frontmatter: { owner: "spec", status: "draft" },
       content: TASKS_MARKDOWN,
     });
-    const tasksDraft = await artifactManager.read(WORKFLOW_ID, "TASKS.md");
+    const tasksDraft = await artifactManager.read(createdWf.id, "TASKS.md");
     expect(validateTasksMarkdown(tasksDraft.body).valid).toBe(true);
-    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "spec_drafting" });
-    await transition(stateManager, "spec_drafting", "critic_spec_review", false);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "spec_drafting" });
+    await transition(stateManager, createdWf.id, "spec_drafting", "critic_spec_review", false);
 
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "CRITIC_REPORT",
       path: "critic-reports/spec-tasks.md",
       frontmatter: { reviewer: "critic", decision: "approved" },
@@ -132,7 +131,7 @@ describe("mocked workflow MVP integration", () => {
     });
     const specDecision = await processCriticDecision(
       {
-        workflowId: WORKFLOW_ID,
+        workflowId: createdWf.id,
         decision: "approved",
         currentStage: "critic_spec_review",
         criticReportPath: "critic-reports/spec-tasks.md",
@@ -141,10 +140,10 @@ describe("mocked workflow MVP integration", () => {
     );
     expect(specDecision.newState.stage).toBe("awaiting_user_approval");
 
-    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "awaiting_user_approval" });
-    await transition(stateManager, "awaiting_user_approval", "foreman_executing", true);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "awaiting_user_approval" });
+    await transition(stateManager, createdWf.id, "awaiting_user_approval", "foreman_executing", true);
 
-    let currentTasks = (await artifactManager.read(WORKFLOW_ID, "TASKS.md")).body;
+    let currentTasks = (await artifactManager.read(createdWf.id, "TASKS.md")).body;
     for (const expectedWave of [["T1"], ["T2"]]) {
       const readyWave = calculateReadyWave(parseTasksMarkdown(currentTasks));
       expect(readyWave.map((task) => task.id)).toEqual(expectedWave);
@@ -153,7 +152,7 @@ describe("mocked workflow MVP integration", () => {
         const result = task.agent === "reviewer" ? await delegateReviewer() : await delegateBuilder();
         expect(result.ok).toBe(true);
         await artifactManager.write({
-          workflowId: WORKFLOW_ID,
+          workflowId: createdWf.id,
           kind: "EVIDENCE",
           path: result.evidencePath,
           content: `${task.id} ${task.agent} succeeded.`,
@@ -162,34 +161,34 @@ describe("mocked workflow MVP integration", () => {
       }
 
       await artifactManager.write({
-        workflowId: WORKFLOW_ID,
+        workflowId: createdWf.id,
         kind: "TASKS",
         path: "TASKS.md",
         frontmatter: { owner: "foreman", status: "checked" },
         content: currentTasks,
       });
-      currentTasks = (await artifactManager.read(WORKFLOW_ID, "TASKS.md")).body;
+      currentTasks = (await artifactManager.read(createdWf.id, "TASKS.md")).body;
     }
 
     expect(calculateReadyWave(parseTasksMarkdown(currentTasks))).toEqual([]);
-    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: "foreman_executing" });
-    await transition(stateManager, "foreman_executing", "final_review", false);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "foreman_executing" });
+    await transition(stateManager, createdWf.id, "foreman_executing", "final_review", false);
     await artifactManager.write({
-      workflowId: WORKFLOW_ID,
+      workflowId: createdWf.id,
       kind: "FINAL_REPORT",
       path: "FINAL_REPORT.md",
       frontmatter: { owner: "foreman", status: "complete" },
       content: "# Final Report\n\nWorkflow completed with mocked builder and reviewer outputs.",
     });
-    await stateManager.updateStatus(WORKFLOW_ID, "completed");
+    await stateManager.updateStatus(createdWf.id, "completed");
 
-    const finalState = await stateManager.read(WORKFLOW_ID);
+    const finalState = await stateManager.read(createdWf.id);
     const discovered = await stateManager.listWorkflows({ status: "completed" });
-    const finalTasks = parseTasksMarkdown((await artifactManager.read(WORKFLOW_ID, "TASKS.md")).body);
+    const finalTasks = parseTasksMarkdown((await artifactManager.read(createdWf.id, "TASKS.md")).body);
 
     expect(finalState.stage).toBe("final_review");
     expect(finalState.status).toBe("completed");
-    expect(discovered.map((workflow) => workflow.id)).toContain(WORKFLOW_ID);
+    expect(discovered.map((workflow) => workflow.id)).toContain(createdWf.id);
     expect(finalState.artifacts.PRD).toBe("PRD.md");
     expect(finalState.artifacts.SPEC).toBe("SPEC.md");
     expect(finalState.artifacts.TASKS).toBe("TASKS.md");
@@ -202,7 +201,7 @@ describe("mocked workflow MVP integration", () => {
     expect(finalTasks.every((task) => task.checked)).toBe(true);
     expect(delegateBuilder).toHaveBeenCalledTimes(1);
     expect(delegateReviewer).toHaveBeenCalledTimes(1);
-    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", WORKFLOW_ID, "PLAN.md")).exists()).toBe(false);
+    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", createdWf.id, "PLAN.md")).exists()).toBe(false);
   });
 });
 
@@ -212,32 +211,32 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    await stateManager.create({ id: "wf-full", type: "full_feature" });
-    await advance(stateManager, "wf-full", "product_drafting");
-    await artifactManager.write({ workflowId: "wf-full", kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
-    await stateManager.recordStageCompletion("wf-full", { stage: "product_drafting", evidence: ["PRD.md"] });
-    await advance(stateManager, "wf-full", "critic_prd_review");
-    await artifactManager.write({ workflowId: "wf-full", kind: "CRITIC_REPORT", path: "critic-reports/prd.md", content: "approved" });
-    await processCriticDecision({ workflowId: "wf-full", decision: "approved", currentStage: "critic_prd_review", criticReportPath: "critic-reports/prd.md" }, stateManager);
+    const wf_full = await stateManager.create({ title: "wf-full", type: "full_feature" });
+    await advance(stateManager, wf_full.id, "product_drafting");
+    await artifactManager.write({ workflowId: wf_full.id, kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"] });
+    await advance(stateManager, wf_full.id, "critic_prd_review");
+    await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", path: "critic-reports/prd.md", content: "approved" });
+    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_prd_review", criticReportPath: "critic-reports/prd.md" }, stateManager);
 
-    await artifactManager.write({ workflowId: "wf-full", kind: "SPEC", path: "SPEC.md", content: "---\nowner: spec\n---\n# SPEC" });
-    await artifactManager.write({ workflowId: "wf-full", kind: "TASKS", path: "TASKS.md", content: TASKS_MARKDOWN });
-    await stateManager.recordStageCompletion("wf-full", { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"] });
-    await advance(stateManager, "wf-full", "critic_spec_review");
-    await artifactManager.write({ workflowId: "wf-full", kind: "CRITIC_REPORT", path: "critic-reports/spec.md", content: "approved" });
-    await processCriticDecision({ workflowId: "wf-full", decision: "approved", currentStage: "critic_spec_review", criticReportPath: "critic-reports/spec.md" }, stateManager);
+    await artifactManager.write({ workflowId: wf_full.id, kind: "SPEC", path: "SPEC.md", content: "---\nowner: spec\n---\n# SPEC" });
+    await artifactManager.write({ workflowId: wf_full.id, kind: "TASKS", path: "TASKS.md", content: TASKS_MARKDOWN });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"] });
+    await advance(stateManager, wf_full.id, "critic_spec_review");
+    await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", path: "critic-reports/spec.md", content: "approved" });
+    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_spec_review", criticReportPath: "critic-reports/spec.md" }, stateManager);
 
-    await stateManager.recordStageCompletion("wf-full", { stage: "awaiting_user_approval", evidence: ["user-approved"] });
-    await advance(stateManager, "wf-full", "foreman_executing", true);
-    await artifactManager.write({ workflowId: "wf-full", kind: "EVIDENCE", path: "evidence/builder.md", content: "builder done" });
-    await stateManager.recordStageCompletion("wf-full", { stage: "foreman_executing", evidence: ["evidence/builder.md"] });
-    await advance(stateManager, "wf-full", "final_review");
-    await artifactManager.write({ workflowId: "wf-full", kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "---\nstatus: complete\n---\n# Done" });
-    await stateManager.recordStageCompletion("wf-full", { stage: "final_review", evidence: ["FINAL_REPORT.md"] });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "awaiting_user_approval", evidence: ["user-approved"] });
+    await advance(stateManager, wf_full.id, "foreman_executing", true);
+    await artifactManager.write({ workflowId: wf_full.id, kind: "EVIDENCE", path: "evidence/builder.md", content: "builder done" });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "foreman_executing", evidence: ["evidence/builder.md"] });
+    await advance(stateManager, wf_full.id, "final_review");
+    await artifactManager.write({ workflowId: wf_full.id, kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "---\nstatus: complete\n---\n# Done" });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "final_review", evidence: ["FINAL_REPORT.md"] });
 
-    const beforeComplete = await stateManager.read("wf-full");
+    const beforeComplete = await stateManager.read(wf_full.id);
     expect(canCompleteWorkflow(beforeComplete, (kind) => Boolean(beforeComplete.artifacts[kind as keyof typeof beforeComplete.artifacts]))).toEqual({ allowed: true });
-    const completed = await stateManager.complete("wf-full");
+    const completed = await stateManager.complete(wf_full.id);
 
     expect(completed.status).toBe("completed");
     expect(completed.stage).toBe("final_review");
@@ -252,33 +251,33 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    await stateManager.create({ id: "wf-research", type: "research_only" });
-    await advance(stateManager, "wf-research", "researching");
-    await artifactManager.write({ workflowId: "wf-research", kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: librarian\n---\n# Findings" });
-    await stateManager.recordStageCompletion("wf-research", { stage: "researching", evidence: ["RESEARCH.md"] });
-    await advance(stateManager, "wf-research", "research_consolidation");
-    await stateManager.recordStageCompletion("wf-research", { stage: "research_consolidation", evidence: ["RESEARCH.md"] });
+    const wf_research = await stateManager.create({ title: "wf-research", type: "research_only" });
+    await advance(stateManager, wf_research.id, "researching");
+    await artifactManager.write({ workflowId: wf_research.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: librarian\n---\n# Findings" });
+    await stateManager.recordStageCompletion(wf_research.id, { stage: "researching", evidence: ["RESEARCH.md"] });
+    await advance(stateManager, wf_research.id, "research_consolidation");
+    await stateManager.recordStageCompletion(wf_research.id, { stage: "research_consolidation", evidence: ["RESEARCH.md"] });
 
-    const ready = await stateManager.read("wf-research");
+    const ready = await stateManager.read(wf_research.id);
     expect(canCompleteWorkflow(ready, (kind) => Boolean(ready.artifacts[kind as keyof typeof ready.artifacts]))).toEqual({ allowed: true });
-    expect((await stateManager.complete("wf-research")).status).toBe("completed");
+    expect((await stateManager.complete(wf_research.id)).status).toBe("completed");
   });
 
   test("quick_fix lifecycle advances through analysis, patch, verify, and completes", async () => {
     const root = workspaceRoot("quick-fix");
     const stateManager = new WorkflowStateManager(root);
 
-    await stateManager.create({ id: "wf-quick", type: "quick_fix" });
-    await advance(stateManager, "wf-quick", "quick_analysis");
-    await stateManager.recordStageCompletion("wf-quick", { stage: "quick_analysis", evidence: ["analysis"] });
-    await advance(stateManager, "wf-quick", "quick_patch");
-    await stateManager.recordStageCompletion("wf-quick", { stage: "quick_patch", evidence: ["patch"] });
-    await advance(stateManager, "wf-quick", "quick_verify");
-    await stateManager.recordStageCompletion("wf-quick", { stage: "quick_verify", evidence: ["bun test"] });
+    const wf_quick = await stateManager.create({ title: "wf-quick", type: "quick_fix" });
+    await advance(stateManager, wf_quick.id, "quick_analysis");
+    await stateManager.recordStageCompletion(wf_quick.id, { stage: "quick_analysis", evidence: ["analysis"] });
+    await advance(stateManager, wf_quick.id, "quick_patch");
+    await stateManager.recordStageCompletion(wf_quick.id, { stage: "quick_patch", evidence: ["patch"] });
+    await advance(stateManager, wf_quick.id, "quick_verify");
+    await stateManager.recordStageCompletion(wf_quick.id, { stage: "quick_verify", evidence: ["bun test"] });
 
-    const ready = await stateManager.read("wf-quick");
+    const ready = await stateManager.read(wf_quick.id);
     expect(canCompleteWorkflow(ready, () => true)).toEqual({ allowed: true });
-    expect((await stateManager.complete("wf-quick")).status).toBe("completed");
+    expect((await stateManager.complete(wf_quick.id)).status).toBe("completed");
   });
 
   test("derived upgrade from research_only keeps source active and links derived full_feature", async () => {
@@ -288,28 +287,28 @@ describe("end-to-end workflow lifecycle integration", () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sourceStore = storeManager.create("source-session", root);
 
-    await createWorkflowWithOrchestrator({ id: "wf-source", type: "research_only", orchestratorSessionId: sourceStore.getState().sessionId }, stateManager, storeManager);
-    await advance(stateManager, "wf-source", "researching");
-    await artifactManager.write({ workflowId: "wf-source", kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: research\n---\n# Source research" });
-    await stateManager.recordStageCompletion("wf-source", { stage: "researching", evidence: ["RESEARCH.md"] });
-    await advance(stateManager, "wf-source", "research_consolidation");
-    await stateManager.recordStageCompletion("wf-source", { stage: "research_consolidation" });
+    const source = await createWorkflowWithOrchestrator({ title: "wf-source", type: "research_only", orchestratorSessionId: sourceStore.getState().sessionId }, stateManager, storeManager);
+    await advance(stateManager, source.workflow.id, "researching");
+    await artifactManager.write({ workflowId: source.workflow.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: research\n---\n# Source research" });
+    await stateManager.recordStageCompletion(source.workflow.id, { stage: "researching", evidence: ["RESEARCH.md"] });
+    await advance(stateManager, source.workflow.id, "research_consolidation");
+    await stateManager.recordStageCompletion(source.workflow.id, { stage: "research_consolidation" });
 
-    const result = await createDerivedWorkflowWithOrchestrator({ sourceWorkflowId: "wf-source", targetType: "full_feature", reason: "upgrade", id: "wf-derived", workspaceRoot: root }, stateManager, storeManager);
-    const sourceAfter = await stateManager.read("wf-source");
-    const derived = await stateManager.read("wf-derived");
+    const result = await createDerivedWorkflowWithOrchestrator({ sourceWorkflowId: source.workflow.id, title: "Derived from source", targetType: "full_feature", reason: "upgrade", workspaceRoot: root }, stateManager, storeManager);
+    const sourceAfter = await stateManager.read(source.workflow.id);
+    const derived = await stateManager.read(result.workflow.id);
 
     expect(sourceAfter.status).toBe("active");
     expect(sourceAfter.stage).toBe("research_consolidation");
-    expect(sourceAfter.derivedWorkflows).toEqual([{ workflowId: "wf-derived", reason: "upgrade", createdAt: result.source.derivedWorkflows[0]?.createdAt }]);
+    expect(sourceAfter.derivedWorkflows).toEqual([{ workflowId: result.workflow.id, reason: "upgrade", createdAt: result.source.derivedWorkflows[0]?.createdAt }]);
     expect(sourceAfter.artifacts.RESEARCH).toBe("RESEARCH.md");
     expect(derived.type).toBe("full_feature");
-    expect(derived.derivedFrom?.workflowId).toBe("wf-source");
+    expect(derived.derivedFrom?.workflowId).toBe(source.workflow.id);
     expect(derived.derivedFrom?.reason).toBe("upgrade");
-    expect(result.session.workflowId).toBe("wf-derived");
+    expect(result.session.workflowId).toBe(result.workflow.id);
     expect(result.workflow.sessionIds.orchestrator).toBe(result.session.sessionId);
     expect(result.session.messages[0]?.parts[0]).toMatchObject({ type: "text" });
-    expect(result.session.messages[0]?.parts[0]?.type === "text" ? result.session.messages[0].parts[0].text : "").toContain('artifact_read({ workflowId: "wf-source", path: "RESEARCH.md" })');
+    expect(result.session.messages[0]?.parts[0]?.type === "text" ? result.session.messages[0].parts[0].text : "").toContain('artifact_read({ workflowId: "' + source.workflow.id + '", path: "RESEARCH.md" })');
   });
 
   test("artifact manager reads artifacts across workflow contexts by workflow id", async () => {
@@ -317,15 +316,15 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    await stateManager.create({ id: "wf-a", type: "research_only" });
-    await stateManager.create({ id: "wf-b", type: "quick_fix" });
-    await artifactManager.write({ workflowId: "wf-a", kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: a\n---\n# Shared research" });
-    await artifactManager.write({ workflowId: "wf-b", kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "---\nowner: b\n---\n# Other workflow" });
+    const wf_a = await stateManager.create({ title: "wf-a", type: "research_only" });
+    const wf_b = await stateManager.create({ title: "wf-b", type: "quick_fix" });
+    await artifactManager.write({ workflowId: wf_a.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: a\n---\n# Shared research" });
+    await artifactManager.write({ workflowId: wf_b.id, kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "---\nowner: b\n---\n# Other workflow" });
 
-    const readFromOtherContext = await artifactManager.read("wf-a", "RESEARCH.md");
+    const readFromOtherContext = await artifactManager.read(wf_a.id, "RESEARCH.md");
     expect(readFromOtherContext.frontmatter.owner).toBe("a");
     expect(readFromOtherContext.body).toContain("Shared research");
-    expect((await stateManager.read("wf-b")).artifacts).toEqual({ FINAL_REPORT: "FINAL_REPORT.md" });
+    expect((await stateManager.read(wf_b.id)).artifacts).toEqual({ FINAL_REPORT: "FINAL_REPORT.md" });
   });
 
   test("session linking stores workflowId on session and orchestrator session id on workflow", async () => {
@@ -334,12 +333,12 @@ describe("end-to-end workflow lifecycle integration", () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const session = storeManager.create("orchestrator-session", root);
 
-    const linked = await createWorkflowWithOrchestrator({ id: "wf-linked", type: "full_feature", orchestratorSessionId: session.getState().sessionId }, stateManager, storeManager);
+    const linked = await createWorkflowWithOrchestrator({ title: "wf-linked", type: "full_feature", orchestratorSessionId: session.getState().sessionId }, stateManager, storeManager);
 
-    expect(linked.session.workflowId).toBe("wf-linked");
+    expect(linked.session.workflowId).toBe(linked.workflow.id);
     expect(linked.workflow.sessionIds.orchestrator).toBe("orchestrator-session");
-    expect((await stateManager.read("wf-linked")).sessionIds.orchestrator).toBe("orchestrator-session");
-    expect(storeManager.get("orchestrator-session", root)?.getState().workflowId).toBe("wf-linked");
+    expect((await stateManager.read(linked.workflow.id)).sessionIds.orchestrator).toBe("orchestrator-session");
+    expect(storeManager.get("orchestrator-session", root)?.getState().workflowId).toBe(linked.workflow.id);
   });
 
   test("workflow tools emit workflow.state_change SSE stream events", async () => {
@@ -348,15 +347,16 @@ describe("end-to-end workflow lifecycle integration", () => {
     const store = storeManager.create("sse-session", root);
     const ctx = createContext(root, storeManager, store);
 
-    await createWorkflowCreateTool().execute({ id: "wf-sse", type: "quick_fix" }, ctx);
-    await createWorkflowRecordCompletionTool().execute({ workflowId: "wf-sse", stage: "idle" }, ctx);
-    await createWorkflowUpdateStageTool().execute({ workflowId: "wf-sse", stage: "quick_analysis", hasUserApproval: false, incrementRetry: false }, ctx);
+    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "wf-sse", type: "quick_fix" }, ctx) as string);
+    const workflowId = createdResult.id;
+    await createWorkflowRecordCompletionTool().execute({ workflowId, stage: "idle" }, ctx);
+    await createWorkflowUpdateStageTool().execute({ workflowId, stage: "quick_analysis", hasUserApproval: false, incrementRetry: false }, ctx);
 
     const events = store.getState().events.filter((event) => event.kind === "workflow.state_change");
     expect(events.map((event) => event.payload)).toMatchObject([
-      { type: "workflow.state_change", workflowId: "wf-sse", changed: ["stage", "status", "sessionIds"] },
-      { type: "workflow.state_change", workflowId: "wf-sse", changed: ["stageCompletions"] },
-      { type: "workflow.state_change", workflowId: "wf-sse", changed: ["stage"] },
+      { type: "workflow.state_change", workflowId, changed: ["stage", "status", "sessionIds"] },
+      { type: "workflow.state_change", workflowId, changed: ["stageCompletions"] },
+      { type: "workflow.state_change", workflowId, changed: ["stage"] },
     ]);
   });
 
@@ -427,23 +427,23 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    await stateManager.create({ id: "wf-errors", type: "full_feature" });
-    const invalid = validateTransition({ workflowId: "wf-errors", workflowType: "full_feature", currentStage: "idle", targetStage: "final_review", retryCount: 0, maxRetries: 3, hasArtifact: () => false, hasStageCompletion: () => false, hasUserApproval: false });
+    const wf_errors = await stateManager.create({ title: "wf-errors", type: "full_feature" });
+    const invalid = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "idle", targetStage: "final_review", retryCount: 0, maxRetries: 3, hasArtifact: () => false, hasStageCompletion: () => false, hasUserApproval: false });
     expect(invalid.allowed).toBe(false);
     expect(invalid.errorName).toBe("WorkflowTransitionError");
 
-    await advance(stateManager, "wf-errors", "product_drafting");
-    await artifactManager.write({ workflowId: "wf-errors", kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
-    const missingCompletion = validateTransition({ workflowId: "wf-errors", workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: () => false, hasUserApproval: false });
+    await advance(stateManager, wf_errors.id, "product_drafting");
+    await artifactManager.write({ workflowId: wf_errors.id, kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
+    const missingCompletion = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: () => false, hasUserApproval: false });
     expect(missingCompletion.allowed).toBe(false);
     expect(missingCompletion.error).toContain("record completion for product_drafting");
 
-    const prematureComplete = canCompleteWorkflow(await stateManager.read("wf-errors"), () => true);
+    const prematureComplete = canCompleteWorkflow(await stateManager.read(wf_errors.id), () => true);
     expect(prematureComplete.allowed).toBe(false);
     expect(prematureComplete.error).toContain("required stage final_review");
 
-    await stateManager.complete("wf-errors");
-    await stateManager.createDerived({ sourceWorkflowId: "wf-errors", targetType: "full_feature", reason: "upgrade", id: "wf-derived-error" })
+    await stateManager.complete(wf_errors.id);
+    await stateManager.createDerived({ sourceWorkflowId: wf_errors.id, targetType: "full_feature", reason: "upgrade", title: "Derived" })
       .then(
         () => { throw new Error("Expected terminal source derivation to fail"); },
         (error) => expect(error).toBeInstanceOf(WorkflowTerminalStateError),
@@ -456,9 +456,10 @@ describe("end-to-end workflow lifecycle integration", () => {
     const store = storeManager.create("tool-error-session", root);
     const ctx = createContext(root, storeManager, store);
 
-    await createWorkflowCreateTool().execute({ id: "wf-tool-errors", type: "full_feature" }, ctx);
-    const transitionResult = await createWorkflowUpdateStageTool().execute({ workflowId: "wf-tool-errors", stage: "final_review", hasUserApproval: false, incrementRetry: false }, ctx);
-    const completeResult = await createWorkflowCompleteTool().execute({ workflowId: "wf-tool-errors" }, ctx);
+    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "wf-tool-errors", type: "full_feature" }, ctx) as string);
+    const wfToolId = createdResult.id;
+    const transitionResult = await createWorkflowUpdateStageTool().execute({ workflowId: wfToolId, stage: "final_review", hasUserApproval: false, incrementRetry: false }, ctx);
+    const completeResult = await createWorkflowCompleteTool().execute({ workflowId: wfToolId }, ctx);
 
     expect(isToolError(transitionResult)).toBe(true);
     expect(isToolError(completeResult)).toBe(true);
@@ -469,15 +470,16 @@ describe("end-to-end workflow lifecycle integration", () => {
 
 async function transition(
   stateManager: WorkflowStateManager,
+  workflowId: string,
   currentStage: WorkflowStage,
   targetStage: WorkflowStage,
   hasUserApproval: boolean,
 ): Promise<void> {
-  const state = await stateManager.read(WORKFLOW_ID);
+  const state = await stateManager.read(workflowId);
   expect(state.stage).toBe(currentStage);
 
   const result = validateTransition({
-    workflowId: WORKFLOW_ID,
+    workflowId,
     workflowType: state.type,
     currentStage,
     targetStage,
@@ -490,9 +492,9 @@ async function transition(
 
   expect(result).toEqual({ allowed: true });
   if (currentStage !== "idle") {
-    await stateManager.recordStageCompletion(WORKFLOW_ID, { stage: currentStage });
+    await stateManager.recordStageCompletion(workflowId, { stage: currentStage });
   }
-  await stateManager.updateStage(WORKFLOW_ID, targetStage);
+  await stateManager.updateStage(workflowId, targetStage);
 }
 
 function workspaceRoot(name: string): string {

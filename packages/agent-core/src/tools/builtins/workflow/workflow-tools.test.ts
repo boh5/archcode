@@ -144,20 +144,21 @@ describe("workflow builtin tools", () => {
     const orchestratorStore = storeManager.create("test-roundtrip", TMP_DIR);
     const store = createMockStore({ sessionId: "test-roundtrip" });
 
-    const created = await execute(registry, projectContext, "workflow_create", { id: "wf-create", type: "full_feature" }, store);
+    const created = await execute(registry, projectContext, "workflow_create", { title: "wf-create", type: "full_feature" }, store);
     expect(created.isError).toBe(false);
-    expect(JSON.parse(created.output)).toMatchObject({
-      id: "wf-create",
+    const createdState = JSON.parse(created.output);
+    expect(createdState).toMatchObject({
       type: "full_feature",
       stage: "idle",
       status: "active",
       sessionIds: { orchestrator: "test-roundtrip" },
     });
-    expect(orchestratorStore.getState().workflowId).toBe("wf-create");
+    expect(createdState.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(orchestratorStore.getState().workflowId).toBe(createdState.id);
 
-    const read = await execute(registry, projectContext, "workflow_read", { workflowId: "wf-create" });
+    const read = await execute(registry, projectContext, "workflow_read", { workflowId: createdState.id });
     expect(read.isError).toBe(false);
-    expect(JSON.parse(read.output)).toMatchObject({ id: "wf-create", stage: "idle" });
+    expect(JSON.parse(read.output)).toMatchObject({ id: createdState.id, stage: "idle" });
   });
 
   test("workflow_create links orchestrator session and emits state change", async () => {
@@ -166,44 +167,45 @@ describe("workflow builtin tools", () => {
     const store = createMockStore({ sessionId: "orchestrator-link" });
 
     const created = await execute(registry, projectContext, "workflow_create", {
-      id: "wf-linked",
+      title: "wf-linked",
       type: "full_feature",
     }, store);
 
     expect(created.isError).toBe(false);
-    expect(JSON.parse(created.output).sessionIds).toMatchObject({ orchestrator: "orchestrator-link" });
-    expect(orchestratorStore.getState().workflowId).toBe("wf-linked");
+    const createdState = JSON.parse(created.output);
+    expect(createdState.sessionIds).toMatchObject({ orchestrator: "orchestrator-link" });
+    expect(orchestratorStore.getState().workflowId).toBe(createdState.id);
     expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
       type: "workflow.state_change",
-      workflowId: "wf-linked",
+      workflowId: createdState.id,
       changed: ["stage", "status", "sessionIds"],
     });
   });
 
   test("workflow_update_stage mutates stage with guarded transitions only", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-stage", type: "full_feature" });
+    const wf_stage = await stateManager.create({ title: "wf-stage", type: "full_feature" });
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: "wf-stage",
+      workflowId: wf_stage.id,
       stage: "product_drafting",
     });
     expect(updated.isError).toBe(false);
     expect(JSON.parse(updated.output)).toMatchObject({
-      id: "wf-stage",
+      id: wf_stage.id,
       stage: "product_drafting",
       status: "active",
     });
 
     const invalid = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: "wf-stage",
+      workflowId: wf_stage.id,
       stage: "not_a_stage",
     });
     expect(invalid.isError).toBe(true);
     expect(inferToolErrorKindFromResult(invalid)).toBe("schema");
 
     const denied = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: "wf-stage",
+      workflowId: wf_stage.id,
       stage: "foreman_executing",
     });
     expect(denied.isError).toBe(true);
@@ -213,17 +215,17 @@ describe("workflow builtin tools", () => {
   test("workflow_update_stage emits state change after mutation", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const store = createMockStore();
-    await stateManager.create({ id: "wf-stage-event", type: "full_feature" });
+    const wf_stage_event = await stateManager.create({ title: "wf-stage-event", type: "full_feature" });
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: "wf-stage-event",
+      workflowId: wf_stage_event.id,
       stage: "product_drafting",
     }, store);
 
     expect(updated.isError).toBe(false);
     expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
       type: "workflow.state_change",
-      workflowId: "wf-stage-event",
+      workflowId: wf_stage_event.id,
       changed: ["stage"],
     });
   });
@@ -231,10 +233,10 @@ describe("workflow builtin tools", () => {
   test("workflow_record_completion persists completion record and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const store = createMockStore();
-    await stateManager.create({ id: "wf-completion-record", type: "quick_fix" });
+    const wf_completion_record = await stateManager.create({ title: "wf-completion-record", type: "quick_fix" });
 
     const recorded = await execute(registry, projectContext, "workflow_record_completion", {
-      workflowId: "wf-completion-record",
+      workflowId: wf_completion_record.id,
       stage: "quick_verify",
       criticPassed: true,
       evidence: ["evidence/check.md"],
@@ -249,17 +251,17 @@ describe("workflow builtin tools", () => {
     });
     expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
       type: "workflow.state_change",
-      workflowId: "wf-completion-record",
+      workflowId: wf_completion_record.id,
       changed: ["stageCompletions"],
     });
   });
 
   test("workflow_complete denies before completion policy is satisfied", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-complete-denied", type: "quick_fix" });
+    const wf_complete_denied = await stateManager.create({ title: "wf-complete-denied", type: "quick_fix" });
 
     const denied = await execute(registry, projectContext, "workflow_complete", {
-      workflowId: "wf-complete-denied",
+      workflowId: wf_complete_denied.id,
     });
 
     expect(denied.isError).toBe(true);
@@ -270,37 +272,37 @@ describe("workflow builtin tools", () => {
   test("workflow_complete checks policy, completes workflow, and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const store = createMockStore();
-    await stateManager.create({ id: "wf-complete", type: "quick_fix" });
-    await stateManager.updateStage("wf-complete", "quick_verify");
-    await stateManager.recordStageCompletion("wf-complete", { stage: "quick_verify" });
+    const wf_complete = await stateManager.create({ title: "wf-complete", type: "quick_fix" });
+    await stateManager.updateStage(wf_complete.id, "quick_verify");
+    await stateManager.recordStageCompletion(wf_complete.id, { stage: "quick_verify" });
 
     const completed = await execute(registry, projectContext, "workflow_complete", {
-      workflowId: "wf-complete",
+      workflowId: wf_complete.id,
     }, store);
 
     expect(completed.isError).toBe(false);
     expect(JSON.parse(completed.output)).toMatchObject({
-      id: "wf-complete",
+      id: wf_complete.id,
       stage: "quick_verify",
       status: "completed",
     });
     expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
       type: "workflow.state_change",
-      workflowId: "wf-complete",
+      workflowId: wf_complete.id,
       changed: ["status"],
     });
   });
 
   test("artifact_write and artifact_read use artifact manager without changing stage or status", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact", type: "full_feature" });
-    await stateManager.updateStage("wf-artifact", "product_drafting");
-    await stateManager.updateStatus("wf-artifact", "paused");
+    const wf_artifact = await stateManager.create({ title: "wf-artifact", type: "full_feature" });
+    await stateManager.updateStage(wf_artifact.id, "product_drafting");
+    await stateManager.updateStatus(wf_artifact.id, "paused");
     const store = createMockStore();
-    store.getState().setWorkflowId("wf-artifact");
+    store.getState().setWorkflowId(wf_artifact.id);
 
     const written = await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-artifact",
+      workflowId: wf_artifact.id,
       kind: "PRD",
       path: "PRD.md",
       content: "# Product\n",
@@ -317,12 +319,12 @@ describe("workflow builtin tools", () => {
       artifacts: { PRD: "PRD.md" },
     });
 
-    const state = await stateManager.read("wf-artifact");
+    const state = await stateManager.read(wf_artifact.id);
     expect(state.stage).toBe("product_drafting");
     expect(state.status).toBe("paused");
 
     const read = await execute(registry, projectContext, "artifact_read", {
-      workflowId: "wf-artifact",
+      workflowId: wf_artifact.id,
       kind: "PRD",
     });
     expect(read.isError).toBe(false);
@@ -335,12 +337,12 @@ describe("workflow builtin tools", () => {
 
   test("artifact_write includes modified diff metadata for existing text artifacts", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact-modified", type: "full_feature" });
+    const wf_artifact_modified = await stateManager.create({ title: "wf-artifact-modified", type: "full_feature" });
     const store = createMockStore();
-    store.getState().setWorkflowId("wf-artifact-modified");
+    store.getState().setWorkflowId(wf_artifact_modified.id);
 
     await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-artifact-modified",
+      workflowId: wf_artifact_modified.id,
       kind: "SPEC",
       path: "SPEC.md",
       content: "# Spec\n\nBefore\n",
@@ -348,7 +350,7 @@ describe("workflow builtin tools", () => {
     }, store);
 
     const updated = await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-artifact-modified",
+      workflowId: wf_artifact_modified.id,
       kind: "SPEC",
       path: "SPEC.md",
       content: "# Spec\n\nAfter\n",
@@ -365,12 +367,12 @@ describe("workflow builtin tools", () => {
 
   test("artifact_write returns unsupported diff metadata for binary or oversized content", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-artifact-unsupported", type: "full_feature" });
+    const wf_artifact_unsupported = await stateManager.create({ title: "wf-artifact-unsupported", type: "full_feature" });
     const store = createMockStore();
-    store.getState().setWorkflowId("wf-artifact-unsupported");
+    store.getState().setWorkflowId(wf_artifact_unsupported.id);
 
     const binary = await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-artifact-unsupported",
+      workflowId: wf_artifact_unsupported.id,
       kind: "EVIDENCE",
       path: "evidence/blob.md",
       content: "\0\0\0binary",
@@ -383,7 +385,7 @@ describe("workflow builtin tools", () => {
     });
 
     const oversized = await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-artifact-unsupported",
+      workflowId: wf_artifact_unsupported.id,
       kind: "EVIDENCE",
       path: "evidence/large.md",
       content: "x".repeat(1_000_001),
@@ -399,10 +401,10 @@ describe("workflow builtin tools", () => {
   test("artifact_read supports same-project cross-workflow reads while artifact_write stays current-workflow only", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const artifactManager = projectContext.artifacts;
-    await stateManager.create({ id: "wf-current", type: "full_feature" });
-    await stateManager.create({ id: "wf-other", type: "full_feature" });
+    const wf_current = await stateManager.create({ title: "wf-current", type: "full_feature" });
+    const wf_other = await stateManager.create({ title: "wf-other", type: "full_feature" });
     await artifactManager.write({
-      workflowId: "wf-other",
+      workflowId: wf_other.id,
       kind: "PRD",
       path: "PRD.md",
       frontmatter: { kind: "PRD" },
@@ -410,30 +412,30 @@ describe("workflow builtin tools", () => {
     });
 
     const store = createMockStore();
-    store.getState().setWorkflowId("wf-current");
+    store.getState().setWorkflowId(wf_current.id);
 
     const read = await execute(registry, projectContext, "artifact_read", {
-      workflowId: "wf-other",
+      workflowId: wf_other.id,
       kind: "PRD",
     }, store);
     expect(read.isError).toBe(false);
     expect(JSON.parse(read.output)).toMatchObject({ path: "PRD.md", body: "# Other\n" });
 
     const wrongWorkflowWrite = await execute(registry, projectContext, "artifact_write", {
-      workflowId: "wf-other",
+      workflowId: wf_other.id,
       kind: "SPEC",
       path: "SPEC.md",
       content: "# Wrong\n",
     }, store);
     expect(wrongWorkflowWrite.isError).toBe(true);
-    expect(wrongWorkflowWrite.output).toContain("can only write to current workflow wf-current");
+    expect(wrongWorkflowWrite.output).toContain(`can only write to current workflow ${wf_current.id}`);
   });
 
   test("workflow_task_check toggles only top-level TASKS.md task checkboxes", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-tasks", type: "full_feature" });
+    const wf_tasks = await stateManager.create({ title: "wf-tasks", type: "full_feature" });
     await artifactManager.write({
-      workflowId: "wf-tasks",
+      workflowId: wf_tasks.id,
       kind: "TASKS",
       path: "TASKS.md",
       frontmatter: { kind: "TASKS" },
@@ -441,22 +443,22 @@ describe("workflow builtin tools", () => {
     });
 
     const result = await execute(registry, projectContext, "workflow_task_check", {
-      workflowId: "wf-tasks",
+      workflowId: wf_tasks.id,
       taskId: "T1",
       checked: true,
     });
     expect(result.isError).toBe(false);
 
-    const tasks = await artifactManager.read("wf-tasks", "TASKS.md");
+    const tasks = await artifactManager.read(wf_tasks.id, "TASKS.md");
     expect(tasks.content).toContain("- [x] T1. Build tool");
     expect(tasks.content).toContain("    - [ ] Tool toggles tasks");
   });
 
   test("workflow_task_check rejects nested checkboxes, unknown ids, and non-TASKS targets", async () => {
     const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
-    await stateManager.create({ id: "wf-reject", type: "full_feature" });
+    const wf_reject = await stateManager.create({ title: "wf-reject", type: "full_feature" });
     await artifactManager.write({
-      workflowId: "wf-reject",
+      workflowId: wf_reject.id,
       kind: "TASKS",
       path: "TASKS.md",
       frontmatter: { kind: "TASKS" },
@@ -464,7 +466,7 @@ describe("workflow builtin tools", () => {
     });
 
     const nested = await execute(registry, projectContext, "workflow_task_check", {
-      workflowId: "wf-reject",
+      workflowId: wf_reject.id,
       taskId: "Tool toggles tasks",
       checked: true,
     });
@@ -472,16 +474,16 @@ describe("workflow builtin tools", () => {
     expect(nested.output).toContain("Unknown task id");
 
     const unknown = await execute(registry, projectContext, "workflow_task_check", {
-      workflowId: "wf-reject",
+      workflowId: wf_reject.id,
       taskId: "T9",
       checked: true,
     });
     expect(unknown.isError).toBe(true);
     expect(unknown.output).toContain("Unknown task id");
 
-    await stateManager.updateArtifacts("wf-reject", { TASKS: "PRD.md" });
+    await stateManager.updateArtifacts(wf_reject.id, { TASKS: "PRD.md" });
     const nonTasks = await execute(registry, projectContext, "workflow_task_check", {
-      workflowId: "wf-reject",
+      workflowId: wf_reject.id,
       taskId: "T1",
       checked: true,
     });

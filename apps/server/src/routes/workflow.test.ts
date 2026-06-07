@@ -88,29 +88,26 @@ describe("workflow routes", () => {
   describe("GET /api/projects/:slug/workflows/:workflowId", () => {
     test("returns the requested workflow", async () => {
       const { app, project, workspaceRoot } = await createTestApp("workflow-found");
-      const workflowId = "wf-1";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
-      await stateManager.create({
-        id: workflowId,
-        type: "full_feature",
+      const workflow = await stateManager.create({ title: "wf-1", type: "full_feature",
         sessionIds: { orchestrator: "session-1" },
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}`,
       );
 
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.workflow).toBeDefined();
-      expect(body.workflow.id).toBe(workflowId);
+      expect(body.workflow.id).toBe(workflow.id);
       expect(body.workflow.sessionIds).toEqual({ orchestrator: "session-1" });
     });
 
     test("returns 404 for non-existent workflow", async () => {
       const { app, project } = await createTestApp("workflow-not-found");
-      const workflowId = "missing-workflow";
+      const workflowId = "550e8400-e29b-41d4-a716-446655440123";
 
       const res = await app.request(
         `/api/projects/${project.slug}/workflows/${workflowId}`,
@@ -144,13 +141,12 @@ describe("workflow routes", () => {
     ] as const) {
       test(`returns ${artifact.kind} artifact body`, async () => {
         const { app, project, workspaceRoot } = await createTestApp(`${artifact.kind.toLowerCase()}-artifact`);
-        const workflowId = `wf-${artifact.kind.toLowerCase()}`;
 
         const stateManager = new WorkflowStateManager(workspaceRoot);
         const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-        await stateManager.create({ id: workflowId, type: "full_feature" });
+        const workflow = await stateManager.create({ title: `wf-${artifact.kind.toLowerCase()}`, type: "full_feature" });
         await artifactManager.write({
-          workflowId,
+          workflowId: workflow.id,
           kind: artifact.kind,
           path: `${artifact.kind}.md`,
           frontmatter: { version: "1" },
@@ -158,7 +154,7 @@ describe("workflow routes", () => {
         });
 
         const res = await app.request(
-          `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/${artifact.kind}`,
+          `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/${artifact.kind}`,
         );
 
         expect(res.status).toBe(200);
@@ -168,14 +164,13 @@ describe("workflow routes", () => {
 
     test("returns PRD artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("prd-artifact");
-      const workflowId = "wf-prd";
       const artifactBody = "# PRD\n\nProduct Requirements.";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-prd", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "PRD",
         path: "PRD.md",
         frontmatter: { owner: "product" },
@@ -183,7 +178,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/PRD`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/PRD`,
       );
 
       expect(res.status).toBe(200);
@@ -192,14 +187,13 @@ describe("workflow routes", () => {
 
     test("returns SPEC artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("spec-artifact");
-      const workflowId = "wf-spec";
       const artifactBody = "# SPEC\n\nTechnical spec.";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-spec", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "SPEC",
         path: "SPEC.md",
         frontmatter: { version: "1" },
@@ -207,7 +201,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/SPEC`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/SPEC`,
       );
 
       expect(res.status).toBe(200);
@@ -216,14 +210,13 @@ describe("workflow routes", () => {
 
     test("returns TASKS artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("tasks-artifact");
-      const workflowId = "wf-tasks";
       const artifactBody = "# Tasks\n\n- Task 1";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-tasks", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "TASKS",
         path: "TASKS.md",
         frontmatter: { version: "1" },
@@ -231,7 +224,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/TASKS`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/TASKS`,
       );
 
       expect(res.status).toBe(200);
@@ -240,14 +233,13 @@ describe("workflow routes", () => {
 
     test("returns FINAL_REPORT artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("final-report-artifact");
-      const workflowId = "wf-final";
       const artifactBody = "# Final Report\n\nAll done.";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-final", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "FINAL_REPORT",
         path: "FINAL_REPORT.md",
         frontmatter: { version: "1" },
@@ -255,7 +247,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/FINAL_REPORT`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/FINAL_REPORT`,
       );
 
       expect(res.status).toBe(200);
@@ -264,14 +256,13 @@ describe("workflow routes", () => {
 
     test("returns CRITIC_REPORT artifact body from workflow state", async () => {
       const { app, project, workspaceRoot } = await createTestApp("critic-artifact");
-      const workflowId = "wf-critic";
       const artifactBody = "## Review\n\nLooks good.";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-critic", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "CRITIC_REPORT",
         path: "critic-reports/prd.md",
         frontmatter: { reviewer: "critic" },
@@ -279,7 +270,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/CRITIC_REPORT`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/CRITIC_REPORT`,
       );
 
       expect(res.status).toBe(200);
@@ -288,14 +279,13 @@ describe("workflow routes", () => {
 
     test("returns EVIDENCE artifact body from workflow state", async () => {
       const { app, project, workspaceRoot } = await createTestApp("evidence-artifact");
-      const workflowId = "wf-evidence";
       const artifactBody = "Test output evidence";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-evidence", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "EVIDENCE",
         path: "evidence/test-output.txt",
         frontmatter: { source: "test" },
@@ -303,7 +293,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/EVIDENCE`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/EVIDENCE`,
       );
 
       expect(res.status).toBe(200);
@@ -312,26 +302,25 @@ describe("workflow routes", () => {
 
     test("returns explicit multi-file group artifact by path query", async () => {
       const { app, project, workspaceRoot } = await createTestApp("artifact-path-query");
-      const workflowId = "wf-path-query";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-path-query", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "EVIDENCE",
         path: "evidence/first.txt",
         content: "first",
       });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         kind: "EVIDENCE",
         path: "evidence/second.txt",
         content: "second",
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/EVIDENCE?path=${encodeURIComponent("evidence/second.txt")}`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/EVIDENCE?path=${encodeURIComponent("evidence/second.txt")}`,
       );
 
       expect(res.status).toBe(200);
@@ -340,19 +329,18 @@ describe("workflow routes", () => {
 
     test("returns supporting notes through path-based artifact route", async () => {
       const { app, project, workspaceRoot } = await createTestApp("artifact-notes-query");
-      const workflowId = "wf-notes-query";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-notes-query", type: "full_feature" });
       await artifactManager.write({
-        workflowId,
+        workflowId: workflow.id,
         path: "notes/intermediate.md",
         content: "scratch notes",
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts?path=${encodeURIComponent("notes/intermediate.md")}`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts?path=${encodeURIComponent("notes/intermediate.md")}`,
       );
 
       expect(res.status).toBe(200);
@@ -363,10 +351,9 @@ describe("workflow routes", () => {
       const { app, project, workspaceRoot } = await createTestApp("artifact-cross-workflow");
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      await stateManager.create({ id: "wf-current", type: "full_feature" });
-      await stateManager.create({ id: "wf-other", type: "full_feature" });
+      const wfOtherWf = await stateManager.create({ title: "wf-other", type: "full_feature" });
       await artifactManager.write({
-        workflowId: "wf-other",
+        workflowId: wfOtherWf.id,
         kind: "PRD",
         path: "PRD.md",
         frontmatter: { kind: "PRD" },
@@ -374,7 +361,7 @@ describe("workflow routes", () => {
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/wf-other/artifacts?kind=PRD`,
+        `/api/projects/${project.slug}/workflows/${wfOtherWf.id}/artifacts?kind=PRD`,
       );
 
       expect(res.status).toBe(200);
@@ -383,18 +370,17 @@ describe("workflow routes", () => {
 
     test("rejects path traversal artifact reads", async () => {
       const { app, project, workspaceRoot } = await createTestApp("artifact-traversal");
-      const workflowId = "wf-traversal";
       const stateManager = new WorkflowStateManager(workspaceRoot);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-traversal", type: "full_feature" });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts?path=${encodeURIComponent("../outside.md")}`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts?path=${encodeURIComponent("../outside.md")}`,
       );
 
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error.code).toBe("BAD_REQUEST");
-      expect(body.error.message).toContain("Invalid artifact path for workflow wf-traversal");
+      expect(body.error.message).toContain(`Invalid artifact path for workflow ${workflow.id}`);
     });
 
     test("rejects cross-project artifact reads by project slug isolation", async () => {
@@ -407,9 +393,9 @@ describe("workflow routes", () => {
 
       const secondState = new WorkflowStateManager(secondWorkspace);
       const secondArtifacts = new WorkflowArtifactManager(secondWorkspace, secondState);
-      await secondState.create({ id: "wf-foreign", type: "full_feature" });
+      const foreignWf = await secondState.create({ title: "wf-foreign", type: "full_feature" });
       await secondArtifacts.write({
-        workflowId: "wf-foreign",
+        workflowId: foreignWf.id,
         kind: "PRD",
         path: "PRD.md",
         frontmatter: { kind: "PRD" },
@@ -417,15 +403,15 @@ describe("workflow routes", () => {
       });
 
       const res = await first.app.request(
-        `/api/projects/${first.project.slug}/workflows/wf-foreign/artifacts?kind=PRD`,
+        `/api/projects/${first.project.slug}/workflows/${foreignWf.id}/artifacts?kind=PRD`,
       );
       const foreignRes = await first.app.request(
-        `/api/projects/${secondProject.slug}/workflows/wf-foreign/artifacts?kind=PRD`,
+        `/api/projects/${secondProject.slug}/workflows/${foreignWf.id}/artifacts?kind=PRD`,
       );
 
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({
-        error: { code: "WORKFLOW_NOT_FOUND", message: "Workflow not found: wf-foreign" },
+        error: { code: "WORKFLOW_NOT_FOUND", message: `Workflow not found: ${foreignWf.id}` },
       });
       expect(foreignRes.status).toBe(200);
       expect(await foreignRes.json()).toEqual({ body: "foreign" });
@@ -433,7 +419,7 @@ describe("workflow routes", () => {
 
     test("returns 404 for non-existent workflow", async () => {
       const { app, project } = await createTestApp("missing-workflow-artifact");
-      const workflowId = "non-existent-workflow";
+      const workflowId = "550e8400-e29b-41d4-a716-446655440124";
 
       const res = await app.request(
         `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/PRD`,
@@ -447,18 +433,17 @@ describe("workflow routes", () => {
 
     test("returns 404 for non-existent artifact", async () => {
       const { app, project, workspaceRoot } = await createTestApp("missing-artifact");
-      const workflowId = "wf-no-artifact";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
-      await stateManager.create({ id: workflowId, type: "full_feature" });
+      const workflow = await stateManager.create({ title: "wf-no-artifact", type: "full_feature" });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflowId}/artifacts/PRD`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/PRD`,
       );
 
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({
-        error: { code: "ARTIFACT_NOT_FOUND", message: `Artifact not found: PRD in workflow ${workflowId}` },
+        error: { code: "ARTIFACT_NOT_FOUND", message: `Artifact not found: PRD in workflow ${workflow.id}` },
       });
     });
 

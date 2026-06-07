@@ -45,6 +45,9 @@ export const WorkflowArtifactKindSchema = z.enum([
   "FINAL_REPORT",
 ]);
 
+export const WorkflowUuidSchema = z.uuid();
+export const WorkflowTitleSchema = z.string().trim().min(1).max(200);
+
 export const StageCompletionRecordSchema = z.strictObject({
   stage: WorkflowStageSchema,
   completedAt: z.string(),
@@ -53,7 +56,7 @@ export const StageCompletionRecordSchema = z.strictObject({
 });
 
 export const DerivedFromSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   reason: z.enum(["upgrade", "branch"]),
   handoffSummaryId: z.string().optional(),
   triggeredAt: z.string(),
@@ -61,13 +64,14 @@ export const DerivedFromSchema = z.strictObject({
 });
 
 export const DerivedWorkflowEntrySchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   reason: z.enum(["upgrade", "branch"]),
   createdAt: z.string(),
 });
 
 export const WorkflowStateSchema = z.strictObject({
-  id: z.string().min(1),
+  id: WorkflowUuidSchema,
+  title: WorkflowTitleSchema,
   type: WorkflowTypeSchema,
   stage: WorkflowStageSchema,
   status: WorkflowStatusSchema,
@@ -99,6 +103,13 @@ export class WorkflowPathError extends Error {
   }
 }
 
+export class WorkflowInvalidIdError extends Error {
+  constructor(public readonly workflowId: string) {
+    super(`Invalid workflow id format: ${workflowId}`);
+    this.name = "WorkflowInvalidIdError";
+  }
+}
+
 export class WorkflowStateError extends Error {
   constructor(
     public readonly workflowId: string,
@@ -110,8 +121,8 @@ export class WorkflowStateError extends Error {
 }
 
 export interface CreateWorkflowStateInput {
-  id: string;
   type: WorkflowType;
+  title: string;
   artifacts?: WorkflowState["artifacts"];
   derivedFrom?: DerivedFrom;
   sessionIds?: Record<string, string>;
@@ -121,6 +132,7 @@ export interface CreateWorkflowStateInput {
 
 export interface CreateDerivedWorkflowInput {
   sourceWorkflowId: string;
+  title: string;
   targetType: WorkflowType;
   reason: DerivedFrom["reason"];
   triggerMessageId?: string;
@@ -152,7 +164,8 @@ export class WorkflowStateManager {
   async create(input: CreateWorkflowStateInput): Promise<WorkflowState> {
     const now = new Date().toISOString();
     const state = WorkflowStateSchema.parse({
-      id: input.id,
+      id: crypto.randomUUID(),
+      title: input.title,
       type: input.type,
       stage: "idle",
       status: "active",
@@ -179,7 +192,6 @@ export class WorkflowStateManager {
     }
 
     const triggeredAt = new Date().toISOString();
-    const derivedWorkflowId = input.id ?? crypto.randomUUID();
     const handoffSummaryId = "HANDOFF_SUMMARY.md";
     const handoffSummary = buildHandoffSummary({
       source,
@@ -191,6 +203,20 @@ export class WorkflowStateManager {
     const handoffPath = await this.workflowArtifactPath(source.id, handoffSummaryId);
     await atomicWrite(handoffPath, handoffSummary);
 
+    const derived = await this.create({
+      title: input.title,
+      type: input.targetType,
+      derivedFrom: {
+        workflowId: source.id,
+        reason: input.reason,
+        handoffSummaryId,
+        triggeredAt,
+        triggerMessageId: input.triggerMessageId,
+      },
+    });
+
+    const derivedWorkflowId = derived.id;
+
     const sourceUpdated = WorkflowStateSchema.parse({
       ...source,
       artifacts: { ...source.artifacts, HANDOFF_SUMMARY: handoffSummaryId },
@@ -201,18 +227,6 @@ export class WorkflowStateManager {
       updatedAt: triggeredAt,
     });
     await this.write(sourceUpdated);
-
-    const derived = await this.create({
-      id: derivedWorkflowId,
-      type: input.targetType,
-      derivedFrom: {
-        workflowId: source.id,
-        reason: input.reason,
-        handoffSummaryId,
-        triggeredAt,
-        triggerMessageId: input.triggerMessageId,
-      },
-    });
 
     if (input.eventStore) {
       emitWorkflowStateChange(input.eventStore, sourceUpdated.id, ["artifacts", "derivedWorkflows"]);
@@ -227,6 +241,9 @@ export class WorkflowStateManager {
   }
 
   async readWorkflow(workflowId: string): Promise<WorkflowState> {
+    if (!WorkflowUuidSchema.safeParse(workflowId).success) {
+      throw new WorkflowInvalidIdError(workflowId);
+    }
     const content = await Bun.file(await this.workflowStatePath(workflowId)).text();
     return this.parseWorkflowState(workflowId, content);
   }
@@ -247,6 +264,9 @@ export class WorkflowStateManager {
       if (!entry.isDirectory()) continue;
 
       const workflowId = entry.name;
+      if (!WorkflowUuidSchema.safeParse(workflowId).success) {
+        throw new WorkflowInvalidIdError(workflowId);
+      }
       try {
         const state = await this.readWorkflow(workflowId);
         if (allowedStatuses && !allowedStatuses.has(state.status)) continue;

@@ -4,11 +4,11 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { createWorkflowWithOrchestrator } from "../../../agents/workflow/linking";
-import { WorkflowPathError, WorkflowTypeSchema } from "../../../agents/workflow/state";
+import { WorkflowPathError, WorkflowTitleSchema, WorkflowTypeSchema } from "../../../agents/workflow/state";
 
 const WorkflowCreateInputSchema = z.strictObject({
-  id: z.string().min(1),
   type: WorkflowTypeSchema,
+  title: WorkflowTitleSchema,
 });
 
 type WorkflowCreateInput = z.infer<typeof WorkflowCreateInputSchema>;
@@ -24,7 +24,7 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
       const orchestratorSessionId = ctx.store.getState().sessionId;
       try {
         const { workflow: state } = await createWorkflowWithOrchestrator(
-          { id: input.id, type: input.type, orchestratorSessionId },
+          { title: input.title, type: input.type, orchestratorSessionId },
           stateManager,
           ctx.storeManager,
         );

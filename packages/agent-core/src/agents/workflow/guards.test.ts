@@ -43,6 +43,7 @@ function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
   const now = new Date().toISOString();
   return {
     id: "wf-complete-guards",
+    title: "test",
     type: "full_feature",
     stage: "idle",
     status: "active",

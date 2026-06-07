@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { createSessionStore } from "../../store/store";
 import {
   WorkflowArtifactKindSchema,
+  WorkflowInvalidIdError,
   WorkflowPathError,
   WorkflowStageSchema,
   WorkflowStateManager,
   WorkflowStateSchema,
   WorkflowStatusSchema,
   WorkflowTerminalStateError,
+  WorkflowTitleSchema,
   WorkflowTypeSchema,
+  WorkflowUuidSchema,
 } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "workflow-state");
@@ -23,6 +26,8 @@ beforeEach(async () => {
 afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
 });
+
+const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 
 describe("workflow schemas", () => {
   test("cover required stage, status, and artifact enums", () => {
@@ -65,7 +70,8 @@ describe("workflow schemas", () => {
   test("accepts metadata-only workflow state and rejects unknown keys", () => {
     const now = new Date().toISOString();
     const state = WorkflowStateSchema.parse({
-      id: "wf-1",
+      id: VALID_UUID,
+      title: "My workflow",
       type: "full_feature",
       stage: "idle",
       status: "active",
@@ -79,13 +85,13 @@ describe("workflow schemas", () => {
         },
       },
       derivedFrom: {
-        workflowId: "wf-parent",
+        workflowId: VALID_UUID,
         reason: "upgrade",
         handoffSummaryId: "HANDOFF_SUMMARY.md",
         triggeredAt: now,
         triggerMessageId: "msg-1",
       },
-      derivedWorkflows: [{ workflowId: "wf-child", reason: "branch", createdAt: now }],
+      derivedWorkflows: [{ workflowId: VALID_UUID, reason: "branch", createdAt: now }],
       sessionIds: { orchestrator: "session-1" },
       createdAt: now,
       updatedAt: now,
@@ -93,19 +99,121 @@ describe("workflow schemas", () => {
       maxRetries: 3,
     });
 
-    expect(state.id).toBe("wf-1");
+    expect(state.id).toBe(VALID_UUID);
+    expect(state.title).toBe("My workflow");
     expect(() => WorkflowStateSchema.parse({ ...state, transcripts: [] })).toThrow();
+  });
+
+  test("rejects non-uuid workflow id", () => {
+    const now = new Date().toISOString();
+    const valid = {
+      title: "My workflow",
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    expect(() => WorkflowStateSchema.parse({ id: "wf-1", ...valid })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ id: "default", ...valid })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ id: "../escape", ...valid })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ id: "not-a-uuid", ...valid })).toThrow();
+  });
+
+  test("rejects missing, empty, whitespace, and too-long titles", () => {
+    const now = new Date().toISOString();
+    const validMeta = {
+      id: VALID_UUID,
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(() => WorkflowStateSchema.parse({ ...validMeta })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ ...validMeta, title: "" })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ ...validMeta, title: "   " })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ ...validMeta, title: "\t\n" })).toThrow();
+    expect(() => WorkflowStateSchema.parse({ ...validMeta, title: "a".repeat(201) })).toThrow();
+  });
+
+  test("accepts valid title at boundaries", () => {
+    const now = new Date().toISOString();
+    const meta = {
+      id: VALID_UUID,
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(WorkflowStateSchema.parse({ ...meta, title: "a" }).title).toBe("a");
+    expect(WorkflowStateSchema.parse({ ...meta, title: "x".repeat(200) }).title).toBe("x".repeat(200));
+  });
+
+  test("trims title whitespace on parse", () => {
+    const now = new Date().toISOString();
+    const state = WorkflowStateSchema.parse({
+      id: VALID_UUID,
+      title: "  Hello World  ",
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(state.title).toBe("Hello World");
+  });
+
+  test("rejects non-uuid workflowId in derivedFrom and derivedWorkflows", () => {
+    const now = new Date().toISOString();
+    const base = {
+      id: VALID_UUID,
+      title: "Test",
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(() => WorkflowStateSchema.parse({
+      ...base,
+      derivedFrom: { workflowId: "wf-parent", reason: "upgrade", triggeredAt: now },
+    })).toThrow();
+
+    expect(() => WorkflowStateSchema.parse({
+      ...base,
+      derivedWorkflows: [{ workflowId: "wf-child", reason: "branch", createdAt: now }],
+    })).toThrow();
+  });
+
+  test("WorkflowUuidSchema accepts valid uuids and rejects invalid strings", () => {
+    expect(WorkflowUuidSchema.parse(VALID_UUID)).toBe(VALID_UUID);
+    expect(() => WorkflowUuidSchema.parse("wf-1")).toThrow();
+    expect(() => WorkflowUuidSchema.parse("")).toThrow();
+  });
+
+  test("WorkflowTitleSchema rejects empty, whitespace, and too-long titles", () => {
+    expect(() => WorkflowTitleSchema.parse("")).toThrow();
+    expect(() => WorkflowTitleSchema.parse("   ")).toThrow();
+    expect(() => WorkflowTitleSchema.parse("a".repeat(201))).toThrow();
+    expect(WorkflowTitleSchema.parse("Hello")).toBe("Hello");
+    expect(WorkflowTitleSchema.parse("  Hello  ")).toBe("Hello");
   });
 });
 
 describe("WorkflowStateManager", () => {
-  test("creates and reads .specra/workflows/{workflowId}/workflow.json", async () => {
+  test("creates and reads .specra/workflows/{generatedUuid}/workflow.json", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 
-    const created = await manager.create({ id: "wf-1", type: "full_feature", maxRetries: 5 });
-    const filePath = join(TMP_DIR, ".specra", "workflows", "wf-1", "workflow.json");
+    const created = await manager.create({ title: "My workflow", type: "full_feature", maxRetries: 5 });
+    const filePath = join(TMP_DIR, ".specra", "workflows", created.id, "workflow.json");
 
     expect(await Bun.file(filePath).exists()).toBe(true);
+    expect(created.title).toBe("My workflow");
     expect(created.stage).toBe("idle");
     expect(created.type).toBe("full_feature");
     expect(created.status).toBe("active");
@@ -114,27 +222,29 @@ describe("WorkflowStateManager", () => {
     expect(created.derivedWorkflows).toEqual([]);
     expect(created.retryCount).toBe(0);
     expect(created.maxRetries).toBe(5);
-    await expect(manager.read("wf-1")).resolves.toEqual(created);
+    expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(await Bun.file(filePath).text()).toContain('"title": "My workflow"');
+    await expect(manager.read(created.id)).resolves.toEqual(created);
   });
 
   test("updates stage and status with timestamps", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    const created = await manager.create({ id: "wf-2", type: "full_feature" });
+    const created = await manager.create({ title: "Test", type: "full_feature" });
 
-    const staged = await manager.updateStage("wf-2", "spec_drafting");
+    const staged = await manager.updateStage(created.id, "spec_drafting");
     expect(staged.stage).toBe("spec_drafting");
     expect(staged.updatedAt >= created.updatedAt).toBe(true);
 
-    const paused = await manager.updateStatus("wf-2", "paused");
+    const paused = await manager.updateStatus(created.id, "paused");
     expect(paused.status).toBe("paused");
-    await expect(manager.read("wf-2")).resolves.toEqual(paused);
+    await expect(manager.read(created.id)).resolves.toEqual(paused);
   });
 
   test("records stage completion with completion timestamp", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-completion-record", type: "full_feature" });
+    const created = await manager.create({ title: "Test", type: "full_feature" });
 
-    const updated = await manager.recordStageCompletion("wf-completion-record", {
+    const updated = await manager.recordStageCompletion(created.id, {
       stage: "critic_prd_review",
       criticPassed: true,
       evidence: ["critic-reports/prd.md"],
@@ -146,26 +256,26 @@ describe("WorkflowStateManager", () => {
       evidence: ["critic-reports/prd.md"],
     });
     expect(typeof updated.stageCompletions.critic_prd_review?.completedAt).toBe("string");
-    await expect(manager.read("wf-completion-record")).resolves.toEqual(updated);
+    await expect(manager.read(created.id)).resolves.toEqual(updated);
   });
 
   test("complete sets completed status while preserving business stage", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-complete", type: "quick_fix" });
-    await manager.updateStage("wf-complete", "quick_verify");
+    const created = await manager.create({ title: "Test", type: "quick_fix" });
+    await manager.updateStage(created.id, "quick_verify");
 
-    const completed = await manager.complete("wf-complete");
+    const completed = await manager.complete(created.id);
 
     expect(completed.status).toBe("completed");
     expect(completed.stage).toBe("quick_verify");
-    await expect(manager.read("wf-complete")).resolves.toEqual(completed);
+    await expect(manager.read(created.id)).resolves.toEqual(completed);
   });
 
   test("stores artifact paths and ids without artifact contents", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 
     const created = await manager.create({
-      id: "wf-3",
+      title: "Test",
       type: "full_feature",
       artifacts: { PRD: "artifacts/PRD.md", EVIDENCE: ["evidence/a.md"] },
       sessionIds: { product: "session-product" },
@@ -176,39 +286,51 @@ describe("WorkflowStateManager", () => {
     expect(JSON.stringify(created)).not.toContain("full artifact content");
   });
 
-  test("rejects traversal workflow ids with WorkflowPathError", async () => {
+  test("rejects non-uuid workflow ids with WorkflowInvalidIdError", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 
-    await expect(manager.create({ id: "../escape", type: "full_feature" })).rejects.toThrow(WorkflowPathError);
-    await expect(manager.read("../escape")).rejects.toThrow(WorkflowPathError);
+    await expect(manager.read("../escape")).rejects.toThrow(WorkflowInvalidIdError);
+    await expect(manager.read("default")).rejects.toThrow(WorkflowInvalidIdError);
+    await expect(manager.read("wf-1")).rejects.toThrow(WorkflowInvalidIdError);
+  });
+
+  test("listWorkflows fails fast on non-uuid workflow directories", async () => {
+    const manager = new WorkflowStateManager(TMP_DIR);
+    await manager.create({ title: "Valid", type: "full_feature" });
+
+    await mkdir(join(TMP_DIR, ".specra", "workflows", "old-slug-dir"), { recursive: true });
+
+    await expect(manager.listWorkflows()).rejects.toThrow(WorkflowInvalidIdError);
   });
 
   test("lists incomplete workflows and can include completed workflows when requested", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-active", type: "full_feature" });
-    await manager.create({ id: "wf-paused", type: "quick_fix" });
-    await manager.create({ id: "wf-completed", type: "research_only" });
-    await manager.updateStatus("wf-paused", "paused");
-    await manager.updateStatus("wf-completed", "completed");
+    const wf1 = await manager.create({ title: "Active", type: "full_feature" });
+    const wf2 = await manager.create({ title: "Paused", type: "quick_fix" });
+    const wf3 = await manager.create({ title: "Completed", type: "research_only" });
+    await manager.updateStatus(wf2.id, "paused");
+    await manager.updateStatus(wf3.id, "completed");
 
     const incomplete = await manager.listWorkflows({ status: ["active", "paused"] });
     const all = await manager.listWorkflows();
 
-    expect(incomplete.map((state) => state.id)).toEqual(["wf-active", "wf-paused"]);
-    expect(incomplete.map((state) => state.status)).toEqual(["active", "paused"]);
-    expect(all.map((state) => state.id)).toEqual(["wf-active", "wf-completed", "wf-paused"]);
+    expect(incomplete).toHaveLength(2);
+    expect(new Set(incomplete.map((s) => s.id))).toEqual(new Set([wf1.id, wf2.id]));
+    expect(new Set(incomplete.map((s) => s.status))).toEqual(new Set(["active", "paused"]));
+    expect(all).toHaveLength(3);
+    expect(new Set(all.map((s) => s.id))).toEqual(new Set([wf1.id, wf2.id, wf3.id]));
   });
 
   test("reads workflow metadata with stored session ids without transcript content", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({
-      id: "wf-resume",
+    const created = await manager.create({
+      title: "Test",
       type: "full_feature",
       artifacts: { TASKS: "TASKS.md" },
       sessionIds: { orchestrator: "session-orchestrator" },
     });
 
-    const state = await manager.readWorkflow("wf-resume");
+    const state = await manager.readWorkflow(created.id);
 
     expect(state.sessionIds).toEqual({ orchestrator: "session-orchestrator" });
     expect("taskSessionIds" in state).toBe(false);
@@ -217,76 +339,77 @@ describe("WorkflowStateManager", () => {
 
   test("creates a derived workflow with source metadata and handoff summary", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({
-      id: "wf-source",
+    const source = await manager.create({
+      title: "Source",
       type: "research_only",
       artifacts: { RESEARCH: "RESEARCH.md" },
       sessionIds: { orchestrator: "source-session" },
     });
-    await manager.updateStage("wf-source", "research_consolidation");
+    await manager.updateStage(source.id, "research_consolidation");
 
     const result = await manager.createDerived({
-      sourceWorkflowId: "wf-source",
+      sourceWorkflowId: source.id,
+      title: "Upgrade to full feature",
       targetType: "full_feature",
       reason: "upgrade",
       triggerMessageId: "msg-42",
-      id: "wf-derived",
     });
 
     expect(result.source).toMatchObject({
-      id: "wf-source",
+      id: source.id,
       type: "research_only",
       stage: "research_consolidation",
       artifacts: { RESEARCH: "RESEARCH.md", HANDOFF_SUMMARY: "HANDOFF_SUMMARY.md" },
-      derivedWorkflows: [{ workflowId: "wf-derived", reason: "upgrade" }],
+      derivedWorkflows: [{ workflowId: result.derived.id, reason: "upgrade" }],
       sessionIds: { orchestrator: "source-session" },
     });
     expect(result.derived).toMatchObject({
-      id: "wf-derived",
+      title: "Upgrade to full feature",
       type: "full_feature",
       stage: "idle",
       status: "active",
       sessionIds: {},
       derivedFrom: {
-        workflowId: "wf-source",
+        workflowId: source.id,
         reason: "upgrade",
         handoffSummaryId: "HANDOFF_SUMMARY.md",
         triggerMessageId: "msg-42",
       },
     });
+    expect(result.derived.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(result.handoffSummary).toContain("Source Workflow");
     expect(result.handoffSummary).toContain("- Type: research_only");
     expect(result.handoffSummary).toContain("- Stage: research_consolidation");
     expect(result.handoffSummary).toContain("- Status: active");
     expect(result.handoffSummary).toContain("- RESEARCH: RESEARCH.md");
-    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", "wf-source", "HANDOFF_SUMMARY.md")).text()).toBe(result.handoffSummary);
-    expect(await manager.read("wf-source")).toEqual(result.source);
-    expect(await manager.read("wf-derived")).toEqual(result.derived);
+    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", source.id, "HANDOFF_SUMMARY.md")).text()).toBe(result.handoffSummary);
+    expect(await manager.read(source.id)).toEqual(result.source);
+    expect(await manager.read(result.derived.id)).toEqual(result.derived);
   });
 
   test("rejects derived creation from terminal source workflows", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-terminal", type: "quick_fix" });
-    await manager.complete("wf-terminal");
+    const source = await manager.create({ title: "Terminal", type: "quick_fix" });
+    await manager.complete(source.id);
 
     await expect(manager.createDerived({
-      sourceWorkflowId: "wf-terminal",
+      sourceWorkflowId: source.id,
+      title: "Derived terminal",
       targetType: "full_feature",
       reason: "upgrade",
-      id: "wf-derived-terminal",
     })).rejects.toThrow(WorkflowTerminalStateError);
   });
 
   test("emits state change events for source and derived workflows when requested", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
     const store = createSessionStore("event-session", TMP_DIR);
-    await manager.create({ id: "wf-event-source", type: "research_only" });
+    const source = await manager.create({ title: "Source", type: "research_only" });
 
-    await manager.createDerived({
-      sourceWorkflowId: "wf-event-source",
+    const result = await manager.createDerived({
+      sourceWorkflowId: source.id,
+      title: "Event derived",
       targetType: "quick_fix",
       reason: "branch",
-      id: "wf-event-derived",
       eventStore: store,
     });
 
@@ -294,13 +417,13 @@ describe("WorkflowStateManager", () => {
     expect(events).toEqual([
       {
         type: "workflow.state_change",
-        workflowId: "wf-event-source",
+        workflowId: source.id,
         changed: ["artifacts", "derivedWorkflows"],
         updatedAt: events[0]?.updatedAt,
       },
       {
         type: "workflow.state_change",
-        workflowId: "wf-event-derived",
+        workflowId: result.derived.id,
         changed: ["stage", "status", "derivedFrom"],
         updatedAt: events[1]?.updatedAt,
       },
@@ -309,25 +432,26 @@ describe("WorkflowStateManager", () => {
 
   test("corrupt workflow json returns a named error and list skips only corrupt entries", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    await manager.create({ id: "wf-valid", type: "full_feature" });
-    await mkdir(join(TMP_DIR, ".specra", "workflows", "wf-corrupt"), { recursive: true });
-    await Bun.write(join(TMP_DIR, ".specra", "workflows", "wf-corrupt", "workflow.json"), "{broken json");
+    const valid = await manager.create({ title: "Valid", type: "full_feature" });
+    const corruptId = "550e8400-e29b-41d4-a716-446655440099";
+    await mkdir(join(TMP_DIR, ".specra", "workflows", corruptId), { recursive: true });
+    await Bun.write(join(TMP_DIR, ".specra", "workflows", corruptId, "workflow.json"), "{broken json");
 
-    await expect(manager.readWorkflow("wf-corrupt")).rejects.toMatchObject({
+    await expect(manager.readWorkflow(corruptId)).rejects.toMatchObject({
       name: "WorkflowStateError",
-      workflowId: "wf-corrupt",
+      workflowId: corruptId,
     });
 
     const listed = await manager.listWorkflows();
-    expect(listed.map((state) => state.id)).toEqual(["wf-valid"]);
+    expect(listed.map((state) => state.id)).toEqual([valid.id]);
   });
 
   test("resume discovery only reads metadata and does not execute workflow transitions", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
-    const created = await manager.create({ id: "wf-discovery", type: "full_feature" });
+    const created = await manager.create({ title: "Test", type: "full_feature" });
 
     const listed = await manager.listWorkflows({ status: ["active", "paused"] });
-    const read = await manager.readWorkflow("wf-discovery");
+    const read = await manager.readWorkflow(created.id);
 
     expect(listed).toHaveLength(1);
     expect(read.stage).toBe("idle");
