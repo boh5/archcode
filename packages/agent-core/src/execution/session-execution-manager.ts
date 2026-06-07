@@ -23,6 +23,9 @@ import type { Reminder, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import type { Logger } from "../logger";
+import { formatActiveWorkflowBlock, hasWorkflowTools } from "../prompt/sections/active-workflow";
+import type { ActiveWorkflowPromptContext } from "../prompt/types";
+import { ProjectContextResolver } from "../projects/context-resolver";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
@@ -104,6 +107,7 @@ interface SessionExecutionManagerConfig {
   readonly cleanupDeferredSession: (workspaceRoot: string, sessionId: string) => void;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
+  readonly projectContextResolver?: ProjectContextResolver;
   readonly logger: Logger;
 }
 
@@ -113,10 +117,12 @@ export class SessionExecutionManager {
   readonly #eventBridge: SessionEventBridge;
   readonly #config: SessionExecutionManagerConfig;
   readonly #logger: Logger;
+  readonly #projectContextResolver: ProjectContextResolver;
 
   constructor(config: SessionExecutionManagerConfig) {
     this.#config = config;
     this.#logger = config.logger;
+    this.#projectContextResolver = config.projectContextResolver ?? new ProjectContextResolver({ logger: config.logger });
     this.#eventBridge = new SessionEventBridge({
       getStore: (workspaceRoot, sessionId) => this.#config.getSessionStore(sessionId, workspaceRoot),
     });
@@ -215,6 +221,7 @@ export class SessionExecutionManager {
     }
 
     const targetDefinition = factory.getDefinition(request.targetAgentName);
+    const targetAllowedTools = factory.resolveAllowedTools(targetDefinition, currentDepth + 1);
     const childPolicy = parentDefinition.childPolicy;
     if (childPolicy === undefined) {
       throw new AgentChildPolicyMissingError(parentAgentName);
@@ -249,6 +256,8 @@ export class SessionExecutionManager {
       });
       this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
 
+      const activeWorkflow = await this.#resolveChildActiveWorkflow(workspaceRoot, childStore, targetAllowedTools);
+
       this.#config.sessionAgentManager.createChildAgent({
         workspaceRoot,
         sessionId: childSessionId,
@@ -266,7 +275,7 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: buildChildUserMessage(request.prompt, request.available_artifacts),
+        userMessage: buildChildUserMessage(request.prompt, request.available_artifacts, activeWorkflow, targetAllowedTools),
         agentName: targetDefinition.name,
         origin: "tool_call",
       });
@@ -565,6 +574,30 @@ export class SessionExecutionManager {
       link: { ...link, status: "cancelling" },
     });
   }
+
+  async #resolveChildActiveWorkflow(
+    workspaceRoot: string,
+    childStore: StoreApi<SessionStoreState>,
+    allowedTools: readonly string[],
+  ): Promise<ActiveWorkflowPromptContext | undefined> {
+    const workflowId = childStore.getState().workflowId;
+    if (workflowId === undefined || !hasWorkflowTools(allowedTools)) return undefined;
+
+    try {
+      const projectContext = await this.#projectContextResolver.resolve(workspaceRoot);
+      const workflow = await projectContext.workflowState.read(workflowId);
+      return {
+        id: workflow.id,
+        title: workflow.title,
+        type: workflow.type,
+        stage: workflow.stage,
+        status: workflow.status,
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      throw new Error(`Active workflow context required but workflow state could not be read for workflowId "${workflowId}": ${detail}`);
+    }
+  }
 }
 
 type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
@@ -635,17 +668,25 @@ function formatStatus(status: SubAgentTerminalStatus): string {
 function buildChildUserMessage(
   prompt: string,
   availableArtifacts: readonly AvailableArtifactReference[] | undefined,
+  activeWorkflow: ActiveWorkflowPromptContext | undefined,
+  allowedTools: readonly string[],
 ): string {
-  if (availableArtifacts === undefined || availableArtifacts.length === 0) return prompt;
+  const sections = [prompt];
+
+  if (activeWorkflow !== undefined && hasWorkflowTools(allowedTools)) {
+    sections.push("", formatActiveWorkflowBlock(activeWorkflow));
+  }
+
+  if (availableArtifacts === undefined || availableArtifacts.length === 0) return sections.join("\n");
 
   const references = availableArtifacts.map(formatArtifactReference).join("\n");
-  return [
-    prompt,
+  sections.push(
     "",
     "Available artifacts:",
     references,
     "Use artifact_read before relying on artifact content. The references above identify available artifacts only; their contents are not included in this prompt.",
-  ].join("\n");
+  );
+  return sections.join("\n");
 }
 
 function formatArtifactReference(reference: AvailableArtifactReference): string {

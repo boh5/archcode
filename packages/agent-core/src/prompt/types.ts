@@ -1,5 +1,14 @@
 import type { MemoryRoots } from "../memory";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
+import type { WorkflowStage, WorkflowStatus, WorkflowType } from "../agents/workflow/state";
+
+export interface ActiveWorkflowPromptContext {
+  readonly id: string;
+  readonly title: string;
+  readonly type: WorkflowType;
+  readonly stage: WorkflowStage;
+  readonly status: WorkflowStatus;
+}
 
 /**
  * Context provided to the system prompt builder.
@@ -32,6 +41,9 @@ export interface PromptContext {
 
   /** Fully resolved active skills with full body content */
   readonly activeSkills?: readonly ResolvedSkill[];
+
+  /** Active workflow bound to this agent session, injected only for workflow-capable tool sets */
+  readonly activeWorkflow?: ActiveWorkflowPromptContext;
 }
 
 export interface PromptEnv {

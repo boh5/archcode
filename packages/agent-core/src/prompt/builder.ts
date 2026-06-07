@@ -1,4 +1,5 @@
 import type { PromptContext } from "./types";
+import { buildActiveWorkflowSection } from "./sections/active-workflow";
 import { buildEnvSection } from "./sections/env";
 import { buildGuidelinesSection } from "./sections/guidelines";
 import { buildIdentitySection } from "./sections/identity";
@@ -12,7 +13,7 @@ import { buildWorkflowIntentGateSection } from "./sections/workflow-intent-gate"
 /**
  * Assemble the full system prompt from context.
  *
- * Section order: Identity → Role → Guidelines → Workflow Intent Gate → Skills → Tools → Environment → Memory → Project Context
+ * Section order: Identity → Role → Guidelines → Workflow Intent Gate → Active Workflow → Skills → Tools → Environment → Memory → Project Context
  */
 export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const sections: string[] = [buildIdentitySection(ctx)];
@@ -27,6 +28,11 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const workflowIntentGateSection = buildWorkflowIntentGateSection(ctx);
   if (workflowIntentGateSection !== null) {
     sections.push(workflowIntentGateSection);
+  }
+
+  const activeWorkflowSection = buildActiveWorkflowSection(ctx);
+  if (activeWorkflowSection !== null) {
+    sections.push(activeWorkflowSection);
   }
 
   const skillsSection = await buildSkillsSection(ctx);

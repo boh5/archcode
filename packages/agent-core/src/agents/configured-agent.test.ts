@@ -138,13 +138,13 @@ function setupToolCallStreamText(toolName: string, input: Record<string, unknown
     }
 
     return {
-    fullStream: (async function* () {
-      yield { type: "tool-call", toolCallId: "tool-call-1", toolName, input };
-    })(),
-    finishReason: Promise.resolve("tool-calls"),
-    text: Promise.resolve(""),
-    toolCalls: Promise.resolve([{ toolCallId: "tool-call-1", toolName, input }]),
-    usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      fullStream: (async function* () {
+        yield { type: "tool-call", toolCallId: "tool-call-1", toolName, input };
+      })(),
+      finishReason: Promise.resolve("tool-calls"),
+      text: Promise.resolve(""),
+      toolCalls: Promise.resolve([{ toolCallId: "tool-call-1", toolName, input }]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
     };
   });
 
@@ -153,10 +153,14 @@ function setupToolCallStreamText(toolName: string, input: Record<string, unknown
 }
 
 function definitionWith(overrides: Partial<AgentDefinition>): AgentDefinition {
-  return { ...exploreAgentDefinition, ...overrides, hooks: {
-    ...exploreAgentDefinition.hooks,
-    ...overrides.hooks,
-  }, };
+  return {
+    ...exploreAgentDefinition,
+    ...overrides,
+    hooks: {
+      ...exploreAgentDefinition.hooks,
+      ...overrides.hooks,
+    },
+  };
 }
 
 function createAgent(options: {
@@ -191,11 +195,11 @@ function createAgent(options: {
     memoryConfig: options.memoryConfig,
     quotaEnforcer: options.quotaEnforcer,
     logger: silentLogger,
-      resolveAllowedTools: (definition, depth) => {
-        const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
-        if (depth >= MAX_SUB_AGENT_DEPTH) {
-          return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
-        }
+    resolveAllowedTools: (definition, depth) => {
+      const resolved = toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
+      if (depth >= MAX_SUB_AGENT_DEPTH) {
+        return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+      }
       return resolved;
     },
   });
@@ -528,6 +532,39 @@ describe("ConfiguredAgent", () => {
     await createAgent({ definition: definitionWith({ includeMemoryInPrompt: false }) }).run("without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
     expect(withoutMemory.system).not.toContain("<specra-memory-context>");
+  });
+
+  test("active workflow context is omitted for agents without workflow tools", async () => {
+    const streamFn = setupMockStreamText("no workflow tools ok");
+    const workflowId = crypto.randomUUID();
+    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { workflowId });
+    const agent = createAgent({
+      definition: definitionWith({ tools: { tools: ["unknown_tool"] } }),
+      store,
+    });
+
+    await expect(agent.run("run without workflow tools")).resolves.toEqual({ text: "no workflow tools ok", steps: 0 });
+    expect(streamFn).toHaveBeenCalled();
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).not.toContain("## Active Workflow");
+  });
+
+  test("active workflow-bound agent fails fast when workflow state cannot be read", async () => {
+    const streamFn = setupMockStreamText("should not run");
+    const workflowId = crypto.randomUUID();
+    const toolRegistry = createRegistry([
+      makeTool("workflow_read"),
+      makeTool("artifact_read"),
+    ]);
+    const store = storeManager.create(`configured-workflow-bound-${crypto.randomUUID()}`, tmpRoot, { workflowId });
+    const agent = createAgent({
+      definition: definitionWith({ tools: { tools: ["workflow_read", "artifact_read"] } }),
+      store,
+      toolRegistry,
+    });
+
+    await expect(agent.run("read workflow state")).rejects.toThrow(`Active workflow context required but workflow state could not be read for workflowId "${workflowId}"`);
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {

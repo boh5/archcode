@@ -3,16 +3,19 @@ import { buildSystemPrompt } from "./builder";
 import type { PromptContext } from "./types";
 
 function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
-  return { allowedTools: ["file_read", "file_write"],
-  workspaceRoot: "/home/user/project",
-  promptProfileId: "default",
-  env: {
-    platform: "darwin",
-    timezone: "America/Los_Angeles",
-    locale: "en-US",
-    cwd: "/home/user/project",
-    date: "2025-01-15",
-  }, ...overrides,  };
+  return {
+    allowedTools: ["file_read", "file_write"],
+    workspaceRoot: "/home/user/project",
+    promptProfileId: "default",
+    env: {
+      platform: "darwin",
+      timezone: "America/Los_Angeles",
+      locale: "en-US",
+      cwd: "/home/user/project",
+      date: "2025-01-15",
+    },
+    ...overrides,
+  };
 }
 
 describe("buildSystemPrompt", () => {
@@ -57,6 +60,59 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("Use artifact_write for durable workflow artifacts");
     expect(result).toContain("Use artifact_read before relying on prior artifacts");
     expect(result).toContain("derived full_feature workflow");
+  });
+
+  test("Active Workflow section includes exact workflow details and UUID rules for workflow-capable tools", async () => {
+    const workflowId = "550e8400-e29b-41d4-a716-446655440000";
+    const result = await buildSystemPrompt(makeCtx({
+      allowedTools: ["ask_user", "workflow_create", "workflow_read", "artifact_read"],
+      activeWorkflow: {
+        id: workflowId,
+        title: "Implement UUID workflow context",
+        type: "full_feature",
+        stage: "foreman_executing",
+        status: "active",
+      },
+    }));
+
+    expect(result).toContain("## Active Workflow");
+    expect(result).toContain(`Workflow ID: ${workflowId}`);
+    expect(result).toContain("Title: Implement UUID workflow context");
+    expect(result).toContain("Type: full_feature");
+    expect(result).toContain("Stage: foreman_executing");
+    expect(result).toContain("Status: active");
+    expect(result).toContain(`Use the exact workflow UUID \`${workflowId}\``);
+    expect(result).toContain("Never invent workflow IDs");
+    expect(result).toContain("Never use `default`, a slug, or a title as a workflow ID");
+    expect(result).toContain("Use any other workflow UUID only when an explicit read reference provides that UUID");
+
+    const gateIdx = result.indexOf("## Workflow MVP Orchestration");
+    const activeIdx = result.indexOf("## Active Workflow");
+    const toolsIdx = result.indexOf("## Tools");
+    expect(activeIdx).toBeGreaterThan(gateIdx);
+    expect(activeIdx).toBeLessThan(toolsIdx);
+  });
+
+  test("Active Workflow section is omitted when no active workflow exists", async () => {
+    const result = await buildSystemPrompt(makeCtx({ allowedTools: ["workflow_read", "artifact_read"] }));
+
+    expect(result).not.toContain("## Active Workflow");
+  });
+
+  test("Active Workflow section is omitted when tools are not workflow-capable", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      allowedTools: ["file_read", "grep"],
+      activeWorkflow: {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        title: "Hidden workflow",
+        type: "research_only",
+        stage: "researching",
+        status: "active",
+      },
+    }));
+
+    expect(result).not.toContain("## Active Workflow");
+    expect(result).not.toContain("Hidden workflow");
   });
 
   test("includes environment section", async () => {
