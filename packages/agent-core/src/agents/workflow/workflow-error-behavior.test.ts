@@ -82,7 +82,7 @@ afterAll(async () => {
 describe("workflow error and partial failure behavior", () => {
   test("Product timeout leaves workflow failed with lastError", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
-    const wf_product_timeout = await stateManager.create({ title: "wf-product-timeout", type: "full_feature" });
+    const wf_product_timeout = await stateManager.create({ title: "Product Timeout", type: "full_feature" });
     await stateManager.updateStage(wf_product_timeout.id, "product_drafting");
 
     const failed = await stateManager.fail(wf_product_timeout.id, "Product timeout");
@@ -101,7 +101,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Critic rejection hard-fails workflow and preserves critic report path", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_critic_reject = await stateManager.create({ title: "wf-critic-reject", type: "full_feature" });
+    const wf_critic_reject = await stateManager.create({ title: "Critic Reject", type: "full_feature" });
     await stateManager.updateStage(wf_critic_reject.id, "product_drafting");
     await artifacts.write({
       workflowId: wf_critic_reject.id,
@@ -138,7 +138,7 @@ describe("workflow error and partial failure behavior", () => {
   test("user rejection prevents foreman_executing and remains awaiting_user_approval", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const wf_user_reject = await stateManager.create({
-      title: "wf-user-reject",
+      title: "User Reject",
       type: "full_feature",
       artifacts: { SPEC: "SPEC.md", TASKS: "TASKS.md" },
     });
@@ -167,7 +167,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Foreman partial wave failure preserves unchecked tasks and successful evidence", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_partial_wave = await stateManager.create({ title: "wf-partial-wave", type: "full_feature" });
+    const wf_partial_wave = await stateManager.create({ title: "Partial Wave", type: "full_feature" });
     await artifacts.write({
       workflowId: wf_partial_wave.id,
       kind: "TASKS",
@@ -210,7 +210,7 @@ describe("workflow error and partial failure behavior", () => {
   test("Builder failure plus Reviewer rejection preserves evidence and leaves task unchecked", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_reviewer_reject = await stateManager.create({ title: "wf-reviewer-reject", type: "full_feature" });
+    const wf_reviewer_reject = await stateManager.create({ title: "Reviewer Reject", type: "full_feature" });
     await artifacts.write({
       workflowId: wf_reviewer_reject.id,
       kind: "TASKS",
@@ -253,7 +253,7 @@ describe("workflow error and partial failure behavior", () => {
   test("corrupt artifact read returns a named error without crashing unrelated reads", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_corrupt_artifact = await stateManager.create({ title: "wf-corrupt-artifact", type: "full_feature" });
+    const wf_corrupt_artifact = await stateManager.create({ title: "Corrupt Artifact", type: "full_feature" });
     const written = await artifacts.write({
       workflowId: wf_corrupt_artifact.id,
       kind: "PRD",

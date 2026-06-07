@@ -27,7 +27,7 @@ afterAll(async () => {
 describe("workflow session linking", () => {
   test("links a session as orchestrator and persists the session workflow id", async () => {
     const { stateManager, storeManager } = createManagers();
-    const wf_orchestrator = await stateManager.create({ title: "wf-orchestrator", type: "full_feature" });
+    const wf_orchestrator = await stateManager.create({ title: "Orchestrator Link", type: "full_feature" });
     const store = storeManager.create("session-orchestrator", TMP_DIR);
 
     const linked = await linkSessionToWorkflow(
@@ -51,7 +51,7 @@ describe("workflow session linking", () => {
 
   test("links first-class role participants with stable keys", async () => {
     const { stateManager, storeManager } = createManagers();
-    const wf_roles = await stateManager.create({ title: "wf-roles", type: "full_feature" });
+    const wf_roles = await stateManager.create({ title: "Roles Test", type: "full_feature" });
 
     for (const key of WORKFLOW_PARTICIPANT_KEYS) {
       const sessionId = `session-${key}`;
@@ -74,7 +74,7 @@ describe("workflow session linking", () => {
 
   test("unlinks a participant without clearing the session workflow id", async () => {
     const { stateManager, storeManager } = createManagers();
-    const wf_unlink = await stateManager.create({ title: "wf-unlink", type: "quick_fix" });
+    const wf_unlink = await stateManager.create({ title: "Unlink Test", type: "quick_fix" });
     storeManager.create("session-product", TMP_DIR);
     await linkSessionToWorkflow(wf_unlink.id, "product", "session-product", stateManager, storeManager);
 
@@ -87,7 +87,7 @@ describe("workflow session linking", () => {
 
   test("child sessions inherit workflow id but are not added to workflow session ids", async () => {
     const { stateManager, storeManager } = createManagers();
-    const wf_child = await stateManager.create({ title: "wf-child", type: "full_feature" });
+    const wf_child = await stateManager.create({ title: "Child Workflow", type: "full_feature" });
     const parent = storeManager.create("session-parent", TMP_DIR);
     await linkSessionToWorkflow(wf_child.id, "orchestrator", "session-parent", stateManager, storeManager);
 
@@ -111,7 +111,7 @@ describe("workflow session linking", () => {
 
     const result = await createWorkflowWithOrchestrator(
       {
-        title: "wf-create",
+        title: "Creation Test",
         type: "research_only",
         orchestratorSessionId: "session-create",
         artifacts: { RESEARCH: "RESEARCH.md" },

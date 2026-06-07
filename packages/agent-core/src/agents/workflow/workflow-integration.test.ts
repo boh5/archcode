@@ -211,7 +211,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    const wf_full = await stateManager.create({ title: "wf-full", type: "full_feature" });
+    const wf_full = await stateManager.create({ title: "Full Feature", type: "full_feature" });
     await advance(stateManager, wf_full.id, "product_drafting");
     await artifactManager.write({ workflowId: wf_full.id, kind: "PRD", path: "PRD.md", content: "---\nowner: product\n---\n# PRD" });
     await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"] });
@@ -251,7 +251,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    const wf_research = await stateManager.create({ title: "wf-research", type: "research_only" });
+    const wf_research = await stateManager.create({ title: "Research Only", type: "research_only" });
     await advance(stateManager, wf_research.id, "researching");
     await artifactManager.write({ workflowId: wf_research.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: librarian\n---\n# Findings" });
     await stateManager.recordStageCompletion(wf_research.id, { stage: "researching", evidence: ["RESEARCH.md"] });
@@ -267,7 +267,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const root = workspaceRoot("quick-fix");
     const stateManager = new WorkflowStateManager(root);
 
-    const wf_quick = await stateManager.create({ title: "wf-quick", type: "quick_fix" });
+    const wf_quick = await stateManager.create({ title: "Quick Fix", type: "quick_fix" });
     await advance(stateManager, wf_quick.id, "quick_analysis");
     await stateManager.recordStageCompletion(wf_quick.id, { stage: "quick_analysis", evidence: ["analysis"] });
     await advance(stateManager, wf_quick.id, "quick_patch");
@@ -287,7 +287,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const sourceStore = storeManager.create("source-session", root);
 
-    const source = await createWorkflowWithOrchestrator({ title: "wf-source", type: "research_only", orchestratorSessionId: sourceStore.getState().sessionId }, stateManager, storeManager);
+    const source = await createWorkflowWithOrchestrator({ title: "Source Workflow", type: "research_only", orchestratorSessionId: sourceStore.getState().sessionId }, stateManager, storeManager);
     await advance(stateManager, source.workflow.id, "researching");
     await artifactManager.write({ workflowId: source.workflow.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: research\n---\n# Source research" });
     await stateManager.recordStageCompletion(source.workflow.id, { stage: "researching", evidence: ["RESEARCH.md"] });
@@ -313,7 +313,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(initialMessageText).toContain(`derived workflow ${result.workflow.id}`);
     expect(initialMessageText).toContain(`titled "Derived from source"`);
     expect(initialMessageText).toContain(`Source workflow: ${source.workflow.id}`);
-    expect(initialMessageText).toContain(`titled "wf-source"`);
+    expect(initialMessageText).toContain(`titled "Source Workflow"`);
     expect(initialMessageText).toContain('artifact_read({ workflowId: "' + source.workflow.id + '", path: "RESEARCH.md" })');
   });
 
@@ -322,8 +322,8 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    const wf_a = await stateManager.create({ title: "wf-a", type: "research_only" });
-    const wf_b = await stateManager.create({ title: "wf-b", type: "quick_fix" });
+    const wf_a = await stateManager.create({ title: "Workflow A", type: "research_only" });
+    const wf_b = await stateManager.create({ title: "Workflow B", type: "quick_fix" });
     await artifactManager.write({ workflowId: wf_a.id, kind: "RESEARCH", path: "RESEARCH.md", content: "---\nowner: a\n---\n# Shared research" });
     await artifactManager.write({ workflowId: wf_b.id, kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "---\nowner: b\n---\n# Other workflow" });
 
@@ -339,7 +339,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const session = storeManager.create("orchestrator-session", root);
 
-    const linked = await createWorkflowWithOrchestrator({ title: "wf-linked", type: "full_feature", orchestratorSessionId: session.getState().sessionId }, stateManager, storeManager);
+    const linked = await createWorkflowWithOrchestrator({ title: "Linked Workflow", type: "full_feature", orchestratorSessionId: session.getState().sessionId }, stateManager, storeManager);
 
     expect(linked.session.workflowId).toBe(linked.workflow.id);
     expect(linked.workflow.sessionIds.orchestrator).toBe("orchestrator-session");
@@ -353,7 +353,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const store = storeManager.create("sse-session", root);
     const ctx = createContext(root, storeManager, store);
 
-    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "wf-sse", type: "quick_fix" }, ctx) as string);
+    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "SSE Events", type: "quick_fix" }, ctx) as string);
     const workflowId = createdResult.id;
     await createWorkflowRecordCompletionTool().execute({ workflowId, stage: "idle" }, ctx);
     await createWorkflowUpdateStageTool().execute({ workflowId, stage: "quick_analysis", hasUserApproval: false, incrementRetry: false }, ctx);
@@ -385,7 +385,7 @@ describe("end-to-end workflow lifecycle integration", () => {
   test("child execution receives delegate artifact references without artifact content", async () => {
     const root = workspaceRoot("delegate-artifacts");
     const storeManager = new SessionStoreManager({ logger: silentLogger });
-    const parentStore = storeManager.create("parent-session", root, { agentName: "orchestrator", workflowId: "wf-parent" });
+    const parentStore = storeManager.create("parent-session", root, { agentName: "orchestrator", workflowId: "550e8400-e29b-41d4-a716-446655440010" });
     const capturedMessages: string[] = [];
     const manager = new SessionExecutionManager({
       sessionAgentManager: createFakeSessionAgentManager(capturedMessages) as never,
@@ -412,8 +412,8 @@ describe("end-to-end workflow lifecycle integration", () => {
       prompt: "Inspect the available research reference only.",
       skills: [],
       available_artifacts: [
-        { workflowId: "wf-parent", kind: "RESEARCH", description: "Research summary reference" },
-        { workflowId: "wf-parent", path: "notes/context.md" },
+        { workflowId: "550e8400-e29b-41d4-a716-446655440010", kind: "RESEARCH", description: "Research summary reference" },
+        { workflowId: "550e8400-e29b-41d4-a716-446655440010", path: "notes/context.md" },
       ],
       background: false,
       currentDepth: 0,
@@ -421,11 +421,11 @@ describe("end-to-end workflow lifecycle integration", () => {
     await handle.result;
 
     expect(capturedMessages[0]).toContain("Available artifacts:");
-    expect(capturedMessages[0]).toContain("wf-parent/RESEARCH: Research summary reference");
-    expect(capturedMessages[0]).toContain("wf-parent/notes/context.md");
+    expect(capturedMessages[0]).toContain("550e8400-e29b-41d4-a716-446655440010/RESEARCH: Research summary reference");
+    expect(capturedMessages[0]).toContain("550e8400-e29b-41d4-a716-446655440010/notes/context.md");
     expect(capturedMessages[0]).toContain("Use artifact_read before relying on artifact content");
     expect(capturedMessages[0]).not.toContain(secretArtifactContent);
-    expect(handle.store.getState().workflowId).toBe("wf-parent");
+    expect(handle.store.getState().workflowId).toBe("550e8400-e29b-41d4-a716-446655440010");
   });
 
   test("error cases reject invalid transitions, premature completion, and derivation from terminal sources", async () => {
@@ -433,7 +433,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const stateManager = new WorkflowStateManager(root);
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
-    const wf_errors = await stateManager.create({ title: "wf-errors", type: "full_feature" });
+    const wf_errors = await stateManager.create({ title: "Error Cases", type: "full_feature" });
     const invalid = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "idle", targetStage: "final_review", retryCount: 0, maxRetries: 3, hasArtifact: () => false, hasStageCompletion: () => false, hasUserApproval: false });
     expect(invalid.allowed).toBe(false);
     expect(invalid.errorName).toBe("WorkflowTransitionError");
@@ -462,7 +462,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const store = storeManager.create("tool-error-session", root);
     const ctx = createContext(root, storeManager, store);
 
-    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "wf-tool-errors", type: "full_feature" }, ctx) as string);
+    const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "Tool Errors", type: "full_feature" }, ctx) as string);
     const wfToolId = createdResult.id;
     const transitionResult = await createWorkflowUpdateStageTool().execute({ workflowId: wfToolId, stage: "final_review", hasUserApproval: false, incrementRetry: false }, ctx);
     const completeResult = await createWorkflowCompleteTool().execute({ workflowId: wfToolId }, ctx);

@@ -26,7 +26,7 @@ describe("WorkflowArtifactManager", () => {
   test("writes PRD.md, records metadata, and preserves stage and status", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_prd = await stateManager.create({ title: "wf-prd", type: "full_feature" });
+    const wf_prd = await stateManager.create({ title: "PRD Draft", type: "full_feature" });
     await stateManager.updateStage(wf_prd.id, "product_drafting");
     await stateManager.updateStatus(wf_prd.id, "paused");
 
@@ -52,7 +52,7 @@ describe("WorkflowArtifactManager", () => {
   test("round-trips frontmatter using shared helpers", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_frontmatter = await stateManager.create({ title: "wf-frontmatter", type: "full_feature" });
+    const wf_frontmatter = await stateManager.create({ title: "Frontmatter Test", type: "full_feature" });
 
     await artifacts.write({
       workflowId: wf_frontmatter.id,
@@ -70,7 +70,7 @@ describe("WorkflowArtifactManager", () => {
   test("accepts critic reports and evidence artifact paths", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_multi = await stateManager.create({ title: "wf-multi", type: "full_feature" });
+    const wf_multi = await stateManager.create({ title: "Multi Artifact", type: "full_feature" });
 
     await artifacts.write({
       workflowId: wf_multi.id,
@@ -94,7 +94,7 @@ describe("WorkflowArtifactManager", () => {
   test("accepts all core single-file workflow artifact paths", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_new_kinds = await stateManager.create({ title: "wf-new-kinds", type: "full_feature" });
+    const wf_new_kinds = await stateManager.create({ title: "New Kinds", type: "full_feature" });
 
     const entries = Object.entries(SINGLE_FILE_ARTIFACT_PATHS) as Array<[
       keyof typeof SINGLE_FILE_ARTIFACT_PATHS,
@@ -131,7 +131,7 @@ describe("WorkflowArtifactManager", () => {
   test("accepts supporting notes paths without recording core artifact metadata", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_notes = await stateManager.create({ title: "wf-notes", type: "full_feature" });
+    const wf_notes = await stateManager.create({ title: "Notes Test", type: "full_feature" });
 
     const written = await artifacts.write({
       workflowId: wf_notes.id,
@@ -149,7 +149,7 @@ describe("WorkflowArtifactManager", () => {
   test("reads core artifacts by kind and other workflow artifacts by path", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_other = await stateManager.create({ title: "wf-other", type: "full_feature" });
+    const wf_other = await stateManager.create({ title: "Other Workflow", type: "full_feature" });
 
     await artifacts.write({
       workflowId: wf_other.id,
@@ -187,7 +187,7 @@ describe("WorkflowArtifactManager", () => {
   test("rejects PLAN artifact kind and PLAN.md path", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_plan = await stateManager.create({ title: "wf-plan", type: "full_feature" });
+    const wf_plan = await stateManager.create({ title: "Plan Test", type: "full_feature" });
 
     expect(() =>
       WorkflowArtifactWriteInputSchema.parse({
@@ -215,7 +215,7 @@ describe("WorkflowArtifactManager", () => {
   test("rejects traversal paths with a domain path error", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
-    const wf_outside = await stateManager.create({ title: "wf-outside", type: "full_feature" });
+    const wf_outside = await stateManager.create({ title: "Outside Test", type: "full_feature" });
 
     let traversalWriteError: unknown;
     try {
@@ -248,7 +248,7 @@ describe("WorkflowArtifactManager", () => {
     const otherProjectState = new WorkflowStateManager(otherRoot);
     const otherProjectArtifacts = new WorkflowArtifactManager(otherRoot, otherProjectState);
 
-    const foreign = await otherProjectState.create({ title: "wf-foreign", type: "full_feature" });
+    const foreign = await otherProjectState.create({ title: "Foreign Workflow", type: "full_feature" });
     await otherProjectArtifacts.write({
       workflowId: foreign.id,
       kind: "PRD",

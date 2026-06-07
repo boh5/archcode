@@ -29,20 +29,23 @@ function input(overrides: Partial<TransitionInput>): TransitionInput {
     "EVIDENCE",
     "FINAL_REPORT",
   ]);
-  return { workflowId: "wf-guards",
-  workflowType: "full_feature",
-  currentStage: "idle",
-  targetStage: "product_drafting",
-  retryCount: 0,
-  maxRetries: 3,
-  hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
-  hasUserApproval: true, ...overrides,  };
+  return {
+    workflowId: "550e8400-e29b-41d4-a716-446655440000",
+    workflowType: "full_feature",
+    currentStage: "idle",
+    targetStage: "product_drafting",
+    retryCount: 0,
+    maxRetries: 3,
+    hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
+    hasUserApproval: true,
+    ...overrides,
+  };
 }
 
 function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
   const now = new Date().toISOString();
   return {
-    id: "wf-complete-guards",
+    id: "550e8400-e29b-41d4-a716-446655440000",
     title: "test",
     type: "full_feature",
     stage: "idle",
@@ -166,7 +169,7 @@ describe("workflow transition guards", () => {
   test("denies forward transition when current stage has no completion record", () => {
     const result = canTransitionTo(
       {
-        id: "wf-stage-gate",
+        id: "550e8400-e29b-41d4-a716-446655440001",
         type: "full_feature",
         status: "active",
         stage: "product_drafting",
@@ -195,7 +198,7 @@ describe("workflow transition guards", () => {
     for (const [workflowType, currentStage, targetStage] of backwardTransitions) {
       const result = canTransitionTo(
         {
-          id: "wf-retry",
+          id: "550e8400-e29b-41d4-a716-446655440002",
           type: workflowType,
           status: "active",
           stage: currentStage,
@@ -219,7 +222,7 @@ describe("workflow transition guards", () => {
 
     const result = canTransitionTo(
       {
-        id: "wf-stage-gate",
+        id: "550e8400-e29b-41d4-a716-446655440005",
         type: "full_feature",
         status: "active",
         stage: "product_drafting",
@@ -240,7 +243,7 @@ describe("workflow transition guards", () => {
   test("canTransitionTo denies inactive workflow transitions", () => {
     const result = canTransitionTo(
       {
-        id: "wf-paused",
+        id: "550e8400-e29b-41d4-a716-446655440003",
         type: "quick_fix",
         status: "paused",
         stage: "quick_analysis",
@@ -440,17 +443,17 @@ describe("workflow transition guards", () => {
 
   test("transition and retry errors expose typed fields and names", () => {
     const transitionError = new WorkflowTransitionError(
-      "wf-errors",
+      "550e8400-e29b-41d4-a716-446655440004",
       "idle",
       "final_review",
     );
     expect(transitionError.name).toBe("WorkflowTransitionError");
-    expect(transitionError.workflowId).toBe("wf-errors");
+    expect(transitionError.workflowId).toBe("550e8400-e29b-41d4-a716-446655440004");
     expect(transitionError.currentStage).toBe("idle");
     expect(transitionError.targetStage).toBe("final_review");
 
     const retryError = new WorkflowRetryLimitError(
-      "wf-errors",
+      "550e8400-e29b-41d4-a716-446655440004",
       "spec_drafting",
       "critic_spec_review",
       1,
