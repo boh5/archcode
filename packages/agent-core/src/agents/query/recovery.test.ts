@@ -248,6 +248,51 @@ describe("query loop LLM stream recovery", () => {
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
   });
 
+  test("unknown provider error before output retries at the LLM boundary", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const streamFn = createMockStreamText([
+      { throwBeforeOutput: new Error("provider emitted undocumented transport failure") },
+      { text: "Recovered from unknown" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store }), "Hi");
+
+    expect(result.text).toBe("Recovered from unknown");
+    expect(streamFn).toHaveBeenCalledTimes(2);
+    expect(events.filter((event) => event.type === "llm-retry")).toEqual([
+      expect.objectContaining({ scope: "short", visibility: "internal", profile: "zero-output-short", attempt: 1, errorKind: "unknown" }),
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "llm-recovery", visibility: "internal", profile: "zero-output-short" }));
+  });
+
+  test("internal model-prep unknown errors are not retried as provider failures", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const registry = createRegistry([]);
+    registry.resolveForAgent = mock(() => {
+      throw new Error("internal registry resolve bug");
+    }) as typeof registry.resolveForAgent;
+    const streamFn = createMockStreamText([
+      { text: "should not call model" },
+      { text: "should not retry" },
+    ]);
+
+    const result = await runQueryLoop(makeOptions({ store, toolRegistry: registry }), "Hi");
+
+    expect(result).toEqual({ text: "", steps: 0 });
+    expect(streamFn).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "loop-error",
+      error: "internal registry resolve bug",
+    }));
+    expect(events.filter((event) => event.type === "llm-retry")).toHaveLength(0);
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "llm-recovery-failed",
+      message: expect.stringContaining("Model call failed:"),
+    }));
+  });
+
   test("first-chunk EOF escalates after bounded zero-output retry and avoids duplicate assistant content", async () => {
     const store = createStore();
     const events = captureEvents(store);
@@ -313,7 +358,10 @@ describe("query loop LLM stream recovery", () => {
     expect(tool).toMatchObject({ type: "tool", state: "error", errorMessage: "Execution ended before tool result" });
     expect(store.getState().toModelMessages()).toEqual([
       { role: "user", content: "Use tool" },
-      { role: "assistant", content: [{ type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: undefined }] },
+      { role: "assistant", content: [
+        { type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: undefined },
+        { type: "text", text: "Recovered" },
+      ] },
       { role: "tool", content: [{ type: "tool-result", toolCallId: "tc-pending", toolName: "echo", output: { type: "error-text", value: "Execution ended before tool result" } }] },
     ]);
   });
@@ -322,7 +370,8 @@ describe("query loop LLM stream recovery", () => {
     const store = createStore();
     const executor = mock(async (_input: z.infer<typeof inputSchema>, ctx: ToolExecutionContext) => {
       store.getState().append({ type: "execution-end", status: "interrupted" });
-      ctx.abort.dispatchEvent(new Event("abort"));
+      void ctx;
+      abort.abort();
       return "late result ignored";
     });
     const abort = new AbortController();

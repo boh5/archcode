@@ -1,7 +1,7 @@
-import type { StreamTextResult, ToolSet } from "ai";
+import type { ModelMessage, StreamTextResult, ToolSet } from "ai";
 import type { StoreApi } from "zustand";
 import type { Logger } from "../../logger";
-import type { ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
+import type { ErrorToolPart, ExecutionEndEvent, SessionStoreState, StreamEvent } from "../../store/types";
 import { createToolExecutionContext } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import { partitionToolCalls } from "../../tools/concurrency/partition";
@@ -43,7 +43,7 @@ interface ModelAttemptOptions {
 type ModelAttemptResult =
   | {
       outcome: "success";
-      result: AnyStreamTextResult;
+      finalized: FinalizedModelResult;
       streamError?: unknown;
     }
   | {
@@ -51,6 +51,7 @@ type ModelAttemptResult =
       error: unknown;
       errorKind: string;
       message: string;
+      finalizationKind?: FinalizationKind;
     }
   | {
       outcome: "retry";
@@ -60,6 +61,17 @@ type ModelAttemptResult =
       hadDurableOutput: boolean;
       recoveryAttempt: number;
     };
+
+interface FinalizedModelResult {
+  finishReason: string;
+  usage: unknown;
+  text: string;
+  toolCalls?: ToolCallArray;
+}
+
+type FinalizationKind = "result" | "toolCalls";
+
+type RetryOrTerminalAttemptResult = Exclude<ModelAttemptResult, { outcome: "success" }>;
 
 type ToolCallArray = Array<{
   toolCallId: string;
@@ -110,56 +122,43 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
 
   store.getState().append({ type: "step-start", step });
 
+  let messages: ModelMessage[];
+  let tools: ToolSet | undefined;
+
   try {
     await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
-    const messages = store.getState().toModelMessages();
+    messages = store.getState().toModelMessages();
     await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions, abort, messages }, logger, { sessionId, agentName });
     const resolved = toolRegistry.resolveForAgent(allowedTools);
+    tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
+  } catch (err) {
+    store.getState().append({ type: "step-end", step, finishReason: "error" });
+    throw err;
+  }
 
+  try {
     const result = runLlmStream({
       model: modelInfo.model,
       modelOptions,
       messages,
       abortSignal: abort,
-      ...(resolved.descriptors.length > 0 ? { tools: resolved.toAITools() } : {}),
+      ...(tools ? { tools } : {}),
       ...(systemPrompt ? { system: systemPrompt } : {}),
     });
 
     const { streamError } = await consumeFullStream(result.fullStream as AsyncIterable<TextStreamPart>, store, abort);
-    return { outcome: "success", result: result as AnyStreamTextResult, streamError };
+    const finalized = await finalizeModelResult(result as AnyStreamTextResult, streamError, store, step, abort);
+    if (finalized.outcome !== "success") return finalized;
+    return { outcome: "success", finalized: finalized.finalized, streamError };
   } catch (err) {
-    const classification = classifyLlmError(err);
-    const hadDurableOutput = hasCurrentStepDurableOutput(store);
-    const retryable = classification.retryable && !abort.aborted;
-    const message = errorMessage(err);
-
+    const failure = buildRetryOrTerminalFailure(err, store, step, abort);
     store.getState().append({
       type: "step-end",
       step,
-      finishReason: retryable ? "interrupted" : "error",
+      finishReason: failure.outcome === "retry" ? "interrupted" : "error",
     });
-
-    if (classification.kind === "abort") {
-      throw err;
-    }
-
-    if (!retryable) {
-      return {
-        outcome: "terminal",
-        error: err,
-        errorKind: classification.kind,
-        message,
-      };
-    }
-
-    return {
-      outcome: "retry",
-      error: err,
-      errorKind: classification.kind,
-      message,
-      hadDurableOutput,
-      recoveryAttempt: countRecoveryAttempts(store, step) + 1,
-    };
+    if (failure.outcome === "retry") settleUnfinalizedToolPartsForRecovery(store);
+    return failure;
   }
 }
 
@@ -302,25 +301,29 @@ export async function runQueryLoop(
       }
 
       if (attempt.outcome === "terminal") {
-        store.getState().append({
-          type: "loop-error",
-          step: steps,
-          error: attempt.message,
-        });
-        appendTerminalLlmFailureNotice(store, attempt.error, attempt.errorKind, {
-          steps,
-          recoveredFromFailure,
-          sessionRetryAttempt,
-          zeroOutputShortAttempt,
-          lastRecoveryAttempt,
-        }, { terminalNoRetry: true });
+        if (attempt.finalizationKind) {
+          appendPostStreamTerminalFailure(store, attempt.error, steps, attempt.finalizationKind);
+          markCurrentAssistantModelOutputDiscardedFromContext(store);
+        } else {
+          store.getState().append({
+            type: "loop-error",
+            step: steps,
+            error: attempt.message,
+          });
+          appendTerminalLlmFailureNotice(store, attempt.error, attempt.errorKind, {
+            steps,
+            recoveredFromFailure,
+            sessionRetryAttempt,
+            zeroOutputShortAttempt,
+            lastRecoveryAttempt,
+          }, { terminalNoRetry: true });
+        }
         failed = true;
         runEndStatus = "failed";
         return { text: lastText, steps };
       }
 
-      const { result } = attempt;
-      const streamError = attempt.streamError;
+      const { finalized } = attempt;
 
       if (recoveredFromFailure) {
         store.getState().append({
@@ -351,34 +354,14 @@ export async function runQueryLoop(
         break;
       }
 
-      let finishReason: string;
-      let usage: unknown;
-      try {
-        finishReason = await result.finishReason;
-        usage = await result.usage;
-        lastText = await result.text;
-      } catch (err) {
-        appendPostStreamTerminalFailure(store, preferStreamError(streamError, err), steps, "result");
-        markCurrentAssistantModelOutputDiscardedFromContext(store);
-        failed = true;
-        runEndStatus = "failed";
-        return { text: lastText, steps };
-      }
+      lastText = finalized.text;
 
-      store.getState().append({ type: "step-end", step: steps, finishReason, usage });
+      store.getState().append({ type: "step-end", step: steps, finishReason: finalized.finishReason, usage: finalized.usage });
       await runHooks("afterStepEnd", afterStepEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort }, logger, { sessionId, agentName });
 
-      if (finishReason !== "tool-calls") break;
+      if (finalized.finishReason !== "tool-calls") break;
 
-      let toolCalls: ToolCallArray;
-      try {
-        toolCalls = await result.toolCalls;
-      } catch (err) {
-        appendPostStreamTerminalFailure(store, preferStreamError(streamError, err), steps, "toolCalls");
-        failed = true;
-        runEndStatus = "failed";
-        return { text: lastText, steps };
-      }
+      const toolCalls = finalized.toolCalls ?? [];
       if (abort.aborted) break;
       if (resolvedWorkspaceRoot === undefined) {
         resolvedWorkspaceRoot = options.projectContext.project.workspaceRoot;
@@ -585,10 +568,89 @@ async function consumeFullStream(
   return { streamError };
 }
 
+async function finalizeModelResult(
+  result: AnyStreamTextResult,
+  streamError: unknown,
+  store: StoreApi<SessionStoreState>,
+  step: number,
+  abort: AbortSignal,
+): Promise<{ outcome: "success"; finalized: FinalizedModelResult } | RetryOrTerminalAttemptResult> {
+  let finishReason: string;
+  let usage: unknown;
+  let text: string;
+
+  try {
+    finishReason = await result.finishReason;
+    usage = await result.usage;
+    text = await result.text;
+  } catch (err) {
+    return handleFinalizationFailure(preferStreamError(streamError, err), store, step, abort, "result");
+  }
+
+  if (finishReason !== "tool-calls") {
+    return { outcome: "success", finalized: { finishReason, usage, text } };
+  }
+
+  try {
+    const toolCalls = await result.toolCalls;
+    return { outcome: "success", finalized: { finishReason, usage, text, toolCalls } };
+  } catch (err) {
+    return handleFinalizationFailure(preferStreamError(streamError, err), store, step, abort, "toolCalls");
+  }
+}
+
+function handleFinalizationFailure(
+  err: unknown,
+  store: StoreApi<SessionStoreState>,
+  step: number,
+  abort: AbortSignal,
+  kind: FinalizationKind,
+): RetryOrTerminalAttemptResult {
+  const failure = buildRetryOrTerminalFailure(err, store, step, abort);
+
+  if (failure.outcome === "retry") {
+    if (isStepOpen(store, step)) {
+      store.getState().append({ type: "step-end", step, finishReason: "interrupted" });
+    }
+    settleUnfinalizedToolPartsForRecovery(store);
+    return failure;
+  }
+
+  return { ...failure, finalizationKind: kind };
+}
+
+function buildRetryOrTerminalFailure(
+  err: unknown,
+  store: StoreApi<SessionStoreState>,
+  step: number,
+  abort: AbortSignal,
+): RetryOrTerminalAttemptResult {
+  const classification = classifyLlmError(err, { boundary: "provider-request" });
+  if (classification.kind === "abort") throw err;
+
+  if (classification.retryable && !abort.aborted) {
+    return {
+      outcome: "retry",
+      error: err,
+      errorKind: classification.kind,
+      message: errorMessage(err),
+      hadDurableOutput: hasCurrentStepDurableOutput(store),
+      recoveryAttempt: countRecoveryAttempts(store, step) + 1,
+    };
+  }
+
+  return {
+    outcome: "terminal",
+    error: err,
+    errorKind: classification.kind,
+    message: errorMessage(err),
+  };
+}
+
 function preferStreamError(streamError: unknown, fallback: unknown): unknown {
   if (streamError != null) {
-    const streamClass = classifyLlmError(streamError);
-    const fallbackClass = classifyLlmError(fallback);
+    const streamClass = classifyLlmError(streamError, { boundary: "provider-request" });
+    const fallbackClass = classifyLlmError(fallback, { boundary: "provider-request" });
     if (streamClass.statusCode !== undefined || streamClass.kind !== "unknown") return streamError;
     if (fallbackClass.kind !== "unknown") return fallback;
   }
@@ -705,6 +767,49 @@ function markCurrentAssistantModelOutputDiscardedFromContext(store: StoreApi<Ses
           ...part,
           meta: { ...(part.meta ?? {}), interrupted: true, discardedFromContext: true },
         };
+      });
+
+      return changed ? { ...message, parts } : message;
+    });
+
+    return changed ? { messages } : {};
+  });
+}
+
+function settleUnfinalizedToolPartsForRecovery(store: StoreApi<SessionStoreState>): void {
+  const currentAssistantMessageId = store.getState().currentAssistantMessageId;
+  if (!currentAssistantMessageId) return;
+  const timestamp = Date.now();
+
+  store.setState((state) => {
+    let changed = false;
+    const messages = state.messages.map((message) => {
+      if (message.id !== currentAssistantMessageId) return message;
+
+      const parts = message.parts.map((part) => {
+        if (part.type !== "tool" || (part.state !== "pending" && part.state !== "running")) return part;
+
+        changed = true;
+        const hasAttempt = part.attemptId !== undefined;
+        const settledPart: ErrorToolPart = {
+          type: "tool",
+          id: part.id,
+          state: "error",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: "input" in part ? part.input : undefined,
+          errorMessage: hasAttempt
+            ? "Tool execution result unknown: execution was interrupted"
+            : "Execution ended before tool result",
+          createdAt: part.createdAt,
+          startedAt: "startedAt" in part ? part.startedAt : timestamp,
+          endedAt: timestamp,
+          ...(hasAttempt ? { meta: { unknownResult: true } } : {}),
+          ...(part.attemptId !== undefined ? { attemptId: part.attemptId } : {}),
+          ...(part.attemptTimestamp !== undefined ? { attemptTimestamp: part.attemptTimestamp } : {}),
+          ...(part.attemptDestructive !== undefined ? { attemptDestructive: part.attemptDestructive } : {}),
+        };
+        return settledPart;
       });
 
       return changed ? { ...message, parts } : message;

@@ -10,6 +10,13 @@ import { silentLogger } from "../logger";
 export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
   const logger = input.logger ?? silentLogger;
   const toolName = input.schemaName ?? "result";
+  const callOptions = pickModelCallOptions(input.modelOptions);
+  const tools = {
+    [toolName]: tool({
+      inputSchema: zodSchema(input.schema),
+      description: input.schemaDescription ?? "Submit the result as a JSON object matching the schema",
+    }),
+  };
   let lastSchemaError: LlmSchemaValidationError | undefined;
 
   for (let repairAttempt = 1; repairAttempt <= LLM_OBJECT_SCHEMA_REPAIR_ATTEMPTS; repairAttempt++) {
@@ -19,14 +26,9 @@ export async function runLlmObject<T>(input: LlmObjectInput<T>): Promise<T> {
       ...(input.system ? { system: input.system } : {}),
       prompt,
       abortSignal: input.abortSignal,
-      tools: {
-        [toolName]: tool({
-          inputSchema: zodSchema(input.schema),
-          description: input.schemaDescription ?? "Submit the result as a JSON object matching the schema",
-        }),
-      },
+      tools,
       toolChoice: { type: "tool", toolName },
-      ...pickModelCallOptions(input.modelOptions),
+      ...callOptions,
     }), "LLM object generation", undefined, { abortSignal: input.abortSignal });
 
     try {

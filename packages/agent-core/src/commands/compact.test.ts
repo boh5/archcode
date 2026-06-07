@@ -198,7 +198,7 @@ describe("createCompactCommand", () => {
   test("returns failure message and clears busy guard on error", async () => {
     setLlmAdapterForTest({
       streamText: mock(() => {
-        throw new Error("model down");
+        throw Object.assign(new Error("model down"), { status: 422 });
       }) as unknown as typeof import("ai").streamText,
     });
     const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`);

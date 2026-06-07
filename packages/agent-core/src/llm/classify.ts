@@ -16,7 +16,14 @@ export interface LlmErrorClassification {
   readonly statusCode?: number;
 }
 
-export function classifyLlmError(error: unknown): LlmErrorClassification {
+export type LlmErrorBoundary = "internal" | "provider-request";
+
+export interface LlmErrorClassificationOptions {
+  readonly boundary?: LlmErrorBoundary;
+}
+
+export function classifyLlmError(error: unknown, options: LlmErrorClassificationOptions = {}): LlmErrorClassification {
+  const boundary = options.boundary ?? "internal";
   const statusCode = getStatusCode(error);
   const name = getErrorName(error).toLowerCase();
   const message = getErrorMessage(error).toLowerCase();
@@ -41,6 +48,10 @@ export function classifyLlmError(error: unknown): LlmErrorClassification {
     return { kind: "rate-limit", retryable: true, statusCode };
   }
 
+  if (isNonRetryableClientStatus(statusCode)) {
+    return { kind: "config", retryable: false, statusCode };
+  }
+
   if (statusCode !== undefined && statusCode >= 500 && statusCode <= 599) {
     return { kind: "server", retryable: true, statusCode };
   }
@@ -57,7 +68,13 @@ export function classifyLlmError(error: unknown): LlmErrorClassification {
     return { kind: "network", retryable: true, statusCode };
   }
 
-  return { kind: "unknown", retryable: false, statusCode };
+  return { kind: "unknown", retryable: boundary === "provider-request", statusCode };
+}
+
+function isNonRetryableClientStatus(statusCode: number | undefined): boolean {
+  if (statusCode === undefined) return false;
+  if (statusCode < 400 || statusCode > 499) return false;
+  return statusCode !== 408 && statusCode !== 409 && statusCode !== 429;
 }
 
 function getStatusCode(error: unknown): number | undefined {

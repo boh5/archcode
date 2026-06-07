@@ -179,6 +179,54 @@ This matters for streaming: AI SDK `maxRetries` only applies before a successful
 
 Retry constants are internal v1 implementation details. There is currently **no** `.specra.json` recovery retry configuration, and the config schema must not grow retry fields until that behavior is intentionally productized. Existing auto-compaction behavior is preserved; automated emergency compaction specifically for context-overflow recovery is a follow-up and out of scope for the current refactor.
 
+#### Manual Streaming Recovery Test Server
+
+For local manual testing, `scripts/mock-llm-server.ts` starts a Bun/OpenAI-compatible mock server that can intentionally break SSE streams by destroying the HTTP socket after writing partial SSE data:
+
+```sh
+MOCK_LLM_SCENARIO=partial-eof-once bun run scripts/mock-llm-server.ts
+```
+
+When testing through Specra, prefer failing the first two streamed requests so provider/client-level connection retries cannot hide the failure from Specra's query loop:
+
+```sh
+MOCK_LLM_SCENARIO=partial-eof-once \
+MOCK_LLM_FAIL_STREAM_ATTEMPTS=2 \
+bun run scripts/mock-llm-server.ts
+```
+
+Point a temporary provider config at the mock server:
+
+```json
+"options": {
+  "baseURL": "http://localhost:19998/v1",
+  "apiKey": "mock-key"
+}
+```
+
+Supported scenarios:
+
+| Scenario | Behavior |
+|---|---|
+| `normal` | Always returns a normal streamed answer |
+| `zero-eof-once` | First request aborts before any output, next request recovers |
+| `partial-eof-once` | First request streams partial text then aborts, next request recovers |
+| `tool-eof-once` | First request streams a tool call then aborts before final tool-call data, next request recovers |
+| `always-zero-eof` | Every request aborts before output, useful for observing session retry escalation |
+| `always-partial-eof` | Every request aborts after partial output |
+
+Reset or switch scenarios without restarting:
+
+```sh
+curl -s -X POST http://localhost:19998/__mock/reset \
+  -H 'Content-Type: application/json' \
+  -d '{"scenario":"zero-eof-once","failStreamAttempts":2}'
+```
+
+For EOF scenarios, `curl` may only show a truncated response. The meaningful signal is in Specra/AI SDK behavior: the first failed streamed request should surface a stream error such as “socket connection was closed unexpectedly”, and Specra should then emit retry/recovery events and recover on the next streamed request for the `*-once` scenarios.
+
+The server logs both total requests and `streamAttempt`. Non-streaming background calls such as title generation do not consume `streamAttempt` and will not use up the intentional EOF failures.
+
 ### Variants
 
 Variants are named option profiles under a model. An agent references a variant by name to inherit its options.

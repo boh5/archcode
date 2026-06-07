@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 
 import { computeDelayMs, withLlmRetry, type LlmRetryAuditEntry } from "./retry";
 import type { LlmRetryProfile } from "./constants";
+import { LlmMaxRetriesError } from "./errors";
 
 const noJitterProfile: LlmRetryProfile = {
   totalAttempts: 3,
@@ -67,5 +68,34 @@ describe("withLlmRetry", () => {
     });
     expect(auditEntries[0]!.nextRetryAt).toBeGreaterThanOrEqual(before + 20);
     expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  test("retries unknown provider-boundary errors by default", async () => {
+    const operation = mock(async () => ({ ok: true }));
+    operation.mockImplementationOnce(async () => {
+      throw new Error("provider emitted an undocumented error");
+    });
+
+    const result = await withLlmRetry(operation, "unknown provider error", noJitterProfile);
+
+    expect(result).toEqual({ ok: true });
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry explicit non-retryable provider errors", async () => {
+    const operation = mock(async () => {
+      throw Object.assign(new Error("Unauthorized"), { status: 401 });
+    });
+
+    try {
+      await withLlmRetry(operation, "auth failure", noJitterProfile);
+      expect.unreachable("expected auth failure");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmMaxRetriesError);
+      expect((err as LlmMaxRetriesError).attempts).toBe(1);
+      expect((err as LlmMaxRetriesError).retryable).toBe(false);
+    }
+
+    expect(operation).toHaveBeenCalledTimes(1);
   });
 });

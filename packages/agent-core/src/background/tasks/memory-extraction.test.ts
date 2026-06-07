@@ -317,7 +317,7 @@ describe("createMemoryExtractionTask", () => {
 
     await createMemoryExtractionTask(store, roots).run(makeTaskContext(store, { logger }));
 
-    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledTimes(3);
     expect(store.getState().messages).toHaveLength(5);
     expect(JSON.stringify(store.getState().messages)).not.toContain("recovery-notice");
     expect(await new MemoryFileManager(roots).listTopics()).toHaveLength(0);

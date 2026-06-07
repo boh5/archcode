@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { z } from "zod/v4";
 import { setLlmAdapterForTest } from "./adapter";
 import { runLlmObject } from "./run-object";
-import { LlmObjectError, LlmSchemaValidationError } from "./errors";
+import { LlmMaxRetriesError, LlmObjectError, LlmSchemaValidationError } from "./errors";
 import type { LlmObjectInput } from "./types";
 
 const mockGenerateText = mock(async (input: Record<string, unknown>) => {
@@ -16,7 +16,11 @@ function generateTextCalls(): Array<[Record<string, unknown>]> {
 }
 
 beforeEach(() => {
-  mockGenerateText.mockClear();
+  mockGenerateText.mockReset();
+  mockGenerateText.mockImplementation(async (input: Record<string, unknown>) => {
+    void input;
+    return { text: "", toolCalls: [{ toolName: "result", input: { name: "Alice" } as unknown }] };
+  });
   setLlmAdapterForTest({ generateText: mockGenerateText as never });
 });
 
@@ -76,6 +80,34 @@ describe("runLlmObject", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(LlmObjectError);
     }
+  });
+
+  test("retries unknown provider failures before schema repair handling", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    mockGenerateText
+      .mockImplementationOnce(async () => { throw new Error("undocumented provider failure"); })
+      .mockImplementationOnce(async () => ({ text: "", toolCalls: [{ toolName: "result", input: { name: "Recovered" } as unknown }] }) as never);
+
+    const result = await runLlmObject(makeInput({ schema }));
+
+    expect(result).toEqual({ name: "Recovered" });
+    expect(mockGenerateText).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry explicit non-retryable provider failures", async () => {
+    const schema = z.strictObject({ name: z.string() });
+    mockGenerateText.mockImplementation(async () => { throw Object.assign(new Error("Unauthorized"), { status: 401 }); });
+
+    try {
+      await runLlmObject(makeInput({ schema }));
+      expect.unreachable("expected auth failure");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmMaxRetriesError);
+      expect((err as LlmMaxRetriesError).attempts).toBe(1);
+      expect((err as LlmMaxRetriesError).retryable).toBe(false);
+    }
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
 
   test("return type matches schema inference", async () => {

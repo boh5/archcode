@@ -4,11 +4,12 @@ import type { LlmTextInput, LlmTextResult } from "./types";
 import { withLlmRetry } from "./retry";
 
 export async function runLlmText(input: LlmTextInput): Promise<LlmTextResult> {
+  const promptInput = input.messages ? { messages: input.messages } : { prompt: input.prompt ?? "" };
+  const callOptions = pickModelCallOptions(input.modelOptions);
   return withLlmRetry(async () => {
-    const promptInput = input.messages ? { messages: input.messages } : { prompt: input.prompt ?? "" };
     const result = await getLlmAdapter().generateText({
       model: input.model,
-      ...pickModelCallOptions(input.modelOptions),
+      ...callOptions,
       ...(input.system ? { system: input.system } : {}),
       ...promptInput,
       abortSignal: input.abortSignal,

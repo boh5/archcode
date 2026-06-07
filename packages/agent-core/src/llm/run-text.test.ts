@@ -15,7 +15,11 @@ function generateTextCalls(): Array<[Record<string, unknown>]> {
 }
 
 beforeEach(() => {
-  mockGenerateText.mockClear();
+  mockGenerateText.mockReset();
+  mockGenerateText.mockImplementation(async (input: Record<string, unknown>) => {
+    void input;
+    return { text: "ok", toolCalls: [] };
+  });
   setLlmAdapterForTest({ generateText: mockGenerateText as never });
 });
 
@@ -54,5 +58,31 @@ describe("runLlmText", () => {
       expect((err as LlmMaxRetriesError).attempts).toBe(3);
       expect(mockGenerateText).toHaveBeenCalledTimes(3);
     }
+  });
+
+  test("retries unknown provider failures by default", async () => {
+    mockGenerateText
+      .mockImplementationOnce(async () => { throw new Error("undocumented provider failure"); })
+      .mockImplementationOnce(async () => ({ text: "recovered", toolCalls: [] }));
+
+    const result = await runLlmText({ model: dummyModel, prompt: "x" });
+
+    expect(result).toEqual({ text: "recovered" });
+    expect(mockGenerateText).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry explicit non-retryable provider failures", async () => {
+    mockGenerateText.mockImplementation(async () => { throw Object.assign(new Error("Unauthorized"), { status: 401 }); });
+
+    try {
+      await runLlmText({ model: dummyModel, prompt: "x" });
+      expect.unreachable("expected auth failure");
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmMaxRetriesError);
+      expect((err as LlmMaxRetriesError).attempts).toBe(1);
+      expect((err as LlmMaxRetriesError).retryable).toBe(false);
+    }
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
 });

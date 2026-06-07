@@ -25,7 +25,7 @@ export async function withLlmRetry<T>(
       return await operation();
     } catch (err) {
       lastError = err;
-      const classification = classifyLlmError(err);
+      const classification = classifyLlmError(err, { boundary: "provider-request" });
       lastRetryable = classification.retryable;
       if (!classification.retryable || attempt >= profile.totalAttempts) {
         throw new LlmMaxRetriesError({
