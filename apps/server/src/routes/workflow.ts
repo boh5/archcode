@@ -5,6 +5,7 @@ import {
   SingleFileWorkflowArtifactKindSchema,
   VALID_ARTIFACT_KIND_LIST,
   WorkflowArtifactKindSchema,
+  WorkflowInvalidIdError,
   WorkflowStateManager,
 } from "@specra/agent-core";
 import { WorkflowArtifactManager } from "@specra/agent-core";
@@ -33,6 +34,9 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
       const workflow = await stateManager.read(workflowId);
       return c.json({ workflow });
     } catch (error) {
+      if (error instanceof WorkflowInvalidIdError) {
+        throw new BadRequestError(error.message);
+      }
       if (isMissingFileError(error)) {
         throw new WorkflowNotFoundError(workflowId);
       }
@@ -115,6 +119,9 @@ async function readRouteArtifact(
   try {
     workflowState = await stateManager.read(input.workflowId);
   } catch (error) {
+    if (error instanceof WorkflowInvalidIdError) {
+      throw new BadRequestError(error.message);
+    }
     if (isMissingFileError(error)) {
       throw new WorkflowNotFoundError(input.workflowId);
     }

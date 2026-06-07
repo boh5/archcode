@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { WorkflowUuidSchema } from "../agents/workflow/state";
 
 const NormalizedUsageSchema = z.strictObject({
   inputTokens: z.number(),
@@ -302,7 +303,7 @@ export const SessionFileSchema = z.strictObject({
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
-  workflowId: z.string().optional(),
+  workflowId: WorkflowUuidSchema.optional(),
   eventCursor: z.number().optional(),
 });
 

@@ -18,6 +18,7 @@ export {
   DerivedWorkflowEntrySchema,
   StageCompletionRecordSchema,
   WorkflowArtifactKindSchema,
+  WorkflowInvalidIdError,
   WorkflowStateManager,
   WorkflowTerminalStateError,
   WorkflowTypeSchema,

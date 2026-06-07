@@ -530,6 +530,16 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().parentSessionId).toBe(parentSessionId);
   });
 
+  test("load rejects non-UUID workflowId", async () => {
+    const sessionId = uniqueSessionId("invalid-workflow-id");
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId),
+      workflowId: "not-a-uuid",
+    });
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
+  });
+
   test("save/load serializes workflowId when set", async () => {
     const sessionId = uniqueSessionId("workflow-roundtrip");
     const workflowId = crypto.randomUUID();

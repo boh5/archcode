@@ -102,7 +102,22 @@ describe("workflow routes", () => {
       const body = await res.json();
       expect(body.workflow).toBeDefined();
       expect(body.workflow.id).toBe(workflow.id);
+      expect(body.workflow.title).toBe("Workflow One");
       expect(body.workflow.sessionIds).toEqual({ orchestrator: "session-1" });
+    });
+
+    test("returns 400 for non-UUID workflow ID", async () => {
+      const { app, project } = await createTestApp("workflow-invalid-id");
+      const invalidId = "not-a-uuid";
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/${invalidId}`,
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "BAD_REQUEST", message: `Invalid workflow id format: ${invalidId}` },
+      });
     });
 
     test("returns 404 for non-existent workflow", async () => {
@@ -460,6 +475,20 @@ describe("workflow routes", () => {
           code: "BAD_REQUEST",
           message: "Invalid artifact name: INVALID. Must be one of RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, CRITIC_REPORT, EVIDENCE, FINAL_REPORT",
         },
+      });
+    });
+
+    test("returns 400 for non-UUID workflow ID on artifact route", async () => {
+      const { app, project } = await createTestApp("artifact-invalid-id");
+      const invalidId = "not-a-uuid";
+
+      const res = await app.request(
+        `/api/projects/${project.slug}/workflows/${invalidId}/artifacts/PRD`,
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "BAD_REQUEST", message: `Invalid workflow id format: ${invalidId}` },
       });
     });
 

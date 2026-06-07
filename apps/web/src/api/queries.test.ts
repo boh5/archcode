@@ -145,6 +145,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const workflow: WorkflowState = {
       id: "workflow-123",
+      title: "Test Workflow",
       type: "full_feature",
       stage: "product_drafting",
       status: "active",

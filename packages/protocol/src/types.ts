@@ -651,6 +651,7 @@ export interface Session {
 
 export interface WorkflowState {
   id: string;
+  title: string;
   type: "research_only" | "quick_fix" | "full_feature" | string;
   stage: string;
   status: "active" | "paused" | "completed" | "failed" | string;
