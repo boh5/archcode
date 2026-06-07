@@ -12,6 +12,7 @@ import { calculateReadyWave, parseTasksMarkdown, toggleTaskCheckbox, validateTas
 import type { Registry as ProviderRegistry } from "../../provider";
 import type { SpecraConfig } from "../../config/schema";
 import { SkillService } from "../../skills";
+import { WorkflowReadInputSchema } from "../../tools/builtins/workflow/workflow-read";
 
 const WORKFLOW_TOOL_NAMES = [
   "workflow_create",
@@ -35,6 +36,15 @@ const WORKFLOW_AGENT_NAMES = [
 ] as const;
 
 describe("workflow regression hardening", () => {
+  test("original Product subagent default workflow_read bug is rejected before lookup", () => {
+    const guessedDefault = WorkflowReadInputSchema.safeParse({ workflowId: "default" });
+
+    expect(guessedDefault.success).toBe(false);
+    if (!guessedDefault.success) {
+      expect(guessedDefault.error.issues.map((issue) => issue.message).join("\n")).toContain("Invalid UUID");
+    }
+  });
+
   test("WorkflowArtifactKindSchema has no PLAN.md artifact kind", () => {
     const artifactKinds = WorkflowArtifactKindSchema.options;
 
@@ -74,13 +84,16 @@ describe("workflow regression hardening", () => {
     registerBuiltinTools(registry, silentLogger);
     const providerRegistry = createProviderRegistry();
     const config = createConfigForAgents(providerRegistry.modelIds[0]!);
-    const factory = createAgentFactory({ definitions: agentDefinitions,
-    providerRegistry,
-    toolRegistry: registry,
-    skillService: new SkillService({ builtinSkills: {} }),
-    storeManager,
-    workspaceRoot: import.meta.dir,
-      config, logger: silentLogger });
+    const factory = createAgentFactory({
+      definitions: agentDefinitions,
+      providerRegistry,
+      toolRegistry: registry,
+      skillService: new SkillService({ builtinSkills: {} }),
+      storeManager,
+      workspaceRoot: import.meta.dir,
+      config,
+      logger: silentLogger,
+    });
 
     for (const agentName of WORKFLOW_AGENT_NAMES) {
       const store = storeManager.create(`workflow-regression-${agentName}`);

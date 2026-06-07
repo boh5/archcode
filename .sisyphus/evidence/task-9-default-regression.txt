@@ -1,0 +1,20 @@
+Task 9 default workflowId regression evidence
+
+Behavior covered:
+- Original bug by description: Product/subagent guessed workflow_read({ workflowId: "default" }) while child store had a real workflow UUID.
+- workflow_read({ workflowId: "default" }) is rejected by the registered Zod input schema before state lookup.
+- Tool output is schema-invalid and does not contain TOOL_FILE_NOT_FOUND or "Workflow not found: default".
+
+Commands run:
+1. bun test packages/agent-core/src/agents/workflow/workflow-regression.test.ts packages/agent-core/src/tools/builtins/workflow/workflow-tools.test.ts --test-name-pattern "default"
+   Result: PASS — 2 pass, 0 fail, 8 expect() calls.
+
+2. bun test packages/agent-core/src/agents/workflow/workflow-regression.test.ts packages/agent-core/src/agents/workflow/workflow-integration.test.ts packages/agent-core/src/tools/builtins/workflow/workflow-tools.test.ts packages/agent-core/src/prompt/builder.test.ts packages/agent-core/src/execution/session-execution-manager.test.ts
+   Result: PASS — 91 pass, 0 fail, 483 expect() calls.
+
+3. bun run typecheck
+   Result: PASS — 5 successful packages, 5 total.
+
+LSP diagnostics:
+- workflow-regression.test.ts: no diagnostics.
+- workflow-tools.test.ts: no diagnostics.

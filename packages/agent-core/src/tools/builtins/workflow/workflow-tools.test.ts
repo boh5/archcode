@@ -148,12 +148,15 @@ function workflowEvents(store: StoreApi<SessionStoreState>) {
 }
 
 describe("workflow builtin tools", () => {
-  test("workflow_read rejects non-UUID workflowId at schema level", async () => {
+  test("workflow_read rejects original default workflowId bug at schema level before lookup", async () => {
     const { registry, projectContext } = createWorkflowRegistry();
     const result = await execute(registry, projectContext, "workflow_read", { workflowId: "default" });
     expect(result.isError).toBe(true);
     expect(inferToolErrorKindFromResult(result)).toBe("schema");
     expect(result.output).toContain("Invalid UUID");
+    expect(result.output).toContain("workflowId");
+    expect(result.output).not.toContain("TOOL_FILE_NOT_FOUND");
+    expect(result.output).not.toContain("Workflow not found: default");
   });
 
   test("artifact_read rejects non-UUID workflowId at schema level", async () => {

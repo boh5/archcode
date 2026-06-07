@@ -24,7 +24,10 @@ import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
 import { createTestProjectContext } from "../../tools/test-project-context";
+import { createArtifactReadTool } from "../../tools/builtins/workflow/artifact-read";
+import { createArtifactWriteTool } from "../../tools/builtins/workflow/artifact-write";
 import { createWorkflowCreateTool } from "../../tools/builtins/workflow/workflow-create";
+import { createWorkflowReadTool } from "../../tools/builtins/workflow/workflow-read";
 import { createWorkflowUpdateStageTool } from "../../tools/builtins/workflow/workflow-update-stage";
 import { createWorkflowCompleteTool } from "../../tools/builtins/workflow/workflow-complete";
 import { createWorkflowRecordCompletionTool } from "../../tools/builtins/workflow/workflow-record-completion";
@@ -303,6 +306,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(sourceAfter.derivedWorkflows).toEqual([{ workflowId: result.workflow.id, reason: "upgrade", createdAt: result.source.derivedWorkflows[0]?.createdAt }]);
     expect(sourceAfter.artifacts.RESEARCH).toBe("RESEARCH.md");
     expect(derived.type).toBe("full_feature");
+    expect(derived.title).toBe("Derived from source");
     expect(derived.derivedFrom?.workflowId).toBe(source.workflow.id);
     expect(derived.derivedFrom?.reason).toBe("upgrade");
     expect(result.session.workflowId).toBe(result.workflow.id);
@@ -315,6 +319,68 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(initialMessageText).toContain(`Source workflow: ${source.workflow.id}`);
     expect(initialMessageText).toContain(`titled "Source Workflow"`);
     expect(initialMessageText).toContain('artifact_read({ workflowId: "' + source.workflow.id + '", path: "RESEARCH.md" })');
+
+    const derivedStore = storeManager.get(result.session.sessionId, root);
+    expect(derivedStore).toBeDefined();
+    expect(derivedStore?.getState().workflowId).toBe(result.workflow.id);
+
+    const capturedMessages: string[] = [];
+    const manager = new SessionExecutionManager({
+      sessionAgentManager: createFakeSessionAgentManager(capturedMessages, ["workflow_read", "artifact_read", "artifact_write"]) as never,
+      createSessionStore: (sessionId, workspaceRoot, options) => storeManager.create(sessionId, workspaceRoot, options),
+      getSessionStore: (sessionId, workspaceRoot) => storeManager.get(sessionId, workspaceRoot),
+      deleteSessionStore: (sessionId, workspaceRoot) => storeManager.delete(sessionId, workspaceRoot),
+      resolveRootSessionId: (sessionId) => Promise.resolve(sessionId),
+      buildSessionTree: async (_workspaceRoot, rootSessionId) => ({ root: { session: { sessionId: rootSessionId, rootSessionId, agentName: "orchestrator", title: null, createdAt: Date.now() }, children: [] }, diagnostics: [] }),
+      requestPermission: async () => "approve_once",
+      requestQuestion: async () => ({ answers: [] }),
+      cleanupDeferredSession: () => {},
+      trackSession: () => {},
+      untrackSession: () => {},
+      logger: silentLogger,
+    });
+    if (derivedStore === undefined) throw new Error("Expected derived workflow store");
+
+    const handle = await manager.startChildExecution(root, {
+      parentStore: derivedStore,
+      parentSessionId: result.session.sessionId,
+      parentToolCallId: "derived-child",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "Read source references before planning W2 work.",
+      skills: [],
+      available_artifacts: [{ workflowId: source.workflow.id, path: "RESEARCH.md" }],
+      background: false,
+      currentDepth: 0,
+    });
+    await handle.result;
+
+    expect(handle.store.getState().workflowId).toBe(result.workflow.id);
+    expect(capturedMessages[0]).toContain("## Active Workflow");
+    expect(capturedMessages[0]).toContain(`Workflow ID: ${result.workflow.id}`);
+    expect(capturedMessages[0]).toContain("Title: Derived from source");
+    expect(capturedMessages[0]).toContain("Type: full_feature");
+    expect(capturedMessages[0]).toContain(`Use the exact workflow UUID \`${result.workflow.id}\``);
+    expect(capturedMessages[0]).toContain(`${source.workflow.id}/RESEARCH.md`);
+
+    const ctx = createContext(root, storeManager, derivedStore);
+    const sourceWorkflowRead = await createWorkflowReadTool().execute({ workflowId: source.workflow.id }, ctx);
+    const sourceArtifactRead = await createArtifactReadTool().execute({ workflowId: source.workflow.id, path: "RESEARCH.md" }, ctx);
+    const sourceArtifactWrite = await createArtifactWriteTool().execute({
+      workflowId: source.workflow.id,
+      kind: "SPEC",
+      path: "SPEC.md",
+      content: "# Wrong workflow write\n",
+    }, ctx);
+
+    expect(isToolError(sourceWorkflowRead)).toBe(false);
+    expect(toolOutput(sourceWorkflowRead)).toContain(source.workflow.id);
+    expect(isToolError(sourceArtifactRead)).toBe(false);
+    expect(toolOutput(sourceArtifactRead)).toContain("# Source research");
+    expect(isToolError(sourceArtifactWrite)).toBe(true);
+    expect(toolOutput(sourceArtifactWrite)).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(toolOutput(sourceArtifactWrite)).toContain(result.workflow.id);
+    expect(toolOutput(sourceArtifactWrite)).toContain(source.workflow.id);
   });
 
   test("artifact manager reads artifacts across workflow contexts by workflow id", async () => {
@@ -560,7 +626,7 @@ function toolOutput(result: string | ToolExecutionResult): string {
   return typeof result === "string" ? result : result.output;
 }
 
-function createFakeSessionAgentManager(capturedMessages: string[]) {
+function createFakeSessionAgentManager(capturedMessages: string[], childTools: string[] = []) {
   const definitions = new Map<string, AgentDefinition>([
     ["orchestrator", {
       name: "orchestrator",
@@ -574,7 +640,7 @@ function createFakeSessionAgentManager(capturedMessages: string[]) {
     ["explore", {
       name: "explore",
       promptProfileId: "explore",
-      tools: { tools: [] },
+      tools: { tools: childTools },
       hooks: emptyHooks(),
       includeMemoryInPrompt: false,
       skills: [],

@@ -640,6 +640,8 @@ describe("SessionExecutionManager", () => {
     expect(childPrompt).toContain(`Use the exact workflow UUID \`${workflow.id}\``);
     expect(childPrompt).toContain("Never use `default`, a slug, or a title as a workflow ID");
     expect(childPrompt.indexOf("## Active Workflow")).toBeLessThan(childPrompt.indexOf("Available artifacts:"));
+    expect(handle.store.getState().workflowId).toBe(workflow.id);
+    expect(childPrompt).not.toContain("Workflow ID: default");
   });
 
   test("active workflow child prompt is omitted for agents without workflow tools", async () => {
@@ -736,6 +738,8 @@ describe("SessionExecutionManager", () => {
     expect(childPrompt).toContain("Title: Grandchild Active Workflow");
     expect(childPrompt).toContain("Type: research_only");
     expect(childPrompt).toContain("Stage: researching");
+    expect(childPrompt).toContain(`Use the exact workflow UUID \`${workflow.id}\``);
+    expect(childPrompt).toContain("Never use `default`, a slug, or a title as a workflow ID");
   });
 
   test("link write failure prevents child creation/start and releases reserved slot", async () => {
