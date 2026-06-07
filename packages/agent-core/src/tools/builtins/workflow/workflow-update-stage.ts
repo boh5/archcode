@@ -13,12 +13,13 @@ import {
   WorkflowPathError,
   WorkflowArtifactKindSchema,
   WorkflowStageSchema,
+  WorkflowUuidSchema,
   type WorkflowStage,
 } from "../../../agents/workflow/state";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   stage: WorkflowStageSchema,
   hasUserApproval: z.boolean().default(false),
   criticDecision: z.enum(["approved", "changes_requested", "rejected"]).optional(),

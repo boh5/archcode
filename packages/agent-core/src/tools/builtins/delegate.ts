@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { ToolExecutionContext } from "../types";
@@ -6,13 +6,13 @@ import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import type { ChildExecutionHandle } from "../../delegation/types";
 import type { SessionExecutionRecord } from "@specra/protocol";
-import { WorkflowArtifactKindSchema } from "../../agents/workflow/state";
+import { WorkflowArtifactKindSchema, WorkflowUuidSchema } from "../../agents/workflow/state";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const DelegateAvailableArtifactSchema = z
   .object({
-    workflowId: z.string().min(1),
+    workflowId: WorkflowUuidSchema,
     kind: WorkflowArtifactKindSchema.optional(),
     path: z.string().min(1).optional(),
     description: z.string().optional(),

@@ -3,10 +3,10 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
-import { WorkflowPathError, WorkflowStageSchema } from "../../../agents/workflow/state";
+import { WorkflowPathError, WorkflowStageSchema, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const WorkflowRecordCompletionInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   stage: WorkflowStageSchema,
   criticPassed: z.boolean().optional(),
   evidence: z.array(z.string()).optional(),

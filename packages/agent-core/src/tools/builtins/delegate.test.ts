@@ -64,6 +64,8 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   agentName: "orchestrator", ...overrides,  };
 }
 
+const VALID_WORKFLOW_ID = "550e8400-e29b-41d4-a716-446655440000";
+
 describe("delegate tool", () => {
   it("accepts any non-empty agent_type string in the input schema", () => {
     expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [] }).success).toBe(true);
@@ -81,14 +83,23 @@ describe("delegate tool", () => {
     }
   });
 
+  it("rejects non-UUID workflowId in available_artifacts at schema level", () => {
+    expect(DelegateInputSchema.safeParse({
+      agent_type: "explore",
+      prompt: "inspect",
+      skills: [],
+      available_artifacts: [{ workflowId: "default", kind: "RESEARCH" }],
+    }).success).toBe(false);
+  });
+
   it("validates available_artifacts references without requiring content", () => {
     const parsed = DelegateInputSchema.safeParse({
       agent_type: "explore",
       prompt: "inspect",
       skills: [],
       available_artifacts: [
-        { workflowId: "wf_001", kind: "RESEARCH", description: "Research artifact" },
-        { workflowId: "wf_001", path: "notes/context.md" },
+        { workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH", description: "Research artifact" },
+        { workflowId: VALID_WORKFLOW_ID, path: "notes/context.md" },
       ],
     });
 
@@ -97,21 +108,21 @@ describe("delegate tool", () => {
       agent_type: "explore",
       prompt: "inspect",
       skills: [],
-      available_artifacts: [{ workflowId: "wf_001", kind: "UNKNOWN" }],
+      available_artifacts: [{ workflowId: VALID_WORKFLOW_ID, kind: "UNKNOWN" }],
     }).success).toBe(false);
     expect(DelegateInputSchema.safeParse({
       agent_type: "explore",
       prompt: "inspect",
       skills: [],
-      available_artifacts: [{ workflowId: "wf_001", kind: "RESEARCH", content: "must not be accepted" }],
+      available_artifacts: [{ workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH", content: "must not be accepted" }],
     }).success).toBe(false);
   });
 
   it("forwards available_artifacts to child execution", async () => {
     const executor = new ToolStubExecutor();
     const available_artifacts = [
-      { workflowId: "wf_001", kind: "RESEARCH" as const, description: "Research artifact" },
-      { workflowId: "wf_001", path: "notes/context.md" },
+      { workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH" as const, description: "Research artifact" },
+      { workflowId: VALID_WORKFLOW_ID, path: "notes/context.md" },
     ];
 
     await executeDelegate(

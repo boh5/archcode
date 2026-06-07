@@ -2,10 +2,10 @@ import { z } from "zod/v4";
 import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
-import { WorkflowPathError } from "../../../agents/workflow/state";
+import { WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const WorkflowReadInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
 });
 
 type WorkflowReadInput = z.infer<typeof WorkflowReadInputSchema>;

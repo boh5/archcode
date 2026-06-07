@@ -9,12 +9,12 @@ import {
   SingleFileWorkflowArtifactKindSchema,
   VALID_ARTIFACT_KIND_LIST,
 } from "../../../agents/workflow/artifacts";
-import { WorkflowArtifactKindSchema } from "../../../agents/workflow/state";
+import { WorkflowArtifactKindSchema, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const SINGLE_FILE_KIND_SET: ReadonlySet<string> = new Set(SINGLE_FILE_ARTIFACT_KINDS);
 
 const ArtifactReadInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   kind: WorkflowArtifactKindSchema.optional(),
   path: z.string().min(1).optional(),
 }).superRefine((input, ctx) => {

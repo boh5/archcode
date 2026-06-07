@@ -4,12 +4,12 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { ArtifactPathError } from "../../../agents/workflow/artifacts";
 import { toggleTaskCheckbox } from "../../../agents/workflow/tasks-format";
-import { WorkflowPathError } from "../../../agents/workflow/state";
+import { WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const TASKS_ARTIFACT_PATH = "TASKS.md";
 
 const WorkflowTaskCheckInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   taskId: z.string().min(1),
   checked: z.boolean(),
 });

@@ -4,10 +4,10 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { canCompleteWorkflow } from "../../../agents/workflow/guards";
-import { WorkflowArtifactKindSchema, WorkflowPathError } from "../../../agents/workflow/state";
+import { WorkflowArtifactKindSchema, WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const WorkflowCompleteInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
 });
 
 type WorkflowCompleteInput = z.infer<typeof WorkflowCompleteInputSchema>;

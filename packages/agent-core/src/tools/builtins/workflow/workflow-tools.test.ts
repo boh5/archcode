@@ -139,6 +139,35 @@ function workflowEvents(store: StoreApi<SessionStoreState>) {
 }
 
 describe("workflow builtin tools", () => {
+  test("workflow_read rejects non-UUID workflowId at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "workflow_read", { workflowId: "default" });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    expect(result.output).toContain("Invalid UUID");
+  });
+
+  test("artifact_read rejects non-UUID workflowId at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "artifact_read", { workflowId: "default", kind: "PRD" });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    expect(result.output).toContain("Invalid UUID");
+  });
+
+  test("artifact_write rejects non-UUID workflowId at schema level", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const result = await execute(registry, projectContext, "artifact_write", {
+      workflowId: "default",
+      kind: "PRD",
+      path: "PRD.md",
+      content: "# Product\n",
+    });
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    expect(result.output).toContain("Invalid UUID");
+  });
+
   test("workflow_create and workflow_read round-trip workflow state", async () => {
     const { registry, projectContext } = createWorkflowRegistry();
     const orchestratorStore = storeManager.create("test-roundtrip", TMP_DIR);

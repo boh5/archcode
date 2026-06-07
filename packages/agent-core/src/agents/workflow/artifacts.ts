@@ -11,6 +11,7 @@ import {
 import {
   WorkflowArtifactKindSchema,
   WorkflowStateManager,
+  WorkflowUuidSchema,
   type WorkflowState,
 } from "./state";
 
@@ -65,7 +66,7 @@ function shouldAllowPlainArtifactBody(artifactPath: string): boolean {
 }
 
 export const WorkflowArtifactWriteInputSchema = z.strictObject({
-  workflowId: z.string().min(1),
+  workflowId: WorkflowUuidSchema,
   kind: WorkflowArtifactKindSchema.optional(),
   path: z.string().min(1),
   content: z.string(),
