@@ -511,6 +511,52 @@ describe("workflow builtin tools", () => {
     });
   });
 
+  test("artifact_write accepts parser-valid TASKS.md", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_artifact_tasks = await stateManager.create({ title: "Tasks Artifact", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_artifact_tasks.id);
+
+    const written = await execute(registry, projectContext, "artifact_write", {
+      workflowId: wf_artifact_tasks.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      content: VALID_TASKS,
+      frontmatter: { kind: "TASKS" },
+    }, store);
+
+    expect(written.isError).toBe(false);
+    expect(JSON.parse(written.output).state).toMatchObject({ artifacts: { TASKS: "TASKS.md" } });
+  });
+
+  test("artifact_write rejects invalid TASKS.md and preserves existing artifact", async () => {
+    const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
+    const wf_artifact_tasks_invalid = await stateManager.create({ title: "Invalid Tasks Artifact", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_artifact_tasks_invalid.id);
+    await artifactManager.write({
+      workflowId: wf_artifact_tasks_invalid.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      frontmatter: { kind: "TASKS" },
+      content: VALID_TASKS,
+    });
+
+    const rejected = await execute(registry, projectContext, "artifact_write", {
+      workflowId: wf_artifact_tasks_invalid.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      content: "---",
+    }, store);
+
+    expect(rejected.isError).toBe(true);
+    expect(rejected.output).toContain("TOOL_ARTIFACT_VALIDATION_FAILED");
+    expect(rejected.output).toContain("TASKS.md is invalid and was not written");
+    const preserved = await artifactManager.read(wf_artifact_tasks_invalid.id, "TASKS.md");
+    expect(preserved.body).toBe(VALID_TASKS);
+    expect((await stateManager.read(wf_artifact_tasks_invalid.id)).artifacts).toMatchObject({ TASKS: "TASKS.md" });
+  });
+
   test("artifact_write includes modified diff metadata for existing text artifacts", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_artifact_modified = await stateManager.create({ title: "Artifact Modified", type: "full_feature" });
@@ -766,6 +812,68 @@ describe("workflow builtin tools", () => {
     const tasks = await artifactManager.read(wf_tasks.id, "TASKS.md");
     expect(tasks.content).toContain("- [x] T1. Build tool");
     expect(tasks.content).toContain("    - [ ] Tool toggles tasks");
+  });
+
+  test("workflow_update_stage reports invalid TASKS.md instead of missing artifact", async () => {
+    const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
+    const wf_invalid_tasks_transition = await stateManager.create({ title: "Invalid Tasks Transition", type: "full_feature" });
+    await stateManager.updateStage(wf_invalid_tasks_transition.id, "spec_drafting");
+    await stateManager.recordStageCompletion(wf_invalid_tasks_transition.id, { stage: "spec_drafting" });
+    await artifactManager.write({
+      workflowId: wf_invalid_tasks_transition.id,
+      kind: "SPEC",
+      path: "SPEC.md",
+      frontmatter: { kind: "SPEC" },
+      content: "# Spec\n",
+    });
+    await artifactManager.write({
+      workflowId: wf_invalid_tasks_transition.id,
+      kind: "TASKS",
+      path: "TASKS.md",
+      content: "---",
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_invalid_tasks_transition.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_invalid_tasks_transition.id,
+      stage: "critic_spec_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("TOOL_WORKFLOW_INVALID_ARTIFACT");
+    expect(result.output).toContain("TASKS.md exists but is invalid");
+    expect(result.output).not.toContain("missing required artifact(s): TASKS");
+  });
+
+  test("workflow_update_stage still reports missing TASKS.md when artifact is absent", async () => {
+    const { registry, stateManager, artifactManager, projectContext } = createWorkflowRegistry();
+    const wf_missing_tasks_transition = await stateManager.create({ title: "Missing Tasks Transition", type: "full_feature" });
+    await stateManager.updateStage(wf_missing_tasks_transition.id, "spec_drafting");
+    await stateManager.recordStageCompletion(wf_missing_tasks_transition.id, { stage: "spec_drafting" });
+    await artifactManager.write({
+      workflowId: wf_missing_tasks_transition.id,
+      kind: "SPEC",
+      path: "SPEC.md",
+      frontmatter: { kind: "SPEC" },
+      content: "# Spec\n",
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_missing_tasks_transition.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_missing_tasks_transition.id,
+      stage: "critic_spec_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("TOOL_WORKFLOW_TRANSITION_DENIED");
+    expect(result.output).toContain("missing required artifact(s): TASKS");
+    expect(result.output).not.toContain("TOOL_WORKFLOW_INVALID_ARTIFACT");
   });
 
   test("workflow_task_check rejects nested checkboxes, unknown ids, and non-TASKS targets", async () => {

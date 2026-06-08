@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
-import { createBashPermission } from "../permission";
+import { createBashPermission, createProtectedSpecraPermission } from "../permission";
 import { PathValidator } from "../security";
 import { createProcessRunner } from "../../process/runner";
 import type { ProcessRunnerResult } from "../../process/types";
@@ -123,7 +123,7 @@ export const bashTool = defineTool({
     }
     return raw;
   },
-  permissions: [createBashPermission()],
+  permissions: [createProtectedSpecraPermission(), createBashPermission()],
   execute: async (input: BashInput, ctx: ToolExecutionContext) => {
     return runBashCommand(input, ctx);
   },

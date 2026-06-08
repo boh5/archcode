@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { storeManager } from "../../../store/store";
-import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -253,6 +253,28 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
+  test("apply mode refuses preview matches under .specra before mutation", async () => {
+    const workspace = tempWorkspace();
+    try {
+      const artifact = join(workspace, ".specra", "workflows", "00000000-0000-0000-0000-000000000001", "TASKS.md");
+      mkdirSync(join(workspace, ".specra", "workflows", "00000000-0000-0000-0000-000000000001"), { recursive: true });
+      writeFileSync(artifact, "console.log(message)", "utf-8");
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".specra/workflows/00000000-0000-0000-0000-000000000001/TASKS.md")); });
+      setProcessRunnerForTest(run);
+
+      const result = await astGrepReplaceTool.execute(
+        { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        ctx({ workspaceRoot: workspace, projectContext: createTestProjectContext(workspace), store: createSnapshotStore(artifact) }),
+      );
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
+      expectToolError(result, { kind: "permission-denied", code: "SPECRA_PROTECTED_PATH_WRITE_DENIED", messageIncludes: "system-managed .specra path" });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   test("apply mode returns write-conflict when target mtime changed since snapshot", async () => {
     const workspace = tempWorkspace();
     try {
@@ -434,5 +456,14 @@ describe("ast_grep_replace tool", () => {
     expect(applyScope?.kind).toBe("file-path");
     if (applyScope?.kind !== "file-path") throw new Error("Expected file-path approval");
     expect(applyScope.operation).toBe("write");
+  });
+
+  test("checks protected .specra permission for explicit paths", async () => {
+    const protectedPermission = astGrepReplaceTool.permissions![1];
+
+    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".specra/workflows/wf/TASKS.md"] }, ctx());
+
+    expect(decision.outcome).toBe("deny");
+    expect(decision.errorCode).toBe("SPECRA_PROTECTED_PATH_WRITE_DENIED");
   });
 });

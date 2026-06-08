@@ -26,9 +26,11 @@ Artifact contract:
 - Rejection criteria: missing required fields, malformed top-level checkboxes, circular or impossible dependencies, unclear acceptance criteria, unverifiable QA, or source-code changes requested of non-builder roles.
 
 TASKS.md validation:
-- Every top-level task must be a properly formatted checkbox item.
-- Every task must include the fixed field names Agent:, Dependencies:, Description:, Acceptance:, and QA:.
+- Every top-level task must be a parser-valid checkbox item: "- [ ] Tn. Title" or "- [x] Tn. Title".
+- Every task must include exactly two-space-indented fixed field names: Agent:, Dependencies:, Description:, Acceptance:, and QA:.
+- Acceptance and QA must contain nested checkbox items.
 - Dependencies must reference valid top-level tasks or be none.
+- Reject heading-based task blocks like "## T1", bold list fields like "- **Agent**:", localized required field names, and any separate JSON/frontmatter task graph.
 
 Refusal rules:
 - Refuse requests to edit source code files.

@@ -43,6 +43,17 @@ const VALID_TASKS = `# TASKS
     - [ ] Smoke tested
 `;
 
+const PROMPT_TASKS_EXAMPLE = `- [ ] T1. Implement parser
+
+  Agent: builder
+  Dependencies: none
+  Description: Implement the parser.
+  Acceptance:
+    - [ ] Parser accepts valid TASKS.md
+  QA:
+    - [ ] bun test packages/agent-core/src/agents/workflow/tasks-format.test.ts
+`;
+
 describe("parseTasksMarkdown", () => {
   test("returns top-level task data and ignores nested checkboxes", () => {
     const tasks = parseTasksMarkdown(VALID_TASKS);
@@ -81,6 +92,36 @@ describe("validateTasksMarkdown", () => {
     expect(result.tasks).toHaveLength(3);
   });
 
+  test("accepts the TASKS.md prompt example", () => {
+    const result = validateTasksMarkdown(PROMPT_TASKS_EXAMPLE);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0]).toMatchObject({ id: "T1", dependencies: [] });
+  });
+
+  test("rejects heading and bold-list field TASKS formats", () => {
+    const result = validateTasksMarkdown(`## T1 — Project setup
+
+- [ ] **Agent**: Coder
+- **Dependencies**: none
+- **Description**: Set up the project.
+- **Acceptance**:
+  - [ ] Project builds
+- **QA**:
+  - [ ] Tests pass
+`);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ code: "INVALID_TASK_HEADING", line: 3 }),
+    );
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ code: "MISSING_FIELD", taskId: "unknown", field: "Agent" }),
+    );
+  });
+
   test("reports malformed top-level checkboxes and missing required fields", () => {
     const result = validateTasksMarkdown(`- [ ] Task without id
 
@@ -116,6 +157,24 @@ describe("validateTasksMarkdown", () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(
       expect.objectContaining({ code: "UNKNOWN_DEPENDENCY", taskId: "T1", dependencyId: "T9" }),
+    );
+  });
+
+  test("rejects dependency values that are not TASKS.md task ids", () => {
+    const result = validateTasksMarkdown(`- [ ] T1. Build parser
+
+  Agent: builder
+  Dependencies: task-2
+  Description: Create the shared parser.
+  Acceptance:
+    - [ ] Parser returns task data
+  QA:
+    - [ ] Manual review done
+`);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(
+      expect.objectContaining({ code: "INVALID_DEPENDENCIES", taskId: "T1", dependencyId: "task-2" }),
     );
   });
 

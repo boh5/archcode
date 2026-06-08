@@ -8,6 +8,7 @@ import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
 import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
+import { createProtectedSpecraPermission, isProtectedSpecraPath } from "../../permission";
 import { resolveAndValidatePath } from "../../security";
 import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
 
@@ -110,7 +111,7 @@ export const astGrepReplaceTool = defineTool({
     destructive: true,
     concurrencySafe: false,
   },
-  permissions: [createAstGrepReplaceWorkspacePermission()],
+  permissions: [createAstGrepReplaceWorkspacePermission(), createProtectedSpecraPermission()],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
@@ -121,6 +122,9 @@ export const astGrepReplaceTool = defineTool({
         const previewResult = await runAstGrepReplace(astGrepPath, { ...input, dryRun: true }, ctx, runner);
         if ("isError" in previewResult) return previewResult;
         matches = previewResult;
+
+        const protectedSpecraCheck = checkApplyProtectedSpecra(matches, ctx);
+        if (protectedSpecraCheck) return protectedSpecraCheck;
 
         const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
         if (snapshotCheck) return snapshotCheck;
@@ -171,6 +175,22 @@ async function runAstGrepReplace(
   if (output.ok === false) return output.error;
 
   return parseAstGrepReplacementMatches(output.stdout);
+}
+
+function checkApplyProtectedSpecra(
+  matches: AstGrepReplacementMatch[],
+  ctx: ToolExecutionContext,
+): ToolExecutionResult | undefined {
+  const protectedMatch = matches.find((match) => isProtectedSpecraPath(match.file, ctx.workspaceRoot));
+  if (!protectedMatch) return undefined;
+
+  return createToolErrorResult({
+    kind: "permission-denied",
+    code: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+    message:
+      `Cannot apply ast-grep replacement to system-managed .specra path "${protectedMatch.file}". ` +
+      "Use the appropriate workflow or memory tool instead.",
+  });
 }
 
 function checkApplyReadSnapshots(

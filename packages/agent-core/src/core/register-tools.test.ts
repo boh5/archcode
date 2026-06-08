@@ -380,6 +380,37 @@ describe("registerBuiltinTools", () => {
     });
   });
 
+  describe("protected .specra mutation permissions", () => {
+    it("bash denies commands that reference .specra paths", async () => {
+      const workspaceRoot = await createTmpRoot("bash-specra-deny");
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry, silentLogger);
+      registry.globalHooks.after.pop();
+
+      const result = await registry.execute(
+        {
+          toolName: "bash",
+          toolCallId: "bash-specra-deny",
+          input: {
+            description: "Attempt scripted write to .specra",
+            command: "python3 -c \"open('.specra/workflows/wf/TASKS.md','w').write('---')\"",
+          },
+        },
+        makeContext("bash", ["bash"], workspaceRoot, {
+          toolCallId: "bash-specra-deny",
+          input: {
+            description: "Attempt scripted write to .specra",
+            command: "python3 -c \"open('.specra/workflows/wf/TASKS.md','w').write('---')\"",
+          },
+          confirmPermission: async () => "approve" as const,
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("SPECRA_PROTECTED_PATH_WRITE_DENIED");
+    });
+  });
+
   describe("EXPLORER_READ_ONLY_TOOLS trait integrity", () => {
     it("each listed tool has traits.readOnly === true", () => {
       // Build the same set of descriptors that registerBuiltinTools produces

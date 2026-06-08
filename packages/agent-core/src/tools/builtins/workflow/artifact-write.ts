@@ -12,6 +12,7 @@ import {
 } from "../../../agents/workflow/artifacts";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError } from "../../../agents/workflow/state";
+import { validateTasksMarkdown, type TasksValidationError } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 export function createArtifactWriteTool(): AnyToolDescriptor {
@@ -26,6 +27,9 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
       if (guardResult) return guardResult;
 
       try {
+        const validationError = validateArtifactContentBeforeWrite(input);
+        if (validationError) return validationError;
+
         const before = await readArtifactBeforeWrite(artifactManager, input);
         const result = await artifactManager.write(input);
         emitWorkflowStateChange(ctx.store, input.workflowId, ["artifacts"]);
@@ -69,6 +73,37 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
       }
     },
   });
+}
+
+function validateArtifactContentBeforeWrite(input: WorkflowArtifactWriteInput): ToolExecutionResult | undefined {
+  if (input.kind !== "TASKS") return undefined;
+
+  const validation = validateTasksMarkdown(input.content);
+  if (validation.valid && validation.tasks.length > 0) return undefined;
+
+  return createToolErrorResult({
+    kind: "execution",
+    code: "TOOL_ARTIFACT_VALIDATION_FAILED",
+    name: "WorkflowArtifactValidationError",
+    message: `TASKS.md is invalid and was not written. ${formatTasksValidationSummary(validation.errors, validation.tasks.length)}`,
+    details: {
+      artifactKind: input.kind,
+      path: input.path,
+      taskCount: validation.tasks.length,
+      errors: validation.errors,
+    },
+  });
+}
+
+function formatTasksValidationSummary(errors: readonly TasksValidationError[], taskCount: number): string {
+  if (taskCount === 0 && errors.length === 0) return "TASKS.md must contain at least one top-level task.";
+  if (errors.length === 0) return "TASKS.md must contain at least one top-level task.";
+  return errors.slice(0, 5).map(formatTasksValidationError).join("; ");
+}
+
+function formatTasksValidationError(error: TasksValidationError): string {
+  const location = error.line ? `line ${error.line}: ` : "";
+  return `${location}${error.message}`;
 }
 
 type ArtifactBeforeWrite =

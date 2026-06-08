@@ -16,6 +16,7 @@ import {
   WorkflowUuidSchema,
   type WorkflowStage,
 } from "../../../agents/workflow/state";
+import { getStagePrerequisitesForType } from "../../../agents/workflow/workflow-types";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
@@ -55,7 +56,7 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
           return JSON.stringify(result, null, 2);
         }
 
-        const availableArtifacts = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
+        const artifactAvailability = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
         const transition = canTransitionTo({
           id: currentState.id,
           type: currentState.type,
@@ -64,11 +65,20 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
           retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,
           maxRetries: currentState.maxRetries,
         }, input.stage as WorkflowStage, {
-          hasArtifact: (kind: string) => availableArtifacts.has(kind as ArtifactKind),
+          hasArtifact: (kind: string) => artifactAvailability.available.has(kind as ArtifactKind),
           hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
           hasUserApproval: input.hasUserApproval,
         });
         if (!transition.allowed) {
+          const invalidArtifactResult = createInvalidArtifactTransitionResult({
+            workflowId: input.workflowId,
+            targetStage: input.stage as WorkflowStage,
+            currentType: currentState.type,
+            transitionError: transition.error,
+            invalidArtifacts: artifactAvailability.invalid,
+          });
+          if (invalidArtifactResult) return invalidArtifactResult;
+
           return createToolErrorResult({
             kind: "execution",
             code: "TOOL_WORKFLOW_TRANSITION_DENIED",
@@ -109,8 +119,9 @@ async function collectAvailableArtifacts(
   workflowId: string,
   artifacts: Partial<Record<z.infer<typeof WorkflowArtifactKindSchema>, string | string[]>>,
   artifactManager: WorkflowArtifactManager,
-): Promise<Set<ArtifactKind>> {
+): Promise<ArtifactAvailability> {
   const available = new Set<ArtifactKind>();
+  const invalid = new Map<ArtifactKind, InvalidArtifactReason>();
   for (const kind of WorkflowArtifactKindSchema.options) {
     const artifactPath = artifacts[kind];
     if (typeof artifactPath !== "string") continue;
@@ -118,15 +129,106 @@ async function collectAvailableArtifacts(
       const artifact = await artifactManager.read(workflowId, artifactPath);
       if (kind === "TASKS") {
         const validation = validateTasksMarkdown(artifact.body);
-        if (validation.valid && validation.tasks.length > 0) available.add(kind);
+        if (validation.valid && validation.tasks.length > 0) {
+          available.add(kind);
+        } else {
+          invalid.set(kind, {
+            path: artifactPath,
+            taskCount: validation.tasks.length,
+            errors: validation.errors,
+          });
+        }
       } else {
         available.add(kind);
       }
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+      if (isNotFoundError(error)) continue;
+      if (kind === "TASKS") {
+        invalid.set(kind, {
+          path: artifactPath,
+          taskCount: 0,
+          errors: [{ code: "INVALID_ARTIFACT_CONTENT", message: error instanceof Error ? error.message : String(error) }],
+        });
+        continue;
+      }
+      throw error;
     }
   }
-  return available;
+  return { available, invalid };
+}
+
+interface ArtifactAvailability {
+  available: Set<ArtifactKind>;
+  invalid: Map<ArtifactKind, InvalidArtifactReason>;
+}
+
+interface InvalidArtifactReason {
+  path: string;
+  taskCount: number;
+  errors: ArtifactValidationIssue[];
+}
+
+interface ArtifactValidationIssue {
+  code?: string;
+  message: string;
+  line?: number;
+  taskId?: string;
+  field?: string;
+  dependencyId?: string;
+  taskIds?: string[];
+}
+
+function createInvalidArtifactTransitionResult({
+  workflowId,
+  targetStage,
+  currentType,
+  transitionError,
+  invalidArtifacts,
+}: {
+  workflowId: string;
+  targetStage: WorkflowStage;
+  currentType: Parameters<typeof getStagePrerequisitesForType>[0];
+  transitionError?: string;
+  invalidArtifacts: ReadonlyMap<ArtifactKind, InvalidArtifactReason>;
+}): ToolExecutionResult | undefined {
+  if (!transitionError?.includes("missing required artifact(s)")) return undefined;
+
+  const invalidPrerequisites = getStagePrerequisitesForType(currentType, targetStage)
+    .filter((kind) => invalidArtifacts.has(kind as ArtifactKind)) as ArtifactKind[];
+  if (invalidPrerequisites.length === 0) return undefined;
+
+  const details = invalidPrerequisites.map((kind) => {
+    const invalid = invalidArtifacts.get(kind)!;
+    return {
+      kind,
+      path: invalid.path,
+      taskCount: invalid.taskCount,
+      errors: invalid.errors,
+    };
+  });
+
+  return createToolErrorResult({
+    kind: "execution",
+    code: "TOOL_WORKFLOW_INVALID_ARTIFACT",
+    name: "WorkflowArtifactValidationError",
+    message: `Workflow ${workflowId} cannot enter ${targetStage}: ${details.map(formatInvalidArtifactReason).join("; ")}`,
+    details,
+  });
+}
+
+function formatInvalidArtifactReason(detail: { kind: ArtifactKind; path: string; taskCount: number; errors: readonly ArtifactValidationIssue[] }): string {
+  if (detail.taskCount === 0 && detail.errors.length === 0) {
+    return `${detail.path} exists but is invalid: ${detail.kind} must contain at least one top-level task`;
+  }
+  if (detail.errors.length === 0) {
+    return `${detail.path} exists but is invalid: ${detail.kind} must contain at least one top-level task`;
+  }
+  return `${detail.path} exists but is invalid: ${detail.errors.slice(0, 5).map(formatTasksValidationError).join("; ")}`;
+}
+
+function formatTasksValidationError(error: ArtifactValidationIssue): string {
+  const location = error.line ? `line ${error.line}: ` : "";
+  return `${location}${error.message}`;
 }
 
 function isNotFoundError(error: unknown): boolean {

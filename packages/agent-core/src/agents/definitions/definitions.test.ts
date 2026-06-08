@@ -39,10 +39,16 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("workflow_complete");
     expect(tools).toContain("workflow_record_completion");
     expect(tools).toContain("artifact_read");
-    expect(tools).toContain("artifact_write");
+    expect(tools).not.toContain("artifact_write");
     expect(tools).toContain("workflow_task_check");
     expect(tools).toContain("ast_grep_search");
     expect(tools).toContain("ast_grep_replace");
+  });
+
+  test("workflow artifact author roles keep artifact_write", () => {
+    expect(productAgentDefinition.tools.tools).toContain("artifact_write");
+    expect(specAgentDefinition.tools.tools).toContain("artifact_write");
+    expect(criticAgentDefinition.tools.tools).toContain("artifact_write");
   });
 
   test("foreman includes Markdown-wave execution tools", () => {

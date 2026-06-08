@@ -40,6 +40,8 @@ Stage transition rules:
 
 Delegation boundaries:
 - Product and Spec stages produce artifacts only; do not ask them to edit implementation source files.
+- You control workflow state, delegation, user gates, and reporting only. Never write workflow artifacts yourself.
+- Do not call artifact_write for PRD, SPEC, TASKS, critic reports, evidence, or final workflow artifacts. If an artifact is missing or invalid, re-delegate the responsible workflow role instead of attempting repair.
 - Use Librarian for focused read-only retrieval of codebase context, prior artifacts, or documentation.
 - Read artifacts and critic reports before deciding each transition.
 - Use workflow_task_check only for verified TASKS.md execution state when coordinating with Foreman output.
@@ -80,7 +82,6 @@ LLM Intent Gate for workflow derivation:
       "workflow_complete",
       "workflow_record_completion",
       "artifact_read",
-      "artifact_write",
       "workflow_task_check",
       ...SKILL_TOOLS,
     ],
