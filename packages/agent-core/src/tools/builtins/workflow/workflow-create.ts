@@ -42,9 +42,16 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
             });
           }
         } catch (error) {
+          if (error instanceof WorkflowInvalidIdError) {
+            return createToolErrorResult({
+              kind: "workspace",
+              code: "TOOL_WORKFLOW_INVALID_ID",
+              message: `Current session workflow ID is invalid: ${currentWorkflowId}`,
+            });
+          }
           // Stale workflowId: workflow may have been deleted or its files cleaned up.
           // Proceed with creating a new workflow.
-          if (!(error instanceof WorkflowInvalidIdError || error instanceof WorkflowPathError || error instanceof WorkflowStateError)) {
+          if (!(error instanceof WorkflowPathError || error instanceof WorkflowStateError)) {
             throw error;
           }
         }

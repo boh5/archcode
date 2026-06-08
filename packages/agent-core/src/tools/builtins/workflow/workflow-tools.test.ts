@@ -291,6 +291,20 @@ describe("workflow builtin tools", () => {
     expect(result.output).toContain("Continue the existing workflow");
   });
 
+  test("workflow_create rejects invalid (non-UUID) current workflow id", async () => {
+    const { registry, projectContext } = createWorkflowRegistry();
+    const store = createMockStore({ workflowId: "default", sessionId: "test-invalid-id" });
+
+    const result = await execute(registry, projectContext, "workflow_create", {
+      title: "new-after-invalid",
+      type: "full_feature",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("TOOL_WORKFLOW_INVALID_ID");
+    expect(result.output).toContain("default");
+  });
+
   test("workflow_create allows creation when current workflow is completed", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf = await stateManager.create({ title: "completed-wf", type: "full_feature" });
