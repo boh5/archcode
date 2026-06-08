@@ -1,0 +1,71 @@
+# Task 10 Final Validation Evidence
+Generated: 2026-06-08T00:04:21.008Z
+
+## Scope
+Task: Run full validation and collect evidence for workflow UUID + active workflow context.
+Changed files for final commit:
+- .sisyphus/evidence/task-10-final-validation.txt
+- .sisyphus/evidence/task-10-identity-grep.txt
+
+TypeScript LSP diagnostics: not applicable. Task 10 modified only evidence .txt files and did not modify TypeScript source/test files.
+
+## Validation order and outcomes
+
+### 1. Repository typecheck
+Command:
+```sh
+bun run typecheck
+```
+Status: PASS (exit 0)
+Key outcome:
+- Turborepo packages in scope: @specra/agent-core, @specra/protocol, @specra/server, @specra/utils, @specra/web
+- Tasks: 5 successful, 5 total
+- Cached: 5 cached, 5 total
+
+### 2. Targeted workflow/prompt/session tests
+Command:
+```sh
+bun test packages/agent-core/src/agents/workflow/workflow-regression.test.ts packages/agent-core/src/agents/workflow/workflow-integration.test.ts packages/agent-core/src/tools/builtins/workflow/workflow-tools.test.ts packages/agent-core/src/prompt/builder.test.ts packages/agent-core/src/execution/session-execution-manager.test.ts
+```
+Status: PASS (exit 0)
+Key outcome:
+- 91 pass
+- 0 fail
+- Ran 91 tests across 5 files
+
+### 3. Targeted server/session/web contract tests
+Command:
+```sh
+bun test apps/server/src/routes/workflow.test.ts packages/agent-core/src/store/helpers.test.ts apps/web/src/api/queries.test.ts
+```
+Status: PASS (exit 0)
+Key outcome:
+- 90 pass
+- 0 fail
+- Ran 90 tests across 3 files
+
+### 4. Full repository test suite
+Command:
+```sh
+bun run test
+```
+Status: PASS (exit 0)
+Key outcome:
+- @specra/protocol:test: 71 pass, 0 fail, 3 files
+- @specra/utils:test: 9 pass, 0 fail, 2 files
+- @specra/web:test: 309 pass, 0 fail, 24 files
+- @specra/server:test: 137 pass, 0 fail, 20 files
+- @specra/agent-core:test: 2566 pass, 0 fail, 168 files
+- Turborepo tasks: 8 successful, 8 total
+
+## Identity contract evidence
+Evidence file: .sisyphus/evidence/task-10-identity-grep.txt
+Status: PASS
+Reviewed findings:
+- No legacy `workflowId: z.string().min(1)` matches under `packages/agent-core/src`.
+- No positive model-facing `workflow_create({ id:` caller-provided ID paths found in workflow tools/agent/prompt/execution sources.
+- No `id: z.string().min(1)` workflow_create schema path found in workflow builtins.
+- Prompt/default matches were reviewed as tests, non-workflow defaults, or explicit rejection/avoidance guidance; no prompt instruction suggests using `default` as a workflow id.
+
+## Fixes needed
+No code or test fixes were needed during Task 10 validation.
