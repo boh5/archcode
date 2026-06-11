@@ -2,10 +2,10 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSessionStore } from "../../store/store";
+import { WorkflowArtifactManager } from "./artifacts";
 import {
   WorkflowArtifactKindSchema,
   WorkflowInvalidIdError,
-  WorkflowPathError,
   WorkflowStageSchema,
   WorkflowStateManager,
   WorkflowStateSchema,
@@ -28,6 +28,15 @@ afterAll(async () => {
 });
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
+
+async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected async action to throw");
+}
 
 describe("workflow schemas", () => {
   test("cover required stage, status, and artifact enums", () => {
@@ -224,7 +233,7 @@ describe("WorkflowStateManager", () => {
     expect(created.maxRetries).toBe(5);
     expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(await Bun.file(filePath).text()).toContain('"title": "My workflow"');
-    await expect(manager.read(created.id)).resolves.toEqual(created);
+    expect(await manager.read(created.id)).toEqual(created);
   });
 
   test("updates stage and status with timestamps", async () => {
@@ -237,7 +246,7 @@ describe("WorkflowStateManager", () => {
 
     const paused = await manager.updateStatus(created.id, "paused");
     expect(paused.status).toBe("paused");
-    await expect(manager.read(created.id)).resolves.toEqual(paused);
+    expect(await manager.read(created.id)).toEqual(paused);
   });
 
   test("records stage completion with completion timestamp", async () => {
@@ -256,7 +265,7 @@ describe("WorkflowStateManager", () => {
       evidence: ["critic-reports/prd.md"],
     });
     expect(typeof updated.stageCompletions.critic_prd_review?.completedAt).toBe("string");
-    await expect(manager.read(created.id)).resolves.toEqual(updated);
+    expect(await manager.read(created.id)).toEqual(updated);
   });
 
   test("complete sets completed status while preserving business stage", async () => {
@@ -268,7 +277,7 @@ describe("WorkflowStateManager", () => {
 
     expect(completed.status).toBe("completed");
     expect(completed.stage).toBe("quick_verify");
-    await expect(manager.read(created.id)).resolves.toEqual(completed);
+    expect(await manager.read(created.id)).toEqual(completed);
   });
 
   test("stores artifact paths and ids without artifact contents", async () => {
@@ -289,9 +298,9 @@ describe("WorkflowStateManager", () => {
   test("rejects non-uuid workflow ids with WorkflowInvalidIdError", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 
-    await expect(manager.read("../escape")).rejects.toThrow(WorkflowInvalidIdError);
-    await expect(manager.read("default")).rejects.toThrow(WorkflowInvalidIdError);
-    await expect(manager.read("wf-1")).rejects.toThrow(WorkflowInvalidIdError);
+    expect(await captureAsyncError(() => manager.read("../escape"))).toBeInstanceOf(WorkflowInvalidIdError);
+    expect(await captureAsyncError(() => manager.read("default"))).toBeInstanceOf(WorkflowInvalidIdError);
+    expect(await captureAsyncError(() => manager.read("wf-1"))).toBeInstanceOf(WorkflowInvalidIdError);
   });
 
   test("listWorkflows fails fast on non-uuid workflow directories", async () => {
@@ -300,7 +309,7 @@ describe("WorkflowStateManager", () => {
 
     await mkdir(join(TMP_DIR, ".specra", "workflows", "old-slug-dir"), { recursive: true });
 
-    await expect(manager.listWorkflows()).rejects.toThrow(WorkflowInvalidIdError);
+    expect(await captureAsyncError(() => manager.listWorkflows())).toBeInstanceOf(WorkflowInvalidIdError);
   });
 
   test("lists incomplete workflows and can include completed workflows when requested", async () => {
@@ -390,7 +399,24 @@ describe("WorkflowStateManager", () => {
     expect(result.handoffSummary).toContain("Type: full_feature");
     expect(result.handoffSummary).toContain("Derived Workflow Request");
     expect(result.handoffSummary).toContain("- RESEARCH: RESEARCH.md");
-    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", source.id, "HANDOFF_SUMMARY.md")).text()).toBe(result.handoffSummary);
+
+    const handoff = await new WorkflowArtifactManager(TMP_DIR, manager).readByKind(
+      source.id,
+      "HANDOFF_SUMMARY",
+    );
+    expect(handoff.body).toBe(result.handoffSummary);
+    expect(handoff.frontmatter).toMatchObject({
+      "specra.schema": "1",
+      "specra.workflowId": source.id,
+      "specra.workflowType": "research_only",
+      "specra.artifactKind": "HANDOFF_SUMMARY",
+      "specra.artifactPath": "HANDOFF_SUMMARY.md",
+      "specra.workflowStage": "research_consolidation",
+      "specra.writerAgent": "system",
+      "specra.writerSessionId": "source-session",
+      "specra.toolCallId": "createDerived",
+      "specra.writtenAt": result.source.updatedAt,
+    });
     expect(await manager.read(source.id)).toEqual(result.source);
     expect(await manager.read(result.derived.id)).toEqual(result.derived);
   });
@@ -400,12 +426,12 @@ describe("WorkflowStateManager", () => {
     const source = await manager.create({ title: "Terminal", type: "quick_fix" });
     await manager.complete(source.id);
 
-    await expect(manager.createDerived({
+    expect(await captureAsyncError(() => manager.createDerived({
       sourceWorkflowId: source.id,
       title: "Derived terminal",
       targetType: "full_feature",
       reason: "upgrade",
-    })).rejects.toThrow(WorkflowTerminalStateError);
+    }))).toBeInstanceOf(WorkflowTerminalStateError);
   });
 
   test("emits state change events for source and derived workflows when requested", async () => {
@@ -445,7 +471,7 @@ describe("WorkflowStateManager", () => {
     await mkdir(join(TMP_DIR, ".specra", "workflows", corruptId), { recursive: true });
     await Bun.write(join(TMP_DIR, ".specra", "workflows", corruptId, "workflow.json"), "{broken json");
 
-    await expect(manager.readWorkflow(corruptId)).rejects.toMatchObject({
+    expect(await captureAsyncError(() => manager.readWorkflow(corruptId))).toMatchObject({
       name: "WorkflowStateError",
       workflowId: corruptId,
     });

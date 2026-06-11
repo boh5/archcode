@@ -8,6 +8,18 @@ import { ProjectRegistry, silentLogger } from "@specra/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
+const VALID_TASKS = `# TASKS
+
+- [ ] T1. Build route
+
+  Agent: builder
+  Dependencies: none
+  Description: Build the workflow route.
+  Acceptance:
+    - [ ] Route returns body
+  QA:
+    - [ ] Tests pass
+`;
 
 function createTestRuntime(projectRegistry: ProjectRegistry) {
   const runtime = {
@@ -164,7 +176,6 @@ describe("workflow routes", () => {
           workflowId: workflow.id,
           kind: artifact.kind,
           path: `${artifact.kind}.md`,
-          frontmatter: { version: "1" },
           content: artifact.body,
         });
 
@@ -188,7 +199,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "PRD",
         path: "PRD.md",
-        frontmatter: { owner: "product" },
         content: artifactBody,
       });
 
@@ -211,7 +221,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "SPEC",
         path: "SPEC.md",
-        frontmatter: { version: "1" },
         content: artifactBody,
       });
 
@@ -225,7 +234,7 @@ describe("workflow routes", () => {
 
     test("returns TASKS artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("tasks-artifact");
-      const artifactBody = "# Tasks\n\n- Task 1";
+      const artifactBody = VALID_TASKS;
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
@@ -234,7 +243,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "TASKS",
         path: "TASKS.md",
-        frontmatter: { version: "1" },
         content: artifactBody,
       });
 
@@ -257,7 +265,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "FINAL_REPORT",
         path: "FINAL_REPORT.md",
-        frontmatter: { version: "1" },
         content: artifactBody,
       });
 
@@ -280,7 +287,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "CRITIC_REPORT",
         path: "critic-reports/prd.md",
-        frontmatter: { reviewer: "critic" },
         content: artifactBody,
       });
 
@@ -303,7 +309,6 @@ describe("workflow routes", () => {
         workflowId: workflow.id,
         kind: "EVIDENCE",
         path: "evidence/test-output.txt",
-        frontmatter: { source: "test" },
         content: artifactBody,
       });
 
@@ -371,7 +376,6 @@ describe("workflow routes", () => {
         workflowId: wfOtherWf.id,
         kind: "PRD",
         path: "PRD.md",
-        frontmatter: { kind: "PRD" },
         content: "# Other PRD\n",
       });
 
@@ -413,7 +417,6 @@ describe("workflow routes", () => {
         workflowId: foreignWf.id,
         kind: "PRD",
         path: "PRD.md",
-        frontmatter: { kind: "PRD" },
         content: "foreign",
       });
 

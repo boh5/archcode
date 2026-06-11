@@ -107,7 +107,6 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_critic_reject.id,
       kind: "PRD",
       path: "PRD.md",
-      frontmatter: { owner: "product" },
       content: "# PRD\n",
     });
     await stateManager.updateStage(wf_critic_reject.id, "critic_prd_review");
@@ -115,7 +114,6 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_critic_reject.id,
       kind: "CRITIC_REPORT",
       path: "critic-reports/prd-rejected.md",
-      frontmatter: { decision: "rejected" },
       content: "Reject: scope is unsafe.",
     });
 
@@ -172,14 +170,12 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_partial_wave.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { owner: "foreman" },
       content: THREE_TASKS_MARKDOWN,
     });
     await artifacts.write({
       workflowId: wf_partial_wave.id,
       kind: "EVIDENCE",
       path: "evidence/T1-builder.md",
-      frontmatter: { task: "T1", status: "passed" },
       content: "T1 builder and reviewer passed before the wave failed.",
     });
     const withOnlyT1Checked = toggleTaskCheckbox(THREE_TASKS_MARKDOWN, "T1", true);
@@ -187,7 +183,6 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_partial_wave.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { owner: "foreman", status: "partial" },
       content: withOnlyT1Checked,
     });
     await stateManager.fail(wf_partial_wave.id, "Foreman wave failed after T1");
@@ -215,21 +210,18 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_reviewer_reject.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { owner: "foreman" },
       content: THREE_TASKS_MARKDOWN,
     });
     await artifacts.write({
       workflowId: wf_reviewer_reject.id,
       kind: "EVIDENCE",
       path: "evidence/T1-builder-failed.md",
-      frontmatter: { task: "T1", status: "builder_failed" },
       content: "Builder failed verification for T1.",
     });
     await artifacts.write({
       workflowId: wf_reviewer_reject.id,
       kind: "EVIDENCE",
       path: "evidence/T1-reviewer-rejected.md",
-      frontmatter: { task: "T1", status: "reviewer_rejected" },
       content: "Reviewer rejected T1 because verification failed.",
     });
     await stateManager.fail(wf_reviewer_reject.id, "Reviewer rejected T1 after builder failure");
@@ -258,14 +250,12 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_corrupt_artifact.id,
       kind: "PRD",
       path: "PRD.md",
-      frontmatter: { owner: "product" },
       content: "# PRD\n",
     });
     await artifacts.write({
       workflowId: wf_corrupt_artifact.id,
       kind: "SPEC",
       path: "SPEC.md",
-      frontmatter: { owner: "spec" },
       content: "# SPEC\n",
     });
     await Bun.write(written.absolutePath, "missing frontmatter delimiter");

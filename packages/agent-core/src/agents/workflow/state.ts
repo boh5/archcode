@@ -8,9 +8,11 @@ import {
   resolveContainedPath,
   SafePathError,
 } from "../../utils/safe-file";
+import { formatFrontmatter } from "../../utils/frontmatter";
 import type { Logger } from "../../logger";
 import { silentLogger } from "../../logger";
 import type { SessionStoreState } from "../../store/types";
+import { buildWorkflowArtifactFrontmatter } from "./artifact-frontmatter";
 import { emitWorkflowStateChange } from "./events";
 
 export const WorkflowStageSchema = z.enum([
@@ -213,7 +215,22 @@ export class WorkflowStateManager {
     });
 
     const handoffPath = await this.workflowArtifactPath(source.id, handoffSummaryId);
-    await atomicWrite(handoffPath, handoffSummary);
+    await atomicWrite(
+      handoffPath,
+      formatFrontmatter(
+        buildWorkflowArtifactFrontmatter(
+          { kind: "HANDOFF_SUMMARY", path: handoffSummaryId },
+          source,
+          {
+            writerAgent: "system",
+            writerSessionId: source.sessionIds.orchestrator,
+            toolCallId: "createDerived",
+            writtenAt: triggeredAt,
+          },
+        ),
+        handoffSummary,
+      ),
+    );
 
     const sourceUpdated = WorkflowStateSchema.parse({
       ...source,

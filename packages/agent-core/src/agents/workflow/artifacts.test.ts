@@ -9,6 +9,7 @@ import {
   WorkflowArtifactManager,
   WorkflowArtifactWriteInputSchema,
 } from "./artifacts";
+import { WorkflowArtifactFrontmatterValueError } from "./artifact-frontmatter";
 import { WorkflowStateManager } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "workflow-artifacts");
@@ -22,8 +23,17 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
+async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected async action to throw");
+}
+
 describe("WorkflowArtifactManager", () => {
-  test("writes PRD.md, records metadata, and preserves stage and status", async () => {
+  test("writes PRD.md with system frontmatter and preserves stage and status", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     const wf_prd = await stateManager.create({ title: "PRD Draft", type: "full_feature" });
@@ -34,14 +44,24 @@ describe("WorkflowArtifactManager", () => {
       workflowId: wf_prd.id,
       kind: "PRD",
       path: "PRD.md",
-      frontmatter: { owner: "product", version: "1" },
       content: "# PRD\n\nRequirements.",
     });
 
     expect(written.path).toBe("PRD.md");
-    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", wf_prd.id, "PRD.md")).text()).toBe(
-      "---\nowner: product\nversion: 1\n---\n# PRD\n\nRequirements.",
-    );
+    const read = await artifacts.read(wf_prd.id, "PRD.md");
+    expect(read.frontmatter).toMatchObject({
+      "specra.schema": "1",
+      "specra.workflowId": wf_prd.id,
+      "specra.workflowType": "full_feature",
+      "specra.artifactKind": "PRD",
+      "specra.artifactPath": "PRD.md",
+      "specra.workflowStage": "product_drafting",
+      "specra.writerAgent": "system",
+      "specra.writerSessionId": "unknown",
+      "specra.toolCallId": "direct",
+    });
+    expect(read.frontmatter["specra.writtenAt"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(read.body).toBe("# PRD\n\nRequirements.");
 
     const state = await stateManager.read(wf_prd.id);
     expect(state.artifacts.PRD).toBe("PRD.md");
@@ -49,7 +69,7 @@ describe("WorkflowArtifactManager", () => {
     expect(state.status).toBe("paused");
   });
 
-  test("round-trips frontmatter using shared helpers", async () => {
+  test("generates system frontmatter for direct manager writes", async () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     const wf_frontmatter = await stateManager.create({ title: "Frontmatter Test", type: "full_feature" });
@@ -58,13 +78,99 @@ describe("WorkflowArtifactManager", () => {
       workflowId: wf_frontmatter.id,
       kind: "SPEC",
       path: "SPEC.md",
-      frontmatter: { owner: "architect", status: "draft" },
       content: "# SPEC\n",
+    }, {
+      writerAgent: "spec",
+      writerSessionId: "spec-session",
+      toolCallId: "artifact-write-call",
+      writtenAt: "2026-01-02T03:04:05.000Z",
     });
 
     const read = await artifacts.read(wf_frontmatter.id, "SPEC.md");
-    expect(read.frontmatter).toEqual({ owner: "architect", status: "draft" });
+    expect(read.frontmatter).toMatchObject({
+      "specra.schema": "1",
+      "specra.workflowId": wf_frontmatter.id,
+      "specra.workflowType": "full_feature",
+      "specra.artifactKind": "SPEC",
+      "specra.artifactPath": "SPEC.md",
+      "specra.workflowStage": "idle",
+      "specra.writerAgent": "spec",
+      "specra.writerSessionId": "spec-session",
+      "specra.toolCallId": "artifact-write-call",
+      "specra.writtenAt": "2026-01-02T03:04:05.000Z",
+    });
     expect(read.body).toBe("# SPEC\n");
+  });
+
+  test("rejects provenance values that could inject frontmatter lines", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
+    const wf_provenance = await stateManager.create({ title: "Provenance Test", type: "full_feature" });
+
+    for (const toolCallId of [
+      "call\nspecra.writerAgent: forged",
+      "call\n---\nforged",
+    ]) {
+      const error = await captureAsyncError(() => artifacts.write({
+        workflowId: wf_provenance.id,
+        kind: "PRD",
+        path: "PRD.md",
+        content: "# PRD\n",
+      }, { toolCallId }));
+
+      expect(error).toBeInstanceOf(WorkflowArtifactFrontmatterValueError);
+      expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", wf_provenance.id, "PRD.md")).exists()).toBe(false);
+    }
+  });
+
+  test("rejects caller-provided frontmatter and markdown frontmatter content", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const wf_schema = await stateManager.create({ title: "Schema Test", type: "full_feature" });
+
+    expect(() => WorkflowArtifactWriteInputSchema.parse({
+      workflowId: wf_schema.id,
+      kind: "PRD",
+      path: "PRD.md",
+      frontmatter: { owner: "model" },
+      content: "# PRD\n",
+    })).toThrow();
+
+    expect(() => WorkflowArtifactWriteInputSchema.parse({
+      workflowId: wf_schema.id,
+      kind: "PRD",
+      path: "PRD.md",
+      content: "---\nowner: model\n---\n# PRD\n",
+    })).toThrow();
+
+    for (const content of [
+      "--- \nowner: model\n---\n# PRD\n",
+      "---\t\nowner: model\n---\n# PRD\n",
+    ]) {
+      expect(() => WorkflowArtifactWriteInputSchema.parse({
+        workflowId: wf_schema.id,
+        kind: "PRD",
+        path: "PRD.md",
+        content,
+      })).toThrow();
+    }
+  });
+
+  test("rejects artifact paths that could inject frontmatter lines", async () => {
+    const stateManager = new WorkflowStateManager(TMP_DIR);
+    const wf_schema = await stateManager.create({ title: "Path Schema Test", type: "full_feature" });
+
+    for (const path of [
+      "evidence/run\n---\nforged.md",
+      "notes/a\nspecra.writerAgent: forged.md",
+      "evidence/run\r\n---\nforged.md",
+    ]) {
+      expect(() => WorkflowArtifactWriteInputSchema.parse({
+        workflowId: wf_schema.id,
+        kind: path.startsWith("evidence/") ? "EVIDENCE" : undefined,
+        path,
+        content: "safe body",
+      })).toThrow();
+    }
   });
 
   test("accepts critic reports and evidence artifact paths", async () => {
@@ -76,7 +182,6 @@ describe("WorkflowArtifactManager", () => {
       workflowId: wf_multi.id,
       kind: "CRITIC_REPORT",
       path: "critic-reports/prd.md",
-      frontmatter: { reviewer: "critic" },
       content: "approved",
     });
     await artifacts.write({
@@ -155,7 +260,6 @@ describe("WorkflowArtifactManager", () => {
       workflowId: wf_other.id,
       kind: "PRD",
       path: "PRD.md",
-      frontmatter: { kind: "PRD" },
       content: "# Other PRD\n",
     });
     await artifacts.write({

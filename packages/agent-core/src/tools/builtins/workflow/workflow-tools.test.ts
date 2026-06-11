@@ -482,7 +482,6 @@ describe("workflow builtin tools", () => {
       kind: "PRD",
       path: "PRD.md",
       content: "# Product\n",
-      frontmatter: { owner: "pm" },
     }, store);
     expect(written.isError).toBe(false);
     expect(written.meta?.diffs).toMatchObject({
@@ -506,9 +505,38 @@ describe("workflow builtin tools", () => {
     expect(read.isError).toBe(false);
     expect(JSON.parse(read.output)).toMatchObject({
       path: "PRD.md",
-      frontmatter: { owner: "pm" },
+      frontmatter: {
+        "specra.schema": "1",
+        "specra.workflowId": wf_artifact.id,
+        "specra.workflowType": "full_feature",
+        "specra.artifactKind": "PRD",
+        "specra.artifactPath": "PRD.md",
+        "specra.workflowStage": "product_drafting",
+        "specra.writerSessionId": "test",
+        "specra.toolCallId": "artifact_write-call",
+      },
       body: "# Product\n",
     });
+  });
+
+  test("artifact_write rejects caller-provided frontmatter at schema level", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_artifact = await stateManager.create({ title: "Artifact Schema Test", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_artifact.id);
+
+    const result = await execute(registry, projectContext, "artifact_write", {
+      workflowId: wf_artifact.id,
+      kind: "PRD",
+      path: "PRD.md",
+      frontmatter: { owner: "pm" },
+      content: "# Product\n",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    expect(result.output).toContain("Unrecognized key");
+    expect(result.output).toContain("frontmatter");
   });
 
   test("artifact_write accepts parser-valid TASKS.md", async () => {
@@ -522,7 +550,6 @@ describe("workflow builtin tools", () => {
       kind: "TASKS",
       path: "TASKS.md",
       content: VALID_TASKS,
-      frontmatter: { kind: "TASKS" },
     }, store);
 
     expect(written.isError).toBe(false);
@@ -538,7 +565,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_artifact_tasks_invalid.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { kind: "TASKS" },
       content: VALID_TASKS,
     });
 
@@ -546,7 +572,7 @@ describe("workflow builtin tools", () => {
       workflowId: wf_artifact_tasks_invalid.id,
       kind: "TASKS",
       path: "TASKS.md",
-      content: "---",
+      content: "# Invalid tasks\n",
     }, store);
 
     expect(rejected.isError).toBe(true);
@@ -568,7 +594,6 @@ describe("workflow builtin tools", () => {
       kind: "SPEC",
       path: "SPEC.md",
       content: "# Spec\n\nBefore\n",
-      frontmatter: { kind: "SPEC" },
     }, store);
 
     const updated = await execute(registry, projectContext, "artifact_write", {
@@ -576,14 +601,13 @@ describe("workflow builtin tools", () => {
       kind: "SPEC",
       path: "SPEC.md",
       content: "# Spec\n\nAfter\n",
-      frontmatter: { kind: "SPEC" },
     }, store);
 
     expect(updated.isError).toBe(false);
     expect(updated.output).toContain('"path": "SPEC.md"');
     expect(updated.meta?.diffs).toMatchObject({
       version: 1,
-      files: [{ path: "SPEC.md", status: "modified", additions: 1, deletions: 1 }],
+      files: [{ path: "SPEC.md", status: "modified" }],
     });
   });
 
@@ -629,7 +653,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_other.id,
       kind: "PRD",
       path: "PRD.md",
-      frontmatter: { kind: "PRD" },
       content: "# Other\n",
     });
 
@@ -677,7 +700,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_current.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { kind: "TASKS" },
       content: VALID_TASKS,
     });
 
@@ -739,7 +761,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { kind: "TASKS" },
       content: VALID_TASKS,
     });
 
@@ -798,7 +819,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_tasks.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { kind: "TASKS" },
       content: VALID_TASKS,
     });
 
@@ -823,14 +843,13 @@ describe("workflow builtin tools", () => {
       workflowId: wf_invalid_tasks_transition.id,
       kind: "SPEC",
       path: "SPEC.md",
-      frontmatter: { kind: "SPEC" },
       content: "# Spec\n",
     });
     await artifactManager.write({
       workflowId: wf_invalid_tasks_transition.id,
       kind: "TASKS",
       path: "TASKS.md",
-      content: "---",
+      content: "# Invalid tasks\n",
     });
     const store = createMockStore();
     store.getState().setWorkflowId(wf_invalid_tasks_transition.id);
@@ -857,7 +876,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_missing_tasks_transition.id,
       kind: "SPEC",
       path: "SPEC.md",
-      frontmatter: { kind: "SPEC" },
       content: "# Spec\n",
     });
     const store = createMockStore();
@@ -885,7 +903,6 @@ describe("workflow builtin tools", () => {
       workflowId: wf_reject.id,
       kind: "TASKS",
       path: "TASKS.md",
-      frontmatter: { kind: "TASKS" },
       content: VALID_TASKS,
     });
 

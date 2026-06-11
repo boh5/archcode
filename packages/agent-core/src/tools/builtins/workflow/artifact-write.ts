@@ -4,7 +4,6 @@ import { defineTool } from "../../define-tool";
 import { computeToolDiff, isProbablyBinaryText, MAX_DIFF_INPUT_CHARS } from "../../diff";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
-import { formatFrontmatter } from "../../../utils/frontmatter";
 import {
   ArtifactPathError,
   WorkflowArtifactWriteInputSchema,
@@ -31,7 +30,8 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
         if (validationError) return validationError;
 
         const before = await readArtifactBeforeWrite(artifactManager, input);
-        const result = await artifactManager.write(input);
+        const result = await artifactManager.write(input, buildArtifactProvenance(ctx));
+        const after = await artifactManager.readRaw(input.workflowId, input.path);
         emitWorkflowStateChange(ctx.store, input.workflowId, ["artifacts"]);
         return {
           output: JSON.stringify(result, null, 2),
@@ -40,7 +40,7 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
             diffs: computeArtifactDiff({
               path: input.path,
               before,
-              after: input.frontmatter ? formatFrontmatter(input.frontmatter, input.content) : input.content,
+              after: after.content,
             }),
           },
         };
@@ -119,9 +119,23 @@ async function readArtifactBeforeWrite(
     if (!existsSync(existing.absolutePath)) return { existed: false };
     return { existed: true, content: existing.content };
   } catch (error) {
+    if (error instanceof Error && error.message.includes("frontmatter")) {
+      const existing = await artifactManager.readRaw(input.workflowId, input.path);
+      if (!existsSync(existing.absolutePath)) return { existed: false };
+      return { existed: true, content: existing.content };
+    }
     if (isNotFoundError(error)) return { existed: false };
     throw error;
   }
+}
+
+function buildArtifactProvenance(ctx: ToolExecutionContext) {
+  return {
+    writerAgent: ctx.agentName,
+    writerSessionId: ctx.store.getState().sessionId,
+    toolCallId: ctx.toolCallId,
+    writtenAt: new Date(ctx.startedAt).toISOString(),
+  };
 }
 
 function computeArtifactDiff({

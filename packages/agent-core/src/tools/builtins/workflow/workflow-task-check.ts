@@ -40,12 +40,17 @@ export function createWorkflowTaskCheckTool(): AnyToolDescriptor {
         }
 
         const artifact = await artifactManager.read(input.workflowId, TASKS_ARTIFACT_PATH);
-        const updated = toggleTaskCheckbox(artifact.content, input.taskId, input.checked);
+        const updated = toggleTaskCheckbox(artifact.body, input.taskId, input.checked);
         await artifactManager.write({
           workflowId: input.workflowId,
           kind: "TASKS",
           path: TASKS_ARTIFACT_PATH,
           content: updated,
+        }, {
+          writerAgent: ctx.agentName,
+          writerSessionId: ctx.store.getState().sessionId,
+          toolCallId: ctx.toolCallId,
+          writtenAt: new Date(ctx.startedAt).toISOString(),
         });
         return `Updated ${input.taskId} in ${TASKS_ARTIFACT_PATH}`;
       } catch (error) {
