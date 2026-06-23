@@ -14,12 +14,12 @@ export const TodoWriteInputSchema = z
     todos: z.array(
       z
         .object({
-          id: z.string().optional(),
-          content: z.string(),
-          status: z.enum(TODO_STATUSES),
+          id: z.string().optional().describe("Stable identifier. If omitted, one is generated automatically."),
+          content: z.string().describe("Brief description of the task"),
+          status: z.enum(TODO_STATUSES).describe("Current state: pending | in_progress | completed | cancelled"),
         })
         .strict(),
-    ),
+    ).describe("Full replacement list of todo items. Each: { id?, content, status }"),
   })
   .strict();
 

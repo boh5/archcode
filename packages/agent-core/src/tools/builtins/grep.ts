@@ -13,11 +13,11 @@ import type { ToolExecutionResult } from "../types";
 
 export const GrepInputSchema = z
   .object({
-    pattern: z.string(),
-    path: z.string().optional(),
-    include: z.string().optional(),
-    output_mode: z.enum(["content", "files_with_matches", "count"]).optional(),
-    context: z.number().optional(),
+    pattern: z.string().describe("Regular expression pattern to search for in file contents"),
+    path: z.string().optional().describe("Directory to search in (absolute or workspace-relative). Defaults to workspace root."),
+    include: z.string().optional().describe("File name glob to filter by (e.g. \"*.ts\"). Defaults to all files."),
+    output_mode: z.enum(["content", "files_with_matches", "count"]).optional().describe("Output format: \"content\" shows matching lines, \"files_with_matches\" lists file paths only, \"count\" shows match counts per file. Default \"content\"."),
+    context: z.number().optional().describe("Number of context lines to show around each match"),
   })
   .strict();
 

@@ -5,7 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
 
 const WorkflowReadInputSchema = z.strictObject({
-  workflowId: WorkflowUuidSchema,
+  workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to read"),
 });
 
 type WorkflowReadInput = z.infer<typeof WorkflowReadInputSchema>;

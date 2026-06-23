@@ -19,11 +19,12 @@ const MemoryWriteInputSchema = z
   .object({
     name: z
       .string()
-      .regex(NAME_REGEX, "Name must match /^[a-zA-Z0-9_]+$/"),
-    description: z.string().optional(),
-    type: z.enum(["user", "feedback", "project", "reference"]).optional(),
-    content: z.string(),
-    scope: z.enum(["project", "user"]).optional(),
+      .regex(NAME_REGEX, "Name must match /^[a-zA-Z0-9_]+$/")
+      .describe("Memory entry name. \"preferences\" writes user-level preferences. Otherwise a project knowledge topic name (letters/numbers/underscores only)."),
+    description: z.string().optional().describe("Short human-readable description of the memory entry"),
+    type: z.enum(["user", "feedback", "project", "reference"]).optional().describe("Memory type: \"user\" (personal style), \"feedback\" (correction), \"project\" (project-specific knowledge), \"reference\" (external reference). Defaults to \"project\" for knowledge topics."),
+    content: z.string().describe("Full markdown content of the memory entry"),
+    scope: z.enum(["project", "user"]).optional().describe("Storage scope: \"project\" (workspace-specific) or \"user\" (cross-workspace). Inferred from name if omitted: \"preferences\" → \"user\", topics → \"project\"."),
   })
   .strict();
 

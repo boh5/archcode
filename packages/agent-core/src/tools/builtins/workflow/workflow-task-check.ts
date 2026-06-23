@@ -10,9 +10,9 @@ import { guardCurrentWorkflow } from "./guard-current-workflow";
 const TASKS_ARTIFACT_PATH = "TASKS.md";
 
 const WorkflowTaskCheckInputSchema = z.strictObject({
-  workflowId: WorkflowUuidSchema,
-  taskId: z.string().min(1),
-  checked: z.boolean(),
+  workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) whose TASKS.md to update"),
+  taskId: z.string().min(1).describe("TASKS.md task id to toggle (e.g. \"T1\", \"T2\")"),
+  checked: z.boolean().describe("true = mark task complete, false = mark incomplete"),
 });
 
 type WorkflowTaskCheckInput = z.infer<typeof WorkflowTaskCheckInputSchema>;

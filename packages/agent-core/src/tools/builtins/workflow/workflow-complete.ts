@@ -8,7 +8,7 @@ import { WorkflowArtifactKindSchema, WorkflowPathError, WorkflowUuidSchema } fro
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowCompleteInputSchema = z.strictObject({
-  workflowId: WorkflowUuidSchema,
+  workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to complete"),
 });
 
 type WorkflowCompleteInput = z.infer<typeof WorkflowCompleteInputSchema>;

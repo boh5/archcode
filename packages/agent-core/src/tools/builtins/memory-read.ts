@@ -18,7 +18,7 @@ import {
 
 const MemoryReadInputSchema = z
   .object({
-    name: z.string().optional(),
+    name: z.string().optional().describe("Name of the memory to read. Omit for combined context. Special: \"preferences\" = user preferences, \"index\" = memory index. Otherwise a project knowledge topic name (letters/numbers/underscores)."),
   })
   .strict();
 

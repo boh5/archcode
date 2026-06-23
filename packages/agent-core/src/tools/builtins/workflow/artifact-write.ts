@@ -18,7 +18,7 @@ import { guardCurrentWorkflow } from "./guard-current-workflow";
 export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_write",
-    description: "Write a workflow artifact and update artifact metadata without changing workflow stage or status.\n\nSingle-file artifacts (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT): pass workflowId, kind, and content only. No path.\n\nMulti-file artifacts (CRITIC_REPORT, EVIDENCE): pass workflowId, kind, name, and content. No path. The `name` is a short kebab-case slug without path separators or .md suffix (e.g. \"prd-review-round-1\"); Specra generates the full path like critic-reports/prd-review-round-1.md and returns it.\n\nThe `content` is markdown body only starting with a # heading. Do not include YAML frontmatter (--- blocks); Specra generates system frontmatter automatically.",
+    description: "Write a workflow artifact and update artifact metadata. Does not change workflow stage or status. Content is markdown body only (no YAML frontmatter — Specra generates it). Single-file kinds (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT): pass workflowId+kind+content. Multi-file kinds (CRITIC_REPORT, EVIDENCE): also pass name (kebab-case slug, no path separators or .md suffix).",
     inputSchema: WorkflowArtifactWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {

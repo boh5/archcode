@@ -10,9 +10,9 @@ import type { ProcessRunnerResult } from "../../process/types";
 export const BashInputSchema = z
   .object({
     description: z.string().min(1).describe("Brief summary of what the command does"),
-    command: z.string().min(1),
-    cwd: z.string().optional(),
-    timeoutMs: z.number().int().positive().optional(),
+    command: z.string().min(1).describe("The bash command(s) to execute. Can be chained with && or ;"),
+    cwd: z.string().optional().describe("Working directory for the command (absolute or workspace-relative). Defaults to workspace root."),
+    timeoutMs: z.number().int().positive().optional().describe("Command timeout in milliseconds. Command is killed if it exceeds this."),
   })
   .strict();
 

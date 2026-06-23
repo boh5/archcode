@@ -10,10 +10,10 @@ import { resolveAndValidatePath } from "../../security";
 
 export const AstGrepSearchInputSchema = z
   .object({
-    pattern: z.string().min(1),
-    lang: z.string().min(1).optional(),
-    paths: z.array(z.string().min(1)).optional(),
-    globs: z.array(z.string().min(1)).optional(),
+    pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$). Must be a complete AST node, not a fragment. See ast-grep docs for syntax."),
+    lang: z.string().min(1).optional().describe("Target language for the pattern. One of: bash, c, cpp, csharp, css, elixir, go, haskell, html, java, javascript, json, kotlin, lua, nix, php, python, ruby, rust, scala, solidity, swift, typescript, tsx, yaml."),
+    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or workspace-relative). Defaults to workspace root."),
+    globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude (e.g. [\"*.ts\", \"!*.test.ts\"])."),
   })
   .strict();
 

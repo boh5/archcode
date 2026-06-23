@@ -6,21 +6,21 @@ import { createToolErrorResult } from "../errors";
 // ─── Input Schema ───
 
 const AskUserQuestionOptionSchema = z.object({
-  label: z.string(),
-  description: z.string(),
+  label: z.string().describe("Short display text (1-5 words)"),
+  description: z.string().describe("Explanation of what this choice entails"),
 }).strict();
 
 const AskUserQuestionSchema = z.object({
-  question: z.string().min(1),
-  header: z.string().min(1).max(30),
-  options: z.array(AskUserQuestionOptionSchema).optional().default([]),
-  multiple: z.boolean().optional(),
-  custom: z.boolean().optional().default(true),
+  question: z.string().min(1).describe("The full question text"),
+  header: z.string().min(1).max(30).describe("Very short label (max 30 chars) shown as the question heading"),
+  options: z.array(AskUserQuestionOptionSchema).optional().default([]).describe("Available choices. Each option: { label, description }. Omit when custom=true for free-text only. If recommending an option, list it first with \"(Recommended)\" suffix."),
+  multiple: z.boolean().optional().describe("Allow selecting more than one answer"),
+  custom: z.boolean().optional().default(true).describe("When true (default), adds a 'Type your own answer' option automatically. Set false to force choosing from provided options only."),
 }).strict();
 
 export const AskUserInputSchema = z
   .object({
-    questions: z.array(AskUserQuestionSchema).min(1),
+    questions: z.array(AskUserQuestionSchema).min(1).describe("Array of questions to ask. Each: { question, header, options?, multiple?, custom? }"),
   })
   .strict();
 
@@ -130,7 +130,7 @@ function rejectOnAbort(signal: AbortSignal): { promise: Promise<never>; cleanup:
 export const askUserTool = defineTool({
   name: "ask_user",
   description:
-    "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on implementation choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\n- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n- Set `custom: false` if the user must choose from the provided options only\n- The `options` array is optional when `custom` is true (free text only)",
+    "Ask the user questions during execution. Use to gather preferences, clarify ambiguous instructions, or offer choices. When `custom` is enabled (default), a free-text answer option is added automatically.",
   inputSchema: AskUserInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: false },
   execute: async (input: AskUserInput, ctx: ToolExecutionContext) => {

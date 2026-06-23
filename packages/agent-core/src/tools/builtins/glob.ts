@@ -12,8 +12,8 @@ import type { ToolExecutionResult } from "../types";
 
 export const GlobInputSchema = z
   .object({
-    pattern: z.string(),
-    path: z.string().optional(),
+    pattern: z.string().describe("Glob pattern to match files against (e.g. \"**/*.ts\", \"src/**/*.json\")"),
+    path: z.string().optional().describe("Directory to search in (absolute or workspace-relative). Defaults to workspace root."),
   })
   .strict();
 

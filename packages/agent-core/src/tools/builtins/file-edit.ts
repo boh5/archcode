@@ -14,15 +14,15 @@ import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
 const FileEditInputSchema = z
   .object({
-    path: z.string(),
+    path: z.string().describe("Absolute or workspace-relative path of the file to edit"),
     edits: z.array(
       z
         .object({
-          oldString: z.string().min(1, "oldString cannot be empty"),
-          newString: z.string(),
+          oldString: z.string().min(1, "oldString cannot be empty").describe("Exact text to find in the file. Must be unique within the file — include surrounding context if needed."),
+          newString: z.string().describe("Text to replace oldString with"),
         })
         .strict(),
-    ).min(1, "edits array must not be empty"),
+    ).min(1, "edits array must not be empty").describe("Array of text replacements to apply in order. Each entry: { oldString, newString }"),
   })
   .strict();
 

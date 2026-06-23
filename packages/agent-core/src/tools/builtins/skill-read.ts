@@ -9,7 +9,7 @@ const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const SkillReadInputSchema = z
   .object({
-    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE),
+    name: z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE).describe("Skill name (lowercase kebab-case, e.g. \"git-master\")"),
   })
   .strict();
 

@@ -16,9 +16,9 @@ const MAX_READ_BYTES = 50 * 1024;
 
 const FileReadInputSchema = z
   .object({
-    path: z.string(),
-    offset: z.number().int().positive().optional(),
-    limit: z.number().int().positive().optional(),
+    path: z.string().describe("Absolute or workspace-relative path of the file to read"),
+    offset: z.number().int().positive().optional().describe("1-based line number to start reading from (default 1)"),
+    limit: z.number().int().positive().optional().describe("Maximum number of lines to return"),
   })
   .strict();
 

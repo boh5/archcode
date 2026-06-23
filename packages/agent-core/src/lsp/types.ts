@@ -31,33 +31,35 @@ export interface LspSymbol {
 
 export const LspDiagnosticsInputSchema = z
   .object({
-    filePath: z.string(),
-    severity: z.enum(["error", "warning", "information", "hint", "all"]).optional(),
+    filePath: z.string().describe("Absolute or workspace-relative path of the file or directory to check"),
+    severity: z.enum(["error", "warning", "information", "hint", "all"]).optional()
+      .describe("Filter by severity. Omit for all severities."),
   })
   .strict();
 
 export const LspGotoDefinitionInputSchema = z
   .object({
-    filePath: z.string(),
-    line: z.number(),
-    character: z.number(),
+    filePath: z.string().describe("Absolute or workspace-relative path of the source file"),
+    line: z.number().describe("1-based line number of the symbol position"),
+    character: z.number().describe("0-based character (column) offset within the line"),
   })
   .strict();
 
 export const LspFindReferencesInputSchema = z
   .object({
-    filePath: z.string(),
-    line: z.number(),
-    character: z.number(),
-    includeDeclaration: z.boolean().optional(),
+    filePath: z.string().describe("Absolute or workspace-relative path of the source file"),
+    line: z.number().describe("1-based line number of the symbol position"),
+    character: z.number().describe("0-based character (column) offset within the line"),
+    includeDeclaration: z.boolean().optional()
+      .describe("Include the symbol's own declaration in results (default true)"),
   })
   .strict();
 
 export const LspSymbolsInputSchema = z
   .object({
-    scope: z.enum(["document", "workspace"]),
-    filePath: z.string().optional(),
-    query: z.string().optional(),
+    scope: z.enum(["document", "workspace"]).describe("Search scope: \"document\" for symbols in one file, \"workspace\" for project-wide search"),
+    filePath: z.string().optional().describe("Required when scope=\"document\". Absolute or workspace-relative path of the file."),
+    query: z.string().optional().describe("Required when scope=\"workspace\". Symbol name (or substring) to search for."),
   })
   .strict()
   .superRefine((data, ctx) => {

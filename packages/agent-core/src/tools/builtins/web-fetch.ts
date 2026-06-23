@@ -455,11 +455,7 @@ function formatResult(result: FetchResult): ToolExecutionResult {
 export const webFetchTool = defineTool({
   name: "web_fetch",
   description:
-    "Fetches content from a URL and returns it in the specified format (markdown, text, or html). " +
-    "For HTML pages, 'markdown' format uses Readability to extract article content and converts it to Markdown. " +
-    "'text' format returns plain text. 'html' returns raw HTML. " +
-    "Non-2xx HTTP responses still return page content when available. " +
-    "Supports up to 5 redirects and a 5MB response size limit.",
+    "Fetch content from a URL and return in markdown, text, or html format. Supports up to 5 redirects and a 5MB response size limit.",
   inputSchema: WebFetchInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: async (input: WebFetchInput, ctx: ToolExecutionContext) => {

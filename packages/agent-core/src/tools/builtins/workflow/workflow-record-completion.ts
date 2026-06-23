@@ -7,10 +7,10 @@ import { WorkflowPathError, WorkflowStageSchema, WorkflowUuidSchema } from "../.
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowRecordCompletionInputSchema = z.strictObject({
-  workflowId: WorkflowUuidSchema,
-  stage: WorkflowStageSchema,
-  criticPassed: z.boolean().optional(),
-  evidence: z.array(z.string()).optional(),
+  workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to record completion for"),
+  stage: WorkflowStageSchema.describe("The stage being completed"),
+  criticPassed: z.boolean().optional().describe("Whether the critic review passed for this stage"),
+  evidence: z.array(z.string()).optional().describe("List of evidence artifact paths supporting the completion claim"),
 });
 
 type WorkflowRecordCompletionInput = z.infer<typeof WorkflowRecordCompletionInputSchema>;

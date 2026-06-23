@@ -5,13 +5,14 @@ import type { ToolExecutionContext } from "../types";
 
 const WaitForReminderConditionSchema = z
   .enum(["all", "any"])
-  .or(z.object({ count: z.number().int().min(1) }).strict());
+  .or(z.object({ count: z.number().int().min(1) }).strict())
+  .describe("How many sessions must produce reminders before returning. \"all\" = every session, \"any\" = at least one, { count: N } = exactly N sessions");
 
 export const WaitForReminderInputSchema = z
   .object({
-    session_ids: z.array(z.string()),
-    condition: WaitForReminderConditionSchema.default("any"),
-    timeout_ms: z.number().int().min(1000).max(600000).default(120000),
+    session_ids: z.array(z.string()).describe("Child session ids to wait for reminders from"),
+    condition: WaitForReminderConditionSchema.default("any").describe("How many sessions must produce reminders before returning. \"all\" = every session, \"any\" = at least one, { count: N } = exactly N sessions. Default \"any\"."),
+    timeout_ms: z.number().int().min(1000).max(600000).default(120000).describe("Max wait time in ms. Default 120000."),
   })
   .strict();
 

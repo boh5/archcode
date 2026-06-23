@@ -14,8 +14,8 @@ import type { ToolExecutionResult } from "../types";
 
 const FileWriteInputSchema = z
   .object({
-    path: z.string(),
-    content: z.string(),
+    path: z.string().describe("Absolute or workspace-relative path where the new file will be created"),
+    content: z.string().describe("Full text content to write to the file"),
   })
   .strict();
 

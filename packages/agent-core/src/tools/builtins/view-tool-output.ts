@@ -21,7 +21,7 @@ export class ToolOutputNotFoundError extends Error {
 
 const ViewToolOutputInputSchema = z
   .object({
-    callId: z.string(),
+    callId: z.string().describe("The callId of the previous tool call to retrieve full output for"),
   })
   .strict();
 

@@ -14,12 +14,12 @@ import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, Too
 
 export const AstGrepReplaceInputSchema = z
   .object({
-    pattern: z.string().min(1),
-    rewrite: z.string().min(1),
-    lang: z.string().min(1).optional(),
-    paths: z.array(z.string().min(1)).optional(),
-    globs: z.array(z.string().min(1)).optional(),
-    dryRun: z.boolean().default(true),
+    pattern: z.string().min(1).describe("ast-grep pattern with meta-variables ($VAR, $$$) to match. Must be a complete AST node."),
+    rewrite: z.string().min(1).describe("Replacement pattern. Use $VAR from the pattern to preserve matched content. Can use literal text."),
+    lang: z.string().min(1).optional().describe("Target language. See ast_grep_search lang param for supported values."),
+    paths: z.array(z.string().min(1)).optional().describe("Directories or files to search in (absolute or workspace-relative). Defaults to workspace root."),
+    globs: z.array(z.string().min(1)).optional().describe("Include/exclude glob patterns. Prefix ! to exclude."),
+    dryRun: z.boolean().default(true).describe("true = preview only, no files written. false = apply changes to disk. Default true."),
   })
   .strict();
 

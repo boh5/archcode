@@ -7,8 +7,8 @@ import { createWorkflowWithOrchestrator } from "../../../agents/workflow/linking
 import { WorkflowInvalidIdError, WorkflowPathError, WorkflowStateError, WorkflowTitleSchema, WorkflowTypeSchema } from "../../../agents/workflow/state";
 
 const WorkflowCreateInputSchema = z.strictObject({
-  type: WorkflowTypeSchema,
-  title: WorkflowTitleSchema,
+  type: WorkflowTypeSchema.describe("Workflow type — determines the sequence of stages and completion policy"),
+  title: WorkflowTitleSchema.describe("Human-readable workflow title"),
 });
 
 type WorkflowCreateInput = z.infer<typeof WorkflowCreateInputSchema>;

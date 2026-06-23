@@ -12,22 +12,22 @@ const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
 export const DelegateAvailableArtifactSchema = z
   .object({
-    workflowId: WorkflowUuidSchema,
-    kind: WorkflowArtifactKindSchema.optional(),
-    path: z.string().min(1).optional(),
-    description: z.string().optional(),
+    workflowId: WorkflowUuidSchema.describe("Workflow id (uuid) owning the artifact"),
+    kind: WorkflowArtifactKindSchema.optional().describe("Artifact kind the child can access via artifact_read"),
+    path: z.string().min(1).optional().describe("Specific artifact path the child can access"),
+    description: z.string().optional().describe("Short description of what the artifact contains"),
   })
   .strict();
 
 export const DelegateInputSchema = z
   .object({
-    agent_type: z.string().min(1),
-    prompt: z.string(),
-    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)),
-    description: z.string().optional(),
-    title: z.string().optional(),
-    background: z.boolean().default(false),
-    available_artifacts: z.array(DelegateAvailableArtifactSchema).optional(),
+    agent_type: z.string().min(1).describe("Target agent type to delegate to (e.g. \"explore\", \"builder\")"),
+    prompt: z.string().describe("Full task instructions for the child agent — include goal, context, constraints, and expected output"),
+    skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Skill names to activate on the child agent. Pass [] for none."),
+    description: z.string().optional().describe("Short 3-5 word label for the delegated task"),
+    title: z.string().optional().describe("Optional session title for the child session"),
+    background: z.boolean().default(false).describe("true = run async; use background_output to read results later. false = block until child completes. Default false."),
+    available_artifacts: z.array(DelegateAvailableArtifactSchema).optional().describe("Workflow artifact references the child can access via artifact_read"),
   })
   .strict();
 
@@ -203,7 +203,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "explore"). Parameters: agent_type (target agent), prompt (the task instructions), skills (skill names to activate, pass [] for none), description (optional short label), title (optional session title), background (true=async, use background_output to read results later), available_artifacts (optional workflow artifact references only; child must use artifact_read for content). Output: plain text summary with the child session id and status.`,
+    `Delegate a task to another agent (e.g. "explore"). Returns a plain text summary with the child session id and status.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

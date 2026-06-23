@@ -21,12 +21,12 @@ import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
-  workflowId: WorkflowUuidSchema,
-  stage: WorkflowStageSchema,
-  hasUserApproval: z.boolean().default(false),
-  criticDecision: z.enum(["approved", "changes_requested", "rejected"]).optional(),
-  criticReportPath: z.string().min(1).optional(),
-  incrementRetry: z.boolean().default(false),
+  workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to update"),
+  stage: WorkflowStageSchema.describe("Target stage to advance to. Ignored when criticDecision is provided (but still required by schema)."),
+  hasUserApproval: z.boolean().default(false).describe("Whether the user has explicitly approved this stage transition. Default false."),
+  criticDecision: z.enum(["approved", "changes_requested", "rejected"]).optional().describe("When set, records a critic outcome instead of a plain stage advance. Overrides stage."),
+  criticReportPath: z.string().min(1).optional().describe("Path to the critic report artifact (used with criticDecision)"),
+  incrementRetry: z.boolean().default(false).describe("Increment the workflow's retry counter for the current stage. Default false."),
 });
 
 type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;

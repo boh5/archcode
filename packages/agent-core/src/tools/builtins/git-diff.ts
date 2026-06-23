@@ -9,7 +9,7 @@ import type { ProcessRunnerResult } from "../../process/types";
 
 const GitDiffInputSchema = z
   .object({
-    staged: z.boolean().optional().default(false),
+    staged: z.boolean().optional().default(false).describe("true = show staged (cached) changes, false = show unstaged working-directory changes. Default false."),
   })
   .strict();
 

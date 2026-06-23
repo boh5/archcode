@@ -16,14 +16,14 @@ const GLOBAL_OUTPUT_CAP = 8_000;
 
 export const BackgroundOutputInputSchema = z
   .object({
-    session_id: z.string(),
-    block: z.boolean().default(false),
-    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS),
-    full_session: z.boolean().default(false),
-    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT),
-    since_message_id: z.string().optional(),
-    include_tool_results: z.boolean().default(false),
-    include_reasoning: z.boolean().default(false),
+    session_id: z.string().describe("Child session id — must be a direct child of the current session"),
+    block: z.boolean().default(false).describe("Wait for the child to finish before returning. Default false."),
+    timeout_ms: z.number().int().min(0).max(MAX_TIMEOUT_MS).default(DEFAULT_TIMEOUT_MS).describe("Max wait time in ms when blocking. Default 60000."),
+    full_session: z.boolean().default(false).describe("Return full message history instead of latest output only. Default false."),
+    message_limit: z.number().int().min(1).max(MAX_MESSAGE_LIMIT).default(DEFAULT_MESSAGE_LIMIT).describe("Max messages to return in full_session mode. Default 20."),
+    since_message_id: z.string().optional().describe("Exclusive cursor — return only messages after this id (for incremental reads)"),
+    include_tool_results: z.boolean().default(false).describe("Include tool call results in output (hidden by default)"),
+    include_reasoning: z.boolean().default(false).describe("Include assistant reasoning content in output (hidden by default)"),
   })
   .strict();
 
@@ -255,7 +255,7 @@ function truncateOutput(value: string): string {
 export const backgroundOutputTool = defineTool({
   name: "background_output",
   description:
-    `Read output from a direct child background sub-agent session. Parameters: session_id (child session, must be a direct child of current session), block (wait for child to finish), timeout_ms (max wait when blocking, default 60000), full_session (return full message history instead of latest output), message_limit (max messages in full_session mode), since_message_id (exclusive cursor for incremental reads), include_tool_results (include tool call results, default hidden), include_reasoning (include reasoning content, default hidden).`,
+    `Read output from a direct child background sub-agent session.`,
   inputSchema: BackgroundOutputInputSchema,
   traits: { readOnly: true, destructive: false, concurrencySafe: true },
   execute: executeBackgroundOutput,
