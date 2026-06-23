@@ -264,6 +264,69 @@ describe("applyRemoteEnvelope", () => {
 
     expect(store.getState().pendingQuestions.size).toBe(0);
   });
+
+  test("batched question.request with 3 questions stores all 3 in a single pending entry", () => {
+    const store = createWebSessionStore("question-batched", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "question.request",
+        questionId: "question-batch-1",
+        question: JSON.stringify({
+          toolName: "ask_user",
+          toolCallId: "tc-batch-1",
+          questions: [
+            { question: "First?", header: "Q1", options: [{ label: "A", description: "" }], custom: false },
+            { question: "Second?", header: "Q2", options: [{ label: "B", description: "" }], custom: false },
+            { question: "Third?", header: "Q3", options: [{ label: "C", description: "" }], custom: false },
+          ],
+        }),
+      }),
+      sessionId: "question-batched",
+    });
+
+    const pending = store.getState().pendingQuestions.get("question-batch-1");
+    expect(pending).toBeDefined();
+    expect(pending!.questions).toHaveLength(3);
+    expect(pending!.questions[0]).toMatchObject({ header: "Q1" });
+    expect(pending!.questions[1]).toMatchObject({ header: "Q2" });
+    expect(pending!.questions[2]).toMatchObject({ header: "Q3" });
+  });
+
+  test("question.terminal empties the queue and unpins the store", () => {
+    const store = createWebSessionStore("question-terminal-clear", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "question.request",
+        questionId: "question-clear-1",
+        question: JSON.stringify({ toolName: "ask_user", toolCallId: "tc-1", questions: [{ question: "Continue?" }] }),
+      }),
+      sessionId: "question-terminal-clear",
+    });
+
+    expect(store.getState().pendingQuestions.size).toBe(1);
+
+    store.getState().applyRemoteEnvelope({
+      ...event(1, {
+        type: "question.terminal",
+        questionId: "question-clear-1",
+        status: "resolved",
+        answer: "Yes",
+      }),
+      sessionId: "question-terminal-clear",
+    });
+
+    expect(store.getState().pendingQuestions.size).toBe(0);
+    // The store should no longer be pinned by pending questions.
+    // isPinned checks pendingPermissions.size > 0 || pendingQuestions.size > 0;
+    // with both empty and no running/streaming/foreground flags, it is not pinned.
+    const state = store.getState();
+    expect(state.pendingPermissions.size).toBe(0);
+    expect(state.pendingQuestions.size).toBe(0);
+    expect(state.isRunning).toBe(false);
+    expect(state.isStreamingModel).toBe(false);
+  });
 });
 
 describe("initializeFromSnapshot", () => {

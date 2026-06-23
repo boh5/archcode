@@ -8,7 +8,12 @@ import {
   type CriticDecision,
 } from "../../../agents/workflow/critic-protocol";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
-import { canTransitionTo, type ArtifactKind } from "../../../agents/workflow/guards";
+import {
+  canTransitionTo,
+  hasResolvedBlockingDecisionInteractions,
+  hasUnresolvedBlockingInteractions,
+  type ArtifactKind,
+} from "../../../agents/workflow/guards";
 import {
   WorkflowPathError,
   WorkflowArtifactKindSchema,
@@ -31,6 +36,14 @@ const WorkflowUpdateStageInputSchema = z.strictObject({
 
 type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
 
+const INTERACTION_CLEARANCE_STAGES = new Set<WorkflowStage>([
+  "requirements_interview",
+  "product_drafting",
+  "critic_prd_review",
+  "spec_drafting",
+  "critic_spec_review",
+]);
+
 export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_update_stage",
@@ -46,6 +59,27 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
       try {
         const currentState = await stateManager.read(input.workflowId);
         if (input.criticDecision) {
+          if (input.criticDecision === "approved" && hasUnresolvedBlockingInteractions(currentState, currentState.stage)) {
+            return createToolErrorResult({
+              kind: "execution",
+              code: "TOOL_WORKFLOW_TRANSITION_DENIED",
+              name: "WorkflowUnresolvedInteractionsError",
+              message: "Cannot approve critic review while blocking interactions remain unresolved",
+            });
+          }
+          if (
+            input.criticDecision === "approved" &&
+            INTERACTION_CLEARANCE_STAGES.has(currentState.stage) &&
+            !hasResolvedBlockingDecisionInteractions(currentState, currentState.stage) &&
+            !currentState.noRequiredInteractionsReason[currentState.stage]?.trim()
+          ) {
+            return createToolErrorResult({
+              kind: "execution",
+              code: "TOOL_WORKFLOW_TRANSITION_DENIED",
+              name: "WorkflowTransitionError",
+              message: "Cannot approve critic review: stage requires either resolved blocking decisions or a recorded no-question reason",
+            });
+          }
           const result = await processCriticDecision({
             workflowId: input.workflowId,
             decision: input.criticDecision as CriticDecision,
@@ -67,6 +101,9 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
         }, input.stage as WorkflowStage, {
           hasArtifact: (kind: string) => artifactAvailability.available.has(kind as ArtifactKind),
           hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
+          hasUnresolvedBlockingInteractions: (stage: WorkflowStage) => hasUnresolvedBlockingInteractions(currentState, stage),
+          hasResolvedBlockingDecisionInteractions: (stage: WorkflowStage) => hasResolvedBlockingDecisionInteractions(currentState, stage),
+          hasNoRequiredInteractionsReason: (stage: WorkflowStage) => Boolean(currentState.noRequiredInteractionsReason[stage]?.trim()),
           hasUserApproval: input.hasUserApproval,
         });
         if (!transition.allowed) {

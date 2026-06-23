@@ -1,10 +1,10 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../../../agents/workflow/state";
+import { WorkflowStateManager, type WorkflowInteraction } from "../../../agents/workflow/state";
 import { MemoryFileManager } from "../../../memory/file-manager";
 import { ProjectApprovalManager } from "../../permission";
 import type { ProjectContext } from "../../../projects/types";
@@ -22,7 +22,9 @@ import {
   createWorkflowCompleteTool,
   createWorkflowCreateTool,
   createWorkflowReadTool,
+  createWorkflowProposeInteractionsTool,
   createWorkflowRecordCompletionTool,
+  createWorkflowRequestInteractionsTool,
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
 } from "./index";
@@ -77,6 +79,8 @@ function createWorkflowRegistry(): {
     createWorkflowUpdateStageTool(),
     createWorkflowCompleteTool(),
     createWorkflowRecordCompletionTool(),
+    createWorkflowProposeInteractionsTool(),
+    createWorkflowRequestInteractionsTool(),
     createArtifactReadTool(),
     createArtifactWriteTool(),
     createWorkflowTaskCheckTool(),
@@ -104,7 +108,24 @@ function makeCtx(
   input: unknown,
   projectContext: ProjectContext,
   store: StoreApi<SessionStoreState> = createMockStore(),
+  options: {
+    askUser?: ToolExecutionContext["askUser"];
+    allowedTools?: readonly string[];
+    agentName?: string;
+  } = {},
 ): ToolExecutionContext {
+  const defaultAllowedTools = [
+    "workflow_create",
+    "workflow_read",
+    "workflow_update_stage",
+    "workflow_complete",
+    "workflow_record_completion",
+    "workflow_propose_interactions",
+    "workflow_request_interactions",
+    "artifact_read",
+    "artifact_write",
+    "workflow_task_check",
+  ];
   return createToolExecutionContext({
     store,
     storeManager,
@@ -114,19 +135,12 @@ function makeCtx(
     step: 1,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set([
-      "workflow_create",
-      "workflow_read",
-      "workflow_update_stage",
-      "workflow_complete",
-      "workflow_record_completion",
-      "artifact_read",
-      "artifact_write",
-      "workflow_task_check",
-    ]),
+    allowedTools: new Set(options.allowedTools ?? defaultAllowedTools),
+    agentName: options.agentName ?? store.getState().agentName,
     agentSkills: [],
     skillService: testSkillService,
     projectContext,
+    ...(options.askUser ? { askUser: options.askUser } : {}),
   });
 }
 
@@ -136,15 +150,49 @@ async function execute(
   toolName: string,
   input: unknown,
   store?: StoreApi<SessionStoreState>,
+  options?: Parameters<typeof makeCtx>[4],
 ) {
   return registry.execute(
     { toolName, toolCallId: `${toolName}-call`, input },
-    makeCtx(toolName, input, projectContext, store),
+    makeCtx(toolName, input, projectContext, store, options),
   );
 }
 
 function workflowEvents(store: StoreApi<SessionStoreState>) {
   return store.getState().events.filter((event) => event.kind === "workflow.state_change");
+}
+
+function validInteractionProposal(overrides: Record<string, unknown> = {}) {
+  return {
+    decisionKey: "requirements.scope",
+    stage: "requirements_interview",
+    sourceAgent: "product",
+    kind: "decision",
+    blocking: true,
+    question: "Should this workflow include the billing dashboard?",
+    options: ["Include billing dashboard", "Exclude billing dashboard"],
+    recommendedOption: "Include billing dashboard",
+    rationale: "The PRD needs this scope decision before drafting acceptance criteria.",
+    ...overrides,
+  };
+}
+
+function workflowInteraction(overrides: Partial<WorkflowInteraction> = {}): WorkflowInteraction {
+  return {
+    id: "critic-decision-1",
+    decisionKey: "critic.risk",
+    stage: "critic_prd_review",
+    sourceAgent: "critic",
+    kind: "decision",
+    blocking: true,
+    question: "Accept the PRD risk?",
+    options: ["Accept", "Revise"],
+    recommendedOption: "Accept",
+    rationale: "Critic approval depends on this blocking user-owned decision.",
+    status: "proposed",
+    revision: 1,
+    ...overrides,
+  };
 }
 
 describe("workflow builtin tools", () => {
@@ -358,12 +406,12 @@ describe("workflow builtin tools", () => {
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage.id,
-      stage: "product_drafting",
+      stage: "requirements_interview",
     }, store);
     expect(updated.isError).toBe(false);
     expect(JSON.parse(updated.output)).toMatchObject({
       id: wf_stage.id,
-      stage: "product_drafting",
+      stage: "requirements_interview",
       status: "active",
     });
 
@@ -390,7 +438,7 @@ describe("workflow builtin tools", () => {
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage_event.id,
-      stage: "product_drafting",
+      stage: "requirements_interview",
     }, store);
 
     expect(updated.isError).toBe(false);
@@ -425,6 +473,146 @@ describe("workflow builtin tools", () => {
       type: "workflow.state_change",
       workflowId: wf_completion_record.id,
       changed: ["stageCompletions"],
+    });
+  });
+
+  test("workflow_record_completion persists noRequiredInteractionsReason", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_completion_reason = await stateManager.create({ title: "Completion Reason", type: "full_feature" });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_completion_reason.id);
+
+    const recorded = await execute(registry, projectContext, "workflow_record_completion", {
+      workflowId: wf_completion_reason.id,
+      stage: "requirements_interview",
+      evidence: ["requirements reviewed"],
+      noRequiredInteractionsReason: "The user supplied all required scope and risk decisions in the initial request.",
+    }, store);
+
+    expect(recorded.isError).toBe(false);
+    const state = JSON.parse(recorded.output);
+    expect(state.stageCompletions.requirements_interview).toMatchObject({
+      stage: "requirements_interview",
+      evidence: ["requirements reviewed"],
+    });
+    expect(state.noRequiredInteractionsReason.requirements_interview).toBe("The user supplied all required scope and risk decisions in the initial request.");
+    expect((await stateManager.read(wf_completion_reason.id)).noRequiredInteractionsReason.requirements_interview).toBe("The user supplied all required scope and risk decisions in the initial request.");
+    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+      type: "workflow.state_change",
+      workflowId: wf_completion_reason.id,
+      changed: ["stageCompletions", "noRequiredInteractionsReason"],
+    });
+  });
+
+  test("workflow_update_stage critic approval rejects unresolved blocking interactions", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_critic_blocked = await stateManager.create({ title: "Critic Blocked", type: "full_feature" });
+    await stateManager.updateStage(wf_critic_blocked.id, "critic_prd_review");
+    await stateManager.updateInteractions(wf_critic_blocked.id, {
+      requiredInteractions: [workflowInteraction({ status: "requested" })],
+      resolvedInteractions: [],
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_critic_blocked.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_critic_blocked.id,
+      stage: "spec_drafting",
+      criticDecision: "approved",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("Cannot approve critic review while blocking interactions remain unresolved");
+    expect((await stateManager.read(wf_critic_blocked.id)).stage).toBe("critic_prd_review");
+  });
+
+  test("workflow_update_stage critic approval rejects missing interaction clearance", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_critic_uncleared = await stateManager.create({ title: "Critic Uncleared", type: "full_feature" });
+    await stateManager.updateStage(wf_critic_uncleared.id, "critic_prd_review");
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_critic_uncleared.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_critic_uncleared.id,
+      stage: "spec_drafting",
+      criticDecision: "approved",
+    }, store);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("Cannot approve critic review: stage requires either resolved blocking decisions or a recorded no-question reason");
+    expect((await stateManager.read(wf_critic_uncleared.id)).stage).toBe("critic_prd_review");
+  });
+
+  test("workflow_update_stage critic approval allows recorded no-question reason", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_critic_reason = await stateManager.create({ title: "Critic Reason", type: "full_feature" });
+    await stateManager.updateStage(wf_critic_reason.id, "critic_prd_review");
+    await stateManager.recordStageCompletion(wf_critic_reason.id, {
+      stage: "critic_prd_review",
+      noRequiredInteractionsReason: "Critic found no user-owned risk or scope decision requiring clarification.",
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_critic_reason.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_critic_reason.id,
+      stage: "spec_drafting",
+      criticDecision: "approved",
+    }, store);
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toMatchObject({
+      newState: { id: wf_critic_reason.id, stage: "spec_drafting" },
+      transitionDescription: "critic approved PRD; advancing to SPEC drafting",
+    });
+  });
+
+  test("workflow_update_stage critic approval allows resolved blocking interactions", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_critic_resolved = await stateManager.create({ title: "Critic Resolved", type: "full_feature" });
+    await stateManager.updateStage(wf_critic_resolved.id, "critic_prd_review");
+    await stateManager.updateInteractions(wf_critic_resolved.id, {
+      requiredInteractions: [workflowInteraction({ status: "resolved", answer: "Accept", resolvedAt: new Date().toISOString() })],
+      resolvedInteractions: [],
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_critic_resolved.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_critic_resolved.id,
+      stage: "spec_drafting",
+      criticDecision: "approved",
+    }, store);
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toMatchObject({
+      newState: { id: wf_critic_resolved.id, stage: "spec_drafting" },
+      transitionDescription: "critic approved PRD; advancing to SPEC drafting",
+    });
+  });
+
+  test("workflow_update_stage critic rejection is allowed with unresolved blocking interactions", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf_critic_rejected = await stateManager.create({ title: "Critic Rejected", type: "full_feature" });
+    await stateManager.updateStage(wf_critic_rejected.id, "critic_prd_review");
+    await stateManager.updateInteractions(wf_critic_rejected.id, {
+      requiredInteractions: [workflowInteraction({ status: "requested" })],
+      resolvedInteractions: [],
+    });
+    const store = createMockStore();
+    store.getState().setWorkflowId(wf_critic_rejected.id);
+
+    const result = await execute(registry, projectContext, "workflow_update_stage", {
+      workflowId: wf_critic_rejected.id,
+      stage: "product_drafting",
+      criticDecision: "rejected",
+    }, store);
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toMatchObject({
+      newState: { id: wf_critic_rejected.id, status: "failed" },
+      transitionDescription: "critic rejected; workflow failed",
     });
   });
 
@@ -901,6 +1089,205 @@ describe("workflow builtin tools", () => {
     expect(nonTasks.output).toContain("only supports TASKS.md");
   });
 
+  test("workflow_propose_interactions rejects invalid proposal fields at schema level", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Invalid Interaction Proposal", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "product" });
+    const invalidCases = [
+      ["decisionKey", { decisionKey: "   " }],
+      ["stage", { stage: "not_a_stage" }],
+      ["sourceAgent", { sourceAgent: "foreman" }],
+      ["kind", { kind: "note" }],
+      ["blocking", { blocking: "yes" }],
+      ["question", { question: "" }],
+      ["rationale", { rationale: "" }],
+      ["options", { kind: "decision", options: ["Only one"] }],
+      ["recommendedOption", { recommendedOption: "Not one of the options" }],
+    ] as const;
+
+    for (const [field, overrides] of invalidCases) {
+      const result = await execute(registry, projectContext, "workflow_propose_interactions", {
+        workflowId: wf.id,
+        proposals: [validInteractionProposal(overrides)],
+      }, store);
+
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("schema");
+      expect(result.output).toContain(field);
+    }
+  });
+
+  test("workflow_propose_interactions dedupes by stage and decision key with revision increment", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Interaction Dedupe", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "critic" });
+
+    const first = await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.scope", question: "Pick initial scope?" })],
+    }, store);
+    expect(first.isError).toBe(false);
+
+    const second = await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.scope", question: "Pick revised scope?" })],
+    }, store);
+
+    expect(second.isError).toBe(false);
+    const summary = JSON.parse(second.output);
+    expect(summary).toMatchObject({ accepted: 1, created: 0, updated: 1 });
+    const state = await stateManager.read(wf.id);
+    expect(state.requiredInteractions).toHaveLength(1);
+    expect(state.requiredInteractions[0]).toMatchObject({
+      decisionKey: "requirements.scope",
+      stage: "requirements_interview",
+      question: "Pick revised scope?",
+      status: "proposed",
+      revision: 2,
+    });
+  });
+
+  test("workflow_request_interactions batches multiple blocking proposals into one askUser call", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Interaction Batch", type: "full_feature" });
+    await stateManager.updateStage(wf.id, "requirements_interview");
+    const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [
+        validInteractionProposal({ decisionKey: "requirements.scope", question: "Pick scope?", options: ["A", "B"], recommendedOption: "A" }),
+        validInteractionProposal({ decisionKey: "requirements.timeline", kind: "preference", question: "Pick timeline?", options: ["Fast", "Safe"], recommendedOption: "Safe" }),
+      ],
+    }, store);
+    const askUser = mock(async () => ({ answers: [["A"], ["Safe"]] }));
+
+    const result = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "requirements_interview",
+    }, store, { askUser });
+
+    expect(result.isError).toBe(false);
+    expect(askUser).toHaveBeenCalledTimes(1);
+    const firstAskUserCall = askUser.mock.calls[0] as unknown as Parameters<NonNullable<ToolExecutionContext["askUser"]>> | undefined;
+    expect(firstAskUserCall).toBeDefined();
+    expect(firstAskUserCall![0].questions).toHaveLength(2);
+    expect(JSON.parse(result.output)).toMatchObject({ requested: 2, resolved: 2, cancelled: 0, pending: 0 });
+  });
+
+  test("workflow_request_interactions persists resolved answers in resolvedInteractions", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Interaction Answers", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.scope", options: ["Include", "Exclude"], recommendedOption: "Include" })],
+    }, store);
+    const askUser = mock(async () => ({ answers: [["Include"]] }));
+
+    const result = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "requirements_interview",
+    }, store, { askUser });
+
+    expect(result.isError).toBe(false);
+    const state = await stateManager.read(wf.id);
+    expect(state.requiredInteractions).toHaveLength(0);
+    expect(state.resolvedInteractions).toHaveLength(1);
+    expect(state.resolvedInteractions[0]).toMatchObject({
+      decisionKey: "requirements.scope",
+      status: "resolved",
+      answer: "Include",
+    });
+    expect(state.resolvedInteractions[0]?.resolvedAt).toBeString();
+  });
+
+  test("workflow_request_interactions leaves partially unanswered blocking decisions requested and cancels denied batches", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const partialWorkflow = await stateManager.create({ title: "Partial Interactions", type: "full_feature" });
+    const partialStore = createMockStore({ workflowId: partialWorkflow.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: partialWorkflow.id,
+      proposals: [
+        validInteractionProposal({ decisionKey: "requirements.scope", question: "Pick scope?", options: ["A", "B"], recommendedOption: "A" }),
+        validInteractionProposal({ decisionKey: "requirements.timeline", kind: "preference", question: "Pick timeline?", options: ["Fast", "Safe"], recommendedOption: "Safe" }),
+      ],
+    }, partialStore);
+
+    const partial = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: partialWorkflow.id,
+      stage: "requirements_interview",
+    }, partialStore, { askUser: mock(async () => ({ answers: [["A"], []] })) });
+
+    expect(partial.isError).toBe(false);
+    expect(JSON.parse(partial.output)).toMatchObject({ requested: 2, resolved: 1, cancelled: 0, pending: 1 });
+    const partialState = await stateManager.read(partialWorkflow.id);
+    expect(partialState.resolvedInteractions.map((interaction) => interaction.decisionKey)).toEqual(["requirements.scope"]);
+    expect(partialState.requiredInteractions).toHaveLength(1);
+    expect(partialState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.timeline", status: "requested" });
+
+    const cancelledWorkflow = await stateManager.create({ title: "Cancelled Interactions", type: "full_feature" });
+    const cancelledStore = createMockStore({ workflowId: cancelledWorkflow.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: cancelledWorkflow.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.cancel", options: ["A", "B"], recommendedOption: "A" })],
+    }, cancelledStore);
+    const cancelled = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: cancelledWorkflow.id,
+      stage: "requirements_interview",
+    }, cancelledStore, { askUser: mock(async () => ({ isError: true as const, reason: "Cancelled" })) });
+
+    expect(cancelled.isError).toBe(false);
+    expect(JSON.parse(cancelled.output)).toMatchObject({ requested: 1, resolved: 0, cancelled: 1, pending: 0 });
+    const cancelledState = await stateManager.read(cancelledWorkflow.id);
+    expect(cancelledState.requiredInteractions).toHaveLength(1);
+    expect(cancelledState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.cancel", status: "cancelled" });
+    expect(cancelledState.requiredInteractions[0]?.cancelledAt).toBeString();
+  });
+
+  test("workflow_request_interactions no-ops when no pending blocking interactions exist", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "No Interaction Pending", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.optional", blocking: false, kind: "clarification", options: [] })],
+    }, store);
+    const askUser = mock(async () => ({ answers: [] }));
+
+    const result = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "requirements_interview",
+    }, store, { askUser });
+
+    expect(result.isError).toBe(false);
+    expect(askUser).not.toHaveBeenCalled();
+    expect(JSON.parse(result.output)).toMatchObject({ requested: 0, resolved: 0, cancelled: 0, pending: 0 });
+    expect(result.output).toContain("no blocking interactions to request");
+  });
+
+  test("workflow_request_interactions is denied for product role context", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Product Request Denied", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "product" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal()],
+    }, store);
+
+    const result = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "requirements_interview",
+    }, store, {
+      allowedTools: ["workflow_read", "workflow_propose_interactions"],
+      agentName: "product",
+      askUser: mock(async () => ({ answers: [["Include billing dashboard"]] })),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("TOOL_NOT_ALLOWED");
+    expect(result.output).toContain("workflow_request_interactions");
+  });
+
   test("registerBuiltinTools includes all workflow tools", () => {
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
@@ -910,6 +1297,8 @@ describe("workflow builtin tools", () => {
     expect(registry.get("workflow_update_stage")).toBeDefined();
     expect(registry.get("workflow_complete")).toBeDefined();
     expect(registry.get("workflow_record_completion")).toBeDefined();
+    expect(registry.get("workflow_propose_interactions")).toBeDefined();
+    expect(registry.get("workflow_request_interactions")).toBeDefined();
     expect(registry.get("artifact_read")).toBeDefined();
     expect(registry.get("artifact_write")).toBeDefined();
     expect(registry.get("workflow_task_check")).toBeDefined();

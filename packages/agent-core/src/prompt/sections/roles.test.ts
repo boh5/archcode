@@ -6,6 +6,10 @@ import { foremanAgentDefinition } from "../../agents/definitions/foreman";
 import { criticAgentDefinition } from "../../agents/definitions/critic";
 import { builderAgentDefinition } from "../../agents/definitions/builder";
 import { reviewerAgentDefinition } from "../../agents/definitions/reviewer";
+import { productAgentDefinition } from "../../agents/definitions/product";
+import { specAgentDefinition } from "../../agents/definitions/spec";
+import { exploreAgentDefinition } from "../../agents/definitions/explore";
+import { librarianAgentDefinition } from "../../agents/definitions/librarian";
 
 function makeCtx(rolePrompt?: string): PromptContext {
   return {
@@ -51,6 +55,7 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("## Workflow Role: Orchestrator");
     expect(result).toContain("workflow_create");
+    expect(result).toContain("requirements_interview");
     expect(result).toContain("Product to write the PRD");
     expect(result).toContain("Critic to review the PRD");
     expect(result).toContain("Spec to write SPEC and TASKS");
@@ -58,6 +63,26 @@ describe("buildRoleSection", () => {
     expect(result).toContain("delegate Foreman");
     expect(result).toContain("final verification/reporting");
     expect(result).toContain("mark workflow status completed");
+  });
+
+  test("orchestrator role prompt owns batched interaction clearance before PRD, SPEC, and Critic gates", () => {
+    const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
+
+    expect(result).toContain("workflow_propose_interactions");
+    expect(result).toContain("workflow_request_interactions");
+    expect(result).toContain("proposal -> request -> resolve");
+    expect(result).toContain("call workflow_request_interactions once per gate");
+    expect(result).toContain("before PRD review, before SPEC review, and before Critic approval");
+    expect(result).toContain("Do not proceed to PRD review, SPEC review, or Critic approval while workflow_read reports unresolved blocking decisions");
+    expect(result).toContain("record stage clearance or noRequiredInteractionsReason");
+  });
+
+  test("orchestrator routes Product, Spec, and Critic questions through interaction tools instead of direct ask_user", () => {
+    const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
+
+    expect(result).toContain("Product, Spec, and Critic must propose questions with workflow_propose_interactions");
+    expect(result).toContain("Do not use ask_user for Product/Spec/Critic planning questions");
+    expect(result).toContain("Only Orchestrator uses workflow_request_interactions to ask the user for batched gate decisions");
   });
 
   test("orchestrator role prompt requires ask_user before Foreman", () => {
@@ -96,6 +121,34 @@ describe("buildRoleSection", () => {
     expect(result).toContain("Rejection criteria");
   });
 
+  test.each([
+    ["Product", productAgentDefinition.rolePrompt],
+    ["Spec", specAgentDefinition.rolePrompt],
+    ["Critic", criticAgentDefinition.rolePrompt],
+  ])("%s prompt surfaces required interactions without direct ask_user", (_name, rolePrompt) => {
+    const result = buildRoleSection(makeCtx(rolePrompt));
+
+    expect(result).toContain("Required Interaction proposal contract");
+    expect(result).toContain("workflow_propose_interactions");
+    expect(result).toContain("decisionKey");
+    expect(result).toContain("options");
+    expect(result).toContain("at least 2 for decisions");
+    expect(result).toContain("recommendedOption");
+    expect(result).toContain("rationale");
+    expect(result).toContain("blocking");
+    expect(result).toContain("noRequiredInteractionsReason");
+    expect(result).toContain("Do NOT call ask_user directly");
+  });
+
+  test("critic prompt narrows user proposals to appropriate decision categories", () => {
+    const result = buildRoleSection(makeCtx(criticAgentDefinition.rolePrompt));
+
+    expect(result).toContain("product scope");
+    expect(result).toContain("risk acceptance");
+    expect(result).toContain("major tradeoffs");
+    expect(result).toContain("blocking ambiguity");
+  });
+
   test("builder role prompt contains TDD instruction and verification order", () => {
     const result = buildRoleSection(makeCtx(builderAgentDefinition.rolePrompt));
 
@@ -114,6 +167,34 @@ describe("buildRoleSection", () => {
     expect(result).toContain("must NOT alter workflow stage/status");
     expect(result).toContain("Explore or Librarian at depth 3");
     expect(result).toContain("artifact_write for evidence and reports");
+  });
+
+  test.each([
+    ["Foreman", foremanAgentDefinition.rolePrompt],
+    ["Builder", builderAgentDefinition.rolePrompt],
+  ])("%s prompt preserves autonomous coding after execution approval", (_name, rolePrompt) => {
+    const result = buildRoleSection(makeCtx(rolePrompt));
+
+    expect(result).toContain("Autonomous-by-default coding after approval");
+    expect(result).toContain("Ask the user ONLY for permissions/security confirmations");
+    expect(result).toContain("true unrecoverable blockers");
+    expect(result).toContain("plan-marked ask-before-changing decisions");
+    expect(result).toContain("Do NOT ask about normal implementation choices");
+  });
+
+  test.each([
+    ["Explorer", exploreAgentDefinition.rolePrompt],
+    ["Librarian", librarianAgentDefinition.rolePrompt],
+  ])("%s prompt requires concise evidence for orchestration decisions", (_name, rolePrompt) => {
+    const result = buildRoleSection(makeCtx(rolePrompt));
+
+    expect(result).toContain("Research mandate");
+    expect(result).toContain("When to research");
+    expect(result).toContain("What to look for");
+    expect(result).toContain("Concise evidence output");
+    expect(result).toContain("Facts found");
+    expect(result).toContain("Citations");
+    expect(result).toContain("Unknowns");
   });
 
   test("reviewer role prompt is codebase read-only with writable evidence reports", () => {

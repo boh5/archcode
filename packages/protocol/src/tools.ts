@@ -53,6 +53,8 @@ export const TOOL_WORKFLOW_READ = "workflow_read";
 export const TOOL_WORKFLOW_UPDATE_STAGE = "workflow_update_stage";
 export const TOOL_WORKFLOW_COMPLETE = "workflow_complete";
 export const TOOL_WORKFLOW_RECORD_COMPLETION = "workflow_record_completion";
+export const TOOL_WORKFLOW_PROPOSE_INTERACTIONS = "workflow_propose_interactions";
+export const TOOL_WORKFLOW_REQUEST_INTERACTIONS = "workflow_request_interactions";
 export const TOOL_WORKFLOW_TASK_CHECK = "workflow_task_check";
 
 // Artifacts
@@ -91,6 +93,8 @@ export type BuiltinToolName =
   | typeof TOOL_WORKFLOW_UPDATE_STAGE
   | typeof TOOL_WORKFLOW_COMPLETE
   | typeof TOOL_WORKFLOW_RECORD_COMPLETION
+  | typeof TOOL_WORKFLOW_PROPOSE_INTERACTIONS
+  | typeof TOOL_WORKFLOW_REQUEST_INTERACTIONS
   | typeof TOOL_WORKFLOW_TASK_CHECK
   | typeof TOOL_ARTIFACT_READ
   | typeof TOOL_ARTIFACT_WRITE;
@@ -144,6 +148,8 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_WORKFLOW_UPDATE_STAGE]: "workflow",
   [TOOL_WORKFLOW_COMPLETE]: "workflow",
   [TOOL_WORKFLOW_RECORD_COMPLETION]: "workflow",
+  [TOOL_WORKFLOW_PROPOSE_INTERACTIONS]: "workflow",
+  [TOOL_WORKFLOW_REQUEST_INTERACTIONS]: "workflow",
   [TOOL_WORKFLOW_TASK_CHECK]: "workflow",
   [TOOL_ARTIFACT_READ]: "fileRead",
   [TOOL_ARTIFACT_WRITE]: "fileWrite",

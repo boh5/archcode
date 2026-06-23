@@ -5,7 +5,7 @@ import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "./artifacts";
 import { processCriticDecision } from "./critic-protocol";
-import { canCompleteWorkflow, validateTransition } from "./guards";
+import { canCompleteWorkflow, hasResolvedBlockingDecisionInteractions, hasUnresolvedBlockingInteractions, validateTransition } from "./guards";
 import {
   createDerivedWorkflowWithOrchestrator,
   createWorkflowWithOrchestrator,
@@ -31,6 +31,8 @@ import { createWorkflowReadTool } from "../../tools/builtins/workflow/workflow-r
 import { createWorkflowUpdateStageTool } from "../../tools/builtins/workflow/workflow-update-stage";
 import { createWorkflowCompleteTool } from "../../tools/builtins/workflow/workflow-complete";
 import { createWorkflowRecordCompletionTool } from "../../tools/builtins/workflow/workflow-record-completion";
+import { createWorkflowProposeInteractionsTool } from "../../tools/builtins/workflow/workflow-propose-interactions";
+import { createWorkflowRequestInteractionsTool } from "../../tools/builtins/workflow/workflow-request-interactions";
 import { SessionExecutionManager } from "../../execution/session-execution-manager";
 import type { AgentDefinition } from "../factory-types";
 
@@ -76,8 +78,10 @@ describe("mocked workflow MVP integration", () => {
     const delegateReviewer = mock(async () => ({ ok: true, evidencePath: "evidence/T2-reviewer.md" }));
 
     const createdWf = await stateManager.create({ title: "integration test", type: "full_feature" });
-    await transition(stateManager, createdWf.id, "idle", "product_drafting", false);
-    await stateManager.recordStageCompletion(createdWf.id, { stage: "product_drafting" });
+    await transition(stateManager, createdWf.id, "idle", "requirements_interview", false);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "requirements_interview", noRequiredInteractionsReason: "Mocked path has no requirements questions." });
+    await transition(stateManager, createdWf.id, "requirements_interview", "product_drafting", false);
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "product_drafting", noRequiredInteractionsReason: "Mocked PRD path has no product questions." });
 
     await artifactManager.write({ workflowId: createdWf.id, kind: "PRD", content: "# PRD\n\nShip a mocked MVP workflow integration path." });
     await transition(stateManager, createdWf.id, "product_drafting", "critic_prd_review", false);
@@ -107,7 +111,7 @@ describe("mocked workflow MVP integration", () => {
     });
     const tasksDraft = await artifactManager.read(createdWf.id, "TASKS.md");
     expect(validateTasksMarkdown(tasksDraft.body).valid).toBe(true);
-    await stateManager.recordStageCompletion(createdWf.id, { stage: "spec_drafting" });
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "spec_drafting", noRequiredInteractionsReason: "Mocked SPEC path has no spec questions." });
     await transition(stateManager, createdWf.id, "spec_drafting", "critic_spec_review", false);
 
     const specReport = await artifactManager.write({
@@ -191,16 +195,18 @@ describe("end-to-end workflow lifecycle integration", () => {
     const artifactManager = new WorkflowArtifactManager(root, stateManager);
 
     const wf_full = await stateManager.create({ title: "Full Feature", type: "full_feature" });
+    await advance(stateManager, wf_full.id, "requirements_interview");
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "requirements_interview", evidence: ["requirements cleared"], noRequiredInteractionsReason: "Lifecycle test starts with complete requirements." });
     await advance(stateManager, wf_full.id, "product_drafting");
     await artifactManager.write({ workflowId: wf_full.id, kind: "PRD", content: "# PRD" });
-    await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"] });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"], noRequiredInteractionsReason: "Lifecycle PRD has no outstanding product questions." });
     await advance(stateManager, wf_full.id, "critic_prd_review");
     const fullPrdReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "prd", content: "approved" });
     await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_prd_review", criticReportPath: fullPrdReport.path }, stateManager);
 
     await artifactManager.write({ workflowId: wf_full.id, kind: "SPEC", content: "# SPEC" });
     await artifactManager.write({ workflowId: wf_full.id, kind: "TASKS", content: TASKS_MARKDOWN });
-    await stateManager.recordStageCompletion(wf_full.id, { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"] });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"], noRequiredInteractionsReason: "Lifecycle SPEC has no outstanding spec questions." });
     await advance(stateManager, wf_full.id, "critic_spec_review");
     const fullSpecReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "spec", content: "approved" });
     await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_spec_review", criticReportPath: fullSpecReport.path }, stateManager);
@@ -223,6 +229,293 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(completed.artifacts.CRITIC_REPORT).toEqual([fullPrdReport.path, fullSpecReport.path]);
     expect(completed.artifacts.EVIDENCE).toEqual([fullEvidence.path]);
     expect(completed.stageCompletions.final_review?.evidence).toEqual(["FINAL_REPORT.md"]);
+  });
+
+  test("full_feature planning decisions are batched, resolved, archived, and keep Foreman gated until approval", async () => {
+    const root = workspaceRoot("full-feature-interactions");
+    const storeManager = new SessionStoreManager({ logger: silentLogger });
+    const store = storeManager.create("orchestrator-interactions", root, { agentName: "orchestrator" });
+    const registry = createWorkflowToolRegistry();
+    const stateManager = new WorkflowStateManager(root);
+    const artifactManager = new WorkflowArtifactManager(root, stateManager);
+    const answersByDecisionKey: Record<string, string> = {
+      "requirements.scope": "Ship billing dashboard",
+      "requirements.timeline": "Safe rollout",
+      "product.api": "Public REST API",
+      "spec.storage": "SQLite first",
+      "critic.risk": "Accept staged rollout risk",
+    };
+    const decisionAskUser = mock(async (request: Parameters<NonNullable<ToolExecutionContext["askUser"]>>[0]) => {
+      const decisionKeys = request.context?.decisionKeys;
+      if (!Array.isArray(decisionKeys)) throw new Error("Expected batched decision keys");
+      return {
+        answers: decisionKeys.map((decisionKey) => [answersByDecisionKey[String(decisionKey)] ?? `answer for ${String(decisionKey)}`]),
+      };
+    });
+    const implementationAskUser = mock(async () => ({ answers: [["ordinary implementation choice"]] }));
+    const beginForeman = mock(async () => ({ ok: true }));
+    const runBuilder = mock(async () => ({ ok: true }));
+
+    const created = parseToolJson<{ id: string; stage: WorkflowStage }>(await executeWorkflowTool(registry, root, storeManager, store, "workflow_create", {
+      title: "Decision-complete full feature",
+      type: "full_feature",
+    }));
+    const workflowId = created.id;
+    expect(created.stage).toBe("idle");
+    expect(store.getState().workflowId).toBe(workflowId);
+
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "requirements_interview",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }));
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
+      workflowId,
+      proposals: [
+        interactionProposal({ decisionKey: "requirements.scope", sourceAgent: "product", question: "Which scope should the PRD target?", options: ["Ship billing dashboard", "Reports only"], recommendedOption: "Ship billing dashboard" }),
+        interactionProposal({ decisionKey: "requirements.timeline", sourceAgent: "product", kind: "preference", question: "Which rollout timeline should planning assume?", options: ["Fast rollout", "Safe rollout"], recommendedOption: "Safe rollout" }),
+      ],
+    }, { agentName: "product" }));
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "requirements_interview",
+      evidence: ["requirements interview completed"],
+    }));
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "product_drafting",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
+
+    const requirementsRequest = parseToolJson<{ requested: number; resolved: number; pending: number; archive: { archived: number } }>(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
+      workflowId,
+      stage: "requirements_interview",
+    }, { askUser: decisionAskUser }));
+    expect(requirementsRequest).toMatchObject({ requested: 2, resolved: 2, pending: 0, archive: { archived: 2 } });
+    expect(decisionAskUser).toHaveBeenCalledTimes(1);
+    const firstDecisionRequest = decisionAskUser.mock.calls[0]?.[0];
+    expect(firstDecisionRequest?.questions).toHaveLength(2);
+    expect(firstDecisionRequest?.context).toMatchObject({ workflowId, stage: "requirements_interview", decisionKeys: ["requirements.scope", "requirements.timeline"] });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "product_drafting",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }));
+
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
+      workflowId,
+      proposals: [interactionProposal({ decisionKey: "product.api", stage: "product_drafting", sourceAgent: "product", question: "Which API surface should the PRD require?", options: ["Public REST API", "Internal-only API"], recommendedOption: "Public REST API" })],
+    }, { agentName: "product" }));
+    await artifactManager.write({ workflowId, kind: "PRD", content: "# PRD\n\nBuild the billing dashboard with the selected scope." });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "product_drafting",
+      evidence: ["PRD.md"],
+    }));
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "critic_prd_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
+      workflowId,
+      stage: "product_drafting",
+    }, { askUser: decisionAskUser }));
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "critic_prd_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }));
+
+    const prdReport = await artifactManager.write({ workflowId, kind: "CRITIC_REPORT", name: "prd", content: "PRD approved after decision clearance." });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "critic_prd_review",
+      evidence: [prdReport.path],
+      noRequiredInteractionsReason: "PRD critic review found no user-owned decision requiring clarification.",
+    }));
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "spec_drafting",
+      hasUserApproval: false,
+      incrementRetry: false,
+      criticDecision: "approved",
+      criticReportPath: prdReport.path,
+    }));
+
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
+      workflowId,
+      proposals: [interactionProposal({ decisionKey: "spec.storage", stage: "spec_drafting", sourceAgent: "spec", question: "Which storage strategy should the SPEC encode?", options: ["SQLite first", "External Postgres required"], recommendedOption: "SQLite first" })],
+    }, { agentName: "spec" }));
+    await artifactManager.write({ workflowId, kind: "SPEC", content: "# SPEC\n\nImplement the approved billing dashboard path." });
+    await artifactManager.write({ workflowId, kind: "TASKS", content: TASKS_MARKDOWN });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "spec_drafting",
+      evidence: ["SPEC.md", "TASKS.md"],
+    }));
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "critic_spec_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
+      workflowId,
+      stage: "spec_drafting",
+    }, { askUser: decisionAskUser }));
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "critic_spec_review",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }));
+
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
+      workflowId,
+      proposals: [interactionProposal({ decisionKey: "critic.risk", stage: "critic_spec_review", sourceAgent: "critic", question: "Accept staged rollout risk noted by Critic?", options: ["Accept staged rollout risk", "Block release until all risk is eliminated"], recommendedOption: "Accept staged rollout risk" })],
+    }, { agentName: "critic" }));
+    const specReport = await artifactManager.write({ workflowId, kind: "CRITIC_REPORT", name: "spec", content: "SPEC/TASKS approved after risk decision." });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "critic_spec_review",
+      evidence: [specReport.path],
+    }));
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "awaiting_user_approval",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
+      workflowId,
+      stage: "critic_spec_review",
+    }, { askUser: decisionAskUser }));
+
+    const afterCriticDecision = await stateManager.read(workflowId);
+    expect(validateTransition({
+      workflowId,
+      workflowType: afterCriticDecision.type,
+      currentStage: afterCriticDecision.stage,
+      targetStage: "awaiting_user_approval",
+      retryCount: afterCriticDecision.retryCount,
+      maxRetries: afterCriticDecision.maxRetries,
+      hasArtifact: (kind) => Boolean(afterCriticDecision.artifacts[kind as keyof typeof afterCriticDecision.artifacts]),
+      hasStageCompletion: (stage) => Boolean(afterCriticDecision.stageCompletions[stage]),
+      hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(afterCriticDecision, stage),
+      hasResolvedBlockingDecisionInteractions: (stage) => hasResolvedBlockingDecisionInteractions(afterCriticDecision, stage),
+      hasNoRequiredInteractionsReason: (stage) => Boolean(afterCriticDecision.noRequiredInteractionsReason[stage]?.trim()),
+      hasUserApproval: false,
+    })).toEqual({ allowed: true });
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "awaiting_user_approval",
+      hasUserApproval: false,
+      incrementRetry: false,
+      criticDecision: "approved",
+      criticReportPath: specReport.path,
+    }));
+
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "foreman_executing",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "record completion for awaiting_user_approval");
+    expect(beginForeman).not.toHaveBeenCalled();
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+      workflowId,
+      stage: "awaiting_user_approval",
+      evidence: ["user-approved-final-plan"],
+    }));
+    expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "foreman_executing",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "without user approval");
+    expect(beginForeman).not.toHaveBeenCalled();
+    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+      workflowId,
+      stage: "foreman_executing",
+      hasUserApproval: true,
+      incrementRetry: false,
+    }));
+    await beginForeman();
+    await runBuilder();
+
+    const finalState = await stateManager.read(workflowId);
+    const archive = await artifactManager.readByKind(workflowId, "INTERACTIONS");
+    expect(finalState.stage).toBe("foreman_executing");
+    expect(finalState.requiredInteractions).toEqual([]);
+    expect(finalState.resolvedInteractions.map((interaction) => interaction.decisionKey).sort()).toEqual([
+      "critic.risk",
+      "product.api",
+      "requirements.scope",
+      "requirements.timeline",
+      "spec.storage",
+    ]);
+    expect(archive.body).toContain("# Workflow Interactions Archive");
+    for (const [decisionKey, answer] of Object.entries(answersByDecisionKey)) {
+      expect(archive.body).toContain(`## ${decisionKey}`);
+      expect(archive.body).toContain(`- Selected Answer: ${answer}`);
+    }
+    expect(decisionAskUser).toHaveBeenCalledTimes(4);
+    expect(beginForeman).toHaveBeenCalledTimes(1);
+    expect(runBuilder).toHaveBeenCalledTimes(1);
+    expect(implementationAskUser).not.toHaveBeenCalled();
+  });
+
+  test("cancelled and empty batched decision answers remain blocking", async () => {
+    const cancelled = await createWorkflowAtRequirementsGate("cancelled-decision");
+    const cancelledResult = parseToolJson<{ cancelled: number; archive: { archived: number } }>(await executeWorkflowTool(
+      cancelled.registry,
+      cancelled.root,
+      cancelled.storeManager,
+      cancelled.store,
+      "workflow_request_interactions",
+      { workflowId: cancelled.workflowId, stage: "requirements_interview" },
+      { askUser: mock(async () => ({ isError: true as const, reason: "Cancelled" })) },
+    ));
+    expect(cancelledResult).toMatchObject({ cancelled: 1, archive: { archived: 1 } });
+    const cancelledState = await cancelled.stateManager.read(cancelled.workflowId);
+    expect(cancelledState.requiredInteractions).toHaveLength(1);
+    expect(cancelledState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.blocker", status: "cancelled" });
+    expect(hasUnresolvedBlockingInteractions(cancelledState, "requirements_interview")).toBe(true);
+    expectToolError(await executeWorkflowTool(cancelled.registry, cancelled.root, cancelled.storeManager, cancelled.store, "workflow_update_stage", {
+      workflowId: cancelled.workflowId,
+      stage: "product_drafting",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
+    expect((await cancelled.artifactManager.readByKind(cancelled.workflowId, "INTERACTIONS")).body).toContain("- Status: cancelled");
+
+    const empty = await createWorkflowAtRequirementsGate("empty-decision");
+    const emptyResult = parseToolJson<{ resolved: number; pending: number }>(await executeWorkflowTool(
+      empty.registry,
+      empty.root,
+      empty.storeManager,
+      empty.store,
+      "workflow_request_interactions",
+      { workflowId: empty.workflowId, stage: "requirements_interview" },
+      { askUser: mock(async () => ({ answers: [[]] })) },
+    ));
+    expect(emptyResult).toMatchObject({ resolved: 0, pending: 1 });
+    const emptyState = await empty.stateManager.read(empty.workflowId);
+    expect(emptyState.requiredInteractions).toHaveLength(1);
+    expect(emptyState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.blocker", status: "requested" });
+    expect(hasUnresolvedBlockingInteractions(emptyState, "requirements_interview")).toBe(true);
+    expectToolError(await executeWorkflowTool(empty.registry, empty.root, empty.storeManager, empty.store, "workflow_update_stage", {
+      workflowId: empty.workflowId,
+      stage: "product_drafting",
+      hasUserApproval: false,
+      incrementRetry: false,
+    }), "unresolved blocking interaction(s) remain");
   });
 
   test("research_only lifecycle creates research, consolidates, and completes", async () => {
@@ -483,9 +776,11 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(invalid.allowed).toBe(false);
     expect(invalid.errorName).toBe("WorkflowTransitionError");
 
+    await advance(stateManager, wf_errors.id, "requirements_interview");
+    await stateManager.recordStageCompletion(wf_errors.id, { stage: "requirements_interview", noRequiredInteractionsReason: "Error-case setup has no requirements questions." });
     await advance(stateManager, wf_errors.id, "product_drafting");
     await artifactManager.write({ workflowId: wf_errors.id, kind: "PRD", content: "# PRD" });
-    const missingCompletion = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: () => false, hasUserApproval: false });
+    const missingCompletion = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: (stage) => stage === "requirements_interview", hasUserApproval: false });
     expect(missingCompletion.allowed).toBe(false);
     expect(missingCompletion.error).toContain("record completion for product_drafting");
 
@@ -538,18 +833,138 @@ async function transition(
     maxRetries: state.maxRetries,
     hasArtifact: (kind: string) => Boolean(state.artifacts[kind as keyof typeof state.artifacts]),
     hasStageCompletion: (stage: WorkflowStage) => Boolean(state.stageCompletions[stage]),
+    hasResolvedBlockingDecisionInteractions: (stage: WorkflowStage) => hasResolvedBlockingDecisionInteractions(state, stage),
+    hasNoRequiredInteractionsReason: (stage: WorkflowStage) => Boolean(state.noRequiredInteractionsReason[stage]?.trim()),
     hasUserApproval,
   });
 
   expect(result).toEqual({ allowed: true });
   if (currentStage !== "idle") {
-    await stateManager.recordStageCompletion(workflowId, { stage: currentStage });
+    await stateManager.recordStageCompletion(workflowId, {
+      stage: currentStage,
+      noRequiredInteractionsReason: isPlanningOrReviewStage(currentStage)
+        ? `No user interaction required for ${currentStage} in test transition.`
+        : undefined,
+    });
   }
   await stateManager.updateStage(workflowId, targetStage);
 }
 
 function workspaceRoot(name: string): string {
   return join(TMP_DIR, name);
+}
+
+function createWorkflowToolRegistry(): ReturnType<typeof createRegistry> {
+  return createRegistry([
+    createWorkflowCreateTool(),
+    createWorkflowReadTool(),
+    createWorkflowUpdateStageTool(),
+    createWorkflowRecordCompletionTool(),
+    createWorkflowCompleteTool(),
+    createWorkflowProposeInteractionsTool(),
+    createWorkflowRequestInteractionsTool(),
+    createArtifactReadTool(),
+    createArtifactWriteTool(),
+  ]);
+}
+
+async function executeWorkflowTool(
+  registry: ReturnType<typeof createRegistry>,
+  root: string,
+  storeManager: SessionStoreManager,
+  store: StoreApi<SessionStoreState>,
+  toolName: string,
+  input: unknown,
+  options: {
+    askUser?: ToolExecutionContext["askUser"];
+    agentName?: string;
+  } = {},
+): Promise<ToolExecutionResult> {
+  const ctx = createToolExecutionContext({
+    store,
+    storeManager,
+    toolName,
+    toolCallId: `${toolName}-${crypto.randomUUID()}`,
+    input,
+    step: 1,
+    abort: new AbortController().signal,
+    agentName: options.agentName ?? store.getState().agentName,
+    startedAt: Date.now(),
+    allowedTools: new Set(registry.getAll().map((tool) => tool.name)),
+    projectContext: createTestProjectContext(root),
+    ...(options.askUser ? { askUser: options.askUser } : {}),
+  });
+  return await registry.execute({ toolName, toolCallId: ctx.toolCallId, input }, ctx);
+}
+
+function parseToolJson<T = unknown>(result: ToolExecutionResult): T {
+  expect(result.isError).toBe(false);
+  return JSON.parse(result.output) as T;
+}
+
+function expectToolError(result: ToolExecutionResult, expectedFragment: string): string {
+  expect(result.isError).toBe(true);
+  expect(result.output).toContain(expectedFragment);
+  return result.output;
+}
+
+function interactionProposal(overrides: Record<string, unknown> = {}) {
+  return {
+    decisionKey: "requirements.scope",
+    stage: "requirements_interview",
+    sourceAgent: "product",
+    kind: "decision",
+    blocking: true,
+    question: "Which user-owned decision should planning use?",
+    options: ["Option A", "Option B"],
+    recommendedOption: "Option A",
+    rationale: "The workflow needs this decision before the next planning gate can be completed.",
+    ...overrides,
+  };
+}
+
+async function createWorkflowAtRequirementsGate(name: string): Promise<{
+  root: string;
+  storeManager: SessionStoreManager;
+  store: StoreApi<SessionStoreState>;
+  registry: ReturnType<typeof createRegistry>;
+  stateManager: WorkflowStateManager;
+  artifactManager: WorkflowArtifactManager;
+  workflowId: string;
+}> {
+  const root = workspaceRoot(name);
+  const storeManager = new SessionStoreManager({ logger: silentLogger });
+  const store = storeManager.create(`${name}-session`, root, { agentName: "orchestrator" });
+  const registry = createWorkflowToolRegistry();
+  const stateManager = new WorkflowStateManager(root);
+  const artifactManager = new WorkflowArtifactManager(root, stateManager);
+  const workflow = parseToolJson<{ id: string }>(await executeWorkflowTool(registry, root, storeManager, store, "workflow_create", {
+    title: name,
+    type: "full_feature",
+  }));
+
+  parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
+    workflowId: workflow.id,
+    stage: "requirements_interview",
+    hasUserApproval: false,
+    incrementRetry: false,
+  }));
+  parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
+    workflowId: workflow.id,
+    proposals: [interactionProposal({
+      decisionKey: "requirements.blocker",
+      question: "Resolve the requirements blocker?",
+      options: ["Resolve now", "Defer"],
+      recommendedOption: "Resolve now",
+    })],
+  }, { agentName: "product" }));
+  parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
+    workflowId: workflow.id,
+    stage: "requirements_interview",
+    evidence: ["requirements gate attempted"],
+  }));
+
+  return { root, storeManager, store, registry, stateManager, artifactManager, workflowId: workflow.id };
 }
 
 async function advance(
@@ -568,11 +983,21 @@ async function advance(
     maxRetries: state.maxRetries,
     hasArtifact: (kind) => Boolean(state.artifacts[kind as keyof typeof state.artifacts]),
     hasStageCompletion: (stage) => Boolean(state.stageCompletions[stage]),
+    hasResolvedBlockingDecisionInteractions: (stage) => hasResolvedBlockingDecisionInteractions(state, stage),
+    hasNoRequiredInteractionsReason: (stage) => Boolean(state.noRequiredInteractionsReason[stage]?.trim()),
     hasUserApproval,
   });
 
   expect(result).toEqual({ allowed: true });
   await stateManager.updateStage(workflowId, targetStage);
+}
+
+function isPlanningOrReviewStage(stage: WorkflowStage): boolean {
+  return stage === "requirements_interview" ||
+    stage === "product_drafting" ||
+    stage === "critic_prd_review" ||
+    stage === "spec_drafting" ||
+    stage === "critic_spec_review";
 }
 
 function createContext(

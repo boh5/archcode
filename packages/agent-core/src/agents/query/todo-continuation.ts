@@ -1,4 +1,6 @@
 import type { Reminder, ExecutionEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
+import { hasUnresolvedBlockingInteractions } from "../workflow/guards";
+import type { WorkflowState } from "../workflow/state";
 
 export const TODO_REMINDER_STEP_INTERVAL = 10;
 export const TODO_REMINDER_COOLDOWN_MS = 30_000;
@@ -13,6 +15,7 @@ export type ReminderBlockReason =
   | "cooldown"
   | "steps_since_write_below_threshold"
   | "pending_question"
+  | "unresolved_workflow_interactions"
   | "running_sub_agents"
   | "max_reminders";
 
@@ -31,6 +34,7 @@ export type ContinuationBlockReason =
   | "no_pending_todos"
   | "cooldown"
   | "pending_question"
+  | "unresolved_workflow_interactions"
   | "running_sub_agents"
   | "max_continuations"
   | "stagnation"
@@ -46,6 +50,11 @@ export type ContinuationCheckResult =
       should: false;
       reason: ContinuationBlockReason;
     };
+
+export interface ContinuationWorkflowContext {
+  workflow?: Pick<WorkflowState, "id" | "stage" | "requiredInteractions" | "resolvedInteractions"> | null;
+  workflowReadFailed?: boolean;
+}
 
 export function getStepsSinceLastTodoWrite(state: SessionStoreState): number {
   const currentStepIndex = state.steps.length - 1;
@@ -104,6 +113,7 @@ export function shouldContinueAfterLoop(
   state: SessionStoreState,
   loopEndStatus: ExecutionEndEvent["status"],
   now: number,
+  workflowContext: ContinuationWorkflowContext = {},
 ): ContinuationCheckResult {
   if (!isLoopEndAllowed(loopEndStatus)) {
     return { should: false, reason: "disallowed_status" };
@@ -121,6 +131,10 @@ export function shouldContinueAfterLoop(
 
   if (hasPendingQuestion(state)) {
     return { should: false, reason: "pending_question" };
+  }
+
+  if (hasWorkflowBlockingInteractions(state, workflowContext)) {
+    return { should: false, reason: "unresolved_workflow_interactions" };
   }
 
   if (state.todoLoopContinuationCount >= TODO_CONTINUATION_MAX_COUNT) {
@@ -154,6 +168,17 @@ export function hasPendingQuestion(state: Pick<SessionStoreState, "messages">): 
       part.toolName === "ask_user" &&
       (part.state === "pending" || part.state === "running"),
   ) ?? false;
+}
+
+export function hasWorkflowBlockingInteractions(
+  state: Pick<SessionStoreState, "workflowId">,
+  workflowContext: ContinuationWorkflowContext = {},
+): boolean {
+  if (state.workflowId === undefined) return false;
+  if (workflowContext.workflowReadFailed === true) return true;
+  const workflow = workflowContext.workflow;
+  if (!workflow || workflow.id !== state.workflowId) return false;
+  return hasUnresolvedBlockingInteractions(workflow, workflow.stage);
 }
 
 function hasStagnated(

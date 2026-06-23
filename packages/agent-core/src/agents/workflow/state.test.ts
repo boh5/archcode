@@ -3,8 +3,11 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSessionStore } from "../../store/store";
 import { WorkflowArtifactManager } from "./artifacts";
+import type { WorkflowInteraction } from "./index";
 import {
   WorkflowArtifactKindSchema,
+  WorkflowInteractionKindSchema,
+  WorkflowInteractionStatusSchema,
   WorkflowInvalidIdError,
   WorkflowStageSchema,
   WorkflowStateManager,
@@ -42,6 +45,7 @@ describe("workflow schemas", () => {
   test("cover required stage, status, and artifact enums", () => {
     expect(WorkflowStageSchema.options).toEqual([
       "idle",
+      "requirements_interview",
       "researching",
       "research_consolidation",
       "quick_analysis",
@@ -111,6 +115,122 @@ describe("workflow schemas", () => {
     expect(state.id).toBe(VALID_UUID);
     expect(state.title).toBe("My workflow");
     expect(() => WorkflowStateSchema.parse({ ...state, transcripts: [] })).toThrow();
+  });
+
+  test("defaults missing workflow interaction metadata for old persisted states", () => {
+    const now = new Date().toISOString();
+    const state = WorkflowStateSchema.parse({
+      id: VALID_UUID,
+      title: "Old workflow",
+      type: "full_feature",
+      stage: "idle",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(state.requiredInteractions).toEqual([]);
+    expect(state.resolvedInteractions).toEqual([]);
+    expect(state.noRequiredInteractionsReason).toEqual({});
+  });
+
+  test("validates strict workflow-managed interaction metadata", () => {
+    const now = new Date().toISOString();
+    const interaction: WorkflowInteraction = {
+      id: "interaction-1",
+      decisionKey: "prd.scope",
+      stage: "product_drafting",
+      sourceAgent: "product",
+      kind: "decision",
+      blocking: true,
+      question: "Which scope should the PRD use?",
+      options: ["minimal", "complete"],
+      recommendedOption: "minimal",
+      rationale: "The minimal scope reduces implementation risk.",
+      status: "proposed",
+      answer: undefined,
+      createdAt: now,
+      resolvedAt: undefined,
+      cancelledAt: undefined,
+      supersededBy: undefined,
+      revision: 1,
+    };
+
+    const state = WorkflowStateSchema.parse({
+      id: VALID_UUID,
+      title: "Workflow with interactions",
+      type: "full_feature",
+      stage: "product_drafting",
+      status: "active",
+      requiredInteractions: [interaction],
+      resolvedInteractions: [{ ...interaction, id: "interaction-2", status: "resolved", answer: "minimal", resolvedAt: now }],
+      noRequiredInteractionsReason: { spec_drafting: "No open spec decisions." },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(WorkflowInteractionStatusSchema.options).toEqual([
+      "proposed",
+      "requested",
+      "resolved",
+      "cancelled",
+      "superseded",
+    ]);
+    expect(WorkflowInteractionKindSchema.options).toEqual([
+      "decision",
+      "preference",
+      "clarification",
+      "approval",
+    ]);
+    expect(state.requiredInteractions[0]).toMatchObject({
+      id: "interaction-1",
+      revision: 1,
+    });
+    expect(state.resolvedInteractions[0]?.answer).toBe("minimal");
+    expect(state.noRequiredInteractionsReason.spec_drafting).toBe("No open spec decisions.");
+  });
+
+  test("rejects invalid workflow interaction status kind and stage", () => {
+    const now = new Date().toISOString();
+    const validInteraction = {
+      id: "interaction-1",
+      decisionKey: "prd.scope",
+      stage: "product_drafting",
+      sourceAgent: "product",
+      kind: "decision",
+      blocking: true,
+      question: "Which scope should the PRD use?",
+      options: ["minimal", "complete"],
+      rationale: "The minimal scope reduces implementation risk.",
+      status: "proposed",
+      createdAt: now,
+    };
+    const baseState = {
+      id: VALID_UUID,
+      title: "Workflow with interactions",
+      type: "full_feature",
+      stage: "product_drafting",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(() => WorkflowStateSchema.parse({
+      ...baseState,
+      requiredInteractions: [{ ...validInteraction, status: "pending" }],
+    })).toThrow();
+    expect(() => WorkflowStateSchema.parse({
+      ...baseState,
+      requiredInteractions: [{ ...validInteraction, kind: "transport-only" }],
+    })).toThrow();
+    expect(() => WorkflowStateSchema.parse({
+      ...baseState,
+      requiredInteractions: [{ ...validInteraction, stage: "unknown_stage" }],
+    })).toThrow();
+    expect(() => WorkflowStateSchema.parse({
+      ...baseState,
+      requiredInteractions: [{ ...validInteraction, extra: "unknown" }],
+    })).toThrow();
   });
 
   test("rejects non-uuid workflow id", () => {

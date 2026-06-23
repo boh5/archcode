@@ -3,12 +3,14 @@ import { describe, expect, test } from "bun:test";
 import {
   canCompleteWorkflow,
   canTransitionTo,
+  hasResolvedBlockingDecisionInteractions,
+  hasUnresolvedBlockingInteractions,
   validateTransition,
   WorkflowRetryLimitError,
   WorkflowTransitionError,
   type TransitionInput,
 } from "./guards";
-import type { WorkflowStage, WorkflowState, WorkflowType } from "./state";
+import type { WorkflowInteraction, WorkflowStage, WorkflowState, WorkflowType } from "./state";
 import {
   getCompletionPolicyForType,
   getStagePrerequisitesForType,
@@ -37,6 +39,7 @@ function input(overrides: Partial<TransitionInput>): TransitionInput {
     retryCount: 0,
     maxRetries: 3,
     hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
+    hasResolvedBlockingDecisionInteractions: () => true,
     hasUserApproval: true,
     ...overrides,
   };
@@ -52,6 +55,9 @@ function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
     status: "active",
     artifacts: {},
     stageCompletions: {},
+    requiredInteractions: [],
+    resolvedInteractions: [],
+    noRequiredInteractionsReason: {},
     derivedWorkflows: [],
     sessionIds: {},
     createdAt: now,
@@ -60,6 +66,39 @@ function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
     maxRetries: 3,
     ...overrides,
   };
+}
+
+function workflowInteraction(overrides: Partial<WorkflowInteraction>): WorkflowInteraction {
+  return {
+    id: "decision-1",
+    decisionKey: "product.scope",
+    stage: "requirements_interview",
+    sourceAgent: "product",
+    kind: "decision",
+    blocking: true,
+    question: "Which scope should we pursue?",
+    options: ["minimal", "complete"],
+    recommendedOption: "minimal",
+    rationale: "Scope needs a user decision before the workflow can advance.",
+    status: "proposed",
+    revision: 1,
+    ...overrides,
+  };
+}
+
+function transitionWithInteractions(workflow: WorkflowState, targetStage: WorkflowStage) {
+  return validateTransition(
+    input({
+      workflowType: workflow.type,
+      currentStage: workflow.stage,
+      targetStage,
+      hasStageCompletion: (stage) => Boolean(workflow.stageCompletions[stage]),
+      hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(workflow, stage),
+      hasResolvedBlockingDecisionInteractions: (stage) => hasResolvedBlockingDecisionInteractions(workflow, stage),
+      hasNoRequiredInteractionsReason: (stage) => Boolean(workflow.noRequiredInteractionsReason[stage]?.trim()),
+      hasUserApproval: true,
+    }),
+  );
 }
 
 describe("workflow transition guards", () => {
@@ -179,7 +218,7 @@ describe("workflow transition guards", () => {
       "critic_prd_review",
       {
         hasArtifact: () => true,
-        hasStageCompletion: () => false,
+        hasStageCompletion: (stage) => stage === "requirements_interview",
         hasUserApproval: true,
       },
     );
@@ -218,7 +257,7 @@ describe("workflow transition guards", () => {
   });
 
   test("canTransitionTo allows transition when prerequisite completion record exists", () => {
-    const completedStages = new Set<WorkflowStage>(["product_drafting"]);
+    const completedStages = new Set<WorkflowStage>(["requirements_interview", "product_drafting"]);
 
     const result = canTransitionTo(
       {
@@ -230,12 +269,13 @@ describe("workflow transition guards", () => {
         maxRetries: 3,
       },
       "critic_prd_review",
-      {
-        hasArtifact: () => true,
-        hasStageCompletion: (stage) => completedStages.has(stage),
-        hasUserApproval: true,
-      },
-    );
+        {
+          hasArtifact: () => true,
+          hasStageCompletion: (stage) => completedStages.has(stage),
+          hasResolvedBlockingDecisionInteractions: () => true,
+          hasUserApproval: true,
+        },
+      );
 
     expect(result).toEqual({ allowed: true });
   });
@@ -286,7 +326,8 @@ describe("workflow transition guards", () => {
 
   test("full_feature follows its approved graph", () => {
     const approvedPath: Array<[WorkflowStage, WorkflowStage]> = [
-      ["idle", "product_drafting"],
+      ["idle", "requirements_interview"],
+      ["requirements_interview", "product_drafting"],
       ["product_drafting", "critic_prd_review"],
       ["critic_prd_review", "spec_drafting"],
       ["spec_drafting", "critic_spec_review"],
@@ -299,6 +340,249 @@ describe("workflow transition guards", () => {
       const result = validateTransition(input({ workflowType: "full_feature", currentStage, targetStage }));
       expect(result, `${currentStage} -> ${targetStage}`).toEqual({ allowed: true });
     }
+  });
+
+  test("full_feature inserts requirements_interview before product drafting", () => {
+    const stages = WORKFLOW_TYPE_REGISTRY.full_feature.stages;
+    const requirementsIndex = stages.indexOf("requirements_interview");
+    const productIndex = stages.indexOf("product_drafting");
+
+    expect(requirementsIndex).toBeGreaterThan(stages.indexOf("idle"));
+    expect(requirementsIndex).toBeLessThan(productIndex);
+    expect(getTransitionsForType("full_feature", "idle")).toEqual(["requirements_interview"]);
+    expect(getTransitionsForType("full_feature", "requirements_interview")).toEqual(["product_drafting"]);
+  });
+
+  test("full_feature no longer allows direct idle to product_drafting", () => {
+    const result = validateTransition(
+      input({ workflowType: "full_feature", currentStage: "idle", targetStage: "product_drafting" }),
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain("Allowed: requirements_interview");
+  });
+
+  test("requires requirements_interview completion before PRD drafting and review", () => {
+    const cannotDraft = canTransitionTo(
+      {
+        id: "550e8400-e29b-41d4-a716-446655440006",
+        type: "full_feature",
+        status: "active",
+        stage: "requirements_interview",
+        retryCount: 0,
+        maxRetries: 3,
+      },
+      "product_drafting",
+      {
+        hasArtifact: () => true,
+        hasStageCompletion: () => false,
+        hasUserApproval: true,
+      },
+    );
+    expect(cannotDraft.allowed).toBe(false);
+    expect(cannotDraft.error).toContain("record completion for requirements_interview");
+
+    const cannotReview = canTransitionTo(
+      {
+        id: "550e8400-e29b-41d4-a716-446655440007",
+        type: "full_feature",
+        status: "active",
+        stage: "product_drafting",
+        retryCount: 0,
+        maxRetries: 3,
+      },
+      "critic_prd_review",
+      {
+        hasArtifact: () => true,
+        hasStageCompletion: (stage) => stage === "product_drafting",
+        hasUserApproval: true,
+      },
+    );
+    expect(cannotReview.allowed).toBe(false);
+    expect(cannotReview.error).toContain("record completion for requirements_interview");
+  });
+
+  test("blocking proposed interaction in requirements_interview denies transition to product_drafting", () => {
+    const workflow = workflowState({
+      stage: "requirements_interview",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [workflowInteraction({ status: "proposed" })],
+    });
+
+    const result = transitionWithInteractions(workflow, "product_drafting");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
+    expect(result.error).toContain("unresolved blocking interaction");
+    expect(result.error).toContain("requirements_interview");
+  });
+
+  test("planning stage transition requires resolved blocking decisions or no-question reason", () => {
+    const workflow = workflowState({
+      stage: "requirements_interview",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+      },
+    });
+
+    const result = transitionWithInteractions(workflow, "product_drafting");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowTransitionError");
+    expect(result.error).toContain("stage requires either resolved blocking decisions or a recorded no-question reason");
+  });
+
+  test("planning stage transition allows a recorded no-question reason", () => {
+    const workflow = workflowState({
+      stage: "requirements_interview",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+      },
+      noRequiredInteractionsReason: {
+        requirements_interview: "All requirements were already provided in the task brief.",
+      },
+    });
+
+    expect(transitionWithInteractions(workflow, "product_drafting")).toEqual({ allowed: true });
+  });
+
+  test("non-planning stages do not require a no-question reason", () => {
+    const workflow = workflowState({
+      stage: "foreman_executing",
+      stageCompletions: {
+        foreman_executing: { stage: "foreman_executing", completedAt: new Date().toISOString() },
+      },
+    });
+
+    expect(transitionWithInteractions(workflow, "final_review")).toEqual({ allowed: true });
+  });
+
+  test("blocking requested interaction denies progression out of its stage", () => {
+    const workflow = workflowState({
+      stage: "product_drafting",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+        product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [
+        workflowInteraction({ id: "decision-2", stage: "product_drafting", status: "requested" }),
+      ],
+    });
+
+    const result = transitionWithInteractions(workflow, "critic_prd_review");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
+  });
+
+  test("resolved blocking interaction with an answer allows progression", () => {
+    const workflow = workflowState({
+      stage: "product_drafting",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+        product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [
+        workflowInteraction({
+          id: "decision-3",
+          stage: "product_drafting",
+          status: "resolved",
+          answer: "minimal",
+          resolvedAt: new Date().toISOString(),
+        }),
+      ],
+    });
+
+    expect(transitionWithInteractions(workflow, "critic_prd_review")).toEqual({ allowed: true });
+  });
+
+  test("cancelled blocking interaction remains unresolved and blocks", () => {
+    const workflow = workflowState({
+      stage: "spec_drafting",
+      stageCompletions: {
+        spec_drafting: { stage: "spec_drafting", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [
+        workflowInteraction({
+          id: "decision-4",
+          stage: "spec_drafting",
+          status: "cancelled",
+          cancelledAt: new Date().toISOString(),
+        }),
+      ],
+    });
+
+    const result = transitionWithInteractions(workflow, "critic_spec_review");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
+  });
+
+  test("superseded interaction does not block when superseding decision is resolved", () => {
+    const workflow = workflowState({
+      stage: "critic_prd_review",
+      stageCompletions: {
+        critic_prd_review: { stage: "critic_prd_review", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [
+        workflowInteraction({
+          id: "decision-5",
+          stage: "critic_prd_review",
+          status: "superseded",
+          supersededBy: "decision-6",
+        }),
+        workflowInteraction({
+          id: "decision-6",
+          stage: "critic_prd_review",
+          status: "resolved",
+          answer: "minimal",
+          resolvedAt: new Date().toISOString(),
+        }),
+      ],
+    });
+
+    expect(transitionWithInteractions(workflow, "spec_drafting")).toEqual({ allowed: true });
+  });
+
+  test("superseded interaction blocks when the superseding decision is unresolved", () => {
+    const workflow = workflowState({
+      stage: "critic_spec_review",
+      stageCompletions: {
+        critic_spec_review: { stage: "critic_spec_review", completedAt: new Date().toISOString() },
+      },
+      requiredInteractions: [
+        workflowInteraction({
+          id: "decision-7",
+          stage: "critic_spec_review",
+          status: "superseded",
+          supersededBy: "decision-8",
+        }),
+        workflowInteraction({ id: "decision-8", stage: "critic_spec_review", status: "requested" }),
+      ],
+    });
+
+    const result = transitionWithInteractions(workflow, "awaiting_user_approval");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
+  });
+
+  test("non-blocking unresolved interactions do not block progression", () => {
+    const workflow = workflowState({
+      stage: "requirements_interview",
+      stageCompletions: {
+        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+      },
+      noRequiredInteractionsReason: {
+        requirements_interview: "Only non-blocking preference notes exist; no user decision is required.",
+      },
+      requiredInteractions: [workflowInteraction({ id: "decision-9", blocking: false, status: "requested" })],
+    });
+
+    expect(transitionWithInteractions(workflow, "product_drafting")).toEqual({ allowed: true });
   });
 
   test("each workflow type has the expected completion policy", () => {

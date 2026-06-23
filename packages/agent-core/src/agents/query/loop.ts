@@ -435,7 +435,7 @@ export async function runQueryLoop(
         ...(failed ? { error: "Execution failed" } : {}),
       });
     }
-    await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus }, logger, { sessionId, agentName });
+    await runHooks("afterLoopEnd", afterLoopEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, loopEndStatus: runEndStatus, projectContext: options.projectContext }, logger, { sessionId, agentName });
   }
 }
 

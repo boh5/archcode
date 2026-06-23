@@ -17,6 +17,7 @@ import { emitWorkflowStateChange } from "./events";
 
 export const WorkflowStageSchema = z.enum([
   "idle",
+  "requirements_interview",
   "researching",
   "research_consolidation",
   "quick_analysis",
@@ -71,6 +72,49 @@ export const DerivedWorkflowEntrySchema = z.strictObject({
   createdAt: z.string(),
 });
 
+export const WorkflowInteractionStatusSchema = z.enum([
+  "proposed",
+  "requested",
+  "resolved",
+  "cancelled",
+  "superseded",
+]);
+
+export const WorkflowInteractionKindSchema = z.enum([
+  "decision",
+  "preference",
+  "clarification",
+  "approval",
+]);
+
+export const WorkflowInteractionSchema = z.strictObject({
+  id: z.string().trim().min(1),
+  decisionKey: z.string().trim().min(1),
+  stage: WorkflowStageSchema,
+  sourceAgent: z.string().trim().min(1),
+  kind: WorkflowInteractionKindSchema,
+  blocking: z.boolean(),
+  question: z.string().trim().min(1),
+  options: z.array(z.string()),
+  recommendedOption: z.string().optional(),
+  rationale: z.string().trim().min(1),
+  status: WorkflowInteractionStatusSchema,
+  answer: z.string().optional(),
+  createdAt: z.string().optional(),
+  resolvedAt: z.string().optional(),
+  cancelledAt: z.string().optional(),
+  supersededBy: z.string().optional(),
+  revision: z.number().int().default(1),
+}).superRefine((interaction, context) => {
+  if (interaction.kind === "decision" && interaction.options.length < 2) {
+    context.addIssue({
+      code: "custom",
+      path: ["options"],
+      message: "Decision interactions require at least two options",
+    });
+  }
+});
+
 export const WorkflowStateSchema = z.strictObject({
   id: WorkflowUuidSchema,
   title: WorkflowTitleSchema,
@@ -79,6 +123,9 @@ export const WorkflowStateSchema = z.strictObject({
   status: WorkflowStatusSchema,
   artifacts: z.partialRecord(WorkflowArtifactKindSchema, z.union([z.string(), z.array(z.string())])).default({}),
   stageCompletions: z.partialRecord(WorkflowStageSchema, StageCompletionRecordSchema).default({}),
+  requiredInteractions: z.array(WorkflowInteractionSchema).default([]),
+  resolvedInteractions: z.array(WorkflowInteractionSchema).default([]),
+  noRequiredInteractionsReason: z.partialRecord(WorkflowStageSchema, z.string()).default({}),
   derivedFrom: DerivedFromSchema.optional(),
   derivedWorkflows: z.array(DerivedWorkflowEntrySchema).default([]),
   sessionIds: z.record(z.string(), z.string()).default({}),
@@ -96,6 +143,9 @@ export type WorkflowArtifactKind = z.infer<typeof WorkflowArtifactKindSchema>;
 export type StageCompletionRecord = z.infer<typeof StageCompletionRecordSchema>;
 export type DerivedFrom = z.infer<typeof DerivedFromSchema>;
 export type DerivedWorkflowEntry = z.infer<typeof DerivedWorkflowEntrySchema>;
+export type WorkflowInteractionStatus = z.infer<typeof WorkflowInteractionStatusSchema>;
+export type WorkflowInteractionKind = z.infer<typeof WorkflowInteractionKindSchema>;
+export type WorkflowInteraction = z.infer<typeof WorkflowInteractionSchema>;
 export type WorkflowState = z.infer<typeof WorkflowStateSchema>;
 
 export class WorkflowPathError extends Error {
@@ -147,6 +197,10 @@ export interface CreateDerivedWorkflowResult {
   handoffSummary: string;
   handoffSummaryId: string;
 }
+
+export type StageCompletionInput = Omit<StageCompletionRecord, "completedAt"> & {
+  noRequiredInteractionsReason?: string;
+};
 
 export interface ListWorkflowsOptions {
   status?: WorkflowStatus | readonly WorkflowStatus[];
@@ -310,16 +364,21 @@ export class WorkflowStateManager {
 
   async recordStageCompletion(
     workflowId: string,
-    record: Omit<StageCompletionRecord, "completedAt">,
+    record: StageCompletionInput,
   ): Promise<WorkflowState> {
     const state = await this.read(workflowId);
+    const { noRequiredInteractionsReason, ...completionRecord } = record;
     const completion: StageCompletionRecord = {
-      ...record,
+      ...completionRecord,
       completedAt: new Date().toISOString(),
     };
+    const trimmedReason = noRequiredInteractionsReason?.trim();
     const updated = WorkflowStateSchema.parse({
       ...state,
       stageCompletions: { ...state.stageCompletions, [record.stage]: completion },
+      noRequiredInteractionsReason: trimmedReason
+        ? { ...state.noRequiredInteractionsReason, [record.stage]: trimmedReason }
+        : state.noRequiredInteractionsReason,
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);
@@ -375,6 +434,21 @@ export class WorkflowStateManager {
     const updated = WorkflowStateSchema.parse({
       ...state,
       artifacts,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateInteractions(
+    workflowId: string,
+    interactions: Pick<WorkflowState, "requiredInteractions" | "resolvedInteractions">,
+  ): Promise<WorkflowState> {
+    const state = await this.read(workflowId);
+    const updated = WorkflowStateSchema.parse({
+      ...state,
+      requiredInteractions: interactions.requiredInteractions,
+      resolvedInteractions: interactions.resolvedInteractions,
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);

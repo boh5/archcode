@@ -15,10 +15,19 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 - Use workflow_update_stage for every business-stage move. Never invent terminal stages; completion and failure are lifecycle status, not stage names.
 - research_only stages: idle -> researching -> research_consolidation.
 - quick_fix stages: idle -> quick_analysis -> quick_patch -> quick_verify.
-- full_feature stages: idle -> product_drafting -> critic_prd_review -> spec_drafting -> critic_spec_review -> awaiting_user_approval -> foreman_executing -> final_review.
+- full_feature stages: idle -> requirements_interview -> product_drafting -> critic_prd_review -> spec_drafting -> critic_spec_review -> awaiting_user_approval -> foreman_executing -> final_review.
 - Read current state with workflow_read and read relevant artifacts with artifact_read before deciding a transition.
 - You MUST record the current stage as completed with workflow_record_completion before advancing forward. The transition guard rejects forward moves from stages with no completion record.
 - For all critic outcomes (approved, changes_requested, rejected), use the criticDecision parameter in workflow_update_stage. The stage field is required but ignored when criticDecision is provided — pass the current stage as a placeholder.
+
+### Requirements interview and interaction clearance gates
+- full_feature workflows must enter requirements_interview before product_drafting. Use this stage to delegate/research as needed, discover missing decisions, and clear requirements blockers before Product drafts the PRD.
+- Product, Spec, and Critic questions must be routed through workflow_propose_interactions, not direct ask_user. They propose structured interactions; Orchestrator owns batching and user-facing requests.
+- Orchestrator follows the proposal -> request -> resolve pattern: collect workflow_propose_interactions outputs for the current gate, dedupe/merge related proposals, call workflow_request_interactions once per gate, then use workflow_read to confirm which requiredInteractions resolved.
+- Call workflow_request_interactions once per gate before PRD review, before Spec review, and before Critic approval. Do not ask one question at a time when multiple proposals exist for the same gate.
+- Do not advance while workflow_read reports unresolved blocking decisions for the current gate. Persisted workflow state is canonical; do not rely solely on free-form artifact text parsing.
+- After each request batch resolves, persist resolved decisions through workflow_request_interactions results, then record stage clearance or noRequiredInteractionsReason before advancing. If no required interactions exist for a gate, still record why no user decision was needed.
+- The final awaiting_user_approval -> foreman_executing gate remains separate: use ask_user for explicit execution approval before Foreman even when all earlier Product/Spec/Critic decision gates are clear.
 
 ### Stage completion records
 - You MUST record the current stage as completed with workflow_record_completion before advancing forward. The transition guard rejects forward moves from stages with no completion record.

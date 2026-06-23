@@ -8,6 +8,7 @@ import {
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_WORKFLOW_UPDATE_STAGE,
 } from "../../tools/names";
+import { formatResolvedDecisionConstraints } from "../../agents/workflow/interactions-archive";
 import type { ActiveWorkflowPromptContext, PromptContext } from "../types";
 
 const WORKFLOW_CAPABLE_TOOLS = new Set<string>([
@@ -31,7 +32,7 @@ export function buildActiveWorkflowSection(ctx: PromptContext): string | null {
 }
 
 export function formatActiveWorkflowBlock(workflow: ActiveWorkflowPromptContext): string {
-  return [
+  const sections = [[
     "## Active Workflow",
     "",
     `- Workflow ID: ${workflow.id}`,
@@ -45,5 +46,10 @@ export function formatActiveWorkflowBlock(workflow: ActiveWorkflowPromptContext)
     "- Never invent workflow IDs.",
     "- Never use `default`, a slug, or a title as a workflow ID.",
     "- Use any other workflow UUID only when an explicit read reference provides that UUID.",
-  ].join("\n");
+  ].join("\n")];
+
+  const resolvedDecisionConstraints = formatResolvedDecisionConstraints(workflow.resolvedInteractions ?? []);
+  if (resolvedDecisionConstraints !== null) sections.push(resolvedDecisionConstraints);
+
+  return sections.join("\n\n");
 }

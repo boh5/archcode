@@ -15,7 +15,9 @@ import {
   createWorkflowCompleteTool,
   createWorkflowCreateTool,
   createWorkflowReadTool,
+  createWorkflowProposeInteractionsTool,
   createWorkflowRecordCompletionTool,
+  createWorkflowRequestInteractionsTool,
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
 } from "../tools/builtins/workflow";
@@ -35,6 +37,8 @@ export function registerBuiltinTools(
   registry.register(createWorkflowUpdateStageTool());
   registry.register(createWorkflowCompleteTool());
   registry.register(createWorkflowRecordCompletionTool());
+  registry.register(createWorkflowProposeInteractionsTool());
+  registry.register(createWorkflowRequestInteractionsTool());
   registry.register(createArtifactReadTool());
   registry.register(createArtifactWriteTool());
   registry.register(createWorkflowTaskCheckTool());

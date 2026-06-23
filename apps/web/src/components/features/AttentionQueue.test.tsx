@@ -1,5 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
-import type { PermissionRequest, PermissionDecision } from "@specra/protocol";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { PermissionRequest, PermissionDecision, QuestionRequest } from "@specra/protocol";
 
 // ─── Test helpers ───
 
@@ -101,7 +101,7 @@ mock.module("../../hooks/use-attention-queue", () => ({
   }),
 }));
 
-const { ConfirmationCard } = await import("./AttentionQueue");
+const { ConfirmationCard, QuestionCard } = await import("./AttentionQueue");
 
 // ─── Factory helpers ───
 
@@ -286,5 +286,219 @@ describe("ConfirmationCard", () => {
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("🔒");
+  });
+});
+
+// ─── QuestionCard batched-question tests ───
+
+interface QuestionData {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description: string }>;
+  multiple?: boolean;
+  custom: boolean;
+}
+
+function makeBatchedQuestionRequest(
+  overrides: Partial<QuestionRequest> = {},
+): QuestionRequest {
+  return {
+    id: "question-batch-1",
+    sessionId: "session-1",
+    toolName: "ask_user",
+    toolCallId: "call-batch-1",
+    questions: [],
+    ...overrides,
+  };
+}
+
+function makeQuestionData(
+  overrides: Partial<QuestionData> = {},
+): QuestionData {
+  return {
+    question: "Pick one",
+    header: "Q1",
+    options: [
+      { label: "Option A", description: "" },
+      { label: "Option B", description: "" },
+    ],
+    multiple: false,
+    custom: true,
+    ...overrides,
+  };
+}
+
+describe("QuestionCard — batched questions", () => {
+  const respondQuestion = mock(
+    (_id: string, _body: { answers: string[][] } | { isError: true; reason: string }) => {},
+  );
+
+  beforeEach(() => {
+    respondQuestion.mockClear();
+  });
+
+  test("renders all 3 questions in a batched question.request", () => {
+    const request = makeBatchedQuestionRequest({
+      questions: [
+        makeQuestionData({ header: "Q1", question: "First question?" }),
+        makeQuestionData({ header: "Q2", question: "Second question?" }),
+        makeQuestionData({ header: "Q3", question: "Third question?" }),
+      ],
+    });
+
+    const result = QuestionCard({ questionRequest: request, onRespond: respondQuestion });
+    const text = textContent(result);
+
+    expect(text).toContain("Q1");
+    expect(text).toContain("Q2");
+    expect(text).toContain("Q3");
+    expect(text).toContain("First question?");
+    expect(text).toContain("Confirm");
+  });
+
+  test("single question does not render tab bar or Confirm tab", () => {
+    const request = makeBatchedQuestionRequest({
+      questions: [makeQuestionData({ header: "Solo", question: "Only one?" })],
+    });
+
+    const result = QuestionCard({ questionRequest: request, onRespond: respondQuestion });
+    const text = textContent(result);
+
+    expect(text).not.toContain("Confirm");
+    expect(text).toContain("Submit Answer");
+  });
+
+  test("handleSubmitAll sends ONE response payload with all answers", () => {
+    const request = makeBatchedQuestionRequest({
+      questions: [
+        makeQuestionData({
+          header: "Q1",
+          question: "First?",
+          options: [{ label: "Alpha", description: "" }],
+          custom: false,
+        }),
+        makeQuestionData({
+          header: "Q2",
+          question: "Second?",
+          options: [{ label: "Beta", description: "" }],
+          custom: false,
+        }),
+        makeQuestionData({
+          header: "Q3",
+          question: "Third?",
+          options: [{ label: "Gamma", description: "" }],
+          custom: false,
+        }),
+      ],
+    });
+
+    // Pre-seed useState so answers=[[Alpha],[Beta],[Gamma]] and activeTab=3 (the
+    // Confirm tab). The no-op setState mock means we cannot mutate, so we inject
+    // the fully-answered state and the Confirm-tab view at init.
+    const preAnswered: string[][] = [["Alpha"], ["Beta"], ["Gamma"]];
+    const originalUseStateImpl = useState.getMockImplementation();
+    let callIndex = 0;
+    useState.mockImplementation(<T,>(initialOrInitializer: T | (() => T)): [T, (value: T | ((previous: T) => T)) => void] => {
+      const idx = callIndex++;
+      if (idx === 0) return [3 as T, setState as (value: T | ((previous: T) => T)) => void];
+      if (idx === 1) return [preAnswered as unknown as T, setState as (value: T | ((previous: T) => T)) => void];
+      const initial = typeof initialOrInitializer === "function"
+        ? (initialOrInitializer as () => T)()
+        : initialOrInitializer;
+      return [initial, setState as (value: T | ((previous: T) => T)) => void];
+    });
+
+    try {
+      const result = QuestionCard({ questionRequest: request, onRespond: respondQuestion });
+
+      const submitAllBtn = findAll(result, (el) => {
+        const cls = el?.props?.className;
+        return typeof cls === "string" && cls.includes("bg-accent") &&
+          typeof el?.props?.children === "string" &&
+          (el.props.children as string).includes("Submit All Answers");
+      })[0];
+
+      expect(submitAllBtn).toBeDefined();
+      const onClick = submitAllBtn?.props?.onClick as (() => void) | undefined;
+      expect(typeof onClick).toBe("function");
+      onClick!();
+
+      expect(respondQuestion).toHaveBeenCalledTimes(1);
+      expect(respondQuestion.mock.calls[0]?.[0]).toBe("question-batch-1");
+      expect(respondQuestion.mock.calls[0]?.[1]).toEqual({
+        answers: [["Alpha"], ["Beta"], ["Gamma"]],
+      });
+    } finally {
+      useState.mockImplementation(originalUseStateImpl!);
+      callIndex = 0;
+    }
+  });
+
+  test("Cancel sends an error response without answers", () => {
+    const request = makeBatchedQuestionRequest({
+      questions: [
+        makeQuestionData({ header: "Q1", options: [{ label: "A", description: "" }], custom: false }),
+        makeQuestionData({ header: "Q2", options: [{ label: "B", description: "" }], custom: false }),
+      ],
+    });
+
+    // Render on the Confirm tab (activeTab=2) where the Cancel button lives.
+    const originalUseStateImpl = useState.getMockImplementation();
+    let callIndex = 0;
+    useState.mockImplementation(<T,>(initialOrInitializer: T | (() => T)): [T, (value: T | ((previous: T) => T)) => void] => {
+      const idx = callIndex++;
+      if (idx === 0) return [2 as T, setState as (value: T | ((previous: T) => T)) => void];
+      const initial = typeof initialOrInitializer === "function"
+        ? (initialOrInitializer as () => T)()
+        : initialOrInitializer;
+      return [initial, setState as (value: T | ((previous: T) => T)) => void];
+    });
+
+    try {
+      const result = QuestionCard({ questionRequest: request, onRespond: respondQuestion });
+
+      const cancelBtns = findAll(result, (el) => {
+        const cls = el?.props?.className;
+        const children = el?.props?.children;
+        return typeof cls === "string" && cls.includes("text-error") &&
+          typeof children === "string" && children === "Cancel";
+      });
+
+      expect(cancelBtns.length).toBeGreaterThan(0);
+      const onClick = cancelBtns[0]?.props?.onClick as (() => void) | undefined;
+      expect(typeof onClick).toBe("function");
+      onClick!();
+
+      expect(respondQuestion).toHaveBeenCalledTimes(1);
+      expect(respondQuestion.mock.calls[0]?.[1]).toEqual({
+        isError: true,
+        reason: "Cancelled by user",
+      });
+    } finally {
+      useState.mockImplementation(originalUseStateImpl!);
+      callIndex = 0;
+    }
+  });
+
+  test("Submit All Answers is disabled until all questions are answered", () => {
+    const request = makeBatchedQuestionRequest({
+      questions: [
+        makeQuestionData({ header: "Q1", options: [{ label: "A", description: "" }], custom: false }),
+        makeQuestionData({ header: "Q2", options: [{ label: "B", description: "" }], custom: false }),
+      ],
+    });
+
+    // Default useState initializer: answers=[[],[]] → allAnswered=false. With
+    // activeTab=0 the Confirm tab (which holds Submit All Answers) is not rendered,
+    // and QuestionPane suppresses its submit button because isLastQuestion=false.
+    const result = QuestionCard({ questionRequest: request, onRespond: respondQuestion });
+
+    const submitBtns = findAll(result, (el) => {
+      const children = el?.props?.children;
+      return typeof children === "string" &&
+        (children === "Submit All Answers" || children === "Submit Answer");
+    });
+
+    expect(submitBtns.length).toBe(0);
   });
 });

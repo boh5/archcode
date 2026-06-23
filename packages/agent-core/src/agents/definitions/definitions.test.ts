@@ -18,6 +18,28 @@ import {
   reviewerAgentDefinition,
   specAgentDefinition,
 } from "./index";
+import {
+  TOOL_ASK_USER,
+  TOOL_ARTIFACT_WRITE,
+  TOOL_AST_GREP_REPLACE,
+  TOOL_BASH,
+  TOOL_FILE_EDIT,
+  TOOL_FILE_WRITE,
+  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
+} from "../../tools/names";
+
+const SOURCE_WRITE_TOOLS = [
+  TOOL_FILE_WRITE,
+  TOOL_FILE_EDIT,
+  TOOL_BASH,
+  TOOL_AST_GREP_REPLACE,
+] as const;
+
+function expectNoSourceWriteTools(tools: readonly string[]) {
+  for (const tool of SOURCE_WRITE_TOOLS) {
+    expect(tools).not.toContain(tool);
+  }
+}
 
 describe("agentDefinitions", () => {
   test("names are unique", () => {
@@ -38,6 +60,8 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("workflow_update_stage");
     expect(tools).toContain("workflow_complete");
     expect(tools).toContain("workflow_record_completion");
+    expect(tools).toContain("workflow_propose_interactions");
+    expect(tools).toContain("workflow_request_interactions");
     expect(tools).toContain("artifact_read");
     expect(tools).not.toContain("artifact_write");
     expect(tools).toContain("workflow_task_check");
@@ -49,6 +73,73 @@ describe("agentDefinitions", () => {
     expect(productAgentDefinition.tools.tools).toContain("artifact_write");
     expect(specAgentDefinition.tools.tools).toContain("artifact_write");
     expect(criticAgentDefinition.tools.tools).toContain("artifact_write");
+  });
+
+  test("workflow artifact author roles cannot mutate source code", () => {
+    for (const definition of [productAgentDefinition, specAgentDefinition, criticAgentDefinition]) {
+      expect(definition.tools.tools).toContain(TOOL_ARTIFACT_WRITE);
+      expectNoSourceWriteTools(definition.tools.tools);
+    }
+  });
+
+  test("Product, Spec, and Critic prompt structured required-interaction proposals instead of ask_user", () => {
+    for (const definition of [productAgentDefinition, specAgentDefinition, criticAgentDefinition]) {
+      expect(definition.tools.tools).toContain(TOOL_WORKFLOW_PROPOSE_INTERACTIONS);
+      expect(definition.tools.tools).not.toContain(TOOL_ASK_USER);
+
+      const prompt = definition.rolePrompt;
+      expect(prompt).toContain("Required Interaction proposal contract");
+      expect(prompt).toContain("workflow_propose_interactions");
+      expect(prompt).toContain("decisionKey");
+      expect(prompt).toContain("options");
+      expect(prompt).toContain("at least 2 for decisions");
+      expect(prompt).toContain("recommendedOption");
+      expect(prompt).toContain("rationale");
+      expect(prompt).toContain("blocking");
+      expect(prompt).toContain("noRequiredInteractionsReason");
+      expect(prompt).toContain("Do NOT call ask_user directly");
+    }
+  });
+
+  test("critic prompt limits user-decision proposals to high-value gates", () => {
+    const prompt = criticAgentDefinition.rolePrompt;
+
+    expect(prompt).toContain("product scope");
+    expect(prompt).toContain("risk acceptance");
+    expect(prompt).toContain("major tradeoffs");
+    expect(prompt).toContain("blocking ambiguity");
+  });
+
+  test("Foreman and Builder prompts default to autonomous coding after approval", () => {
+    for (const definition of [foremanAgentDefinition, builderAgentDefinition]) {
+      const prompt = definition.rolePrompt;
+
+      expect(prompt).toContain("Autonomous-by-default coding after approval");
+      expect(prompt).toContain("Ask the user ONLY for permissions/security confirmations");
+      expect(prompt).toContain("true unrecoverable blockers");
+      expect(prompt).toContain("plan-marked ask-before-changing decisions");
+      expect(prompt).toContain("Do NOT ask about normal implementation choices");
+    }
+  });
+
+  test("Explorer and Librarian prompts require concise evidence-driven research output", () => {
+    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
+      const prompt = definition.rolePrompt;
+
+      expect(prompt).toContain("Research mandate");
+      expect(prompt).toContain("When to research");
+      expect(prompt).toContain("What to look for");
+      expect(prompt).toContain("Concise evidence output");
+      expect(prompt).toContain("Facts found");
+      expect(prompt).toContain("Citations");
+      expect(prompt).toContain("Unknowns");
+    }
+  });
+
+  test("research role definitions cannot mutate source code", () => {
+    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
+      expectNoSourceWriteTools(definition.tools.tools);
+    }
   });
 
   test("foreman includes Markdown-wave execution tools", () => {
@@ -97,6 +188,12 @@ describe("agentDefinitions", () => {
       (t) => !(EXPLORER_READ_ONLY_TOOLS as readonly string[]).includes(t),
     );
     expect(extraTools).toEqual(["todo_write", "skill_list", "skill_read"]);
+  });
+
+  test("builder definition is the source-writing positive control", () => {
+    for (const tool of SOURCE_WRITE_TOOLS) {
+      expect(builderAgentDefinition.tools.tools).toContain(tool);
+    }
   });
 
   test("explore agent cannot delegate", () => {

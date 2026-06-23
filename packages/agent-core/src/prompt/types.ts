@@ -1,6 +1,6 @@
 import type { MemoryRoots } from "../memory";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
-import type { WorkflowStage, WorkflowStatus, WorkflowType } from "../agents/workflow/state";
+import type { WorkflowInteraction, WorkflowStage, WorkflowStatus, WorkflowType } from "../agents/workflow/state";
 
 export interface ActiveWorkflowPromptContext {
   readonly id: string;
@@ -8,6 +8,7 @@ export interface ActiveWorkflowPromptContext {
   readonly type: WorkflowType;
   readonly stage: WorkflowStage;
   readonly status: WorkflowStatus;
+  readonly resolvedInteractions?: readonly WorkflowInteraction[];
 }
 
 /**

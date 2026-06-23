@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createEmptySessionStats } from "@specra/protocol";
+import type { WorkflowInteraction, WorkflowStage, WorkflowState } from "../workflow/state";
 import type { Reminder, SessionStoreState, StoredMessage, StoredPart } from "../../store/types";
 import {
   getStepsSinceLastTodoWrite,
@@ -223,6 +224,80 @@ describe("shouldContinueAfterLoop", () => {
     const result = shouldContinueAfterLoop(state, "completed", 10_000);
     expect(result.should).toBe(true);
   });
+
+  test.each(["proposed", "requested"] as const)(
+    "blocks continuation when workflow has %s blocking interactions",
+    (status) => {
+      const workflow = workflowState({
+        requiredInteractions: [workflowInteraction({ status, blocking: true })],
+      });
+
+      expect(shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow })).toEqual({
+        should: false,
+        reason: "unresolved_workflow_interactions",
+      });
+    },
+  );
+
+  test("resumes continuation after workflow interactions resolve", () => {
+    const workflow = workflowState({
+      requiredInteractions: [],
+      resolvedInteractions: [workflowInteraction({ status: "resolved", answer: "Approved", resolvedAt: "2026-06-23T00:00:00.000Z" })],
+    });
+
+    const result = shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow });
+
+    expect(result.should).toBe(true);
+  });
+
+  test("does not block continuation on non-blocking unresolved workflow preferences", () => {
+    const workflow = workflowState({
+      requiredInteractions: [workflowInteraction({ kind: "preference", blocking: false, status: "requested" })],
+    });
+
+    const result = shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow });
+
+    expect(result.should).toBe(true);
+  });
+
+  test("cancelled blocking workflow answer remains unresolved and blocks continuation", () => {
+    const workflow = workflowState({
+      requiredInteractions: [workflowInteraction({ status: "cancelled", cancelledAt: "2026-06-23T00:00:00.000Z" })],
+    });
+
+    expect(shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow })).toEqual({
+      should: false,
+      reason: "unresolved_workflow_interactions",
+    });
+  });
+
+  test("session reload with stale requested workflow interactions still blocks continuation", () => {
+    const workflowId = crypto.randomUUID();
+    const workflow = workflowState({
+      id: workflowId,
+      requiredInteractions: [workflowInteraction({ id: "stale-request", status: "requested" })],
+    });
+
+    expect(shouldContinueAfterLoop(stateWithPendingTodo({ workflowId }), "completed", 10_000, { workflow })).toEqual({
+      should: false,
+      reason: "unresolved_workflow_interactions",
+    });
+  });
+
+  test("allows autonomous coding after blocking decisions and final approval resolve", () => {
+    const workflow = workflowState({
+      stage: "foreman_executing",
+      requiredInteractions: [],
+      resolvedInteractions: [
+        workflowInteraction({ id: "decision-resolved", status: "resolved", answer: "Option A", resolvedAt: "2026-06-23T00:00:00.000Z" }),
+        workflowInteraction({ id: "final-approval", decisionKey: "final-approval", kind: "approval", options: ["Approve"], status: "resolved", answer: "Approve", resolvedAt: "2026-06-23T00:01:00.000Z" }),
+      ],
+    });
+
+    const result = shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow });
+
+    expect(result.should).toBe(true);
+  });
 });
 
 describe("isLoopEndAllowed", () => {
@@ -345,5 +420,48 @@ function toolPart(toolName: string): StoredPart {
     toolCallId: `call-${toolName}`,
     toolName,
     createdAt: 1,
+  };
+}
+
+function workflowState(overrides: Partial<WorkflowState> = {}): WorkflowState {
+  const now = "2026-06-23T00:00:00.000Z";
+  return {
+    id: crypto.randomUUID(),
+    title: "Workflow",
+    type: "full_feature",
+    stage: "product_drafting",
+    status: "active",
+    artifacts: {},
+    stageCompletions: {},
+    requiredInteractions: [],
+    resolvedInteractions: [],
+    noRequiredInteractionsReason: {},
+    derivedWorkflows: [],
+    sessionIds: {},
+    createdAt: now,
+    updatedAt: now,
+    retryCount: 0,
+    maxRetries: 3,
+    ...overrides,
+  };
+}
+
+function workflowInteraction(overrides: Partial<WorkflowInteraction> = {}): WorkflowInteraction {
+  const stage = (overrides.stage ?? "product_drafting") as WorkflowStage;
+  return {
+    id: "interaction-1",
+    decisionKey: "decision-1",
+    stage,
+    sourceAgent: "product",
+    kind: "decision",
+    blocking: true,
+    question: "Choose the direction?",
+    options: ["Option A", "Option B"],
+    recommendedOption: "Option A",
+    rationale: "The team needs this decision before proceeding.",
+    status: "proposed",
+    createdAt: "2026-06-23T00:00:00.000Z",
+    revision: 1,
+    ...overrides,
   };
 }

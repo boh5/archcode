@@ -394,7 +394,7 @@ export interface QuestionTerminalEvent {
 export interface WorkflowStateChangeEvent {
   type: "workflow.state_change";
   workflowId: string;
-  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "sessionIds" | "derivedFrom" | "derivedWorkflows">;
+  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "noRequiredInteractionsReason" | "sessionIds" | "derivedFrom" | "derivedWorkflows">;
   updatedAt: string;
 }
 
@@ -663,6 +663,9 @@ export interface WorkflowState {
     criticPassed?: boolean;
     evidence?: string[];
   }>;
+  requiredInteractions?: WorkflowInteraction[];
+  resolvedInteractions?: WorkflowInteraction[];
+  noRequiredInteractionsReason?: Record<string, string | undefined>;
   derivedFrom?: {
     workflowId: string;
     reason: "upgrade" | "branch" | string;
@@ -680,6 +683,26 @@ export interface WorkflowState {
   retryCount?: number;
   maxRetries?: number;
   lastError?: string;
+}
+
+export interface WorkflowInteraction {
+  id: string;
+  decisionKey: string;
+  stage: string;
+  sourceAgent: string;
+  kind: "decision" | "preference" | "clarification" | "approval" | string;
+  blocking: boolean;
+  question: string;
+  options: string[];
+  recommendedOption?: string;
+  rationale: string;
+  status: "proposed" | "requested" | "resolved" | "cancelled" | "superseded" | string;
+  answer?: string;
+  createdAt?: string;
+  resolvedAt?: string;
+  cancelledAt?: string;
+  supersededBy?: string;
+  revision: number;
 }
 
 export type DiffLineType = "context" | "add" | "delete";

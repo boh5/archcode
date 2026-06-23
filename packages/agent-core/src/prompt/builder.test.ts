@@ -45,6 +45,8 @@ describe("buildSystemPrompt", () => {
         "workflow_update_stage",
         "workflow_complete",
         "workflow_record_completion",
+        "workflow_propose_interactions",
+        "workflow_request_interactions",
         "artifact_read",
         "artifact_write",
       ],
@@ -54,12 +56,54 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("research_only");
     expect(result).toContain("quick_fix");
     expect(result).toContain("full_feature");
+    expect(result).toContain("requirements_interview");
     expect(result).toContain("Use workflow_update_stage for every business-stage move");
     expect(result).toContain("record the current stage as completed with workflow_record_completion");
     expect(result).toContain("Use workflow_complete");
     expect(result).toContain("Use artifact_write for durable workflow artifacts");
     expect(result).toContain("Use artifact_read before relying on prior artifacts");
     expect(result).toContain("derived full_feature workflow");
+  });
+
+  test("includes batched workflow interaction clearance instructions for orchestrator gates", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      allowedTools: [
+        "ask_user",
+        "workflow_create",
+        "workflow_read",
+        "workflow_update_stage",
+        "workflow_record_completion",
+        "workflow_propose_interactions",
+        "workflow_request_interactions",
+        "artifact_read",
+      ],
+    }));
+
+    expect(result).toContain("### Requirements interview and interaction clearance gates");
+    expect(result).toContain("requirements_interview");
+    expect(result).toContain("proposal -> request -> resolve");
+    expect(result).toContain("workflow_propose_interactions");
+    expect(result).toContain("workflow_request_interactions");
+    expect(result).toContain("Call workflow_request_interactions once per gate");
+    expect(result).toContain("before PRD review, before Spec review, and before Critic approval");
+    expect(result).toContain("Do not advance while workflow_read reports unresolved blocking decisions");
+    expect(result).toContain("record stage clearance or noRequiredInteractionsReason");
+    expect(result).toContain("Product, Spec, and Critic questions must be routed through workflow_propose_interactions");
+    expect(result).toContain("not direct ask_user");
+  });
+
+  test("keeps role instructions before workflow intent gate for orchestrator prompts", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      rolePrompt: "## Workflow Role: Orchestrator\nRole ordering sentinel.",
+      allowedTools: ["ask_user", "workflow_create", "workflow_read", "artifact_read"],
+    }));
+
+    const roleIdx = result.indexOf("## Workflow Role: Orchestrator");
+    const gateIdx = result.indexOf("## Workflow MVP Orchestration");
+
+    expect(roleIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(roleIdx).toBeLessThan(gateIdx);
   });
 
   test("Active Workflow section includes exact workflow details and UUID rules for workflow-capable tools", async () => {
@@ -94,6 +138,42 @@ describe("buildSystemPrompt", () => {
     const toolsIdx = result.indexOf("## Tools");
     expect(activeIdx).toBeGreaterThan(gateIdx);
     expect(activeIdx).toBeLessThan(toolsIdx);
+  });
+
+  test("Active Workflow section injects resolved decisions as downstream execution constraints", async () => {
+    const result = await buildSystemPrompt(makeCtx({
+      allowedTools: ["workflow_read", "artifact_read", "artifact_write"],
+      activeWorkflow: {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Constrained workflow",
+        type: "full_feature",
+        stage: "foreman_executing",
+        status: "active",
+        resolvedInteractions: [{
+          id: "interaction-1",
+          decisionKey: "requirements.scope",
+          stage: "requirements_interview",
+          sourceAgent: "product",
+          kind: "decision",
+          blocking: true,
+          question: "Should billing be included?",
+          options: ["Include billing", "Exclude billing"],
+          rationale: "Defines implementation scope.",
+          status: "resolved",
+          answer: "Include billing",
+          resolvedAt: "2026-06-23T10:05:00.000Z",
+          revision: 1,
+        }],
+      },
+    }));
+
+    expect(result).toContain("### Resolved Workflow Decisions — Execution Constraints");
+    expect(result).toContain("Critic, Foreman, Builder, and Reviewer roles must treat these terminal decisions as binding constraints");
+    expect(result).toContain("requirements.scope");
+    expect(result).toContain("Stage: requirements_interview");
+    expect(result).toContain("Source: product");
+    expect(result).toContain("Answer: Include billing");
+    expect(result).toContain("Question: Should billing be included?");
   });
 
   test("Active Workflow section is omitted when no active workflow exists", async () => {

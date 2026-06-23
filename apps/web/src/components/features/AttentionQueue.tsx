@@ -134,7 +134,7 @@ export function ConfirmationCard({
   );
 }
 
-function QuestionCard({
+export function QuestionCard({
   questionRequest,
   onRespond,
 }: {

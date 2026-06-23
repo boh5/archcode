@@ -1,4 +1,4 @@
-import type { WorkflowStage, WorkflowState, WorkflowStatus, WorkflowType } from "./state";
+import type { WorkflowInteraction, WorkflowStage, WorkflowState, WorkflowStatus, WorkflowType } from "./state";
 import {
   getCompletionPolicyForType,
   getStagesForType,
@@ -18,12 +18,18 @@ export interface TransitionInput {
   maxRetries: number;
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion?: (stage: WorkflowStage) => boolean;
+  hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
+  hasResolvedBlockingDecisionInteractions?: (stage: WorkflowStage) => boolean;
+  hasNoRequiredInteractionsReason?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
 export interface TransitionContext {
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion: (stage: WorkflowStage) => boolean;
+  hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
+  hasResolvedBlockingDecisionInteractions?: (stage: WorkflowStage) => boolean;
+  hasNoRequiredInteractionsReason?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
@@ -69,8 +75,29 @@ export class WorkflowRetryLimitError extends Error {
   }
 }
 
+export class WorkflowUnresolvedInteractionsError extends Error {
+  constructor(
+    public readonly workflowId: string,
+    public readonly currentStage: WorkflowStage,
+    public readonly targetStage: WorkflowStage,
+  ) {
+    super(
+      `Workflow ${workflowId} cannot advance from ${currentStage} to ${targetStage}: unresolved blocking interaction(s) remain in ${currentStage}`,
+    );
+    this.name = "WorkflowUnresolvedInteractionsError";
+  }
+}
+
 const CRITIC_REVIEW_STAGES = new Set<WorkflowStage>([
   "critic_prd_review",
+  "critic_spec_review",
+]);
+
+const INTERACTION_CLEARANCE_STAGES = new Set<WorkflowStage>([
+  "requirements_interview",
+  "product_drafting",
+  "critic_prd_review",
+  "spec_drafting",
   "critic_spec_review",
 ]);
 
@@ -132,6 +159,32 @@ export function validateTransition(input: TransitionInput): TransitionResult {
     }
   }
 
+  if (input.hasUnresolvedBlockingInteractions?.(input.currentStage)) {
+    return denied(
+      new WorkflowUnresolvedInteractionsError(
+        input.workflowId,
+        input.currentStage,
+        input.targetStage,
+      ),
+    );
+  }
+
+  if (
+    INTERACTION_CLEARANCE_STAGES.has(input.currentStage) &&
+    !isBackwardTransition(input.workflowType, input.currentStage, input.targetStage) &&
+    !input.hasResolvedBlockingDecisionInteractions?.(input.currentStage) &&
+    !input.hasNoRequiredInteractionsReason?.(input.currentStage)
+  ) {
+    return denied(
+      new WorkflowTransitionError(
+        input.workflowId,
+        input.currentStage,
+        input.targetStage,
+        `Workflow ${input.workflowId} cannot advance from ${input.currentStage} to ${input.targetStage}: stage requires either resolved blocking decisions or a recorded no-question reason`,
+      ),
+    );
+  }
+
   if (input.targetStage === "foreman_executing" && !input.hasUserApproval) {
     return denied(
       new WorkflowTransitionError(
@@ -171,8 +224,44 @@ export function canTransitionTo(
     maxRetries: workflow.maxRetries,
     hasArtifact: context.hasArtifact,
     hasStageCompletion: context.hasStageCompletion,
+    hasUnresolvedBlockingInteractions: context.hasUnresolvedBlockingInteractions,
+    hasResolvedBlockingDecisionInteractions: context.hasResolvedBlockingDecisionInteractions,
+    hasNoRequiredInteractionsReason: context.hasNoRequiredInteractionsReason,
     hasUserApproval: context.hasUserApproval,
   });
+}
+
+export function hasUnresolvedBlockingInteractions(
+  workflow: Pick<WorkflowState, "requiredInteractions" | "resolvedInteractions">,
+  stage: WorkflowStage,
+): boolean {
+  const interactionsById = new Map<string, WorkflowInteraction>();
+  for (const interaction of [...workflow.requiredInteractions, ...workflow.resolvedInteractions]) {
+    interactionsById.set(interaction.id, interaction);
+  }
+
+  return workflow.requiredInteractions.some((interaction) => {
+    if (interaction.stage !== stage || !interaction.blocking) return false;
+    if (interaction.status === "proposed" || interaction.status === "requested" || interaction.status === "cancelled") {
+      return true;
+    }
+    if (interaction.status === "superseded") {
+      return !isResolvedInteraction(interaction, interactionsById, new Set<string>());
+    }
+    return false;
+  });
+}
+
+export function hasResolvedBlockingDecisionInteractions(
+  workflow: Pick<WorkflowState, "requiredInteractions" | "resolvedInteractions">,
+  stage: WorkflowStage,
+): boolean {
+  return [...workflow.requiredInteractions, ...workflow.resolvedInteractions].some((interaction) => (
+    interaction.stage === stage &&
+    interaction.kind === "decision" &&
+    interaction.blocking &&
+    interaction.status === "resolved"
+  ));
 }
 
 export function canCompleteWorkflow(
@@ -257,8 +346,30 @@ function missingStageCompletionPrerequisite(
   // Backward transitions (critic retries) don't require current-stage completion —
   // the whole point of going back is that the current stage wasn't satisfactorily completed.
   if (isBackwardTransition(workflowType, currentStage, targetStage)) return undefined;
+  if (
+    workflowType === "full_feature" &&
+    targetStage === "critic_prd_review" &&
+    !hasStageCompletion("requirements_interview")
+  ) {
+    return "requirements_interview";
+  }
   if (!hasStageCompletion(currentStage)) return currentStage;
   return undefined;
+}
+
+function isResolvedInteraction(
+  interaction: WorkflowInteraction,
+  interactionsById: Map<string, WorkflowInteraction>,
+  visited: Set<string>,
+): boolean {
+  if (interaction.status === "resolved") return true;
+  if (interaction.status !== "superseded" || !interaction.supersededBy) return false;
+  if (visited.has(interaction.id)) return false;
+  visited.add(interaction.id);
+
+  const supersedingInteraction = interactionsById.get(interaction.supersededBy);
+  if (!supersedingInteraction) return false;
+  return isResolvedInteraction(supersedingInteraction, interactionsById, visited);
 }
 
 function denied(error: Error): TransitionResult {

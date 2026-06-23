@@ -1,22 +1,12 @@
-import { describe, expect, test, mock, afterEach } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { ModelInfo } from "../../../provider/model";
 import { createMockStore } from "../../../store/test-helpers";
 import type { SessionStoreState, StepInfo, StoredPart, StoredTodo, ExecutionEndEvent } from "../../../store/types";
+import { createTestProjectContext } from "../../../tools/test-project-context";
 import type { AfterStepEndContext, AfterLoopEndContext } from "../loop-hooks";
 import { silentLogger } from "../../../logger";
 import { createTodoContinuationHook } from "./todo-continuation";
-
-let mockNow = 10_000;
-const originalDateNow = Date.now;
-
-function setMockNow(ms: number): void {
-  mockNow = ms;
-}
-
-function advanceMockNow(ms: number): void {
-  mockNow += ms;
-}
 
 describe("createTodoContinuationHook - afterStepEnd (10-step reminder)", () => {
   test("does not inject before 10 steps since last todo_write", async () => {
@@ -185,6 +175,39 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
 
     expect(store.getState().reminders).toHaveLength(0);
   });
+
+  test("reads workflow state and blocks loop continuation on stale requested blocking interactions", async () => {
+    const workspaceRoot = `${import.meta.dir}/__test_tmp__/todo-continuation-hook`;
+    const projectContext = createTestProjectContext(workspaceRoot);
+    const workflow = await projectContext.workflowState.create({ type: "full_feature", title: "Feature" });
+    await projectContext.workflowState.updateStage(workflow.id, "product_drafting");
+    await projectContext.workflowState.updateInteractions(workflow.id, {
+      requiredInteractions: [{
+        id: "stale-request",
+        decisionKey: "decision-1",
+        stage: "product_drafting",
+        sourceAgent: "product",
+        kind: "decision",
+        blocking: true,
+        question: "Choose the direction?",
+        options: ["Option A", "Option B"],
+        recommendedOption: "Option A",
+        rationale: "Needed before autonomous coding.",
+        status: "requested",
+        createdAt: "2026-06-23T00:00:00.000Z",
+        revision: 1,
+      }],
+      resolvedInteractions: [],
+    });
+    const store = createHookStore();
+    seedTodos(store, [{ id: "todo-1", content: "continue", status: "pending" }]);
+    store.setState({ workflowId: workflow.id });
+    const { afterLoopEnd } = createTodoContinuationHook();
+
+    await runLoopEnd(afterLoopEnd, store, "completed", projectContext);
+
+    expect(store.getState().reminders).toHaveLength(0);
+  });
 });
 
 function createHookStore(): StoreApi<SessionStoreState> {
@@ -207,8 +230,9 @@ async function runLoopEnd(
   hook: (ctx: AfterLoopEndContext) => Promise<void>,
   store: StoreApi<SessionStoreState>,
   loopEndStatus: ExecutionEndEvent["status"],
+  projectContext?: AfterLoopEndContext["projectContext"],
 ): Promise<void> {
-  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger, loopEndStatus });
+  await hook({ store, modelInfo: modelInfoStub(), logger: silentLogger, loopEndStatus, projectContext });
 }
 
 function seedTodos(store: StoreApi<SessionStoreState>, todos: StoredTodo[]): void {

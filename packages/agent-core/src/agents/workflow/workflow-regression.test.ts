@@ -71,8 +71,10 @@ describe("workflow regression hardening", () => {
     expect(toolNames.filter((name) => name.startsWith("workflow_")).sort()).toEqual([
       "workflow_complete",
       "workflow_create",
+      "workflow_propose_interactions",
       "workflow_read",
       "workflow_record_completion",
+      "workflow_request_interactions",
       "workflow_task_check",
       "workflow_update_stage",
     ]);
@@ -108,6 +110,16 @@ describe("workflow regression hardening", () => {
 
     expect(factory.getDelegateTargetsFor(factory.getDefinition("foreman"), 1)).toEqual(["builder", "reviewer"]);
     expect(factory.getDelegateTargetsFor(factory.getDefinition("builder"), 2)).toEqual(["explore", "librarian"]);
+  });
+
+  test("requirements interview does not require a new workflow agent config", () => {
+    expect(agentDefinitions.map((definition) => definition.name)).toEqual([
+      "orchestrator",
+      "explore",
+      ...WORKFLOW_AGENT_NAMES,
+    ]);
+    expect(agentDefinitions.map((definition) => definition.name)).not.toContain("discovery");
+    expect(agentDefinitions.map((definition) => definition.name)).not.toContain("requirements_interview");
   });
 
   test("workflow code reuses shared filesystem, frontmatter, and TASKS.md helpers", async () => {

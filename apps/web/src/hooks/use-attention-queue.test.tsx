@@ -161,4 +161,89 @@ describe("useAttentionQueue", () => {
     });
     expect(removePermissionRequest).not.toHaveBeenCalled();
   });
+
+  test("respondQuestion removes the pending question from the queue on success (terminal clearing)", () => {
+    questionMutate.mockImplementation((_variables, options) => {
+      options?.onSuccess?.();
+    });
+    mockState.pendingQuestions = new Map([
+      ["question-terminal-1", makeQuestion("question-terminal-1")],
+    ]);
+
+    const actions = createAttentionQueueActions({
+      postPermissionResponse: permissionMutate,
+      postQuestionAnswer: questionMutate,
+      getState,
+    });
+
+    actions.respondQuestion("question-terminal-1", { answers: [["yes"]] });
+
+    expect(questionMutate.mock.calls[0]?.[0]).toEqual({
+      id: "question-terminal-1",
+      body: { answers: [["yes"]] },
+    });
+    expect(removeQuestionRequest).toHaveBeenCalledWith("question-terminal-1");
+  });
+
+  test("respondQuestion does not remove from queue on mutation failure", () => {
+    questionMutate.mockImplementation(() => {});
+    mockState.pendingQuestions = new Map([
+      ["question-fail-1", makeQuestion("question-fail-1")],
+    ]);
+
+    const actions = createAttentionQueueActions({
+      postPermissionResponse: permissionMutate,
+      postQuestionAnswer: questionMutate,
+      getState,
+    });
+
+    actions.respondQuestion("question-fail-1", { answers: [["no"]] });
+
+    expect(questionMutate.mock.calls[0]?.[0]).toEqual({
+      id: "question-fail-1",
+      body: { answers: [["no"]] },
+    });
+    expect(removeQuestionRequest).not.toHaveBeenCalled();
+  });
+
+  test("respondQuestion submits batched answers as a single payload", () => {
+    questionMutate.mockImplementation((_variables, options) => {
+      options?.onSuccess?.();
+    });
+    const actions = createAttentionQueueActions({
+      postPermissionResponse: permissionMutate,
+      postQuestionAnswer: questionMutate,
+      getState,
+    });
+
+    const batchedAnswers: string[][] = [["Alpha"], ["Beta"], ["Gamma"]];
+    actions.respondQuestion("question-batch-1", { answers: batchedAnswers });
+
+    expect(questionMutate).toHaveBeenCalledTimes(1);
+    expect(questionMutate.mock.calls[0]?.[0]).toEqual({
+      id: "question-batch-1",
+      body: { answers: batchedAnswers },
+    });
+    expect(removeQuestionRequest).toHaveBeenCalledWith("question-batch-1");
+  });
+
+  test("respondQuestion submits error cancellation payload", () => {
+    questionMutate.mockImplementation((_variables, options) => {
+      options?.onSuccess?.();
+    });
+    const actions = createAttentionQueueActions({
+      postPermissionResponse: permissionMutate,
+      postQuestionAnswer: questionMutate,
+      getState,
+    });
+
+    actions.respondQuestion("question-cancel-1", { isError: true, reason: "Cancelled by user" });
+
+    expect(questionMutate).toHaveBeenCalledTimes(1);
+    expect(questionMutate.mock.calls[0]?.[0]).toEqual({
+      id: "question-cancel-1",
+      body: { isError: true, reason: "Cancelled by user" },
+    });
+    expect(removeQuestionRequest).toHaveBeenCalledWith("question-cancel-1");
+  });
 });

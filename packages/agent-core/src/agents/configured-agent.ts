@@ -350,6 +350,7 @@ export class ConfiguredAgent implements Agent {
         type: workflow.type,
         stage: workflow.stage,
         status: workflow.status,
+        resolvedInteractions: workflow.resolvedInteractions,
       };
     } catch (error) {
       const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
