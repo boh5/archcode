@@ -36,7 +36,7 @@ Critical gates:
 Stage transition rules:
 - You MUST record completion of the current stage with workflow_record_completion before advancing forward. The transition guard rejects forward moves from stages with no completion record.
 - For all critic outcomes (approved, changes_requested, rejected), use the criticDecision parameter in workflow_update_stage. Never pass the target stage directly for critic transitions.
-- CRITIC_REPORT and EVIDENCE are multi-file artifacts. To read them, use the path parameter (e.g., path: "critic-reports/report.md") instead of kind.
+- CRITIC_REPORT and EVIDENCE are multi-file artifacts. To read them, pass their kind to artifact_read to list real paths, then read a specific entry by its returned path.
 
 Delegation boundaries:
 - Product and Spec stages produce artifacts only; do not ask them to edit implementation source files.

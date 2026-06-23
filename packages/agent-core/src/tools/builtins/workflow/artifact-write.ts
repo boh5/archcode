@@ -6,6 +6,7 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import {
   ArtifactPathError,
+  deriveWorkflowArtifactPath,
   WorkflowArtifactWriteInputSchema,
   type WorkflowArtifactWriteInput,
 } from "../../../agents/workflow/artifacts";
@@ -17,7 +18,7 @@ import { guardCurrentWorkflow } from "./guard-current-workflow";
 export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_write",
-    description: "Write a workflow artifact and update artifact metadata without changing workflow stage or status.",
+    description: "Write a workflow artifact and update artifact metadata without changing workflow stage or status.\n\nSingle-file artifacts (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT): pass workflowId, kind, and content only. No path.\n\nMulti-file artifacts (CRITIC_REPORT, EVIDENCE): pass workflowId, kind, name, and content. No path. The `name` is a short kebab-case slug without path separators or .md suffix (e.g. \"prd-review-round-1\"); Specra generates the full path like critic-reports/prd-review-round-1.md and returns it.\n\nThe `content` is markdown body only starting with a # heading. Do not include YAML frontmatter (--- blocks); Specra generates system frontmatter automatically.",
     inputSchema: WorkflowArtifactWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
@@ -29,16 +30,22 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
         const validationError = validateArtifactContentBeforeWrite(input);
         if (validationError) return validationError;
 
-        const before = await readArtifactBeforeWrite(artifactManager, input);
+        const path = deriveWorkflowArtifactPath(input);
+        const before = await readArtifactBeforeWrite(artifactManager, input.workflowId, path);
         const result = await artifactManager.write(input, buildArtifactProvenance(ctx));
-        const after = await artifactManager.readRaw(input.workflowId, input.path);
+        const after = await artifactManager.readRaw(input.workflowId, result.path);
         emitWorkflowStateChange(ctx.store, input.workflowId, ["artifacts"]);
         return {
-          output: JSON.stringify(result, null, 2),
+          output: JSON.stringify({
+            workflowId: result.workflowId,
+            kind: result.kind,
+            path: result.path,
+            state: result.state,
+          }, null, 2),
           isError: false,
           meta: {
             diffs: computeArtifactDiff({
-              path: input.path,
+              path: result.path,
               before,
               after: after.content,
             }),
@@ -88,7 +95,7 @@ function validateArtifactContentBeforeWrite(input: WorkflowArtifactWriteInput): 
     message: `TASKS.md is invalid and was not written. ${formatTasksValidationSummary(validation.errors, validation.tasks.length)}`,
     details: {
       artifactKind: input.kind,
-      path: input.path,
+      path: deriveWorkflowArtifactPath(input),
       taskCount: validation.tasks.length,
       errors: validation.errors,
     },
@@ -112,15 +119,16 @@ type ArtifactBeforeWrite =
 
 async function readArtifactBeforeWrite(
   artifactManager: ToolExecutionContext["projectContext"]["artifacts"],
-  input: WorkflowArtifactWriteInput,
+  workflowId: string,
+  path: string,
 ): Promise<ArtifactBeforeWrite> {
   try {
-    const existing = await artifactManager.read(input.workflowId, input.path);
+    const existing = await artifactManager.read(workflowId, path);
     if (!existsSync(existing.absolutePath)) return { existed: false };
     return { existed: true, content: existing.content };
   } catch (error) {
     if (error instanceof Error && error.message.includes("frontmatter")) {
-      const existing = await artifactManager.readRaw(input.workflowId, input.path);
+      const existing = await artifactManager.readRaw(workflowId, path);
       if (!existsSync(existing.absolutePath)) return { existed: false };
       return { existed: true, content: existing.content };
     }

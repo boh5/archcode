@@ -106,14 +106,13 @@ describe("workflow error and partial failure behavior", () => {
     await artifacts.write({
       workflowId: wf_critic_reject.id,
       kind: "PRD",
-      path: "PRD.md",
       content: "# PRD\n",
     });
     await stateManager.updateStage(wf_critic_reject.id, "critic_prd_review");
-    await artifacts.write({
+    const criticReport = await artifacts.write({
       workflowId: wf_critic_reject.id,
       kind: "CRITIC_REPORT",
-      path: "critic-reports/prd-rejected.md",
+      name: "prd-rejected",
       content: "Reject: scope is unsafe.",
     });
 
@@ -121,7 +120,7 @@ describe("workflow error and partial failure behavior", () => {
       workflowId: wf_critic_reject.id,
       decision: "rejected",
       currentStage: "critic_prd_review",
-      criticReportPath: "critic-reports/prd-rejected.md",
+      criticReportPath: criticReport.path,
     }, stateManager);
 
     expect(result.newState.stage).toBe("critic_prd_review");
@@ -129,8 +128,8 @@ describe("workflow error and partial failure behavior", () => {
     expect(result.newState.lastError).toContain("Critic rejected");
     expect(result.newState.lastError).toContain("critic-reports/prd-rejected.md");
     expect(result.newState.artifacts.CRITIC_REPORT).toEqual(["critic-reports/prd-rejected.md"]);
-    const criticReport = await artifacts.read(wf_critic_reject.id, "critic-reports/prd-rejected.md");
-    expect(criticReport).toMatchObject({ body: "Reject: scope is unsafe." });
+    const readCriticReport = await artifacts.read(wf_critic_reject.id, criticReport.path);
+    expect(readCriticReport).toMatchObject({ body: "Reject: scope is unsafe." });
   });
 
   test("user rejection prevents foreman_executing and remains awaiting_user_approval", async () => {
@@ -166,25 +165,15 @@ describe("workflow error and partial failure behavior", () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     const wf_partial_wave = await stateManager.create({ title: "Partial Wave", type: "full_feature" });
-    await artifacts.write({
-      workflowId: wf_partial_wave.id,
-      kind: "TASKS",
-      path: "TASKS.md",
-      content: THREE_TASKS_MARKDOWN,
-    });
-    await artifacts.write({
+    await artifacts.write({ workflowId: wf_partial_wave.id, kind: "TASKS", content: THREE_TASKS_MARKDOWN });
+    const evidenceWrite = await artifacts.write({
       workflowId: wf_partial_wave.id,
       kind: "EVIDENCE",
-      path: "evidence/T1-builder.md",
+      name: "T1-builder",
       content: "T1 builder and reviewer passed before the wave failed.",
     });
     const withOnlyT1Checked = toggleTaskCheckbox(THREE_TASKS_MARKDOWN, "T1", true);
-    await artifacts.write({
-      workflowId: wf_partial_wave.id,
-      kind: "TASKS",
-      path: "TASKS.md",
-      content: withOnlyT1Checked,
-    });
+    await artifacts.write({ workflowId: wf_partial_wave.id, kind: "TASKS", content: withOnlyT1Checked });
     await stateManager.fail(wf_partial_wave.id, "Foreman wave failed after T1");
 
     const tasks = parseTasksMarkdown((await artifacts.read(wf_partial_wave.id, "TASKS.md")).body);
@@ -195,8 +184,8 @@ describe("workflow error and partial failure behavior", () => {
     expect(tasks.find((task) => task.id === "T3")?.checked).toBe(false);
     expect(state.status).toBe("failed");
     expect(state.lastError).toBe("Foreman wave failed after T1");
-    expect(state.artifacts.EVIDENCE).toEqual(["evidence/T1-builder.md"]);
-    const evidence = await artifacts.read(wf_partial_wave.id, "evidence/T1-builder.md");
+    expect(state.artifacts.EVIDENCE).toEqual([evidenceWrite.path]);
+    const evidence = await artifacts.read(wf_partial_wave.id, evidenceWrite.path);
     expect(evidence).toMatchObject({
       body: "T1 builder and reviewer passed before the wave failed.",
     });
@@ -206,22 +195,17 @@ describe("workflow error and partial failure behavior", () => {
     const stateManager = new WorkflowStateManager(TMP_DIR);
     const artifacts = new WorkflowArtifactManager(TMP_DIR, stateManager);
     const wf_reviewer_reject = await stateManager.create({ title: "Reviewer Reject", type: "full_feature" });
-    await artifacts.write({
-      workflowId: wf_reviewer_reject.id,
-      kind: "TASKS",
-      path: "TASKS.md",
-      content: THREE_TASKS_MARKDOWN,
-    });
-    await artifacts.write({
+    await artifacts.write({ workflowId: wf_reviewer_reject.id, kind: "TASKS", content: THREE_TASKS_MARKDOWN });
+    const builderEvidenceWrite = await artifacts.write({
       workflowId: wf_reviewer_reject.id,
       kind: "EVIDENCE",
-      path: "evidence/T1-builder-failed.md",
+      name: "T1-builder-failed",
       content: "Builder failed verification for T1.",
     });
-    await artifacts.write({
+    const reviewerEvidenceWrite = await artifacts.write({
       workflowId: wf_reviewer_reject.id,
       kind: "EVIDENCE",
-      path: "evidence/T1-reviewer-rejected.md",
+      name: "T1-reviewer-rejected",
       content: "Reviewer rejected T1 because verification failed.",
     });
     await stateManager.fail(wf_reviewer_reject.id, "Reviewer rejected T1 after builder failure");
@@ -231,11 +215,11 @@ describe("workflow error and partial failure behavior", () => {
 
     expect(tasks.find((task) => task.id === "T1")?.checked).toBe(false);
     expect(state.artifacts.EVIDENCE).toEqual([
-      "evidence/T1-builder-failed.md",
-      "evidence/T1-reviewer-rejected.md",
+      builderEvidenceWrite.path,
+      reviewerEvidenceWrite.path,
     ]);
-    const builderEvidence = await artifacts.read(wf_reviewer_reject.id, "evidence/T1-builder-failed.md");
-    const reviewerEvidence = await artifacts.read(wf_reviewer_reject.id, "evidence/T1-reviewer-rejected.md");
+    const builderEvidence = await artifacts.read(wf_reviewer_reject.id, builderEvidenceWrite.path);
+    const reviewerEvidence = await artifacts.read(wf_reviewer_reject.id, reviewerEvidenceWrite.path);
     expect(builderEvidence).toMatchObject({ body: "Builder failed verification for T1." });
     expect(reviewerEvidence).toMatchObject({
       body: "Reviewer rejected T1 because verification failed.",
@@ -249,15 +233,9 @@ describe("workflow error and partial failure behavior", () => {
     const written = await artifacts.write({
       workflowId: wf_corrupt_artifact.id,
       kind: "PRD",
-      path: "PRD.md",
       content: "# PRD\n",
     });
-    await artifacts.write({
-      workflowId: wf_corrupt_artifact.id,
-      kind: "SPEC",
-      path: "SPEC.md",
-      content: "# SPEC\n",
-    });
+    await artifacts.write({ workflowId: wf_corrupt_artifact.id, kind: "SPEC", content: "# SPEC\n" });
     await Bun.write(written.absolutePath, "missing frontmatter delimiter");
 
     try {

@@ -213,11 +213,14 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
 
   // Artifact tools
   if (toolName === TOOL_ARTIFACT_READ || toolName === TOOL_ARTIFACT_WRITE) {
+    const kind = typeof obj.kind === "string" ? obj.kind : undefined;
     const name = typeof obj.name === "string" ? obj.name : undefined;
+    const path = typeof obj.path === "string" ? obj.path : undefined;
+    const primary = kind ?? name ?? path ?? "—";
     if (toolName === TOOL_ARTIFACT_WRITE && typeof obj.content === "string") {
-      return { icon, primary: name ?? "—", secondary: summarizeContent(obj.content) };
+      return { icon, primary, secondary: summarizeContent(obj.content) };
     }
-    return { icon, primary: name ?? "—" };
+    return { icon, primary };
   }
 
   // Skill tools
@@ -280,8 +283,8 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_WORKFLOW_READ]: ["name"],
   [TOOL_WORKFLOW_UPDATE_STAGE]: ["name", "stage"],
   [TOOL_WORKFLOW_TASK_CHECK]: ["name"],
-  [TOOL_ARTIFACT_READ]: ["name"],
-  [TOOL_ARTIFACT_WRITE]: ["name"],
+  [TOOL_ARTIFACT_READ]: ["workflowId", "kind", "name", "path"],
+  [TOOL_ARTIFACT_WRITE]: ["workflowId", "kind", "name", "path"],
   [TOOL_SKILL_LIST]: [],
   [TOOL_SKILL_READ]: ["name"],
   [TOOL_WAIT_FOR_REMINDER]: [],

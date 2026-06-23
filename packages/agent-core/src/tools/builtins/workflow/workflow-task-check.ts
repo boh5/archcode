@@ -44,7 +44,6 @@ export function createWorkflowTaskCheckTool(): AnyToolDescriptor {
         await artifactManager.write({
           workflowId: input.workflowId,
           kind: "TASKS",
-          path: TASKS_ARTIFACT_PATH,
           content: updated,
         }, {
           writerAgent: ctx.agentName,

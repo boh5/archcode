@@ -79,18 +79,13 @@ describe("mocked workflow MVP integration", () => {
     await transition(stateManager, createdWf.id, "idle", "product_drafting", false);
     await stateManager.recordStageCompletion(createdWf.id, { stage: "product_drafting" });
 
-    await artifactManager.write({
-      workflowId: createdWf.id,
-      kind: "PRD",
-      path: "PRD.md",
-      content: "# PRD\n\nShip a mocked MVP workflow integration path.",
-    });
+    await artifactManager.write({ workflowId: createdWf.id, kind: "PRD", content: "# PRD\n\nShip a mocked MVP workflow integration path." });
     await transition(stateManager, createdWf.id, "product_drafting", "critic_prd_review", false);
 
-    await artifactManager.write({
+    const prdReport = await artifactManager.write({
       workflowId: createdWf.id,
       kind: "CRITIC_REPORT",
-      path: "critic-reports/prd.md",
+      name: "prd",
       content: "PRD approved.",
     });
     const prdDecision = await processCriticDecision(
@@ -98,22 +93,16 @@ describe("mocked workflow MVP integration", () => {
         workflowId: createdWf.id,
         decision: "approved",
         currentStage: "critic_prd_review",
-        criticReportPath: "critic-reports/prd.md",
+        criticReportPath: prdReport.path,
       },
       stateManager,
     );
     expect(prdDecision.newState.stage).toBe("spec_drafting");
 
-    await artifactManager.write({
-      workflowId: createdWf.id,
-      kind: "SPEC",
-      path: "SPEC.md",
-      content: "# SPEC\n\nImplement the mocked path using workflow managers directly.",
-    });
+    await artifactManager.write({ workflowId: createdWf.id, kind: "SPEC", content: "# SPEC\n\nImplement the mocked path using workflow managers directly." });
     await artifactManager.write({
       workflowId: createdWf.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: TASKS_MARKDOWN,
     });
     const tasksDraft = await artifactManager.read(createdWf.id, "TASKS.md");
@@ -121,10 +110,10 @@ describe("mocked workflow MVP integration", () => {
     await stateManager.recordStageCompletion(createdWf.id, { stage: "spec_drafting" });
     await transition(stateManager, createdWf.id, "spec_drafting", "critic_spec_review", false);
 
-    await artifactManager.write({
+    const specReport = await artifactManager.write({
       workflowId: createdWf.id,
       kind: "CRITIC_REPORT",
-      path: "critic-reports/spec-tasks.md",
+      name: "spec-tasks",
       content: "SPEC and TASKS approved.",
     });
     const specDecision = await processCriticDecision(
@@ -132,7 +121,7 @@ describe("mocked workflow MVP integration", () => {
         workflowId: createdWf.id,
         decision: "approved",
         currentStage: "critic_spec_review",
-        criticReportPath: "critic-reports/spec-tasks.md",
+        criticReportPath: specReport.path,
       },
       stateManager,
     );
@@ -152,7 +141,7 @@ describe("mocked workflow MVP integration", () => {
         await artifactManager.write({
           workflowId: createdWf.id,
           kind: "EVIDENCE",
-          path: result.evidencePath,
+          name: result.evidencePath.replace(/^evidence\/(.+)\.md$/, "$1"),
           content: `${task.id} ${task.agent} succeeded.`,
         });
         currentTasks = toggleTaskCheckbox(currentTasks, task.id, true);
@@ -161,7 +150,6 @@ describe("mocked workflow MVP integration", () => {
       await artifactManager.write({
         workflowId: createdWf.id,
         kind: "TASKS",
-        path: "TASKS.md",
         content: currentTasks,
       });
       currentTasks = (await artifactManager.read(createdWf.id, "TASKS.md")).body;
@@ -170,12 +158,7 @@ describe("mocked workflow MVP integration", () => {
     expect(calculateReadyWave(parseTasksMarkdown(currentTasks))).toEqual([]);
     await stateManager.recordStageCompletion(createdWf.id, { stage: "foreman_executing" });
     await transition(stateManager, createdWf.id, "foreman_executing", "final_review", false);
-    await artifactManager.write({
-      workflowId: createdWf.id,
-      kind: "FINAL_REPORT",
-      path: "FINAL_REPORT.md",
-      content: "# Final Report\n\nWorkflow completed with mocked builder and reviewer outputs.",
-    });
+    await artifactManager.write({ workflowId: createdWf.id, kind: "FINAL_REPORT", content: "# Final Report\n\nWorkflow completed with mocked builder and reviewer outputs." });
     await stateManager.updateStatus(createdWf.id, "completed");
 
     const finalState = await stateManager.read(createdWf.id);
@@ -189,10 +172,10 @@ describe("mocked workflow MVP integration", () => {
     expect(finalState.artifacts.SPEC).toBe("SPEC.md");
     expect(finalState.artifacts.TASKS).toBe("TASKS.md");
     expect(finalState.artifacts.CRITIC_REPORT).toEqual([
-      "critic-reports/prd.md",
-      "critic-reports/spec-tasks.md",
+      prdReport.path,
+      specReport.path,
     ]);
-    expect(finalState.artifacts.EVIDENCE).toEqual(["evidence/T1-builder.md", "evidence/T2-reviewer.md"]);
+    expect(finalState.artifacts.EVIDENCE).toHaveLength(2);
     expect(finalState.artifacts.FINAL_REPORT).toBe("FINAL_REPORT.md");
     expect(finalTasks.every((task) => task.checked)).toBe(true);
     expect(delegateBuilder).toHaveBeenCalledTimes(1);
@@ -209,25 +192,25 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const wf_full = await stateManager.create({ title: "Full Feature", type: "full_feature" });
     await advance(stateManager, wf_full.id, "product_drafting");
-    await artifactManager.write({ workflowId: wf_full.id, kind: "PRD", path: "PRD.md", content: "# PRD" });
+    await artifactManager.write({ workflowId: wf_full.id, kind: "PRD", content: "# PRD" });
     await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"] });
     await advance(stateManager, wf_full.id, "critic_prd_review");
-    await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", path: "critic-reports/prd.md", content: "approved" });
-    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_prd_review", criticReportPath: "critic-reports/prd.md" }, stateManager);
+    const fullPrdReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "prd", content: "approved" });
+    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_prd_review", criticReportPath: fullPrdReport.path }, stateManager);
 
-    await artifactManager.write({ workflowId: wf_full.id, kind: "SPEC", path: "SPEC.md", content: "# SPEC" });
-    await artifactManager.write({ workflowId: wf_full.id, kind: "TASKS", path: "TASKS.md", content: TASKS_MARKDOWN });
+    await artifactManager.write({ workflowId: wf_full.id, kind: "SPEC", content: "# SPEC" });
+    await artifactManager.write({ workflowId: wf_full.id, kind: "TASKS", content: TASKS_MARKDOWN });
     await stateManager.recordStageCompletion(wf_full.id, { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"] });
     await advance(stateManager, wf_full.id, "critic_spec_review");
-    await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", path: "critic-reports/spec.md", content: "approved" });
-    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_spec_review", criticReportPath: "critic-reports/spec.md" }, stateManager);
+    const fullSpecReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "spec", content: "approved" });
+    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_spec_review", criticReportPath: fullSpecReport.path }, stateManager);
 
     await stateManager.recordStageCompletion(wf_full.id, { stage: "awaiting_user_approval", evidence: ["user-approved"] });
     await advance(stateManager, wf_full.id, "foreman_executing", true);
-    await artifactManager.write({ workflowId: wf_full.id, kind: "EVIDENCE", path: "evidence/builder.md", content: "builder done" });
-    await stateManager.recordStageCompletion(wf_full.id, { stage: "foreman_executing", evidence: ["evidence/builder.md"] });
+    const fullEvidence = await artifactManager.write({ workflowId: wf_full.id, kind: "EVIDENCE", name: "builder", content: "builder done" });
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "foreman_executing", evidence: [fullEvidence.path] });
     await advance(stateManager, wf_full.id, "final_review");
-    await artifactManager.write({ workflowId: wf_full.id, kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "# Done" });
+    await artifactManager.write({ workflowId: wf_full.id, kind: "FINAL_REPORT", content: "# Done" });
     await stateManager.recordStageCompletion(wf_full.id, { stage: "final_review", evidence: ["FINAL_REPORT.md"] });
 
     const beforeComplete = await stateManager.read(wf_full.id);
@@ -237,8 +220,8 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(completed.status).toBe("completed");
     expect(completed.stage).toBe("final_review");
     expect(completed.artifacts).toMatchObject({ PRD: "PRD.md", SPEC: "SPEC.md", TASKS: "TASKS.md", FINAL_REPORT: "FINAL_REPORT.md" });
-    expect(completed.artifacts.CRITIC_REPORT).toEqual(["critic-reports/prd.md", "critic-reports/spec.md"]);
-    expect(completed.artifacts.EVIDENCE).toEqual(["evidence/builder.md"]);
+    expect(completed.artifacts.CRITIC_REPORT).toEqual([fullPrdReport.path, fullSpecReport.path]);
+    expect(completed.artifacts.EVIDENCE).toEqual([fullEvidence.path]);
     expect(completed.stageCompletions.final_review?.evidence).toEqual(["FINAL_REPORT.md"]);
   });
 
@@ -249,7 +232,7 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const wf_research = await stateManager.create({ title: "Research Only", type: "research_only" });
     await advance(stateManager, wf_research.id, "researching");
-    await artifactManager.write({ workflowId: wf_research.id, kind: "RESEARCH", path: "RESEARCH.md", content: "# Findings" });
+    await artifactManager.write({ workflowId: wf_research.id, kind: "RESEARCH", content: "# Findings" });
     await stateManager.recordStageCompletion(wf_research.id, { stage: "researching", evidence: ["RESEARCH.md"] });
     await advance(stateManager, wf_research.id, "research_consolidation");
     await stateManager.recordStageCompletion(wf_research.id, { stage: "research_consolidation", evidence: ["RESEARCH.md"] });
@@ -285,7 +268,7 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const source = await createWorkflowWithOrchestrator({ title: "Source Workflow", type: "research_only", orchestratorSessionId: sourceStore.getState().sessionId }, stateManager, storeManager);
     await advance(stateManager, source.workflow.id, "researching");
-    await artifactManager.write({ workflowId: source.workflow.id, kind: "RESEARCH", path: "RESEARCH.md", content: "# Source research" });
+    await artifactManager.write({ workflowId: source.workflow.id, kind: "RESEARCH", content: "# Source research" });
     await stateManager.recordStageCompletion(source.workflow.id, { stage: "researching", evidence: ["RESEARCH.md"] });
     await advance(stateManager, source.workflow.id, "research_consolidation");
     await stateManager.recordStageCompletion(source.workflow.id, { stage: "research_consolidation" });
@@ -362,7 +345,6 @@ describe("end-to-end workflow lifecycle integration", () => {
     const sourceArtifactWrite = await createArtifactWriteTool().execute({
       workflowId: source.workflow.id,
       kind: "SPEC",
-      path: "SPEC.md",
       content: "# Wrong workflow write\n",
     }, ctx);
 
@@ -383,8 +365,8 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const wf_a = await stateManager.create({ title: "Workflow A", type: "research_only" });
     const wf_b = await stateManager.create({ title: "Workflow B", type: "quick_fix" });
-    await artifactManager.write({ workflowId: wf_a.id, kind: "RESEARCH", path: "RESEARCH.md", content: "# Shared research" });
-    await artifactManager.write({ workflowId: wf_b.id, kind: "FINAL_REPORT", path: "FINAL_REPORT.md", content: "# Other workflow" });
+    await artifactManager.write({ workflowId: wf_a.id, kind: "RESEARCH", content: "# Shared research" });
+    await artifactManager.write({ workflowId: wf_b.id, kind: "FINAL_REPORT", content: "# Other workflow" });
 
     const readFromOtherContext = await artifactManager.read(wf_a.id, "RESEARCH.md");
     expect(readFromOtherContext.frontmatter).toMatchObject({
@@ -502,7 +484,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(invalid.errorName).toBe("WorkflowTransitionError");
 
     await advance(stateManager, wf_errors.id, "product_drafting");
-    await artifactManager.write({ workflowId: wf_errors.id, kind: "PRD", path: "PRD.md", content: "# PRD" });
+    await artifactManager.write({ workflowId: wf_errors.id, kind: "PRD", content: "# PRD" });
     const missingCompletion = validateTransition({ workflowId: wf_errors.id, workflowType: "full_feature", currentStage: "product_drafting", targetStage: "critic_prd_review", retryCount: 0, maxRetries: 3, hasArtifact: (kind) => kind === "PRD", hasStageCompletion: () => false, hasUserApproval: false });
     expect(missingCompletion.allowed).toBe(false);
     expect(missingCompletion.error).toContain("record completion for product_drafting");

@@ -144,8 +144,8 @@ describe("getToolSummary", () => {
 
   test("artifact_write returns content stats", () => {
     const content = "a".repeat(300);
-    const result = getToolSummary("artifact_write", { name: "plan.md", content });
-    expect(result.primary).toBe("plan.md");
+    const result = getToolSummary("artifact_write", { workflowId: "wf-1", kind: "PRD", content });
+    expect(result.primary).toBe("PRD");
     expect(result.secondary).toContain("chars");
     expect(result.secondary).toContain("lines");
   });
@@ -177,9 +177,9 @@ describe("formatToolInputDetails", () => {
 
   test("artifact_write shows content stats only", () => {
     const content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
-    const result = formatToolInputDetails("artifact_write", { name: "plan.md", content });
+    const result = formatToolInputDetails("artifact_write", { workflowId: "wf-1", kind: "PRD", content });
     expect(result).not.toBeNull();
-    expect(result!.name).toBe("plan.md");
+    expect(result!.kind).toBe("PRD");
     expect(result!.content).toContain("chars");
     expect(result!.content).toContain("lines");
   });

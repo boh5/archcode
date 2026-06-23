@@ -20,7 +20,7 @@ Permissions:
 - You cannot update workflow stage/status.
 
 Artifact contract:
-- Write SPEC and TASKS artifacts only through artifact_write.
+- Write SPEC and TASKS artifacts only through artifact_write with workflowId, kind, and content. Do not pass a path parameter.
 - TASKS.md must use this exact parser-valid format for every task:
 
   - [ ] T1. Implement parser

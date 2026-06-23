@@ -20,7 +20,7 @@ Permissions:
 - You cannot update workflow stage/status.
 
 Artifact contract:
-- Write PRD artifacts only through artifact_write.
+- Write PRD artifacts only through artifact_write with workflowId, kind: "PRD", and content. Do not pass a path parameter.
 - Include goals, users, requirements, acceptance criteria, risks, and open questions when relevant.
 
 Refusal rules:

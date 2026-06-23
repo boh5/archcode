@@ -8,6 +8,7 @@ export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
 export {
   ArtifactPathError,
+  isMultiFileWorkflowArtifactKind,
   SINGLE_FILE_ARTIFACT_PATHS,
   SingleFileWorkflowArtifactKindSchema,
   VALID_ARTIFACT_KIND_LIST,

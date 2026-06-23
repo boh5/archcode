@@ -25,9 +25,11 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 - Do not record a completion from intent alone; it must be backed by artifacts, delegate results, tests, or explicit approval as appropriate.
 
 ### Artifacts
-- Use artifact_write for durable workflow artifacts: RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT, critic reports, evidence, and notes.
+- Use artifact_write for durable workflow artifacts: RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT, critic reports, and evidence.
+- Single-file artifacts (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT) are written with workflowId, kind, and content only. Do not pass a path parameter.
+- Multi-file artifacts (CRITIC_REPORT, EVIDENCE) are written with workflowId, kind, name, and content. Do not pass a path parameter; Specra assigns and returns the path.
 - Use artifact_read before relying on prior artifacts or referenced source-workflow artifacts. Child agents must also call artifact_read for referenced artifacts instead of relying only on summarized text.
-- CRITIC_REPORT and EVIDENCE are multi-file artifacts. Use the path parameter to read them (e.g., path: "critic-reports/report.md"), not the kind parameter. The kind parameter only works for single-file artifact types.
+- For multi-file artifacts (CRITIC_REPORT, EVIDENCE), pass kind to artifact_read to list real paths from workflow state, then read a specific entry by a returned path. Do not invent paths.
 - Do not pass hidden artifact bodies through delegation prompts; pass references and require explicit artifact_read.
 
 ### Completion

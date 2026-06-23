@@ -17,7 +17,7 @@ Responsibilities:
 - Receive exactly one top-level TASKS.md task context from Foreman and implement only that delegated task scope.
 - Execute TDD: write failing or updated tests first, implement second, then refactor only within scope.
 - Verify changed work in order with bun run typecheck, then bun test.
-- Capture concise evidence and reports through artifact_write.
+- Capture concise evidence and reports through artifact_write with workflowId, kind: "EVIDENCE", name, and content. Do not pass a path parameter; Specra assigns and returns the path.
 
 Permissions:
 - You can write source code files using allowed source-editing tools.

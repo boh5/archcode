@@ -175,7 +175,6 @@ describe("workflow routes", () => {
         await artifactManager.write({
           workflowId: workflow.id,
           kind: artifact.kind,
-          path: `${artifact.kind}.md`,
           content: artifact.body,
         });
 
@@ -198,31 +197,25 @@ describe("workflow routes", () => {
       await artifactManager.write({
         workflowId: workflow.id,
         kind: "PRD",
-        path: "PRD.md",
         content: artifactBody,
       });
 
-      const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/PRD`,
-      );
+        const res = await app.request(
+          `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/PRD`,
+        );
 
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ body: artifactBody });
-    });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ body: artifactBody });
+      });
 
-    test("returns SPEC artifact body", async () => {
+      test("returns SPEC artifact body", async () => {
       const { app, project, workspaceRoot } = await createTestApp("spec-artifact");
       const artifactBody = "# SPEC\n\nTechnical spec.";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
       const workflow = await stateManager.create({ title: "Spec Draft", type: "full_feature" });
-      await artifactManager.write({
-        workflowId: workflow.id,
-        kind: "SPEC",
-        path: "SPEC.md",
-        content: artifactBody,
-      });
+      await artifactManager.write({ workflowId: workflow.id, kind: "SPEC", content: artifactBody });
 
       const res = await app.request(
         `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/SPEC`,
@@ -242,7 +235,6 @@ describe("workflow routes", () => {
       await artifactManager.write({
         workflowId: workflow.id,
         kind: "TASKS",
-        path: "TASKS.md",
         content: artifactBody,
       });
 
@@ -261,12 +253,7 @@ describe("workflow routes", () => {
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
       const workflow = await stateManager.create({ title: "Final Report", type: "full_feature" });
-      await artifactManager.write({
-        workflowId: workflow.id,
-        kind: "FINAL_REPORT",
-        path: "FINAL_REPORT.md",
-        content: artifactBody,
-      });
+      await artifactManager.write({ workflowId: workflow.id, kind: "FINAL_REPORT", content: artifactBody });
 
       const res = await app.request(
         `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/FINAL_REPORT`,
@@ -283,10 +270,10 @@ describe("workflow routes", () => {
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
       const workflow = await stateManager.create({ title: "Critic Review", type: "full_feature" });
-      await artifactManager.write({
+      const criticWrite = await artifactManager.write({
         workflowId: workflow.id,
         kind: "CRITIC_REPORT",
-        path: "critic-reports/prd.md",
+        name: "prd",
         content: artifactBody,
       });
 
@@ -295,20 +282,20 @@ describe("workflow routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ body: artifactBody });
+      expect(await res.json()).toEqual({ paths: [criticWrite.path] });
     });
 
-    test("returns EVIDENCE artifact body from workflow state", async () => {
+    test("returns EVIDENCE artifact paths from workflow state", async () => {
       const { app, project, workspaceRoot } = await createTestApp("evidence-artifact");
       const artifactBody = "Test output evidence";
 
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
       const workflow = await stateManager.create({ title: "Evidence Log", type: "full_feature" });
-      await artifactManager.write({
+      const evidenceWrite = await artifactManager.write({
         workflowId: workflow.id,
         kind: "EVIDENCE",
-        path: "evidence/test-output.txt",
+        name: "test-output",
         content: artifactBody,
       });
 
@@ -317,7 +304,7 @@ describe("workflow routes", () => {
       );
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ body: artifactBody });
+      expect(await res.json()).toEqual({ paths: [evidenceWrite.path] });
     });
 
     test("returns explicit multi-file group artifact by path query", async () => {
@@ -326,45 +313,25 @@ describe("workflow routes", () => {
       const stateManager = new WorkflowStateManager(workspaceRoot);
       const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
       const workflow = await stateManager.create({ title: "Path Query", type: "full_feature" });
-      await artifactManager.write({
+      const firstWrite = await artifactManager.write({
         workflowId: workflow.id,
         kind: "EVIDENCE",
-        path: "evidence/first.txt",
+        name: "first",
         content: "first",
       });
-      await artifactManager.write({
+      const secondWrite = await artifactManager.write({
         workflowId: workflow.id,
         kind: "EVIDENCE",
-        path: "evidence/second.txt",
+        name: "second",
         content: "second",
       });
 
       const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/EVIDENCE?path=${encodeURIComponent("evidence/second.txt")}`,
+        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts/EVIDENCE?path=${encodeURIComponent(secondWrite.path)}`,
       );
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ body: "second" });
-    });
-
-    test("returns supporting notes through path-based artifact route", async () => {
-      const { app, project, workspaceRoot } = await createTestApp("artifact-notes-query");
-
-      const stateManager = new WorkflowStateManager(workspaceRoot);
-      const artifactManager = new WorkflowArtifactManager(workspaceRoot, stateManager);
-      const workflow = await stateManager.create({ title: "Notes Query", type: "full_feature" });
-      await artifactManager.write({
-        workflowId: workflow.id,
-        path: "notes/intermediate.md",
-        content: "scratch notes",
-      });
-
-      const res = await app.request(
-        `/api/projects/${project.slug}/workflows/${workflow.id}/artifacts?path=${encodeURIComponent("notes/intermediate.md")}`,
-      );
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ body: "scratch notes" });
     });
 
     test("returns same-project cross-workflow artifact reads", async () => {
@@ -375,7 +342,6 @@ describe("workflow routes", () => {
       await artifactManager.write({
         workflowId: wfOtherWf.id,
         kind: "PRD",
-        path: "PRD.md",
         content: "# Other PRD\n",
       });
 
@@ -416,7 +382,6 @@ describe("workflow routes", () => {
       await secondArtifacts.write({
         workflowId: foreignWf.id,
         kind: "PRD",
-        path: "PRD.md",
         content: "foreign",
       });
 

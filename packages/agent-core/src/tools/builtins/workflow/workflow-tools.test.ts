@@ -172,7 +172,6 @@ describe("workflow builtin tools", () => {
     const result = await execute(registry, projectContext, "artifact_write", {
       workflowId: "default",
       kind: "PRD",
-      path: "PRD.md",
       content: "# Product\n",
     });
     expect(result.isError).toBe(true);
@@ -480,7 +479,6 @@ describe("workflow builtin tools", () => {
     const written = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact.id,
       kind: "PRD",
-      path: "PRD.md",
       content: "# Product\n",
     }, store);
     expect(written.isError).toBe(false);
@@ -528,7 +526,6 @@ describe("workflow builtin tools", () => {
     const result = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact.id,
       kind: "PRD",
-      path: "PRD.md",
       frontmatter: { owner: "pm" },
       content: "# Product\n",
     }, store);
@@ -548,7 +545,6 @@ describe("workflow builtin tools", () => {
     const written = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_tasks.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     }, store);
 
@@ -564,14 +560,12 @@ describe("workflow builtin tools", () => {
     await artifactManager.write({
       workflowId: wf_artifact_tasks_invalid.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     });
 
     const rejected = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_tasks_invalid.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: "# Invalid tasks\n",
     }, store);
 
@@ -592,14 +586,12 @@ describe("workflow builtin tools", () => {
     await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_modified.id,
       kind: "SPEC",
-      path: "SPEC.md",
       content: "# Spec\n\nBefore\n",
     }, store);
 
     const updated = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_modified.id,
       kind: "SPEC",
-      path: "SPEC.md",
       content: "# Spec\n\nAfter\n",
     }, store);
 
@@ -620,7 +612,7 @@ describe("workflow builtin tools", () => {
     const binary = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_unsupported.id,
       kind: "EVIDENCE",
-      path: "evidence/blob.md",
+      name: "blob",
       content: "\0\0\0binary",
     }, store);
     expect(binary.isError).toBe(false);
@@ -633,7 +625,7 @@ describe("workflow builtin tools", () => {
     const oversized = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_artifact_unsupported.id,
       kind: "EVIDENCE",
-      path: "evidence/large.md",
+      name: "large",
       content: "x".repeat(1_000_001),
     }, store);
     expect(oversized.isError).toBe(false);
@@ -649,12 +641,7 @@ describe("workflow builtin tools", () => {
     const artifactManager = projectContext.artifacts;
     const wf_current = await stateManager.create({ title: "Current Workflow", type: "full_feature" });
     const wf_other = await stateManager.create({ title: "Other Workflow", type: "full_feature" });
-    await artifactManager.write({
-      workflowId: wf_other.id,
-      kind: "PRD",
-      path: "PRD.md",
-      content: "# Other\n",
-    });
+    await artifactManager.write({ workflowId: wf_other.id, kind: "PRD", content: "# Other\n" });
 
     const store = createMockStore();
     store.getState().setWorkflowId(wf_current.id);
@@ -669,7 +656,6 @@ describe("workflow builtin tools", () => {
     const wrongWorkflowWrite = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_other.id,
       kind: "SPEC",
-      path: "SPEC.md",
       content: "# Wrong\n",
     }, store);
     expect(wrongWorkflowWrite.isError).toBe(true);
@@ -699,7 +685,6 @@ describe("workflow builtin tools", () => {
     await artifactManager.write({
       workflowId: wf_current.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     });
 
@@ -745,7 +730,6 @@ describe("workflow builtin tools", () => {
     const artifactWrite = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf_other.id,
       kind: "PRD",
-      path: "PRD.md",
       content: "# Wrong\n",
     }, store);
     expect(artifactWrite.isError).toBe(true);
@@ -760,7 +744,6 @@ describe("workflow builtin tools", () => {
     await artifactManager.write({
       workflowId: wf.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     });
 
@@ -802,7 +785,6 @@ describe("workflow builtin tools", () => {
     const artifactWrite = await execute(registry, projectContext, "artifact_write", {
       workflowId: wf.id,
       kind: "PRD",
-      path: "PRD.md",
       content: "# Wrong\n",
     }, store);
     expect(artifactWrite.isError).toBe(true);
@@ -818,7 +800,6 @@ describe("workflow builtin tools", () => {
     await artifactManager.write({
       workflowId: wf_tasks.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     });
 
@@ -839,16 +820,10 @@ describe("workflow builtin tools", () => {
     const wf_invalid_tasks_transition = await stateManager.create({ title: "Invalid Tasks Transition", type: "full_feature" });
     await stateManager.updateStage(wf_invalid_tasks_transition.id, "spec_drafting");
     await stateManager.recordStageCompletion(wf_invalid_tasks_transition.id, { stage: "spec_drafting" });
-    await artifactManager.write({
-      workflowId: wf_invalid_tasks_transition.id,
-      kind: "SPEC",
-      path: "SPEC.md",
-      content: "# Spec\n",
-    });
+    await artifactManager.write({ workflowId: wf_invalid_tasks_transition.id, kind: "SPEC", content: "# Spec\n" });
     await artifactManager.write({
       workflowId: wf_invalid_tasks_transition.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: "# Invalid tasks\n",
     });
     const store = createMockStore();
@@ -872,12 +847,7 @@ describe("workflow builtin tools", () => {
     const wf_missing_tasks_transition = await stateManager.create({ title: "Missing Tasks Transition", type: "full_feature" });
     await stateManager.updateStage(wf_missing_tasks_transition.id, "spec_drafting");
     await stateManager.recordStageCompletion(wf_missing_tasks_transition.id, { stage: "spec_drafting" });
-    await artifactManager.write({
-      workflowId: wf_missing_tasks_transition.id,
-      kind: "SPEC",
-      path: "SPEC.md",
-      content: "# Spec\n",
-    });
+    await artifactManager.write({ workflowId: wf_missing_tasks_transition.id, kind: "SPEC", content: "# Spec\n" });
     const store = createMockStore();
     store.getState().setWorkflowId(wf_missing_tasks_transition.id);
 
@@ -902,7 +872,6 @@ describe("workflow builtin tools", () => {
     await artifactManager.write({
       workflowId: wf_reject.id,
       kind: "TASKS",
-      path: "TASKS.md",
       content: VALID_TASKS,
     });
 

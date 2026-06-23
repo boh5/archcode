@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { SpecraRuntime } from "@specra/agent-core";
 import {
   ArtifactPathError,
+  isMultiFileWorkflowArtifactKind,
   SingleFileWorkflowArtifactKindSchema,
   VALID_ARTIFACT_KIND_LIST,
   WorkflowArtifactKindSchema,
@@ -67,7 +68,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
       fallbackName: name,
     });
 
-    return c.json({ body: result.body });
+    return c.json(result);
   });
 
   app.get("/:slug/workflows/:workflowId/artifacts", async (c) => {
@@ -81,10 +82,6 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
     }
 
     const kind = kindInput ? parseArtifactKind(kindInput) : undefined;
-    if (!kind && !path) {
-      throw new BadRequestError("Either kind or path query parameter is required");
-    }
-
     const result = await readRouteArtifact(runtime, {
       slug,
       workflowId,
@@ -93,7 +90,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
       fallbackName: path ?? kind ?? "artifact",
     });
 
-    return c.json({ body: result.body });
+    return c.json(result);
   });
 
   return app;
@@ -129,9 +126,16 @@ async function readRouteArtifact(
   }
 
   try {
-    return input.path
-      ? await artifactManager.read(input.workflowId, input.path)
-      : await readArtifactByRouteKind({
+    if (!input.kind && !input.path) {
+      return { artifacts: workflowState.artifacts };
+    }
+
+    if (input.path) {
+      const artifact = await artifactManager.read(input.workflowId, input.path);
+      return { body: artifact.body };
+    }
+
+    return await readArtifactByRouteKind({
           artifactManager,
           workflowId: input.workflowId,
           kind: input.kind as (typeof WorkflowArtifactKindSchema.options)[number],
@@ -171,15 +175,15 @@ async function readArtifactByRouteKind({
 }) {
   const singleKind = SingleFileWorkflowArtifactKindSchema.safeParse(kind);
   if (singleKind.success) {
-    return await artifactManager.readByKind(workflowId, singleKind.data);
+    const artifact = await artifactManager.readByKind(workflowId, singleKind.data);
+    return { body: artifact.body };
   }
 
-  const paths = workflowState.artifacts[kind];
-  if (!paths) {
-    throw new ArtifactNotFoundError(kind, workflowId);
+  if (isMultiFileWorkflowArtifactKind(kind)) {
+    return { paths: artifactManager.listPathsByKind(workflowState, kind) };
   }
 
-  return await artifactManager.read(workflowId, Array.isArray(paths) ? paths[0] : paths);
+  throw new ArtifactNotFoundError(kind, workflowId);
 }
 
 function isMissingFileError(error: unknown): boolean {
