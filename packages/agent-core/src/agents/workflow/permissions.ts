@@ -38,18 +38,21 @@ export const workflowRoleToolPermissions = {
   product: uniqueTools([
     ...WORKFLOW_ARTIFACT_AUTHOR_TOOLS,
     ...NON_INTERACTIVE_EXPLORER_READ_ONLY_TOOLS,
+    ...DELEGATION_EXECUTION_TOOLS,
     ...TODO_ONLY_TOOLS,
     ...SKILL_TOOLS,
   ]),
   spec: uniqueTools([
     ...WORKFLOW_ARTIFACT_AUTHOR_TOOLS,
     ...NON_INTERACTIVE_EXPLORER_READ_ONLY_TOOLS,
+    ...DELEGATION_EXECUTION_TOOLS,
     ...TODO_ONLY_TOOLS,
     ...SKILL_TOOLS,
   ]),
   critic: uniqueTools([
     ...WORKFLOW_ARTIFACT_AUTHOR_TOOLS,
     ...NON_INTERACTIVE_EXPLORER_READ_ONLY_TOOLS,
+    ...DELEGATION_EXECUTION_TOOLS,
     ...TODO_ONLY_TOOLS,
     ...SKILL_TOOLS,
   ]),
@@ -71,6 +74,7 @@ export const workflowRoleToolPermissions = {
   ]),
   reviewer: uniqueTools([
     ...EXPLORER_READ_ONLY_TOOLS,
+    ...DELEGATION_EXECUTION_TOOLS,
     ...ARTIFACT_EVIDENCE_WRITE_TOOLS,
     ...TODO_AND_ASK_TOOLS,
     ...MEMORY_READ_TOOLS,

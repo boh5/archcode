@@ -1,3 +1,8 @@
+import {
+  DEFAULT_SUB_AGENT_TIMEOUT_MS,
+  MAX_CONCURRENT_SUB_AGENTS,
+  MAX_SUB_AGENT_DEPTH,
+} from "../constants";
 import type { AgentDefinition } from "../factory-types";
 import { workflowRoleToolPermissions } from "../workflow/permissions";
 
@@ -33,6 +38,7 @@ Refusal rules:
 - Refuse to approve code that lacks required verification evidence or fails acceptance criteria.`,
   tools: {
     tools: workflowRoleToolPermissions.reviewer,
+    delegateTargets: ["explore", "librarian"],
   },
   hooks: {
     autoCompact: true,
@@ -42,6 +48,13 @@ Refusal rules:
     memoryExtraction: false,
     memoryConsolidation: false,
     titleGeneration: "unless-supplied",
+  },
+  childPolicy: {
+    maxDepth: MAX_SUB_AGENT_DEPTH,
+    maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+    timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+    abortCascade: true,
+    terminalReminders: true,
   },
   includeMemoryInPrompt: true,
   enforceToolOutputQuota: true,

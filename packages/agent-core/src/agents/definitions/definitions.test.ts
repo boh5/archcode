@@ -201,6 +201,24 @@ describe("agentDefinitions", () => {
     expect("childPolicy" in exploreAgentDefinition).toBe(false);
   });
 
+  test("product, spec, critic, and reviewer can delegate to explore and librarian", () => {
+    for (const definition of [
+      productAgentDefinition,
+      specAgentDefinition,
+      criticAgentDefinition,
+      reviewerAgentDefinition,
+    ]) {
+      expect(definition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+      expect(definition.childPolicy).toEqual({
+        maxDepth: MAX_SUB_AGENT_DEPTH,
+        maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+        timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+        abortCascade: true,
+        terminalReminders: true,
+      });
+    }
+  });
+
   const KNOWN_SKILLS = [
     "git-master",
     "safe-refactor",

@@ -98,4 +98,14 @@ describe("workflow role tool permissions", () => {
       expect(workflowRoleToolPermissions.builder).toContain(tool);
     }
   });
+
+  test("product, spec, critic, and reviewer roles include delegation execution tools", () => {
+    for (const role of ["product", "spec", "critic", "reviewer"] as const) {
+      const tools = workflowRoleToolPermissions[role];
+      expect(tools).toContain("delegate");
+      expect(tools).toContain("background_output");
+      expect(tools).toContain("wait_for_reminder");
+      expect(tools).toContain("view_tool_output");
+    }
+  });
 });
