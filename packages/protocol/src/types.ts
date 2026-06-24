@@ -547,6 +547,13 @@ export interface SessionStep {
   error?: string;
 }
 
+export interface SessionModelInfo {
+  displayName: string;
+  modelId: string;
+  providerId: string;
+  qualifiedId: string;
+}
+
 export interface SessionProjection {
   sessionId: string;
   rootSessionId: string;
@@ -565,6 +572,7 @@ export interface SessionProjection {
   isStreamingModel: boolean;
   currentExecutionId?: string;
   currentAssistantMessageId?: string;
+  modelInfo?: SessionModelInfo | null;
 }
 
 export interface Project {
@@ -596,6 +604,7 @@ export interface SessionSummary {
   rootSessionId: string;
   parentSessionId?: string;
   agentName?: string | null;
+  modelInfo?: SessionModelInfo | null;
   title?: string | null;
   workflowId?: string;
   createdAt: number;
@@ -647,6 +656,7 @@ export interface Session {
   events?: SessionEventEnvelope[];
   parentSessionId?: string;
   eventCursor?: number;
+  modelInfo?: SessionModelInfo | null;
 }
 
 export interface WorkflowState {

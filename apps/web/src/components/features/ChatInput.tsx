@@ -24,6 +24,7 @@ export function ChatInput({ slug, sessionId }: ChatInputProps) {
   const slashMenuRef = useRef<HTMLDivElement>(null);
 
   const isRunning = useSessionStore(sessionId, (s) => s.isRunning, slug);
+  const modelInfo = useSessionStore(sessionId, (s) => s.modelInfo, slug);
   const postMessage = usePostMessage();
   const postCommand = usePostCommand();
   const abortSession = useAbortSession();
@@ -178,9 +179,6 @@ useEffect(() => {
     [],
   );
 
-  // v1: static label until model info is available in store
-  const modelName = "GLM-5";
-
   return (
     <div className="border-t border-border-subtle bg-bg-surface px-5 py-3 flex flex-col gap-2 shrink-0 relative">
       {showSlashMenu && filteredCommands.length > 0 && !isRunning && (
@@ -296,7 +294,7 @@ useEffect(() => {
       </div>
 
       <div className="flex items-center justify-between text-[11px] text-text-tertiary px-1">
-        <span>{modelName}</span>
+        <span>{modelInfo?.displayName ?? "Unknown"}</span>
         {isRunning ? (
           <span className="text-text-secondary select-none">Thinking…</span>
         ) : (

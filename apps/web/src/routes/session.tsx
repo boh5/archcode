@@ -37,6 +37,7 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
+        modelInfo,
       } = focusedSession;
       childStore.getState().initializeFromSnapshot({
         messages,
@@ -50,6 +51,7 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
+        modelInfo,
       });
     }
   }, [focusSessionId, focusedSession, slug]);
@@ -76,6 +78,7 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
+        modelInfo,
       } = session;
       store.getState().initializeFromSnapshot({
         messages,
@@ -89,6 +92,7 @@ export function SessionRoute() {
         executions,
         childSessionLinks,
         eventCursor,
+        modelInfo,
       });
     }
   }, [session, sessionId, slug]);

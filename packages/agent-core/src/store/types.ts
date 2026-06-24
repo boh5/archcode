@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import type {
   SessionMessage,
+  SessionModelInfo,
   SessionStep,
   SessionTodo,
   Reminder,
@@ -70,6 +71,7 @@ export type {
   ReminderSource,
   SessionPart as StoredPart,
   SessionMessage as StoredMessage,
+  SessionModelInfo,
   SessionStep as StepInfo,
   SessionTodo as StoredTodo,
   SessionTodoStatus as StoredTodoStatus,
@@ -82,6 +84,7 @@ export interface SessionStoreState {
 
   // Persistent layer
   agentName: string;
+  modelInfo?: SessionModelInfo | null;
   title: string | null;
   messages: SessionMessage[];
   steps: SessionStep[];

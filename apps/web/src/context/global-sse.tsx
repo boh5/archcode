@@ -82,6 +82,12 @@ export function handleSSEEvent(
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
       }
+
+      if (envelope.payload.type === "execution-start") {
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
+      }
       break;
     }
     case "heartbeat": {

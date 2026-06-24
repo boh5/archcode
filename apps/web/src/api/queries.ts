@@ -192,6 +192,7 @@ function normalizeSessionSummary(session: SessionSummary): Session {
     createdAt: session.createdAt,
     updatedAt: session.lastUpdatedAt,
     lastUpdatedAt: session.lastUpdatedAt,
+    ...(session.modelInfo === undefined ? {} : { modelInfo: session.modelInfo }),
   };
 }
 

@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@specra/protocol";
 import type {
+  SessionModelInfo,
   SessionTreeDiagnostic,
   SessionTreeDiagnosticType,
   SessionTreeNode,
@@ -36,6 +37,7 @@ export interface CreateSessionOptions {
   readonly parentSessionId?: string;
   readonly workflowId?: string;
   readonly agentName?: string;
+  readonly modelInfo?: SessionModelInfo | null;
   readonly title?: string;
 }
 
@@ -128,6 +130,7 @@ export class SessionStoreManager {
       sessionId,
       createdAt: Date.now(),
       agentName: options.agentName ?? "orchestrator",
+      modelInfo: options.modelInfo ?? null,
       title: options.title ?? null,
       messages: [],
       steps: [],
@@ -390,12 +393,14 @@ export class SessionStoreManager {
         parentSessionId: parsed.parentSessionId,
         workflowId: parsed.workflowId,
         agentName: parsed.agentName,
+        ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
         ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
       });
       store.setState({
         sessionId: parsed.sessionId,
         createdAt: parsed.createdAt,
         agentName: parsed.agentName,
+        modelInfo: parsed.modelInfo ?? null,
         title: parsed.title ?? null,
         messages: parsed.messages,
         steps: parsed.steps,
@@ -650,6 +655,7 @@ function toSessionSummary(file: SessionFile): SessionSummary {
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
     ...(file.workflowId === undefined ? {} : { workflowId: file.workflowId }),
     agentName: file.agentName,
+    ...(file.modelInfo === undefined ? {} : { modelInfo: file.modelInfo }),
     title: file.title ?? null,
     createdAt: file.createdAt,
     ...(lastUpdatedAt === undefined ? {} : { lastUpdatedAt }),

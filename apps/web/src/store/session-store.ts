@@ -11,6 +11,7 @@ import type {
   SessionEventEnvelope,
   SessionEventPayload,
   SessionMessage,
+  SessionModelInfo,
   SessionProjection,
   SessionExecutionRecord,
   SessionStats,
@@ -64,6 +65,7 @@ export interface WebSessionStoreState extends SessionProjection {
     executions?: SessionExecutionRecord[];
     eventCursor?: number;
     events?: SessionEventEnvelope[];
+    modelInfo?: SessionModelInfo | null;
   }) => void;
 }
 
@@ -255,6 +257,7 @@ export function createWebSessionStore(
     sessionId,
     createdAt: Date.now(),
     title: null,
+    modelInfo: null,
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
@@ -396,6 +399,9 @@ export function createWebSessionStore(
         }
         if (data.parentSessionId !== undefined) {
           updates.parentSessionId = data.parentSessionId;
+        }
+        if (data.modelInfo !== undefined) {
+          updates.modelInfo = data.modelInfo;
         }
         if (data.events !== undefined) {
           updates.events = data.events;

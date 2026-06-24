@@ -3,6 +3,8 @@ import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../backgr
 import type { SpecraConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ModelInfo } from "../provider/model";
+import type { SessionModelInfo } from "@specra/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -170,6 +172,8 @@ function createConfiguredAgent(
   const resolvedConfig = config.config ?? ({ provider: {} } as SpecraConfig);
   const { modelInfo, options: modelOptions } = resolveAgentModel(definition.name, resolvedConfig, config.providerRegistry);
 
+  store.setState({ modelInfo: toSessionModelInfo(modelInfo) });
+
   return new ConfiguredAgent({
     definition,
     providerRegistry: config.providerRegistry,
@@ -219,4 +223,13 @@ function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, o
   }
 
   return store;
+}
+
+function toSessionModelInfo(modelInfo: ModelInfo): SessionModelInfo {
+  return {
+    displayName: modelInfo.displayName,
+    modelId: modelInfo.modelId,
+    providerId: modelInfo.providerId,
+    qualifiedId: modelInfo.qualifiedId,
+  };
 }

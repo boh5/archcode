@@ -3,8 +3,16 @@ import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
+import type { SessionModelInfo } from "@specra/protocol";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
 import { WorkflowUuidSchema } from "../agents/workflow/state";
+
+const SessionModelInfoSchema = z.strictObject({
+  displayName: z.string(),
+  modelId: z.string(),
+  providerId: z.string(),
+  qualifiedId: z.string(),
+});
 
 const NormalizedUsageSchema = z.strictObject({
   inputTokens: z.number(),
@@ -285,6 +293,7 @@ export const SessionFileSchema = z.strictObject({
   sessionId: z.string(),
   createdAt: z.number(),
   agentName: z.string(),
+  modelInfo: SessionModelInfoSchema.nullable().optional(),
   title: z.string().nullable().optional(),
   messages: z.array(StoredMessageSchema),
   steps: z.array(StepInfoSchema),
@@ -315,6 +324,7 @@ export interface SessionSummary {
   parentSessionId?: string;
   workflowId?: string;
   agentName?: string | null;
+  modelInfo?: SessionModelInfo | null;
   title?: string | null;
   createdAt: number;
   lastUpdatedAt?: number;
@@ -322,7 +332,7 @@ export interface SessionSummary {
 
 type PersistableSessionState = Pick<
   SessionStoreState,
-  "sessionId" | "createdAt" | "agentName" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
+  "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
   "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "workflowId" | "events"
@@ -377,6 +387,7 @@ async function saveSessionTranscript(
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
+    ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 
   const json = JSON.stringify(data, null, 2);
@@ -433,6 +444,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
     ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
+    ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 }
 
@@ -452,6 +464,7 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
           ...(parsed.workflowId === undefined ? {} : { workflowId: parsed.workflowId }),
           agentName: parsed.agentName,
+          ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
           title: parsed.title ?? null,
           createdAt: parsed.createdAt,
           ...(timestamps.lastUpdatedAt === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt }),
