@@ -18,7 +18,7 @@ import {
   SkillNotAllowedError,
 } from "./errors";
 import type { StoreApi } from "zustand";
-import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition, AgentName } from "./factory-types";
 import { DELEGATION_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
 import type { Agent } from "./types";
@@ -37,6 +37,8 @@ export interface AgentFactoryConfig {
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
+  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly logger: Logger;
 }
 
@@ -191,6 +193,8 @@ function createConfiguredAgent(
     logger: config.logger,
     resolveAllowedTools: (agentDefinition, depth) => factoryResolveAllowedTools(config, agentDefinition, depth),
     startChildExecution: config.startChildExecution,
+    cancelChildSession: config.cancelChildSession,
+    resumeChildSession: config.resumeChildSession,
     activeSkills: options.activeSkills,
   });
 }

@@ -1,6 +1,12 @@
-import { describe, expect, it } from "bun:test";
-import { DelegateTargetNotAllowedError, SubAgentError } from "../../agents/errors";
-import type { ChildExecutionRequest } from "../../delegation/types";
+import { describe, expect, it, mock } from "bun:test";
+import {
+  AgentRunningError,
+  ChildSessionAgentMismatchError,
+  ChildSessionNotFoundError,
+  DelegateTargetNotAllowedError,
+  SubAgentError,
+} from "../../agents/errors";
+import type { ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
 import { storeManager } from "../../store/store";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { TOOL_ERROR_META_KEY } from "../errors";
@@ -277,5 +283,199 @@ describe("delegate tool", () => {
     );
 
     expect(executor.lastRequest?.title).toBe("Fallback Title");
+  });
+
+  describe("resume mode (session_id provided)", () => {
+    const RESUME_SESSION_ID = "resume-child-session-id";
+
+    function makeResumeHandle(sessionId: string = RESUME_SESSION_ID) {
+      const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`);
+      store.getState().setParentSessionId("parent-id");
+      store.getState().append({ type: "execution-start", executionId: "resume-run" });
+      store.getState().append({ type: "text-start" });
+      store.getState().append({ type: "text-delta", text: "resumed output" });
+      store.getState().append({ type: "text-end" });
+      store.getState().append({ type: "execution-end", status: "completed" });
+      return {
+        sessionId,
+        store,
+        result: Promise.resolve({ text: "resumed output", steps: 1 }),
+        abort: () => {},
+      };
+    }
+
+    it("accepts optional session_id in the input schema", () => {
+      expect(
+        DelegateInputSchema.safeParse({
+          agent_type: "explore",
+          prompt: "continue",
+          skills: [],
+          session_id: RESUME_SESSION_ID,
+        }).success,
+      ).toBe(true);
+      expect(
+        DelegateInputSchema.safeParse({
+          agent_type: "explore",
+          prompt: "continue",
+          skills: [],
+        }).success,
+      ).toBe(true);
+    });
+
+    it("calls resumeChildSession when session_id is provided and returns formatted result", async () => {
+      const handle = makeResumeHandle();
+      const resumeChildSession = mock(
+        (workspaceRoot: string, request: ResumeChildRequest) => Promise.resolve(handle),
+      );
+      const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
+      const parentAbort = new AbortController();
+
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue work", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession, store: parentStore, abort: parentAbort.signal, currentDepth: 2 }),
+      );
+
+      expect(resumeChildSession).toHaveBeenCalledTimes(1);
+      const [workspaceRoot, request] = resumeChildSession.mock.calls[0]!;
+      expect(workspaceRoot).toBe(import.meta.dir);
+      expect(request).toMatchObject({
+        parentStore,
+        parentSessionId: parentStore.getState().sessionId,
+        parentToolCallId: "delegate-call",
+        toolName: "delegate",
+        sessionId: RESUME_SESSION_ID,
+        targetAgentName: "explore",
+        prompt: "continue work",
+        currentDepth: 2,
+        parentAbort: parentAbort.signal,
+      });
+
+      const output = result as string;
+      expect(output.startsWith("Sub-agent result: completed.\n")).toBe(true);
+      expect(output).toContain(`Session ID: ${RESUME_SESSION_ID}`);
+      expect(output).toContain("Status: completed");
+      expect(output).toContain("Result:\nresumed output");
+    });
+
+    it("returns structured error when resumeChildSession is unavailable", async () => {
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext(),
+      );
+
+      const errorResult = result as ToolExecutionResult;
+      expect(errorResult.isError).toBe(true);
+      expect(errorResult.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
+      expect(JSON.parse(errorResult.output)).toMatchObject({
+        name: "SubAgentError",
+        code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
+        message: "Child session resume is not available in this execution context",
+        details: { ok: false, session_id: RESUME_SESSION_ID },
+      });
+    });
+
+    it("returns structured error when resumeChildSession throws ChildSessionNotFoundError", async () => {
+      const resumeChildSession = mock(() => {
+        throw new ChildSessionNotFoundError(import.meta.dir, RESUME_SESSION_ID);
+      });
+
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession }),
+      );
+
+      const errorResult = result as ToolExecutionResult;
+      expect(errorResult.isError).toBe(true);
+      expect(JSON.parse(errorResult.output)).toMatchObject({
+        name: "ChildSessionNotFoundError",
+        code: "TOOL_DELEGATE_FAILED",
+        details: {
+          ok: false,
+          session_id: RESUME_SESSION_ID,
+          error: { name: "ChildSessionNotFoundError" },
+        },
+      });
+    });
+
+    it("returns structured error when resumeChildSession throws AgentRunningError", async () => {
+      const resumeChildSession = mock(() => {
+        throw new AgentRunningError();
+      });
+
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession }),
+      );
+
+      const errorResult = result as ToolExecutionResult;
+      expect(errorResult.isError).toBe(true);
+      expect(JSON.parse(errorResult.output)).toMatchObject({
+        name: "AgentRunningError",
+        code: "TOOL_DELEGATE_FAILED",
+        details: {
+          ok: false,
+          session_id: RESUME_SESSION_ID,
+          error: { name: "AgentRunningError" },
+        },
+      });
+    });
+
+    it("returns structured error when resumeChildSession throws ChildSessionAgentMismatchError", async () => {
+      const resumeChildSession = mock(() => {
+        throw new ChildSessionAgentMismatchError(RESUME_SESSION_ID, "explore", "builder");
+      });
+
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession }),
+      );
+
+      const errorResult = result as ToolExecutionResult;
+      expect(errorResult.isError).toBe(true);
+      expect(JSON.parse(errorResult.output)).toMatchObject({
+        name: "ChildSessionAgentMismatchError",
+        code: "TOOL_DELEGATE_FAILED",
+        details: {
+          ok: false,
+          session_id: RESUME_SESSION_ID,
+          error: { name: "ChildSessionAgentMismatchError" },
+        },
+      });
+    });
+
+    it("returns error when session_id is provided AND background=true", async () => {
+      const resumeChildSession = mock(() => Promise.resolve(makeResumeHandle()));
+
+      const result = await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: true, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession }),
+      );
+
+      expect(resumeChildSession).not.toHaveBeenCalled();
+      const errorResult = result as ToolExecutionResult;
+      expect(errorResult.isError).toBe(true);
+      expect(JSON.parse(errorResult.output)).toMatchObject({
+        code: "TOOL_DELEGATE_FAILED",
+        details: {
+          ok: false,
+          session_id: RESUME_SESSION_ID,
+          error: { name: "SubAgentError" },
+        },
+      });
+    });
+
+    it("does not call startChildExecution when session_id is provided", async () => {
+      const handle = makeResumeHandle();
+      const resumeChildSession = mock(() => Promise.resolve(handle));
+      const startChildExecution = mock(() => Promise.resolve(handle));
+
+      await executeDelegate(
+        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        makeContext({ resumeChildSession, startChildExecution }),
+      );
+
+      expect(startChildExecution).not.toHaveBeenCalled();
+      expect(resumeChildSession).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -28,6 +28,12 @@ export const DelegateInputSchema = z
     title: z.string().optional().describe("Optional session title for the child session"),
     background: z.boolean().default(false).describe("true = run async; use background_output to read results later. false = block until child completes. Default false."),
     available_artifacts: z.array(DelegateAvailableArtifactSchema).optional().describe("Workflow artifact references the child can access via artifact_read"),
+    session_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional id of an existing child session to resume. When provided, resumes the sub-agent session with the given prompt; the sub-agent retains its full history. Resume is foreground-only (background must be false).",
+      ),
   })
   .strict();
 
@@ -49,6 +55,11 @@ interface ChildExecutionOutcome {
 }
 
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
+  // Resume mode: session_id provided → resume an existing child session.
+  if (input.session_id !== undefined) {
+    return executeResumeDelegate(input, ctx);
+  }
+
   if (ctx.startChildExecution === undefined) {
     return createToolErrorResult({
       kind: "execution",
@@ -94,6 +105,73 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
 
   if (input.background ?? false) {
     return formatAsyncDelegateOutput({ input, handle });
+  }
+
+  const outcome = await waitForChildOutcome(handle);
+  return formatSyncDelegateOutput({ input, handle, outcome });
+}
+
+/**
+ * Resume-mode delegate: re-runs an existing child session with a new prompt.
+ * Foreground only — background resume is not supported.
+ */
+async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
+  const sessionId = input.session_id!;
+
+  if (input.background ?? false) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DELEGATE_FAILED",
+      name: "SubAgentError",
+      message: "Resume mode does not support background execution; set background to false when providing session_id",
+      details: {
+        ok: false,
+        session_id: sessionId,
+        error: {
+          name: "SubAgentError",
+          message: "Resume mode does not support background execution; set background to false when providing session_id",
+        },
+      } satisfies DelegateErrorOutput,
+    });
+  }
+
+  if (ctx.resumeChildSession === undefined) {
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DELEGATE_EXECUTOR_UNAVAILABLE",
+      name: "SubAgentError",
+      message: "Child session resume is not available in this execution context",
+      details: { ok: false, session_id: sessionId } satisfies Pick<DelegateErrorOutput, "ok" | "session_id">,
+    });
+  }
+
+  let handle: ChildExecutionHandle;
+  try {
+    handle = await ctx.resumeChildSession(ctx.workspaceRoot, {
+      parentStore: ctx.store,
+      parentSessionId: ctx.store.getState().sessionId,
+      parentToolCallId: ctx.toolCallId,
+      toolName: "delegate",
+      sessionId,
+      targetAgentName: input.agent_type,
+      prompt: input.prompt,
+      currentDepth: ctx.currentDepth ?? 0,
+      parentAbort: ctx.abort,
+    });
+  } catch (error) {
+    const safeError = error instanceof Error ? error : new Error(String(error));
+    return createToolErrorResult({
+      kind: "execution",
+      code: "TOOL_DELEGATE_FAILED",
+      message: safeError.message,
+      name: safeError.name,
+      error: safeError,
+      details: {
+        ok: false,
+        session_id: sessionId,
+        error: { name: safeError.name, message: safeError.message },
+      } satisfies DelegateErrorOutput,
+    });
   }
 
   const outcome = await waitForChildOutcome(handle);
@@ -203,7 +281,7 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "explore"). Returns a plain text summary with the child session id and status.`,
+    `Delegate a task to another agent (e.g. "explore"). Returns a plain text summary with the child session id and status. When session_id is provided, resumes an existing sub-agent session with the given prompt; the sub-agent retains its full history. Resume is foreground-only.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

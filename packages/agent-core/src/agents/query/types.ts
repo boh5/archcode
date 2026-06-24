@@ -7,7 +7,7 @@ import type { SessionStoreState } from "../../store/types";
 import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
-import type { ChildExecutionHandle, ChildExecutionRequest } from "../../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
 import type { SkillService } from "../../skills";
 import type { QueryLoopHooks } from "./loop-hooks";
 import type { Logger } from "../../logger";
@@ -33,6 +33,8 @@ export interface QueryLoopOptions {
   store: StoreApi<SessionStoreState>;
   commandRegistry?: CommandRegistry;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
+  cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   agentName?: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;

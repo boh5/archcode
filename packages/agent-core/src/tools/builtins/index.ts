@@ -15,6 +15,7 @@ export { webFetchTool, WebFetchInputSchema, runWebFetch, validateUrl } from "./w
 export { waitForReminderTool, WaitForReminderInputSchema, executeWaitForReminder } from "./wait-for-reminder";
 export { delegateTool, DelegateInputSchema, executeDelegate } from "./delegate";
 export { backgroundOutputTool, BackgroundOutputInputSchema, executeBackgroundOutput } from "./background-output";
+export { cancelSessionTool, CancelSessionInputSchema, executeCancelSession } from "./cancel-session";
 export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
 export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
@@ -37,6 +38,7 @@ import { webFetchTool } from "./web-fetch";
 import { waitForReminderTool } from "./wait-for-reminder";
 import { delegateTool } from "./delegate";
 import { backgroundOutputTool } from "./background-output";
+import { cancelSessionTool } from "./cancel-session";
 import { viewToolOutputTool } from "./view-tool-output";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 import { skillListTool } from "./skill-list";
@@ -64,6 +66,7 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     waitForReminderTool,
     delegateTool,
     backgroundOutputTool,
+    cancelSessionTool,
     skillListTool,
     skillReadTool,
     viewToolOutputTool,

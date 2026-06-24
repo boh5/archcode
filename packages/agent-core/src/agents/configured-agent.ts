@@ -23,7 +23,7 @@ import type { Logger } from "../logger";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
-import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
 import {
   createAutoCompactHook,
@@ -55,6 +55,8 @@ export interface ConfiguredAgentOptions {
   readonly projectContextResolver?: ProjectContextResolver;
   readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
+  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
@@ -91,6 +93,8 @@ export class ConfiguredAgent implements Agent {
   private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
   private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
+  private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
+  private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
@@ -128,6 +132,8 @@ export class ConfiguredAgent implements Agent {
     this.ownsBackgroundTaskManager = options.backgroundTaskManager === undefined;
     this.resolveAllowedTools = options.resolveAllowedTools;
     this.startChildExecution = options.startChildExecution;
+    this.cancelChildSession = options.cancelChildSession;
+    this.resumeChildSession = options.resumeChildSession;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
@@ -221,6 +227,8 @@ export class ConfiguredAgent implements Agent {
             store: this.store,
             commandRegistry: this.commandRegistry,
             startChildExecution: this.startChildExecution,
+            cancelChildSession: this.cancelChildSession,
+            resumeChildSession: this.resumeChildSession,
             agentName: this.definition.name,
             currentDepth: this.depth,
             hooks,

@@ -15,7 +15,7 @@ import type { AgentDefinition } from "./factory-types";
 import type { Agent } from "./types";
 import type { CommandResult } from "../commands/types";
 import type { Logger } from "../logger";
-import type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 
 export interface SessionAgentManagerConfig {
   readonly definitions: readonly AgentDefinition[];
@@ -28,6 +28,8 @@ export interface SessionAgentManagerConfig {
   readonly tombstoneTtlMs?: number;
   readonly storeManager: SessionStoreManager;
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
+  readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
+  readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly logger: Logger;
 }
 
@@ -45,18 +47,30 @@ export class SessionAgentManager {
   readonly #storeManager: SessionStoreManager;
   readonly #logger: Logger;
   #startChildExecution: SessionAgentManagerConfig["startChildExecution"];
+  #cancelChildSession: SessionAgentManagerConfig["cancelChildSession"];
+  #resumeChildSession: SessionAgentManagerConfig["resumeChildSession"];
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
     this.#storeManager = config.storeManager;
     this.#logger = config.logger;
     this.#startChildExecution = config.startChildExecution;
+    this.#cancelChildSession = config.cancelChildSession;
+    this.#resumeChildSession = config.resumeChildSession;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
 
   setStartChildExecution(callback: SessionAgentManagerConfig["startChildExecution"]): void {
     this.#startChildExecution = callback;
+  }
+
+  setCancelChildSession(callback: SessionAgentManagerConfig["cancelChildSession"]): void {
+    this.#cancelChildSession = callback;
+  }
+
+  setResumeChildSession(callback: SessionAgentManagerConfig["resumeChildSession"]): void {
+    this.#resumeChildSession = callback;
   }
 
   async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
@@ -220,6 +234,8 @@ export class SessionAgentManager {
           }
           return this.#startChildExecution(workspaceRoot, request);
         },
+        cancelChildSession: this.#cancelChildSession,
+        resumeChildSession: this.#resumeChildSession,
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);
