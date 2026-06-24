@@ -5,6 +5,10 @@ import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {
   AgentChildPolicyMissingError,
   AgentRunningError,
+  ChildSessionAgentMismatchError,
+  ChildSessionNotFoundError,
+  ChildSessionNotDescendantError,
+  ChildSessionParentMismatchError,
   ConcurrentLimitError,
   DelegateTargetNotAllowedError,
   DelegationToolNotAllowedError,
@@ -12,7 +16,7 @@ import {
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { CommandResult } from "../commands/types";
-import type { AvailableArtifactReference, ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
+import type { AvailableArtifactReference, ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
@@ -323,6 +327,67 @@ export class SessionExecutionManager {
     };
   }
 
+  cancelChildSession(workspaceRoot: string, parentSessionId: string, childSessionId: string): boolean {
+    if (!this.#isDescendantOf(workspaceRoot, childSessionId, parentSessionId)) {
+      throw new ChildSessionNotDescendantError(parentSessionId, childSessionId);
+    }
+    return this.abort(workspaceRoot, childSessionId);
+  }
+
+  async resumeChildExecution(workspaceRoot: string, request: ResumeChildRequest): Promise<ChildExecutionHandle> {
+    const key = scopedKey(workspaceRoot, request.sessionId);
+    if (this.#active.has(key)) throw new AgentRunningError();
+
+    const childStore = this.#config.getSessionStore(request.sessionId, workspaceRoot);
+    if (childStore === undefined) {
+      throw new ChildSessionNotFoundError(workspaceRoot, request.sessionId);
+    }
+    const childState = childStore.getState();
+    if (childState.agentName !== request.targetAgentName) {
+      throw new ChildSessionAgentMismatchError(request.sessionId, request.targetAgentName, childState.agentName);
+    }
+    if (childState.parentSessionId !== request.parentSessionId) {
+      throw new ChildSessionParentMismatchError(request.sessionId, request.parentSessionId, childState.parentSessionId);
+    }
+
+    const existingLink = this.#findChildSessionLink(request.parentStore, request.sessionId);
+    if (existingLink !== undefined) {
+      this.#updateChildLinkStatus(request.parentStore, existingLink, "running");
+    }
+
+    const agent = await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
+    const execution = this.startExecution({
+      slug: "",
+      workspaceRoot,
+      sessionId: request.sessionId,
+      userMessage: request.prompt,
+      agentName: request.targetAgentName,
+      origin: "tool_call",
+    });
+
+    const removeParentAbort = wireAbortCascade(request.parentAbort, execution.abortController);
+
+    const result = execution.promise
+      .then(() => toAgentResult(childStore))
+      .finally(() => {
+        removeParentAbort();
+        const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
+        if (current !== undefined && current.executionToken !== execution.executionToken) return;
+        const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
+        const link = this.#findChildSessionLink(request.parentStore, request.sessionId);
+        if (link !== undefined) {
+          this.#updateChildLinkStatus(request.parentStore, link, status);
+        }
+      });
+
+    return {
+      sessionId: request.sessionId,
+      store: childStore,
+      result,
+      abort: () => this.#cancelExecution(execution, "Sub-agent aborted"),
+    };
+  }
+
   async dispatchCommand(
     workspaceRoot: string,
     sessionId: string,
@@ -572,6 +637,41 @@ export class SessionExecutionManager {
     parentStore.getState().append({
       type: "tool-child-session-link",
       link: { ...link, status: "cancelling" },
+    });
+  }
+
+  #isDescendantOf(workspaceRoot: string, descendantSessionId: string, ancestorSessionId: string): boolean {
+    if (descendantSessionId === ancestorSessionId) return false;
+    let currentSessionId: string | undefined = descendantSessionId;
+    const visited = new Set<string>();
+    while (currentSessionId !== undefined && !visited.has(currentSessionId)) {
+      visited.add(currentSessionId);
+      const store = this.#config.getSessionStore(currentSessionId, workspaceRoot);
+      const parentSessionId = store?.getState().parentSessionId;
+      if (parentSessionId === undefined) return false;
+      if (parentSessionId === ancestorSessionId) return true;
+      currentSessionId = parentSessionId;
+    }
+    return false;
+  }
+
+  #findChildSessionLink(parentStore: StoreApi<SessionStoreState>, childSessionId: string): ToolChildSessionLink | undefined {
+    const links = parentStore.getState().childSessionLinks;
+    for (let index = links.length - 1; index >= 0; index -= 1) {
+      const candidate = links[index];
+      if (candidate?.childSessionId === childSessionId) return candidate;
+    }
+    return undefined;
+  }
+
+  #updateChildLinkStatus(
+    parentStore: StoreApi<SessionStoreState>,
+    link: ToolChildSessionLink,
+    status: ToolChildSessionLinkStatus,
+  ): void {
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: { ...link, status },
     });
   }
 

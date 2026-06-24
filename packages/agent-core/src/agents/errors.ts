@@ -113,3 +113,49 @@ export class SkillNotAllowedError extends SubAgentError {
     this.name = "SkillNotAllowedError";
   }
 }
+
+export class ChildSessionNotFoundError extends Error {
+  constructor(
+    public readonly workspaceRoot: string,
+    public readonly sessionId: string,
+  ) {
+    super(`Child session "${sessionId}" was not found in workspace "${workspaceRoot}"`);
+    this.name = "ChildSessionNotFoundError";
+  }
+}
+
+export class ChildSessionAgentMismatchError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly expectedAgentName: string,
+    public readonly actualAgentName: string,
+  ) {
+    super(
+      `Child session "${sessionId}" was created with agent "${actualAgentName}" but resume requested agent "${expectedAgentName}"`,
+    );
+    this.name = "ChildSessionAgentMismatchError";
+  }
+}
+
+export class ChildSessionParentMismatchError extends Error {
+  constructor(
+    public readonly sessionId: string,
+    public readonly expectedParentSessionId: string,
+    public readonly actualParentSessionId: string | undefined,
+  ) {
+    super(
+      `Child session "${sessionId}" has parent "${actualParentSessionId ?? "<none>"}" but resume expected parent "${expectedParentSessionId}"`,
+    );
+    this.name = "ChildSessionParentMismatchError";
+  }
+}
+
+export class ChildSessionNotDescendantError extends Error {
+  constructor(
+    public readonly parentSessionId: string,
+    public readonly childSessionId: string,
+  ) {
+    super(`Session "${childSessionId}" is not a descendant of "${parentSessionId}"`);
+    this.name = "ChildSessionNotDescendantError";
+  }
+}

@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createEmptySessionStats } from "@specra/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
-import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError } from "../agents/errors";
+import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { CommandResult } from "../commands/types";
 import type { AskUserResponse } from "../deferred";
@@ -1262,5 +1262,263 @@ describe("SessionExecutionManager", () => {
     await rm(getSessionPath(workspaceRoot, rootId, siblingId));
 
     expect(await storeManager.resolveRootSessionId(siblingId, workspaceRoot)).toBe(rootId);
+  });
+
+  test("resumeChildExecution on completed session appends new messages and updates existing link", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const factory = makeFactory();
+    const { manager } = createManager({}, { factory });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "first round",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await first.result;
+    const childSessionId = first.sessionId;
+    const childStore = first.store;
+    const messagesAfterFirst = childStore.getState().messages.length;
+    const linksAfterFirst = parentStore.getState().childSessionLinks.length;
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-tool-call",
+      toolName: "delegate",
+      sessionId: childSessionId,
+      targetAgentName: "explore",
+      prompt: "second round",
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await resumed.result;
+
+    expect(resumed.sessionId).toBe(childSessionId);
+    expect(resumed.store).toBe(childStore);
+    expect(childStore.getState().messages.length).toBeGreaterThan(messagesAfterFirst);
+    expect(parentStore.getState().childSessionLinks.length).toBe(linksAfterFirst);
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId,
+      parentToolCallId: "resume-tool-call",
+      status: "completed",
+    });
+  });
+
+  test("resumeChildExecution on running session throws AgentRunningError", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const childRun = deferred<AgentResult>();
+    const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "running-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "first round",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "running-tool-call",
+      toolName: "delegate",
+      sessionId: first.sessionId,
+      targetAgentName: "explore",
+      prompt: "second round",
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(AgentRunningError);
+
+    first.abort();
+    childRun.resolve({ text: "done", steps: 1 });
+    await first.result;
+  });
+
+  test("resumeChildExecution on non-existent session throws ChildSessionNotFoundError", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "missing-tool-call",
+      toolName: "delegate",
+      sessionId: "nonexistent-session-id",
+      targetAgentName: "explore",
+      prompt: "resume",
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(ChildSessionNotFoundError);
+  });
+
+  test("resumeChildExecution with mismatched agent name throws ChildSessionAgentMismatchError", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "mismatch-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "first round",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await first.result;
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "mismatch-tool-call",
+      toolName: "delegate",
+      sessionId: first.sessionId,
+      targetAgentName: "orchestrator",
+      prompt: "second round",
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(ChildSessionAgentMismatchError);
+  });
+
+  test("resumeChildExecution with wrong parent throws ChildSessionParentMismatchError", async () => {
+    const parentId = crypto.randomUUID();
+    const otherParentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const otherParentStore = storeManager.create(otherParentId, workspaceRoot, { agentName: "orchestrator" });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    const first = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "parent-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "first round",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await first.result;
+
+    await expect(manager.resumeChildExecution(workspaceRoot, {
+      parentStore: otherParentStore,
+      parentSessionId: otherParentId,
+      parentToolCallId: "parent-tool-call",
+      toolName: "delegate",
+      sessionId: first.sessionId,
+      targetAgentName: "explore",
+      prompt: "second round",
+      currentDepth: 0,
+      parentAbort: undefined,
+    })).rejects.toThrow(ChildSessionParentMismatchError);
+  });
+
+  test("cancelChildSession on running descendant aborts, marks link cancelled, appends reminder", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const childRun = deferred<AgentResult>();
+    const { manager } = createManager({}, { factory: makeFactory(), childRun: childRun.promise });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "cancel-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "running",
+      skills: [],
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    expect(manager.cancelChildSession(workspaceRoot, parentId, child.sessionId)).toBe(true);
+    childRun.resolve({ text: "done", steps: 1 });
+    await child.result;
+
+    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+      childSessionId: child.sessionId,
+      status: "cancelled",
+    });
+    const reminders = parentStore.getState().reminders;
+    expect(reminders.some((reminder) => reminder.source.type === "subagent_cancelled" && reminder.sessionId === child.sessionId)).toBe(true);
+  });
+
+  test("cancelChildSession on non-descendant throws ChildSessionNotDescendantError", async () => {
+    const parentId = crypto.randomUUID();
+    const strangerId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    storeManager.create(strangerId, workspaceRoot, { agentName: "orchestrator" });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    expect(() => manager.cancelChildSession(workspaceRoot, parentId, strangerId)).toThrow(ChildSessionNotDescendantError);
+  });
+
+  test("cancelChildSession cascades to grandchildren", async () => {
+    const rootId = crypto.randomUUID();
+    const childId = crypto.randomUUID();
+    const grandchildId = crypto.randomUUID();
+    const rootStore = storeManager.create(rootId, workspaceRoot, { agentName: "orchestrator" });
+    const childStore = storeManager.create(childId, workspaceRoot, { rootSessionId: rootId, parentSessionId: rootId, agentName: "explore" });
+    const grandchildStore = storeManager.create(grandchildId, workspaceRoot, { rootSessionId: rootId, parentSessionId: childId, agentName: "explore" });
+    rootStore.getState().append({ type: "tool-child-session-link", link: makeChildLink(rootId, childId, "explore") });
+    childStore.getState().append({ type: "tool-child-session-link", link: makeChildLink(childId, grandchildId, "explore") });
+    const childRun = deferred<AgentResult>();
+    const grandchildRun = deferred<AgentResult>();
+    const childAgent = new MockAgent(childId, childRun.promise);
+    const grandchildAgent = new MockAgent(grandchildId, grandchildRun.promise);
+    const { manager } = createManager({ [childId]: childAgent, [grandchildId]: grandchildAgent });
+    const childExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: childId, userMessage: "child", origin: "tool_call", agentName: "explore" });
+    const grandchildExecution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: grandchildId, userMessage: "grandchild", origin: "tool_call", agentName: "explore" });
+    await Promise.resolve();
+
+    expect(manager.cancelChildSession(workspaceRoot, rootId, childId)).toBe(true);
+    childRun.resolve({ text: "done", steps: 1 });
+    grandchildRun.resolve({ text: "done", steps: 1 });
+    await Promise.all([childExecution.promise, grandchildExecution.promise]);
+
+    expect(childExecution.abortController.signal.aborted).toBe(true);
+    expect(grandchildExecution.abortController.signal.aborted).toBe(true);
+  });
+
+  test("cancelChildSession on non-running session returns false", async () => {
+    const parentId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const { manager } = createManager({}, { factory: makeFactory() });
+
+    const child = await manager.startChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "completed-tool-call",
+      toolName: "delegate",
+      targetAgentName: "explore",
+      prompt: "done",
+      skills: [],
+      background: false,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+    await child.result;
+
+    expect(manager.cancelChildSession(workspaceRoot, parentId, child.sessionId)).toBe(false);
   });
 });
