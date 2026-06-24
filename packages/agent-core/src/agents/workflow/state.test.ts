@@ -45,7 +45,6 @@ describe("workflow schemas", () => {
   test("cover required stage, status, and artifact enums", () => {
     expect(WorkflowStageSchema.options).toEqual([
       "idle",
-      "requirements_interview",
       "researching",
       "research_consolidation",
       "quick_analysis",
@@ -131,7 +130,6 @@ describe("workflow schemas", () => {
 
     expect(state.requiredInteractions).toEqual([]);
     expect(state.resolvedInteractions).toEqual([]);
-    expect(state.noRequiredInteractionsReason).toEqual({});
   });
 
   test("validates strict workflow-managed interaction metadata", () => {
@@ -164,7 +162,6 @@ describe("workflow schemas", () => {
       status: "active",
       requiredInteractions: [interaction],
       resolvedInteractions: [{ ...interaction, id: "interaction-2", status: "resolved", answer: "minimal", resolvedAt: now }],
-      noRequiredInteractionsReason: { spec_drafting: "No open spec decisions." },
       createdAt: now,
       updatedAt: now,
     });
@@ -187,7 +184,6 @@ describe("workflow schemas", () => {
       revision: 1,
     });
     expect(state.resolvedInteractions[0]?.answer).toBe("minimal");
-    expect(state.noRequiredInteractionsReason.spec_drafting).toBe("No open spec decisions.");
   });
 
   test("rejects invalid workflow interaction status kind and stage", () => {

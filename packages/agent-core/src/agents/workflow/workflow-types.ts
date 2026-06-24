@@ -30,7 +30,6 @@ const NO_PREREQUISITES: readonly ArtifactKind[] = [];
 function emptyTransitions(): Record<WorkflowStage, readonly WorkflowStage[]> {
   return {
     idle: NO_TRANSITIONS,
-    requirements_interview: NO_TRANSITIONS,
     researching: NO_TRANSITIONS,
     research_consolidation: NO_TRANSITIONS,
     quick_analysis: NO_TRANSITIONS,
@@ -49,7 +48,6 @@ function emptyTransitions(): Record<WorkflowStage, readonly WorkflowStage[]> {
 function emptyPrerequisites(): Record<WorkflowStage, readonly ArtifactKind[]> {
   return {
     idle: NO_PREREQUISITES,
-    requirements_interview: NO_PREREQUISITES,
     researching: NO_PREREQUISITES,
     research_consolidation: NO_PREREQUISITES,
     quick_analysis: NO_PREREQUISITES,
@@ -113,7 +111,6 @@ export const WORKFLOW_TYPE_REGISTRY = {
     label: "Full feature",
     stages: [
       "idle",
-      "requirements_interview",
       "product_drafting",
       "critic_prd_review",
       "spec_drafting",
@@ -125,8 +122,7 @@ export const WORKFLOW_TYPE_REGISTRY = {
     initialStage: "idle",
     transitions: {
       ...emptyTransitions(),
-      idle: ["requirements_interview"],
-      requirements_interview: ["product_drafting"],
+      idle: ["product_drafting"],
       product_drafting: ["critic_prd_review"],
       critic_prd_review: ["product_drafting", "spec_drafting"],
       spec_drafting: ["critic_spec_review"],

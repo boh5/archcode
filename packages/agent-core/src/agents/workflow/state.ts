@@ -17,7 +17,6 @@ import { emitWorkflowStateChange } from "./events";
 
 export const WorkflowStageSchema = z.enum([
   "idle",
-  "requirements_interview",
   "researching",
   "research_consolidation",
   "quick_analysis",
@@ -125,7 +124,6 @@ export const WorkflowStateSchema = z.strictObject({
   stageCompletions: z.partialRecord(WorkflowStageSchema, StageCompletionRecordSchema).default({}),
   requiredInteractions: z.array(WorkflowInteractionSchema).default([]),
   resolvedInteractions: z.array(WorkflowInteractionSchema).default([]),
-  noRequiredInteractionsReason: z.partialRecord(WorkflowStageSchema, z.string()).default({}),
   derivedFrom: DerivedFromSchema.optional(),
   derivedWorkflows: z.array(DerivedWorkflowEntrySchema).default([]),
   sessionIds: z.record(z.string(), z.string()).default({}),
@@ -198,9 +196,7 @@ export interface CreateDerivedWorkflowResult {
   handoffSummaryId: string;
 }
 
-export type StageCompletionInput = Omit<StageCompletionRecord, "completedAt"> & {
-  noRequiredInteractionsReason?: string;
-};
+export type StageCompletionInput = Omit<StageCompletionRecord, "completedAt">;
 
 export interface ListWorkflowsOptions {
   status?: WorkflowStatus | readonly WorkflowStatus[];
@@ -367,18 +363,13 @@ export class WorkflowStateManager {
     record: StageCompletionInput,
   ): Promise<WorkflowState> {
     const state = await this.read(workflowId);
-    const { noRequiredInteractionsReason, ...completionRecord } = record;
     const completion: StageCompletionRecord = {
-      ...completionRecord,
+      ...record,
       completedAt: new Date().toISOString(),
     };
-    const trimmedReason = noRequiredInteractionsReason?.trim();
     const updated = WorkflowStateSchema.parse({
       ...state,
       stageCompletions: { ...state.stageCompletions, [record.stage]: completion },
-      noRequiredInteractionsReason: trimmedReason
-        ? { ...state.noRequiredInteractionsReason, [record.stage]: trimmedReason }
-        : state.noRequiredInteractionsReason,
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);
