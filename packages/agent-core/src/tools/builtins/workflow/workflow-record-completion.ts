@@ -11,7 +11,6 @@ const WorkflowRecordCompletionInputSchema = z.strictObject({
   stage: WorkflowStageSchema.describe("The stage being completed"),
   criticPassed: z.boolean().optional().describe("Whether the critic review passed for this stage"),
   evidence: z.array(z.string()).optional().describe("List of evidence artifact paths supporting the completion claim"),
-  noRequiredInteractionsReason: z.string().optional().describe("Concrete reason why this planning/review stage required no user interaction"),
 });
 
 type WorkflowRecordCompletionInput = z.infer<typeof WorkflowRecordCompletionInputSchema>;
@@ -32,11 +31,8 @@ export function createWorkflowRecordCompletionTool(): AnyToolDescriptor {
           stage: input.stage,
           criticPassed: input.criticPassed,
           evidence: input.evidence,
-          noRequiredInteractionsReason: input.noRequiredInteractionsReason,
         });
-        emitWorkflowStateChange(ctx.store, state.id, input.noRequiredInteractionsReason?.trim()
-          ? ["stageCompletions", "noRequiredInteractionsReason"]
-          : ["stageCompletions"]);
+        emitWorkflowStateChange(ctx.store, state.id, ["stageCompletions"]);
         return JSON.stringify(state, null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {
