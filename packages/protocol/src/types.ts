@@ -394,7 +394,7 @@ export interface QuestionTerminalEvent {
 export interface WorkflowStateChangeEvent {
   type: "workflow.state_change";
   workflowId: string;
-  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "noRequiredInteractionsReason" | "sessionIds" | "derivedFrom" | "derivedWorkflows">;
+  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "sessionIds" | "derivedFrom" | "derivedWorkflows">;
   updatedAt: string;
 }
 
@@ -675,7 +675,6 @@ export interface WorkflowState {
   }>;
   requiredInteractions?: WorkflowInteraction[];
   resolvedInteractions?: WorkflowInteraction[];
-  noRequiredInteractionsReason?: Record<string, string | undefined>;
   derivedFrom?: {
     workflowId: string;
     reason: "upgrade" | "branch" | string;

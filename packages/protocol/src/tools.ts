@@ -38,6 +38,7 @@ export const TOOL_DELEGATE = "delegate";
 export const TOOL_WAIT_FOR_REMINDER = "wait_for_reminder";
 export const TOOL_BACKGROUND_OUTPUT = "background_output";
 export const TOOL_VIEW_TOOL_OUTPUT = "view_tool_output";
+export const TOOL_CANCEL_SESSION = "cancel_session";
 
 // Skills
 export const TOOL_SKILL_LIST = "skill_list";
@@ -84,6 +85,7 @@ export type BuiltinToolName =
   | typeof TOOL_WAIT_FOR_REMINDER
   | typeof TOOL_BACKGROUND_OUTPUT
   | typeof TOOL_VIEW_TOOL_OUTPUT
+  | typeof TOOL_CANCEL_SESSION
   | typeof TOOL_SKILL_LIST
   | typeof TOOL_SKILL_READ
   | typeof TOOL_MEMORY_READ
@@ -139,6 +141,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_WAIT_FOR_REMINDER]: "delegation",
   [TOOL_BACKGROUND_OUTPUT]: "delegation",
   [TOOL_VIEW_TOOL_OUTPUT]: "delegation",
+  [TOOL_CANCEL_SESSION]: "delegation",
   [TOOL_SKILL_LIST]: "skill",
   [TOOL_SKILL_READ]: "skill",
   [TOOL_MEMORY_READ]: "memory",
