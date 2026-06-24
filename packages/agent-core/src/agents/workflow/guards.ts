@@ -19,8 +19,6 @@ export interface TransitionInput {
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion?: (stage: WorkflowStage) => boolean;
   hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
-  hasResolvedBlockingDecisionInteractions?: (stage: WorkflowStage) => boolean;
-  hasNoRequiredInteractionsReason?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
@@ -28,8 +26,6 @@ export interface TransitionContext {
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion: (stage: WorkflowStage) => boolean;
   hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
-  hasResolvedBlockingDecisionInteractions?: (stage: WorkflowStage) => boolean;
-  hasNoRequiredInteractionsReason?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
@@ -90,14 +86,6 @@ export class WorkflowUnresolvedInteractionsError extends Error {
 
 const CRITIC_REVIEW_STAGES = new Set<WorkflowStage>([
   "critic_prd_review",
-  "critic_spec_review",
-]);
-
-const INTERACTION_CLEARANCE_STAGES = new Set<WorkflowStage>([
-  "requirements_interview",
-  "product_drafting",
-  "critic_prd_review",
-  "spec_drafting",
   "critic_spec_review",
 ]);
 
@@ -169,22 +157,6 @@ export function validateTransition(input: TransitionInput): TransitionResult {
     );
   }
 
-  if (
-    INTERACTION_CLEARANCE_STAGES.has(input.currentStage) &&
-    !isBackwardTransition(input.workflowType, input.currentStage, input.targetStage) &&
-    !input.hasResolvedBlockingDecisionInteractions?.(input.currentStage) &&
-    !input.hasNoRequiredInteractionsReason?.(input.currentStage)
-  ) {
-    return denied(
-      new WorkflowTransitionError(
-        input.workflowId,
-        input.currentStage,
-        input.targetStage,
-        `Workflow ${input.workflowId} cannot advance from ${input.currentStage} to ${input.targetStage}: stage requires either resolved blocking decisions or a recorded no-question reason`,
-      ),
-    );
-  }
-
   if (input.targetStage === "foreman_executing" && !input.hasUserApproval) {
     return denied(
       new WorkflowTransitionError(
@@ -225,8 +197,6 @@ export function canTransitionTo(
     hasArtifact: context.hasArtifact,
     hasStageCompletion: context.hasStageCompletion,
     hasUnresolvedBlockingInteractions: context.hasUnresolvedBlockingInteractions,
-    hasResolvedBlockingDecisionInteractions: context.hasResolvedBlockingDecisionInteractions,
-    hasNoRequiredInteractionsReason: context.hasNoRequiredInteractionsReason,
     hasUserApproval: context.hasUserApproval,
   });
 }
@@ -250,18 +220,6 @@ export function hasUnresolvedBlockingInteractions(
     }
     return false;
   });
-}
-
-export function hasResolvedBlockingDecisionInteractions(
-  workflow: Pick<WorkflowState, "requiredInteractions" | "resolvedInteractions">,
-  stage: WorkflowStage,
-): boolean {
-  return [...workflow.requiredInteractions, ...workflow.resolvedInteractions].some((interaction) => (
-    interaction.stage === stage &&
-    interaction.kind === "decision" &&
-    interaction.blocking &&
-    interaction.status === "resolved"
-  ));
 }
 
 export function canCompleteWorkflow(
@@ -346,13 +304,6 @@ function missingStageCompletionPrerequisite(
   // Backward transitions (critic retries) don't require current-stage completion —
   // the whole point of going back is that the current stage wasn't satisfactorily completed.
   if (isBackwardTransition(workflowType, currentStage, targetStage)) return undefined;
-  if (
-    workflowType === "full_feature" &&
-    targetStage === "critic_prd_review" &&
-    !hasStageCompletion("requirements_interview")
-  ) {
-    return "requirements_interview";
-  }
   if (!hasStageCompletion(currentStage)) return currentStage;
   return undefined;
 }

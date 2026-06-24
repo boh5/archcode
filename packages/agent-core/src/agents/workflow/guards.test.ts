@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   canCompleteWorkflow,
   canTransitionTo,
-  hasResolvedBlockingDecisionInteractions,
   hasUnresolvedBlockingInteractions,
   validateTransition,
   WorkflowRetryLimitError,
@@ -39,7 +38,6 @@ function input(overrides: Partial<TransitionInput>): TransitionInput {
     retryCount: 0,
     maxRetries: 3,
     hasArtifact: (kind: string) => artifacts.has(kind as ArtifactKind),
-    hasResolvedBlockingDecisionInteractions: () => true,
     hasUserApproval: true,
     ...overrides,
   };
@@ -57,7 +55,6 @@ function workflowState(overrides: Partial<WorkflowState>): WorkflowState {
     stageCompletions: {},
     requiredInteractions: [],
     resolvedInteractions: [],
-    noRequiredInteractionsReason: {},
     derivedWorkflows: [],
     sessionIds: {},
     createdAt: now,
@@ -72,7 +69,7 @@ function workflowInteraction(overrides: Partial<WorkflowInteraction>): WorkflowI
   return {
     id: "decision-1",
     decisionKey: "product.scope",
-    stage: "requirements_interview",
+    stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
     blocking: true,
@@ -94,8 +91,6 @@ function transitionWithInteractions(workflow: WorkflowState, targetStage: Workfl
       targetStage,
       hasStageCompletion: (stage) => Boolean(workflow.stageCompletions[stage]),
       hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(workflow, stage),
-      hasResolvedBlockingDecisionInteractions: (stage) => hasResolvedBlockingDecisionInteractions(workflow, stage),
-      hasNoRequiredInteractionsReason: (stage) => Boolean(workflow.noRequiredInteractionsReason[stage]?.trim()),
       hasUserApproval: true,
     }),
   );
@@ -218,7 +213,7 @@ describe("workflow transition guards", () => {
       "critic_prd_review",
       {
         hasArtifact: () => true,
-        hasStageCompletion: (stage) => stage === "requirements_interview",
+        hasStageCompletion: () => false,
         hasUserApproval: true,
       },
     );
@@ -257,7 +252,7 @@ describe("workflow transition guards", () => {
   });
 
   test("canTransitionTo allows transition when prerequisite completion record exists", () => {
-    const completedStages = new Set<WorkflowStage>(["requirements_interview", "product_drafting"]);
+    const completedStages = new Set<WorkflowStage>(["product_drafting"]);
 
     const result = canTransitionTo(
       {
@@ -272,7 +267,6 @@ describe("workflow transition guards", () => {
         {
           hasArtifact: () => true,
           hasStageCompletion: (stage) => completedStages.has(stage),
-          hasResolvedBlockingDecisionInteractions: () => true,
           hasUserApproval: true,
         },
       );
@@ -326,8 +320,7 @@ describe("workflow transition guards", () => {
 
   test("full_feature follows its approved graph", () => {
     const approvedPath: Array<[WorkflowStage, WorkflowStage]> = [
-      ["idle", "requirements_interview"],
-      ["requirements_interview", "product_drafting"],
+      ["idle", "product_drafting"],
       ["product_drafting", "critic_prd_review"],
       ["critic_prd_review", "spec_drafting"],
       ["spec_drafting", "critic_spec_review"],
@@ -342,129 +335,27 @@ describe("workflow transition guards", () => {
     }
   });
 
-  test("full_feature inserts requirements_interview before product drafting", () => {
-    const stages = WORKFLOW_TYPE_REGISTRY.full_feature.stages;
-    const requirementsIndex = stages.indexOf("requirements_interview");
-    const productIndex = stages.indexOf("product_drafting");
-
-    expect(requirementsIndex).toBeGreaterThan(stages.indexOf("idle"));
-    expect(requirementsIndex).toBeLessThan(productIndex);
-    expect(getTransitionsForType("full_feature", "idle")).toEqual(["requirements_interview"]);
-    expect(getTransitionsForType("full_feature", "requirements_interview")).toEqual(["product_drafting"]);
-  });
-
-  test("full_feature no longer allows direct idle to product_drafting", () => {
-    const result = validateTransition(
-      input({ workflowType: "full_feature", currentStage: "idle", targetStage: "product_drafting" }),
-    );
-
-    expect(result.allowed).toBe(false);
-    expect(result.errorName).toBe("WorkflowTransitionError");
-    expect(result.error).toContain("Allowed: requirements_interview");
-  });
-
-  test("requires requirements_interview completion before PRD drafting and review", () => {
-    const cannotDraft = canTransitionTo(
-      {
-        id: "550e8400-e29b-41d4-a716-446655440006",
-        type: "full_feature",
-        status: "active",
-        stage: "requirements_interview",
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      "product_drafting",
-      {
-        hasArtifact: () => true,
-        hasStageCompletion: () => false,
-        hasUserApproval: true,
-      },
-    );
-    expect(cannotDraft.allowed).toBe(false);
-    expect(cannotDraft.error).toContain("record completion for requirements_interview");
-
-    const cannotReview = canTransitionTo(
-      {
-        id: "550e8400-e29b-41d4-a716-446655440007",
-        type: "full_feature",
-        status: "active",
-        stage: "product_drafting",
-        retryCount: 0,
-        maxRetries: 3,
-      },
-      "critic_prd_review",
-      {
-        hasArtifact: () => true,
-        hasStageCompletion: (stage) => stage === "product_drafting",
-        hasUserApproval: true,
-      },
-    );
-    expect(cannotReview.allowed).toBe(false);
-    expect(cannotReview.error).toContain("record completion for requirements_interview");
-  });
-
-  test("blocking proposed interaction in requirements_interview denies transition to product_drafting", () => {
+  test("blocking proposed interaction in product_drafting denies transition to critic_prd_review", () => {
     const workflow = workflowState({
-      stage: "requirements_interview",
+      stage: "product_drafting",
       stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
+        product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
       },
       requiredInteractions: [workflowInteraction({ status: "proposed" })],
     });
 
-    const result = transitionWithInteractions(workflow, "product_drafting");
+    const result = transitionWithInteractions(workflow, "critic_prd_review");
 
     expect(result.allowed).toBe(false);
     expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
     expect(result.error).toContain("unresolved blocking interaction");
-    expect(result.error).toContain("requirements_interview");
-  });
-
-  test("planning stage transition requires resolved blocking decisions or no-question reason", () => {
-    const workflow = workflowState({
-      stage: "requirements_interview",
-      stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
-      },
-    });
-
-    const result = transitionWithInteractions(workflow, "product_drafting");
-
-    expect(result.allowed).toBe(false);
-    expect(result.errorName).toBe("WorkflowTransitionError");
-    expect(result.error).toContain("stage requires either resolved blocking decisions or a recorded no-question reason");
-  });
-
-  test("planning stage transition allows a recorded no-question reason", () => {
-    const workflow = workflowState({
-      stage: "requirements_interview",
-      stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
-      },
-      noRequiredInteractionsReason: {
-        requirements_interview: "All requirements were already provided in the task brief.",
-      },
-    });
-
-    expect(transitionWithInteractions(workflow, "product_drafting")).toEqual({ allowed: true });
-  });
-
-  test("non-planning stages do not require a no-question reason", () => {
-    const workflow = workflowState({
-      stage: "foreman_executing",
-      stageCompletions: {
-        foreman_executing: { stage: "foreman_executing", completedAt: new Date().toISOString() },
-      },
-    });
-
-    expect(transitionWithInteractions(workflow, "final_review")).toEqual({ allowed: true });
+    expect(result.error).toContain("product_drafting");
   });
 
   test("blocking requested interaction denies progression out of its stage", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
         product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
       },
       requiredInteractions: [
@@ -482,7 +373,6 @@ describe("workflow transition guards", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
         product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
       },
       requiredInteractions: [
@@ -572,17 +462,14 @@ describe("workflow transition guards", () => {
 
   test("non-blocking unresolved interactions do not block progression", () => {
     const workflow = workflowState({
-      stage: "requirements_interview",
+      stage: "product_drafting",
       stageCompletions: {
-        requirements_interview: { stage: "requirements_interview", completedAt: new Date().toISOString() },
-      },
-      noRequiredInteractionsReason: {
-        requirements_interview: "Only non-blocking preference notes exist; no user decision is required.",
+        product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
       },
       requiredInteractions: [workflowInteraction({ id: "decision-9", blocking: false, status: "requested" })],
     });
 
-    expect(transitionWithInteractions(workflow, "product_drafting")).toEqual({ allowed: true });
+    expect(transitionWithInteractions(workflow, "critic_prd_review")).toEqual({ allowed: true });
   });
 
   test("each workflow type has the expected completion policy", () => {
