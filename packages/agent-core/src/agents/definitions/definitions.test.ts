@@ -96,7 +96,7 @@ describe("agentDefinitions", () => {
       expect(prompt).toContain("recommendedOption");
       expect(prompt).toContain("rationale");
       expect(prompt).toContain("blocking");
-      expect(prompt).toContain("noRequiredInteractionsReason");
+      expect(prompt).toContain("After proposing interactions, you will be resumed with user answers");
       expect(prompt).toContain("Do NOT call ask_user directly");
     }
   });

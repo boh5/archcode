@@ -88,7 +88,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 23 builtins including 4 LSP and 2 ast-grep tools", () => {
+  it("registers all 24 builtins including 4 LSP and 2 ast-grep tools", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -113,6 +113,7 @@ describe("registerBuiltinTools", () => {
       "wait_for_reminder",
       "delegate",
       "background_output",
+      "cancel_session",
       "skill_list",
       "skill_read",
       "view_tool_output",
@@ -442,12 +443,13 @@ describe("registerBuiltinTools", () => {
   });
 
   describe("DELEGATION_EXECUTION_TOOLS", () => {
-    it("includes exactly delegate, background_output, wait_for_reminder, view_tool_output", () => {
+    it("includes exactly delegate, background_output, wait_for_reminder, view_tool_output, cancel_session", () => {
       expect(DELEGATION_EXECUTION_TOOLS).toEqual([
         "delegate",
         "background_output",
         "wait_for_reminder",
         "view_tool_output",
+        "cancel_session",
       ]);
     });
   });

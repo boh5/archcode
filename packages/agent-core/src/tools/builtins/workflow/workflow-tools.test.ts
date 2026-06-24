@@ -165,7 +165,7 @@ function workflowEvents(store: StoreApi<SessionStoreState>) {
 function validInteractionProposal(overrides: Record<string, unknown> = {}) {
   return {
     decisionKey: "requirements.scope",
-    stage: "requirements_interview",
+    stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
     blocking: true,
@@ -406,12 +406,12 @@ describe("workflow builtin tools", () => {
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store);
     expect(updated.isError).toBe(false);
     expect(JSON.parse(updated.output)).toMatchObject({
       id: wf_stage.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
       status: "active",
     });
 
@@ -438,7 +438,7 @@ describe("workflow builtin tools", () => {
 
     const updated = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_stage_event.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store);
 
     expect(updated.isError).toBe(false);
@@ -476,34 +476,6 @@ describe("workflow builtin tools", () => {
     });
   });
 
-  test("workflow_record_completion persists noRequiredInteractionsReason", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_completion_reason = await stateManager.create({ title: "Completion Reason", type: "full_feature" });
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_completion_reason.id);
-
-    const recorded = await execute(registry, projectContext, "workflow_record_completion", {
-      workflowId: wf_completion_reason.id,
-      stage: "requirements_interview",
-      evidence: ["requirements reviewed"],
-      noRequiredInteractionsReason: "The user supplied all required scope and risk decisions in the initial request.",
-    }, store);
-
-    expect(recorded.isError).toBe(false);
-    const state = JSON.parse(recorded.output);
-    expect(state.stageCompletions.requirements_interview).toMatchObject({
-      stage: "requirements_interview",
-      evidence: ["requirements reviewed"],
-    });
-    expect(state.noRequiredInteractionsReason.requirements_interview).toBe("The user supplied all required scope and risk decisions in the initial request.");
-    expect((await stateManager.read(wf_completion_reason.id)).noRequiredInteractionsReason.requirements_interview).toBe("The user supplied all required scope and risk decisions in the initial request.");
-    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
-      type: "workflow.state_change",
-      workflowId: wf_completion_reason.id,
-      changed: ["stageCompletions", "noRequiredInteractionsReason"],
-    });
-  });
-
   test("workflow_update_stage critic approval rejects unresolved blocking interactions", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_critic_blocked = await stateManager.create({ title: "Critic Blocked", type: "full_feature" });
@@ -526,49 +498,7 @@ describe("workflow builtin tools", () => {
     expect((await stateManager.read(wf_critic_blocked.id)).stage).toBe("critic_prd_review");
   });
 
-  test("workflow_update_stage critic approval rejects missing interaction clearance", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_critic_uncleared = await stateManager.create({ title: "Critic Uncleared", type: "full_feature" });
-    await stateManager.updateStage(wf_critic_uncleared.id, "critic_prd_review");
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_critic_uncleared.id);
-
-    const result = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: wf_critic_uncleared.id,
-      stage: "spec_drafting",
-      criticDecision: "approved",
-    }, store);
-
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Cannot approve critic review: stage requires either resolved blocking decisions or a recorded no-question reason");
-    expect((await stateManager.read(wf_critic_uncleared.id)).stage).toBe("critic_prd_review");
-  });
-
-  test("workflow_update_stage critic approval allows recorded no-question reason", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_critic_reason = await stateManager.create({ title: "Critic Reason", type: "full_feature" });
-    await stateManager.updateStage(wf_critic_reason.id, "critic_prd_review");
-    await stateManager.recordStageCompletion(wf_critic_reason.id, {
-      stage: "critic_prd_review",
-      noRequiredInteractionsReason: "Critic found no user-owned risk or scope decision requiring clarification.",
-    });
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_critic_reason.id);
-
-    const result = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: wf_critic_reason.id,
-      stage: "spec_drafting",
-      criticDecision: "approved",
-    }, store);
-
-    expect(result.isError).toBe(false);
-    expect(JSON.parse(result.output)).toMatchObject({
-      newState: { id: wf_critic_reason.id, stage: "spec_drafting" },
-      transitionDescription: "critic approved PRD; advancing to SPEC drafting",
-    });
-  });
-
-  test("workflow_update_stage critic approval allows resolved blocking interactions", async () => {
+  test("workflow_update_stage critic approval is allowed when no unresolved blocking interactions remain", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_critic_resolved = await stateManager.create({ title: "Critic Resolved", type: "full_feature" });
     await stateManager.updateStage(wf_critic_resolved.id, "critic_prd_review");
@@ -1140,7 +1070,7 @@ describe("workflow builtin tools", () => {
     expect(state.requiredInteractions).toHaveLength(1);
     expect(state.requiredInteractions[0]).toMatchObject({
       decisionKey: "requirements.scope",
-      stage: "requirements_interview",
+      stage: "product_drafting",
       question: "Pick revised scope?",
       status: "proposed",
       revision: 2,
@@ -1150,7 +1080,7 @@ describe("workflow builtin tools", () => {
   test("workflow_request_interactions batches multiple blocking proposals into one askUser call", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf = await stateManager.create({ title: "Interaction Batch", type: "full_feature" });
-    await stateManager.updateStage(wf.id, "requirements_interview");
+    await stateManager.updateStage(wf.id, "product_drafting");
     const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
     await execute(registry, projectContext, "workflow_propose_interactions", {
       workflowId: wf.id,
@@ -1163,7 +1093,7 @@ describe("workflow builtin tools", () => {
 
     const result = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: wf.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store, { askUser });
 
     expect(result.isError).toBe(false);
@@ -1186,7 +1116,7 @@ describe("workflow builtin tools", () => {
 
     const result = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: wf.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store, { askUser });
 
     expect(result.isError).toBe(false);
@@ -1215,7 +1145,7 @@ describe("workflow builtin tools", () => {
 
     const partial = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: partialWorkflow.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, partialStore, { askUser: mock(async () => ({ answers: [["A"], []] })) });
 
     expect(partial.isError).toBe(false);
@@ -1233,7 +1163,7 @@ describe("workflow builtin tools", () => {
     }, cancelledStore);
     const cancelled = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: cancelledWorkflow.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, cancelledStore, { askUser: mock(async () => ({ isError: true as const, reason: "Cancelled" })) });
 
     expect(cancelled.isError).toBe(false);
@@ -1256,7 +1186,7 @@ describe("workflow builtin tools", () => {
 
     const result = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: wf.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store, { askUser });
 
     expect(result.isError).toBe(false);
@@ -1276,7 +1206,7 @@ describe("workflow builtin tools", () => {
 
     const result = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: wf.id,
-      stage: "requirements_interview",
+      stage: "product_drafting",
     }, store, {
       allowedTools: ["workflow_read", "workflow_propose_interactions"],
       agentName: "product",

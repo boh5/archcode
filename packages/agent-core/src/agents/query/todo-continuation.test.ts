@@ -435,7 +435,6 @@ function workflowState(overrides: Partial<WorkflowState> = {}): WorkflowState {
     stageCompletions: {},
     requiredInteractions: [],
     resolvedInteractions: [],
-    noRequiredInteractionsReason: {},
     derivedWorkflows: [],
     sessionIds: {},
     createdAt: now,

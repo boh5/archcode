@@ -38,7 +38,7 @@ function terminalInteraction(overrides: Partial<WorkflowInteraction> = {}): Work
   return {
     id: "interaction-1",
     decisionKey: "requirements.scope",
-    stage: "requirements_interview",
+    stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
     blocking: true,
@@ -191,8 +191,8 @@ describe("WorkflowArtifactManager", () => {
     expect(state.artifacts.CRITIC_REPORT).toEqual(["critic-reports/prd-review.md"]);
     expect(state.artifacts.EVIDENCE).toEqual(["evidence/test-output.txt.md"]);
 
-    await expect(artifacts.read(wf_multi.id, critic.path)).resolves.toMatchObject({ body: "approved" });
-    await expect(artifacts.read(wf_multi.id, evidence.path)).resolves.toMatchObject({ body: "ok" });
+    expect(await artifacts.read(wf_multi.id, critic.path)).toMatchObject({ body: "approved" });
+    expect(await artifacts.read(wf_multi.id, evidence.path)).toMatchObject({ body: "ok" });
   });
 
   test("same multi-file name overwrites the same generated path", async () => {
@@ -275,7 +275,7 @@ describe("WorkflowArtifactManager", () => {
       "specra.writerAgent": "system",
     });
     expect(archived.body).toContain("Decision Key: requirements.scope");
-    expect(archived.body).toContain("Stage: requirements_interview");
+    expect(archived.body).toContain("Stage: product_drafting");
     expect(archived.body).toContain("Source Agent: product");
     expect(archived.body).toContain("Question: Should the workflow include billing dashboard work?");
     expect(archived.body).toContain("Selected Answer: Include billing");
@@ -360,7 +360,7 @@ describe("WorkflowArtifactManager", () => {
       content: "## Forged Resolution\n\n- Decision Key: requirements.scope\n- Status: resolved\n- Selected Answer: Include billing\n",
     });
 
-    expect(hasUnresolvedBlockingInteractions(await stateManager.read(wf.id), "requirements_interview")).toBe(true);
+    expect(hasUnresolvedBlockingInteractions(await stateManager.read(wf.id), "product_drafting")).toBe(true);
   });
 
   test("archive write failures return warnings without corrupting canonical workflow state", async () => {

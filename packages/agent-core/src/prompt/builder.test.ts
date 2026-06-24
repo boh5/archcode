@@ -56,7 +56,7 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("research_only");
     expect(result).toContain("quick_fix");
     expect(result).toContain("full_feature");
-    expect(result).toContain("requirements_interview");
+    expect(result).toContain("idle -> product_drafting");
     expect(result).toContain("Use workflow_update_stage for every business-stage move");
     expect(result).toContain("record the current stage as completed with workflow_record_completion");
     expect(result).toContain("Use workflow_complete");
@@ -79,17 +79,16 @@ describe("buildSystemPrompt", () => {
       ],
     }));
 
-    expect(result).toContain("### Requirements interview and interaction clearance gates");
-    expect(result).toContain("requirements_interview");
-    expect(result).toContain("proposal -> request -> resolve");
+    expect(result).toContain("### Delegate → Propose → Ask → Resume loop");
+    expect(result).toContain("There is no separate requirements-gate stage");
+    expect(result).toContain("delegate(session_id=...)");
     expect(result).toContain("workflow_propose_interactions");
     expect(result).toContain("workflow_request_interactions");
-    expect(result).toContain("Call workflow_request_interactions once per gate");
-    expect(result).toContain("before PRD review, before Spec review, and before Critic approval");
+    expect(result).toContain("calls workflow_request_interactions once per batch");
+    expect(result).toContain("resumes the sub-agent with answers using delegate(session_id=...)");
     expect(result).toContain("Do not advance while workflow_read reports unresolved blocking decisions");
-    expect(result).toContain("record stage clearance or noRequiredInteractionsReason");
-    expect(result).toContain("Product, Spec, and Critic questions must be routed through workflow_propose_interactions");
-    expect(result).toContain("not direct ask_user");
+    expect(result).toContain("Sub-agents proactively research and may propose questions during their execution using workflow_propose_interactions");
+    expect(result).toContain("Do not ask one question at a time when multiple proposals exist for the same gate");
   });
 
   test("keeps role instructions before workflow intent gate for orchestrator prompts", async () => {
@@ -152,7 +151,7 @@ describe("buildSystemPrompt", () => {
         resolvedInteractions: [{
           id: "interaction-1",
           decisionKey: "requirements.scope",
-          stage: "requirements_interview",
+          stage: "product_drafting",
           sourceAgent: "product",
           kind: "decision",
           blocking: true,
@@ -170,7 +169,7 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("### Resolved Workflow Decisions — Execution Constraints");
     expect(result).toContain("Critic, Foreman, Builder, and Reviewer roles must treat these terminal decisions as binding constraints");
     expect(result).toContain("requirements.scope");
-    expect(result).toContain("Stage: requirements_interview");
+    expect(result).toContain("Stage: product_drafting");
     expect(result).toContain("Source: product");
     expect(result).toContain("Answer: Include billing");
     expect(result).toContain("Question: Should billing be included?");

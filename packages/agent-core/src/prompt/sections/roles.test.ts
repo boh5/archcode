@@ -55,7 +55,7 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("## Workflow Role: Orchestrator");
     expect(result).toContain("workflow_create");
-    expect(result).toContain("requirements_interview");
+    expect(result).toContain("Move to product_drafting");
     expect(result).toContain("Product to write the PRD");
     expect(result).toContain("Critic to review the PRD");
     expect(result).toContain("Spec to write SPEC and TASKS");
@@ -70,11 +70,11 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("workflow_propose_interactions");
     expect(result).toContain("workflow_request_interactions");
-    expect(result).toContain("proposal -> request -> resolve");
+    expect(result).toContain("Delegate→propose→ask→resume");
     expect(result).toContain("call workflow_request_interactions once per gate");
-    expect(result).toContain("before PRD review, before SPEC review, and before Critic approval");
-    expect(result).toContain("Do not proceed to PRD review, SPEC review, or Critic approval while workflow_read reports unresolved blocking decisions");
-    expect(result).toContain("record stage clearance or noRequiredInteractionsReason");
+    expect(result).toContain("before PRD review, before SPEC review, and before accepting Critic approval");
+    expect(result).toContain("Never advance out of a stage while workflow_read shows unresolved blocking interactions for that stage");
+    expect(result).toContain("Persisted resolvedInteractions clear answered blockers");
   });
 
   test("orchestrator routes Product, Spec, and Critic questions through interaction tools instead of direct ask_user", () => {
@@ -136,7 +136,7 @@ describe("buildRoleSection", () => {
     expect(result).toContain("recommendedOption");
     expect(result).toContain("rationale");
     expect(result).toContain("blocking");
-    expect(result).toContain("noRequiredInteractionsReason");
+    expect(result).toContain("After proposing interactions, you will be resumed with user answers");
     expect(result).toContain("Do NOT call ask_user directly");
   });
 
