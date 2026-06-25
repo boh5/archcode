@@ -5,12 +5,14 @@ import { ProjectRoute } from "./routes/project";
 import { SessionRoute } from "./routes/session";
 import { NotFoundRoute } from "./routes/not-found";
 import { AddProjectModalRenderer } from "./context/add-project-modal";
+import { SettingsModalRenderer } from "./context/settings-modal";
 
 export const router = createBrowserRouter([
   {
     element: (
       <>
         <AddProjectModalRenderer />
+        <SettingsModalRenderer />
         <Outlet />
       </>
     ),

@@ -9,13 +9,14 @@ import type { Project } from "../../api/types";
 
 interface ProjectBarProps {
   onAddProject?: () => void;
+  onSettings?: () => void;
 }
 
 function getInitials(slug: string): string {
   return slug.slice(0, 2).toLowerCase();
 }
 
-export function ProjectBar({ onAddProject }: ProjectBarProps) {
+export function ProjectBar({ onAddProject, onSettings }: ProjectBarProps) {
   const navigate = useNavigate();
   const { slug: activeSlug } = useParams<{ slug: string }>();
   const { data: projects } = useProjects();
@@ -32,6 +33,10 @@ export function ProjectBar({ onAddProject }: ProjectBarProps) {
 
   const handleAddProject = () => {
     onAddProject?.();
+  };
+
+  const handleSettingsClick = () => {
+    onSettings?.();
   };
 
   const handleProjectClosed = useCallback(
@@ -115,6 +120,12 @@ export function ProjectBar({ onAddProject }: ProjectBarProps) {
           role="button"
           tabIndex={0}
           title="Settings"
+          onClick={handleSettingsClick}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              handleSettingsClick();
+            }
+          }}
         >
           ⚙
         </div>

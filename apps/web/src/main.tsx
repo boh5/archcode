@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/composite/ErrorBoundary";
 import { ToastContainer } from "./components/composite/Toast";
 import { AddProjectModalProvider } from "./context/add-project-modal";
 import { GlobalSSEProvider } from "./context/global-sse";
+import { SettingsModalProvider } from "./context/settings-modal";
 import { useToast } from "./hooks/use-toast";
 import { router } from "./router";
 import "./styles/globals.css";
@@ -45,10 +46,12 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <GlobalSSEProvider>
         <AddProjectModalProvider>
-          <ErrorBoundary>
-            <RouterProvider router={router} />
-          </ErrorBoundary>
-          <ToastContainer toasts={toasts} onDismiss={dismiss} />
+          <SettingsModalProvider>
+            <ErrorBoundary>
+              <RouterProvider router={router} />
+            </ErrorBoundary>
+            <ToastContainer toasts={toasts} onDismiss={dismiss} />
+          </SettingsModalProvider>
         </AddProjectModalProvider>
       </GlobalSSEProvider>
     </QueryClientProvider>

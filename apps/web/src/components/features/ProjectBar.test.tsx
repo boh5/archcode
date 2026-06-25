@@ -65,6 +65,7 @@ const project: Project = {
 
 const navigate = mock((_path: string) => {});
 const onAddProject = mock(() => {});
+const onSettings = mock(() => {});
 const setState = mock((_value: unknown) => {});
 const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => [
   initial,
@@ -156,7 +157,7 @@ mock.module("../../api/mutations", () => ({
 ({ ProjectBar } = await import("./ProjectBar"));
 
 function render(): unknown {
-  return ProjectBar({ onAddProject });
+  return ProjectBar({ onAddProject, onSettings });
 }
 
 function projectNode(tree: unknown) {
@@ -166,7 +167,7 @@ function projectNode(tree: unknown) {
 
 describe("ProjectBar", () => {
   beforeEach(() => {
-    for (const fn of [navigate, onAddProject, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme, useTheme]) {
+    for (const fn of [navigate, onAddProject, onSettings, setState, useState, useCallback, useNavigate, useParams, useProjects, toggleTheme, useTheme]) {
       fn.mockClear();
     }
   });
@@ -222,5 +223,24 @@ describe("ProjectBar", () => {
     (addNode?.props?.onKeyDown as (event: { key: string }) => void)({ key: " " });
 
     expect(onAddProject).toHaveBeenCalledTimes(2);
+  });
+
+  test("settings affordance opens the settings modal", () => {
+    const settingsNode = findAll(
+      render(),
+      (element) => element.props?.title === "Settings",
+    )[0] as {
+      props: {
+        onClick: () => void;
+        onKeyDown: (event: { key: string }) => void;
+      };
+    };
+
+    settingsNode.props.onClick();
+    settingsNode.props.onKeyDown({ key: "Enter" });
+    settingsNode.props.onKeyDown({ key: " " });
+
+    expect(onSettings).toHaveBeenCalledTimes(3);
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

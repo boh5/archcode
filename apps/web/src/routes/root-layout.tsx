@@ -1,5 +1,6 @@
 import { Outlet } from "react-router-dom";
 import { useAddProjectModal } from "../context/add-project-modal";
+import { useSettingsModal } from "../context/settings-modal";
 import { ProjectBar } from "../components/features/ProjectBar";
 import { Sidebar } from "../components/features/Sidebar";
 import { DetailPanel } from "../components/features/DetailPanel";
@@ -12,6 +13,7 @@ import { DetailPanel } from "../components/features/DetailPanel";
  */
 export function RootLayout() {
   const { openAddProjectModal } = useAddProjectModal();
+  const { openSettingsModal } = useSettingsModal();
 
   return (
     <div className="grid h-screen overflow-hidden grid-cols-[52px_260px_1fr_360px] grid-rows-[48px_1fr] max-[1100px]:grid-cols-[52px_220px_1fr_0px] max-[800px]:grid-cols-[0_0_1fr_0]">
@@ -20,7 +22,7 @@ export function RootLayout() {
       </div>
 
       <div className="col-start-1 col-end-2 row-start-1 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
-        <ProjectBar onAddProject={openAddProjectModal} />
+        <ProjectBar onAddProject={openAddProjectModal} onSettings={openSettingsModal} />
       </div>
 
       <div className="col-start-2 col-end-3 row-start-2 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">
