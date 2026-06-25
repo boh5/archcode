@@ -44,7 +44,7 @@ export {
   isSensitiveFile,
   SENSITIVE_PATTERNS,
   createMemoryIndexPermission,
-  createProtectedSpecraPermission,
+  createProtectedPathPermission,
   createReadBeforeEditPermission,
   createFileExistsPermission,
   createBashPermission,

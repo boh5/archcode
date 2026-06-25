@@ -139,8 +139,8 @@ export class ConfiguredAgent implements Agent {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
     });
     this.memoryRoots = {
-      project: join(this.workspaceRoot, ".specra", "memory"),
-      user: join(homedir(), ".specra", "memory"),
+      project: join(this.workspaceRoot, ".archcode", "memory"),
+      user: join(homedir(), ".archcode", "memory"),
     };
 
     this.commandRegistry = new CommandRegistry();

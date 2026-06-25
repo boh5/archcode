@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand";
 import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
-import { MAX_EVENTS, createEmptySessionStats, reduceStreamEvent } from "@specra/protocol";
+import { MAX_EVENTS, createEmptySessionStats, reduceStreamEvent } from "@archcode/protocol";
 import type {
   GlobalSessionEventEnvelope,
   PermissionTerminalEvent,
@@ -18,7 +18,7 @@ import type {
   SessionStep,
   SessionTodo,
   StreamEvent,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 
 const MAX_IDLE_SESSION_STORES = 20;

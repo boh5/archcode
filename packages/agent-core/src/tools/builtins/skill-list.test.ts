@@ -11,7 +11,7 @@ import { SkillListInputSchema, skillListTool } from "./skill-list";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-list-tool");
 const projectRoot = join(tmpRoot, "project");
-const userSkillsRoot = join(tmpRoot, "user", ".specra", "skills");
+const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
 const orchestratorSkills = ["git-master", "safe-refactor", "codemap", "review-work", "research-docs"] as const;
 const exploreSkills = ["codemap", "research-docs"] as const;

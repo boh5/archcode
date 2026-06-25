@@ -11,7 +11,7 @@
 | Agent 命名 | `TestAgent` | 临时名称，打通流程后替换 |
 | Agent 接口 | 半透明 — 暴露 `store` | TUI 已有 store 渲染逻辑，零改造成本 |
 | Store 写权限 | 暴露完整 StoreApi | 短期接受，靠约定约束 TUI 只读 |
-| 依赖注入 | Agent 内部自管 | 构造时接收 `SpecraConfig`，内部创建 registry + model + store |
+| 依赖注入 | Agent 内部自管 | 构造时接收 `ArchCodeConfig`，内部创建 registry + model + store |
 | Model 选择 | 默认第一个 | 无 model 时明确报错（从 main.ts 搬入） |
 | System prompt | 硬编码 | 简单直接 |
 | 工具系统 | 暂不设计 | 留空 |
@@ -67,7 +67,7 @@ class TestAgent implements Agent {
   private modelInfo: ModelInfo;
   private running = false;
 
-  constructor(config: SpecraConfig) {
+  constructor(config: ArchCodeConfig) {
     this.registry = createRegistry(config.provider);
     const modelIds = this.registry.getModelIds();
     if (modelIds.length === 0) throw new Error('No models configured');

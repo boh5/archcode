@@ -11,7 +11,7 @@ import type {
   SessionExecutionRecord,
   ToolChildSessionLink,
   PendingInteraction,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 
 export type {
   StreamEvent,
@@ -75,8 +75,8 @@ export type {
   SessionStep as StepInfo,
   SessionTodo as StoredTodo,
   SessionTodoStatus as StoredTodoStatus,
-} from "@specra/protocol";
-export { MAX_EVENTS } from "@specra/protocol";
+} from "@archcode/protocol";
+export { MAX_EVENTS } from "@archcode/protocol";
 
 export interface SessionStoreState {
   sessionId: string;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import type { SpecraConfig } from "../config/schema";
+import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
@@ -53,7 +53,7 @@ function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): Sess
     config: {
       provider: {},
       agents: { orchestrator: { model: providerRegistry.modelIds[0]! } },
-    } as SpecraConfig,
+    } as ArchCodeConfig,
     logger: silentLogger,
     maxConcurrentSessions,
     ...(tombstoneTtlMs === undefined ? {} : { tombstoneTtlMs }),
@@ -63,7 +63,7 @@ function createManager(maxConcurrentSessions = 4, tombstoneTtlMs?: number): Sess
 describe("SessionAgentManager", () => {
   test("enforces per-workspace concurrent session limit", () => {
     const manager = createManager(2);
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     manager.acquireSlot(workspaceRoot, "one");
     manager.acquireSlot(workspaceRoot, "two");
@@ -82,7 +82,7 @@ describe("SessionAgentManager", () => {
 
   test("releaseSlot frees capacity for the same workspace", () => {
     const manager = createManager(1);
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     manager.acquireSlot(workspaceRoot, "one");
     expect(() => manager.acquireSlot(workspaceRoot, "two")).toThrow(ConcurrentSessionLimitError);
@@ -94,7 +94,7 @@ describe("SessionAgentManager", () => {
 
   test("tombstoned sessions cannot be recreated", async () => {
     const manager = createManager();
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     manager.dispose(workspaceRoot, "deleted");
 
@@ -104,7 +104,7 @@ describe("SessionAgentManager", () => {
 
   test("concurrent getOrCreate returns the same agent instance", async () => {
     const manager = createManager();
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     const [first, second] = await Promise.all([
       manager.getOrCreate(workspaceRoot, "same-session"),
@@ -117,7 +117,7 @@ describe("SessionAgentManager", () => {
 
   test("tombstone expiry allows recreating a deleted session", async () => {
     const manager = createManager(4, 25);
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     manager.dispose(workspaceRoot, "expired");
     expect(manager.isTombstoned(workspaceRoot, "expired")).toBe(true);
@@ -130,7 +130,7 @@ describe("SessionAgentManager", () => {
 
   test("clearTombstone allows recreating a deleted session", async () => {
     const manager = createManager();
-    const workspaceRoot = "/tmp/specra-workspace";
+    const workspaceRoot = "/tmp/archcode-workspace";
 
     manager.dispose(workspaceRoot, "cleared");
     expect(manager.clearTombstone(workspaceRoot, "cleared")).toBe(true);

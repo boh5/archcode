@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
-import type { SpecraConfig } from "../config/schema";
+import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
 import { UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
@@ -101,10 +101,10 @@ function definition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 
 function makeFactory(
   definitions: readonly AgentDefinition[] = [definition()],
-  options: { providerRegistry?: ProviderRegistry; config?: Partial<SpecraConfig>; skillService?: SkillService } = {},
+  options: { providerRegistry?: ProviderRegistry; config?: Partial<ArchCodeConfig>; skillService?: SkillService } = {},
 ) {
   const providerRegistry = options.providerRegistry ?? makeProviderRegistry();
-  const config: SpecraConfig = {
+  const config: ArchCodeConfig = {
     provider: {},
     ...options.config,
     agents:
@@ -112,7 +112,7 @@ function makeFactory(
       Object.fromEntries(
         definitions.map((definitionItem) => [definitionItem.name, { model: providerRegistry.modelIds[1] ?? providerRegistry.modelIds[0] }]),
       ),
-  } as SpecraConfig;
+  } as ArchCodeConfig;
 
   return createAgentFactory({ definitions,
   providerRegistry,
@@ -195,7 +195,7 @@ describe("createAgentFactory", () => {
       agents: {
         orchestrator: { model: providerRegistry.modelIds[1]! },
       },
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     const agent = factory.createAgent("orchestrator", { activeSkills });
 
@@ -221,7 +221,7 @@ describe("createAgentFactory", () => {
       agents: {
         orchestrator: { model: providerRegistry.modelIds[1]! },
       },
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     factory.createRootAgent("orchestrator");
 
@@ -244,7 +244,7 @@ describe("createAgentFactory", () => {
     config: {
       provider: {},
       agents: {},
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     expect(() => factory.createRootAgent("orchestrator")).toThrow(MissingAgentModelConfigError);
 
@@ -278,7 +278,7 @@ describe("createAgentFactory", () => {
       agents: {
         orchestrator: { model: providerRegistry.modelIds[1]! },
       },
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     expect(() => factory.createAgent("explore")).toThrow(MissingAgentModelConfigError);
 
@@ -317,7 +317,7 @@ describe("createAgentFactory", () => {
       agents: {
         orchestrator: { model: "missing:model" },
       },
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     expect(() => factory.createRootAgent("orchestrator")).toThrow(NoModelsConfiguredError);
   });
@@ -339,7 +339,7 @@ describe("createAgentFactory", () => {
       agents: {
         orchestrator: { model: "test:missing" },
       },
-    } as SpecraConfig, logger: silentLogger });
+    } as ArchCodeConfig, logger: silentLogger });
 
     try {
       factory.createRootAgent("orchestrator");

@@ -16,7 +16,7 @@ export function RootLayout() {
   return (
     <div className="grid h-screen overflow-hidden grid-cols-[52px_260px_1fr_360px] grid-rows-[48px_1fr] max-[1100px]:grid-cols-[52px_220px_1fr_0px] max-[800px]:grid-cols-[0_0_1fr_0]">
       <div className="col-start-2 col-end-5 row-start-1 row-end-2 flex items-center border-b border-border-default px-4">
-        <span className="text-sm font-medium text-text-secondary">Specra</span>
+        <span className="text-sm font-medium text-text-secondary">ArchCode</span>
       </div>
 
       <div className="col-start-1 col-end-2 row-start-1 row-end-3 min-h-0 overflow-hidden max-[800px]:hidden border-r border-border-default bg-bg-surface">

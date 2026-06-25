@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { AskUserService } from "../ask-user-service";
 import { errorHandler } from "../error-handler";
 import { createQuestionsRoutes } from "./questions";
@@ -10,7 +10,7 @@ const QUESTION_ID = "question-1";
 function createRuntime() {
   return {
     respondQuestion: mock((id: string) => id === QUESTION_ID),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 function createTestApp(askUserService: AskUserService): Hono {

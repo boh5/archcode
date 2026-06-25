@@ -182,7 +182,7 @@ describe("mocked workflow MVP integration", () => {
     expect(finalTasks.every((task) => task.checked)).toBe(true);
     expect(delegateBuilder).toHaveBeenCalledTimes(1);
     expect(delegateReviewer).toHaveBeenCalledTimes(1);
-    expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", createdWf.id, "PLAN.md")).exists()).toBe(false);
+    expect(await Bun.file(join(TMP_DIR, ".archcode", "workflows", createdWf.id, "PLAN.md")).exists()).toBe(false);
   });
 });
 
@@ -651,9 +651,9 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const readFromOtherContext = await artifactManager.read(wf_a.id, "RESEARCH.md");
     expect(readFromOtherContext.frontmatter).toMatchObject({
-      "specra.workflowId": wf_a.id,
-      "specra.artifactKind": "RESEARCH",
-      "specra.artifactPath": "RESEARCH.md",
+      "archcode.workflowId": wf_a.id,
+      "archcode.artifactKind": "RESEARCH",
+      "archcode.artifactPath": "RESEARCH.md",
     });
     expect(readFromOtherContext.body).toContain("Shared research");
     expect((await stateManager.read(wf_b.id)).artifacts).toEqual({ FINAL_REPORT: "FINAL_REPORT.md" });

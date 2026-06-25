@@ -1,24 +1,24 @@
 ## Project
 
-Specra — long-running coding agent with Hono server + React Web UI. Two-tier agent architecture (Orchestrator + Explorer sub-agents) with structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode — **You architect. AI codes.** Programming is splitting into architecting intent and writing code. ArchCode is the workbench where the architect hands the blueprint to AI for execution. Long-running coding agent with Hono server + React Web UI. Two-tier agent architecture (Orchestrator + Explorer sub-agents) with structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
 Turborepo workspace with Bun. Four packages:
 
 ```
-specra/                          # Root workspace (bun@1.3.13)
-├── apps/server/                 # @specra/server  — Hono API/SSE server
-├── apps/web/                    # @specra/web     — Vite + React frontend
-├── packages/agent-core/        # @specra/agent-core — core agent logic
-├── packages/protocol/           # @specra/protocol — shared types (zero runtime deps)
+specra/                          # Root workspace (bun@1.3.13) — folder name kept for now
+├── apps/server/                 # @archcode/server  — Hono API/SSE server
+├── apps/web/                    # @archcode/web     — Vite + React frontend
+├── packages/agent-core/        # @archcode/agent-core — core agent logic
+├── packages/protocol/           # @archcode/protocol — shared types (zero runtime deps)
 └── scripts/build.ts            # 3-phase production build pipeline
 ```
 
 **Dependency graph:**
 ```
-@specra/server → @specra/agent-core → @specra/protocol
-@specra/web → @specra/protocol
+@archcode/server → @archcode/agent-core → @archcode/protocol
+@archcode/web → @archcode/protocol
 ```
 
 Web does NOT depend on agent-core or server. Architecture tests in `__arch__/` enforce these boundaries.
@@ -53,7 +53,7 @@ Validation order: `typecheck` → `test` (enforced by Turborepo task graph).
 
 ```
 apps/server/src/
-├── main.ts                     # Boot entry: createSpecraRuntime() → bootServer(runtime)
+├── main.ts                     # Boot entry: createRuntime() → bootServer(runtime)
 ├── index.ts                     # Barrel: re-exports app, boot, error-handler, errors, listen, logger
 ├── app.ts                       # Hono app builder (routes, CORS, error handling)
 ├── boot.ts                      # Server bootstrap + graceful shutdown on SIGINT/SIGTERM
@@ -72,9 +72,9 @@ apps/server/src/
 └── events/                     # global-event-bus.ts
 
 packages/agent-core/src/
-├── runtime.ts                  # createSpecraRuntime(): config → providers → tools → MCP → session manager
+├── runtime.ts                  # createRuntime(): config → providers → tools → MCP → session manager
 ├── index.ts                    # Public API exports
-├── config/                     # .specra.json loading, Zod schema (.strict()), env expansion, MCP config
+├── config/                     # .archcode.json loading, Zod schema (.strict()), env expansion, MCP config
 ├── provider/                   # Provider registry wrapping AI SDK instances, ModelInfo with token limits
 ├── agents/definitions/         # AgentDefinition records for orchestrator, explore, and workflow roles
 ├── agents/factory.ts           # Agent creation and delegation through ConfiguredAgent
@@ -132,26 +132,26 @@ packages/protocol/src/
 
 **Data flow:**
 ```
-.specra.json → config → providers → registerBuiltinTools + MCP → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
+.archcode.json → config → providers → registerBuiltinTools + MCP → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
 
 Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered tools, own store) → reminder to parent
 ```
 
 **Server + Web UI:**
-- `apps/server/src/main.ts` creates `SpecraRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
-- `apps/server/src/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `SPECRA_SERVER_PASSWORD`, `/api/health`, project/session/message/event/permission/question/command/workflow/file routes, and centralized errors.
-- `apps/server/src/boot.ts` starts the server on `SPECRA_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `SPECRA_SERVER_PASSWORD` is unset.
+- `apps/server/src/main.ts` creates `AgentRuntime`, registers providers/tools/MCP, initializes `ProjectRegistry` + `ProjectContextResolver`, then calls `bootServer(runtime)`.
+- `apps/server/src/app.ts` builds the Hono app: request logging, CORS, optional Basic auth via `ARCHCODE_SERVER_PASSWORD`, `/api/health`, project/session/message/event/permission/question/command/workflow/file routes, and centralized errors.
+- `apps/server/src/boot.ts` starts the server on `ARCHCODE_PORT` (default `4096`) and wires graceful shutdown. Development mode is inferred when `ARCHCODE_SERVER_PASSWORD` is unset.
 - `apps/web/` is the React frontend. In development it runs through Vite (`bun run --cwd apps/web dev`); production uses `bun run build` then `bun run start` so Hono can serve API + UI from one port.
 
 **Build pipeline** (`scripts/build.ts`):
 1. `runWebBuild()` → Vite builds `apps/web/` to `apps/web/dist/`
 2. `generateManifest()` → generates `apps/server/src/web-manifest.ts` (import map of web dist assets, gitignored)
-3. `compileBinary()` → `Bun.build()` compiles `apps/server/src/main.ts` → `dist/specra` binary (minified, includes css-tree patch plugin)
+3. `compileBinary()` → `Bun.build()` compiles `apps/server/src/main.ts` → `dist/archcode` binary (minified, includes css-tree patch plugin)
 
 **Multi-project model:**
-- `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.specra/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
+- `packages/agent-core/src/projects/registry.ts` persists registered workspaces under `~/.archcode/projects/index.json`, validates absolute existing directories, derives stable slugs, and tracks open times.
 - `packages/agent-core/src/projects/context-resolver.ts` creates per-workspace runtime context: workflow state, project memory, approvals, and artifacts.
-- `SpecraRuntime.agentFor(workspaceRoot)` lazily creates one root Orchestrator agent per workspace and caches it.
+- `AgentRuntime.agentFor(workspaceRoot)` lazily creates one root Orchestrator agent per workspace and caches it.
 - Web UI Add Project flow should register an existing workspace directory, then use project-scoped API routes (`/api/projects/:slug/...`) for sessions, files, workflow, and events.
 
 **SSE + Deferred pattern:**
@@ -167,9 +167,9 @@ partitionToolCalls → globalGuards (memory-index-guard) → tool guards (worksp
   → before hooks → execute → after hooks (edit-error-recovery) → global after (redact → truncate → audit → logger)
 ```
 
-**Config** (`.specra.json`): `provider.<id>.{npm, name, options, models}` + `agents.<agentName>.{model, variant, options}` + `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
+**Config** (`.archcode.json`): `provider.<id>.{npm, name, options, models}` + `agents.<agentName>.{model, variant, options}` + `mcp.servers.<id>.{url, headers, enabled}`. Strict Zod. Env expansion: `${VAR}`, `${VAR:-default}`.
 
-**Model configuration** (`.specra.json`):
+**Model configuration** (`.archcode.json`):
 - Provider ids and model ids combine as `provider:modelId` (example: `"local:glm-5"`). Do **not** use `provider/model`.
 - `provider.<id>.models.<modelId>.options` defines base AI SDK model-call options for that model. Use AI SDK camelCase names such as `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `maxRetries`, `timeout`, and `providerOptions`.
 - `provider.<id>.models.<modelId>.variants.<variantName>` defines named option profiles for the same model. An agent's `variant` references one of these names and is consumed during resolution; it is never passed to the AI SDK call.
@@ -178,8 +178,8 @@ partitionToolCalls → globalGuards (memory-index-guard) → tool guards (worksp
 - `providerOptions` follows the same shallow merge rule as one top-level key: later layers replace the whole `providerOptions` object rather than deep-merging nested provider settings.
 - Unknown model ids, unknown variant names, and missing agent model config all fail fast with actionable errors.
 - LLM execution is centralized in `packages/agent-core/src/llm/`. Non-LLM runtime code must not import `streamText` or `generateText` directly from `"ai"`; use `runLlmStream`, `runLlmText`, or `runLlmObject` instead.
-- `.specra.json` `maxRetries` is an AI SDK option, not Specra-managed recovery configuration. Managed calls force AI SDK `maxRetries: 0` so Specra owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
-- Retry constants are internal v1 implementation details. There is no `.specra.json` recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
+- `.archcode.json` `maxRetries` is an AI SDK option, not ArchCode-managed recovery configuration. Managed calls force AI SDK `maxRetries: 0` so ArchCode owns retry/recovery, including HTTP 200 stream-body EOF/truncated-SSE failures that AI SDK retries cannot recover.
+- Retry constants are internal v1 implementation details. There is no `.archcode.json` recovery retry config yet. Existing auto-compact behavior is preserved; emergency context-overflow compact automation is follow-up/out-of-scope.
 
 Minimal example:
 ```json
@@ -277,13 +277,13 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
-**Global**: memory-index-guard denies edits to `.specra/memory/index.md` on file_write/file_edit. Global after-hooks: **redact → truncate → audit → logger**.
+**Global**: memory-index-guard denies edits to `.archcode/memory/index.md` on file_write/file_edit. Global after-hooks: **redact → truncate → audit → logger**.
 
 **Core API**: `defineTool()` → `ToolDescriptor`. `ToolTraits: { readOnly, destructive, concurrencySafe }`. `partitionToolCalls()` groups concurrent-safe calls into parallel batches. Guards return `{ outcome: "allow" | "deny" | "ask" }`.
 
 ## Session Store
 
-Zustand vanilla store per agent session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) for edit guard. `BusyError` if run-start while running. Reminders: todo_step_reminder, todo_loop_continuation, subagent_completed/failed/timed_out/cancelled. Persisted to `~/.specra/sessions/{id}.json`, validated by `SessionFileSchema` (strict Zod) on load.
+Zustand vanilla store per agent session. `append(StreamEvent)` → `reduceStreamEvent()` → `toModelMessages()`. Tool parts: `pending → running → completed | error`. `readSnapshots` (Map<path, mtime>) for edit guard. `BusyError` if run-start while running. Reminders: todo_step_reminder, todo_loop_continuation, subagent_completed/failed/timed_out/cancelled. Persisted to `~/.archcode/sessions/{id}.json`, validated by `SessionFileSchema` (strict Zod) on load.
 
 ## Context Compaction
 
@@ -291,40 +291,40 @@ Auto-compact at `contextTokens ≥ limit × 0.75` + ≥ 5 new messages. 3-phase:
 
 ## Memory System
 
-Project: `.specra/memory/`, User: `~/.specra/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: `prompt/sections/memory.ts` reads + truncates + wraps in `<specra-memory-context>` XML. `memory_write` rejects secrets.
+Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md` (topic index), `preferences.md`, `knowledge/{topic}.md` (frontmatter + markdown). Types: `"user" | "feedback" | "project" | "reference"`. `MemoryFileManager`: atomic writes, path validation, frontmatter parse/format, index rebuild/search. Extraction (background task via `runLlmObject`) → writes topics. Consolidation (background task) → reorganizes index. Injection: `prompt/sections/memory.ts` reads + truncates + wraps in `<archcode-memory-context>` XML. `memory_write` rejects secrets.
 
 ## LSP Integration
 
-`LspClientPool` (acquire/release, 5min idle timeout, crash loop detection). `LspClient` (Content-Modified retry 3x). `StdioLspTransport` (Bun.spawn + vscode-jsonrpc). Auto-install: `resolveServerBinary` → PATH → npm install -g → `~/.cache/specra/lsp-servers/`. 18 built-in servers, 50+ ext→language mappings.
+`LspClientPool` (acquire/release, 5min idle timeout, crash loop detection). `LspClient` (Content-Modified retry 3x). `StdioLspTransport` (Bun.spawn + vscode-jsonrpc). Auto-install: `resolveServerBinary` → PATH → npm install -g → `~/.cache/archcode/lsp-servers/`. 18 built-in servers, 50+ ext→language mappings.
 
 ## MCP
 
-HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.specra.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
+HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.archcode.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
 
 ## Key Dependencies
 
-- `@specra/agent-core`: `ai` v6 + `@ai-sdk/openai-compatible` (streamText), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
-- `@specra/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
-- `@specra/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
-- `@specra/protocol`: zero runtime deps
+- `@archcode/agent-core`: `ai` v6 + `@ai-sdk/openai-compatible` (streamText), `@modelcontextprotocol/sdk`, `zustand` v5, `zod` v4 (.strict()), `vscode-jsonrpc` + `vscode-languageserver-protocol` (LSP), `jsdom` + `@mozilla/readability` + `turndown` + `@truto/turndown-plugin-gfm` (web_fetch)
+- `@archcode/server`: `hono` v4 (HTTP/SSE), `zustand` v5, `zod` v4, `fuzzysort`
+- `@archcode/web`: `react` 19 + `react-dom` + `react-router-dom` v7, `@tanstack/react-query`, `zustand` v5, `@radix-ui/*`, `streamdown`, `eventsource-parser`
+- `@archcode/protocol`: zero runtime deps
 - Build: `vite` v6 + `@vitejs/plugin-react` + Tailwind v4 (`@tailwindcss/vite`), `typescript` v6, `turbo` v2
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SPECRA_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
-| `SPECRA_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*`. Unset = dev mode |
-| `SPECRA_HOST` | unset | Externally advertised host |
-| `SPECRA_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
-| `SPECRA_PROJECTS_DIR` | unset | Base directory for project selection flows |
+| `ARCHCODE_PORT` | `4096` | Hono server port (falls back to ephemeral if busy) |
+| `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*`. Unset = dev mode |
+| `ARCHCODE_HOST` | unset | Externally advertised host |
+| `ARCHCODE_OPEN_BROWSER` | unset | Auto-open Web UI on boot (reserved) |
+| `ARCHCODE_PROJECTS_DIR` | unset | Base directory for project selection flows |
 
 ## Conventions
 
 - Talk in chinese, code in english (include comments).
 - If you have any questions or choices, feel free to ask user.
 - Use TDD development.
-- **When modifying `.specra.json` config schema or defaults, must also update README.md config docs.**
+- **When modifying `.archcode.json` config schema or defaults, must also update README.md config docs.**
 - **Prefer Bun-native APIs** over `node:*` imports. Use `crypto.randomUUID()`, `Bun.file()`, `Bun.write()`, `Bun.SystemError`, `import.meta.dir`. Only use `node:*` when Bun has no native alternative (e.g. `node:path` join/resolve, `node:os` tmpdir/homedir, `node:fs/promises` mkdir/rename/readdir/rm, `node:fs` sync methods).
 - Custom error classes: extend `Error`, typed constructor params, explicit `this.name = "ClassName"`, meaningful public fields.
 - Barrel exports via `index.ts`. All Zod schemas use `.strict()`.

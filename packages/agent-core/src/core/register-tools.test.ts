@@ -34,7 +34,7 @@ afterAll(() => {
 });
 
 async function createTmpRoot(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), `specra-${prefix}-`));
+  const root = await mkdtemp(join(tmpdir(), `archcode-${prefix}-`));
   tmpRoots.push(root);
   return root;
 }
@@ -66,8 +66,8 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
     project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
     workflowState,
     memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".specra", "memory"),
-      user: join(workspaceRoot, ".specra", "user-memory"),
+      project: join(workspaceRoot, ".archcode", "memory"),
+      user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
@@ -312,7 +312,7 @@ describe("registerBuiltinTools", () => {
   });
 
   describe("memory index permission", () => {
-    it("memory index permission denies writes to .specra/memory/index.md", async () => {
+    it("memory index permission denies writes to .archcode/memory/index.md", async () => {
       const workspaceRoot = await createTmpRoot("perm-deny");
       const registry = new ToolRegistry();
       registerBuiltinTools(registry, silentLogger);
@@ -322,16 +322,16 @@ describe("registerBuiltinTools", () => {
         {
           toolName: "file_write",
           toolCallId: "perm-test",
-          input: { path: ".specra/memory/index.md", content: "hacked" },
+          input: { path: ".archcode/memory/index.md", content: "hacked" },
         },
         makeContext("file_write", ["file_write"], workspaceRoot, {
           toolCallId: "perm-test",
-          input: { path: ".specra/memory/index.md", content: "hacked" },
+          input: { path: ".archcode/memory/index.md", content: "hacked" },
         }),
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("SPECRA_PROTECTED_PATH_WRITE_DENIED");
+      expect(result.output).toContain("PROTECTED_PATH_WRITE_DENIED");
     });
 
     it("memory index permission allows writes to non-index files", async () => {
@@ -381,9 +381,9 @@ describe("registerBuiltinTools", () => {
     });
   });
 
-  describe("protected .specra mutation permissions", () => {
-    it("bash denies commands that reference .specra paths", async () => {
-      const workspaceRoot = await createTmpRoot("bash-specra-deny");
+  describe("protected .archcode mutation permissions", () => {
+    it("bash denies commands that reference .archcode paths", async () => {
+      const workspaceRoot = await createTmpRoot("bash-archcode-deny");
       const registry = new ToolRegistry();
       registerBuiltinTools(registry, silentLogger);
       registry.globalHooks.after.pop();
@@ -391,24 +391,24 @@ describe("registerBuiltinTools", () => {
       const result = await registry.execute(
         {
           toolName: "bash",
-          toolCallId: "bash-specra-deny",
+          toolCallId: "bash-archcode-deny",
           input: {
-            description: "Attempt scripted write to .specra",
-            command: "python3 -c \"open('.specra/workflows/wf/TASKS.md','w').write('---')\"",
+            description: "Attempt scripted write to .archcode",
+            command: "python3 -c \"open('.archcode/workflows/wf/TASKS.md','w').write('---')\"",
           },
         },
         makeContext("bash", ["bash"], workspaceRoot, {
-          toolCallId: "bash-specra-deny",
+          toolCallId: "bash-archcode-deny",
           input: {
-            description: "Attempt scripted write to .specra",
-            command: "python3 -c \"open('.specra/workflows/wf/TASKS.md','w').write('---')\"",
+            description: "Attempt scripted write to .archcode",
+            command: "python3 -c \"open('.archcode/workflows/wf/TASKS.md','w').write('---')\"",
           },
           confirmPermission: async () => "approve" as const,
         }),
       );
 
       expect(result.isError).toBe(true);
-      expect(result.output).toContain("SPECRA_PROTECTED_PATH_WRITE_DENIED");
+      expect(result.output).toContain("PROTECTED_PATH_WRITE_DENIED");
     });
   });
 

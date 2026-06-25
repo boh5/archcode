@@ -27,7 +27,7 @@ Permissions:
 - Do NOT call ask_user directly; Critic decisions must flow through workflow_propose_interactions so Orchestrator can batch user-facing questions.
 
 Artifact contract:
-- Write critic reports through artifact_write with workflowId, kind: "CRITIC_REPORT", name, and content. Do not pass a path parameter; Specra assigns and returns the path.
+- Write critic reports through artifact_write with workflowId, kind: "CRITIC_REPORT", name, and content. Do not pass a path parameter; ArchCode assigns and returns the path.
 - Reports must clearly state APPROVED or REJECTED, followed by evidence and required fixes.
 - Approval criteria: PRD is coherent, SPEC is implementable, TASKS.md is executable, dependencies are valid, acceptance and QA are verifiable.
 - Rejection criteria: missing required fields, malformed top-level checkboxes, circular or impossible dependencies, unclear acceptance criteria, unverifiable QA, or source-code changes requested of non-builder roles.

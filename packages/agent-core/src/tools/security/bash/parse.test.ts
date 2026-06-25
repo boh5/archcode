@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { classifyCommand } from "../bash-classifier";
 import { parseShellRequest } from "./parse";
 
-const workspaceRoot = join(tmpdir(), "specra-bash-parse-tests");
+const workspaceRoot = join(tmpdir(), "archcode-bash-parse-tests");
 
 function parse(command: string) {
   return parseShellRequest(command, { workspaceRoot });
@@ -78,6 +78,6 @@ describe("parseShellRequest", () => {
     if ("ok" in request) throw new Error("unexpected parse failure");
     expect(request.invocations.map((invocation) => invocation.separatorBefore)).toEqual([undefined, ";", "||", "|"]);
     expect(request.invocations.map((invocation) => invocation.command)).toEqual(["pwd", "rm", "git", "tee"]);
-    expect(classifyCommand("pwd ; rm -rf .specra || git status | tee out.txt", { workspaceRoot }).outcome).toBe("deny");
+    expect(classifyCommand("pwd ; rm -rf .archcode || git status | tee out.txt", { workspaceRoot }).outcome).toBe("deny");
   });
 });

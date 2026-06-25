@@ -28,7 +28,7 @@ export class LlmSchemaValidationError extends Error {
 }
 
 /**
- * Thrown when Specra-managed retry handling exhausts all attempts.
+ * Thrown when ArchCode-managed retry handling exhausts all attempts.
  */
 export class LlmMaxRetriesError extends Error {
   public readonly cause: Error | undefined;

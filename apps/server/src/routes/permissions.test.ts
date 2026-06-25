@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Hono } from "hono";
 import { errorHandler } from "../error-handler";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { PermissionService } from "../permission-service";
 import { createPermissionRoutes } from "./permissions";
 
@@ -10,7 +10,7 @@ const PERMISSION_ID = "permission-1";
 function createRuntime() {
   return {
     respondPermission: mock((id: string) => id === PERMISSION_ID),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 function createTestApp(permissionService: PermissionService): Hono {

@@ -10,7 +10,7 @@ import {
   CONTENT_SUMMARY_THRESHOLD_CHARS,
   CONTENT_SUMMARY_THRESHOLD_LINES,
 } from "./tool-format";
-import type { ToolDiffMetadata } from "@specra/protocol";
+import type { ToolDiffMetadata } from "@archcode/protocol";
 
 describe("getToolIcon", () => {
   test("returns correct icon for each category", () => {

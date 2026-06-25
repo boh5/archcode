@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
-import { createBashPermission, createProtectedSpecraPermission } from "../permission";
+import { createBashPermission, createProtectedPathPermission } from "../permission";
 import { PathValidator } from "../security";
 import { createProcessRunner } from "../../process/runner";
 import type { ProcessRunnerResult } from "../../process/types";
@@ -21,7 +21,7 @@ type BashInput = z.infer<typeof BashInputSchema>;
 const ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL"] as const;
 
 export function buildBashEnv(source: Record<string, string | undefined> = Bun.env): Record<string, string> {
-  const env: Record<string, string> = { SPECRA_CLI: "1" };
+  const env: Record<string, string> = { ARCHCODE_CLI: "1" };
 
   for (const key of ENV_ALLOWLIST) {
     if (key.endsWith("_TOKEN") || key.endsWith("_KEY")) continue;
@@ -123,7 +123,7 @@ export const bashTool = defineTool({
     }
     return raw;
   },
-  permissions: [createProtectedSpecraPermission(), createBashPermission()],
+  permissions: [createProtectedPathPermission(), createBashPermission()],
   execute: async (input: BashInput, ctx: ToolExecutionContext) => {
     return runBashCommand(input, ctx);
   },

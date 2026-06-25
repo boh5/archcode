@@ -6,7 +6,7 @@ import { assertSkillName, parseSkillMarkdown } from "./schema";
 import type { ResolvedSkill, SkillIndexEntry, SkillSource } from "./types";
 import { resolveContainedPath, SafePathError } from "../utils/safe-file";
 
-const PROJECT_SKILLS_DIR = join(".specra", "skills");
+const PROJECT_SKILLS_DIR = join(".archcode", "skills");
 const SKILL_FILE = "SKILL.md";
 
 export class SkillPathError extends Error {
@@ -69,7 +69,7 @@ export class SkillService {
   readonly #builtinSkills: Record<string, string>;
 
   constructor(options: SkillServiceOptions = {}) {
-    this.userSkillsRoot = resolve(options.userSkillsRoot ?? join(homedir(), ".specra", "skills"));
+    this.userSkillsRoot = resolve(options.userSkillsRoot ?? join(homedir(), ".archcode", "skills"));
     this.#builtinSkills = options.builtinSkills ?? BUILTIN_SKILL_BODIES;
   }
 

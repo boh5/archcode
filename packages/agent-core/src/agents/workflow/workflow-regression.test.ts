@@ -10,7 +10,7 @@ import { silentLogger } from "../../logger";
 import { ModelInfo } from "../../provider/model";
 import { calculateReadyWave, parseTasksMarkdown, toggleTaskCheckbox, validateTasksMarkdown } from "./tasks-format";
 import type { Registry as ProviderRegistry } from "../../provider";
-import type { SpecraConfig } from "../../config/schema";
+import type { ArchCodeConfig } from "../../config/schema";
 import { SkillService } from "../../skills";
 import { WorkflowReadInputSchema } from "../../tools/builtins/workflow/workflow-read";
 
@@ -177,9 +177,9 @@ function createProviderRegistry(): ProviderRegistry {
   } as ProviderRegistry;
 }
 
-function createConfigForAgents(model: string): SpecraConfig {
+function createConfigForAgents(model: string): ArchCodeConfig {
   return {
     provider: {},
     agents: Object.fromEntries(agentDefinitions.map((definition) => [definition.name, { model }])),
-  } as SpecraConfig;
+  } as ArchCodeConfig;
 }

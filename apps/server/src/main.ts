@@ -1,12 +1,12 @@
 import { bootServer } from "./boot";
-import { closeMcpManagerBestEffort, createConsoleLogger, createSpecraRuntime, type McpWarning, type SpecraRuntime } from "@specra/agent-core";
+import { closeMcpManagerBestEffort, createConsoleLogger, createRuntime, type McpWarning, type AgentRuntime } from "@archcode/agent-core";
 
-export { createSpecraRuntime, type SpecraRuntime, type SpecraRuntimeOptions } from "@specra/agent-core";
+export { createRuntime, type AgentRuntime, type AgentRuntimeOptions } from "@archcode/agent-core";
 
 const logger = createConsoleLogger({ level: "info" });
 
 async function main() {
-  const runtime: SpecraRuntime = await createSpecraRuntime({ logger });
+  const runtime: AgentRuntime = await createRuntime({ logger });
 
   const close = () => {
     void closeMcpManagerBestEffort(runtime.mcpManager, (warning: McpWarning) => {

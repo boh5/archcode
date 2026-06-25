@@ -16,15 +16,15 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "file-manager");
 
 function makeManager(): MemoryFileManager {
   return new MemoryFileManager({
-    project: join(TMP_DIR, "project", ".specra", "memory"),
-    user: join(TMP_DIR, "user", ".specra", "memory"),
+    project: join(TMP_DIR, "project", ".archcode", "memory"),
+    user: join(TMP_DIR, "user", ".archcode", "memory"),
   });
 }
 
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
-  await mkdir(join(TMP_DIR, "project", ".specra", "memory"), { recursive: true });
-  await mkdir(join(TMP_DIR, "user", ".specra", "memory"), { recursive: true });
+  await mkdir(join(TMP_DIR, "project", ".archcode", "memory"), { recursive: true });
+  await mkdir(join(TMP_DIR, "user", ".archcode", "memory"), { recursive: true });
 });
 
 afterAll(async () => {
@@ -202,12 +202,12 @@ describe("MemoryFileManager — path validation", () => {
 
   test("resolveProjectPath resolves valid relative path", async () => {
     const result = await manager.resolveProjectPath("knowledge/topic.md");
-    expect(result).toBe(resolve(join(TMP_DIR, "project", ".specra", "memory", "knowledge", "topic.md")));
+    expect(result).toBe(resolve(join(TMP_DIR, "project", ".archcode", "memory", "knowledge", "topic.md")));
   });
 
   test("resolveUserPath resolves valid relative path", async () => {
     const result = await manager.resolveUserPath("preferences.md");
-    expect(result).toBe(resolve(join(TMP_DIR, "user", ".specra", "memory", "preferences.md")));
+    expect(result).toBe(resolve(join(TMP_DIR, "user", ".archcode", "memory", "preferences.md")));
   });
 
   test("rejects path traversal with ..", async () => {
@@ -229,24 +229,24 @@ describe("MemoryFileManager — path validation", () => {
   });
 
   test("isContained returns true for paths within root", () => {
-    const root = "/home/user/.specra/memory";
-    expect(manager.isContained("/home/user/.specra/memory/file.md", root)).toBe(true);
-    expect(manager.isContained("/home/user/.specra/memory/sub/file.md", root)).toBe(true);
+    const root = "/home/user/.archcode/memory";
+    expect(manager.isContained("/home/user/.archcode/memory/file.md", root)).toBe(true);
+    expect(manager.isContained("/home/user/.archcode/memory/sub/file.md", root)).toBe(true);
   });
 
   test("isContained returns false for paths outside root", () => {
-    const root = "/home/user/.specra/memory";
+    const root = "/home/user/.archcode/memory";
     expect(manager.isContained("/etc/passwd", root)).toBe(false);
-    expect(manager.isContained("/home/user/.specra/other", root)).toBe(false);
+    expect(manager.isContained("/home/user/.archcode/other", root)).toBe(false);
   });
 
   test("isContained returns true for exact root match", () => {
-    const root = "/home/user/.specra/memory";
+    const root = "/home/user/.archcode/memory";
     expect(manager.isContained(root, root)).toBe(true);
   });
 
   test("rejects symlink pointing outside project root", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     const outsideDir = join(TMP_DIR, "outside");
     await mkdir(outsideDir, { recursive: true });
@@ -258,7 +258,7 @@ describe("MemoryFileManager — path validation", () => {
   });
 
   test("allows symlink pointing within project root", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     await Bun.write(join(knowledgeDir, "real.md"), "real content");
     const symlinkPath = join(knowledgeDir, "link.md");
@@ -286,7 +286,7 @@ describe("MemoryFileManager — read methods", () => {
   });
 
   test("readIndex returns content when index.md exists", async () => {
-    const indexPath = join(TMP_DIR, "project", ".specra", "memory", "index.md");
+    const indexPath = join(TMP_DIR, "project", ".archcode", "memory", "index.md");
     await Bun.write(indexPath, "- [Test](test_memory) — Summary\n");
     const result = await manager.readIndex();
     expect(result).toBe("- [Test](test_memory) — Summary\n");
@@ -297,7 +297,7 @@ describe("MemoryFileManager — read methods", () => {
   });
 
   test("readPreferences returns content for user preferences", async () => {
-    const prefPath = join(TMP_DIR, "user", ".specra", "memory", "preferences.md");
+    const prefPath = join(TMP_DIR, "user", ".archcode", "memory", "preferences.md");
     await Bun.write(prefPath, "I prefer dark mode");
     const result = await manager.readPreferences();
     expect(result).toBe("I prefer dark mode");
@@ -309,7 +309,7 @@ describe("MemoryFileManager — read methods", () => {
   });
 
   test("readTopic parses frontmatter and returns MemoryTopicFile", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     const content = "---\nname: My Topic\ndescription: A description\ntype: project\n---\nTopic body content.";
     await Bun.write(join(knowledgeDir, "my_topic.md"), content);
@@ -328,7 +328,7 @@ describe("MemoryFileManager — read methods", () => {
   });
 
   test("listTopics returns sorted names (without .md) from knowledge dir", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     await Bun.write(join(knowledgeDir, "beta.md"), "");
     await Bun.write(join(knowledgeDir, "alpha.md"), "");
@@ -375,7 +375,7 @@ describe("MemoryFileManager — write methods", () => {
     };
     await manager.writeTopic("test", fm, "Content");
 
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     const entries = await readdir(knowledgeDir);
     expect(entries).toContain("test.md");
   });
@@ -407,7 +407,7 @@ describe("MemoryFileManager — write methods", () => {
   });
 
   test("writeIndex writes index.md atomically", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     await Bun.write(join(knowledgeDir, "a.md"), "---\nname: Topic A\ndescription: Summary A\ntype: project\n---\nContent A");
     await Bun.write(join(knowledgeDir, "b.md"), "---\nname: Topic B\ndescription: Summary B\ntype: project\n---\nContent B");
@@ -425,7 +425,7 @@ describe("MemoryFileManager — write methods", () => {
   });
 
   test("writeIndex filters out entries with nonexistent names", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
     await Bun.write(join(knowledgeDir, "exists.md"), "---\nname: Exists\ndescription: Desc\ntype: project\n---\nContent");
 
@@ -449,7 +449,7 @@ describe("MemoryFileManager — write methods", () => {
     };
     await manager.writeTopic("atomic", fm, "Atomic content");
 
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     const entries = await readdir(knowledgeDir);
     const tmpFiles = entries.filter((e) => e.startsWith(".tmp-"));
     expect(tmpFiles).toHaveLength(0);
@@ -468,7 +468,7 @@ describe("MemoryFileManager — rebuildIndex", () => {
   });
 
   test("rebuildIndex generates correct index from knowledge dir", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
 
     const topic1 = "---\nname: React Patterns\ndescription: Common React patterns\ntype: reference\n---\nContent 1";
@@ -489,7 +489,7 @@ describe("MemoryFileManager — rebuildIndex", () => {
   });
 
   test("rebuildIndex skips files with invalid frontmatter", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
 
     const validTopic = "---\nname: Valid\ndescription: Valid desc\ntype: project\n---\nValid content";
@@ -507,7 +507,7 @@ describe("MemoryFileManager — rebuildIndex", () => {
   });
 
   test("rebuildIndex handles empty knowledge dir", async () => {
-    const knowledgeDir = join(TMP_DIR, "project", ".specra", "memory", "knowledge");
+    const knowledgeDir = join(TMP_DIR, "project", ".archcode", "memory", "knowledge");
     await mkdir(knowledgeDir, { recursive: true });
 
     await manager.rebuildIndex();

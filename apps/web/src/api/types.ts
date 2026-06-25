@@ -24,4 +24,4 @@ export type {
   CommandResult,
   PermissionDecision,
   QuestionAnswerBody,
-} from "@specra/protocol";
+} from "@archcode/protocol";

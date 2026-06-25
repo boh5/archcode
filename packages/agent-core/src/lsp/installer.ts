@@ -201,7 +201,7 @@ function getInstallRoot(serverId: string): string {
 
 function getInstallBaseDir(): string {
   const base = Bun.env.XDG_CACHE_HOME ?? (Bun.env.HOME ? join(Bun.env.HOME, ".cache") : import.meta.dir);
-  return join(base, "specra", "lsp-servers");
+  return join(base, "archcode", "lsp-servers");
 }
 
 async function runInstallerCommand(command: string[], options: ExecCommandOptions = {}): Promise<ExecCommandResult> {

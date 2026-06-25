@@ -6,7 +6,7 @@ const EXACT_ONLY_EFFECTS = new Set<ShellEffectKind>([
   "remote-exec",
   "credential-exfil",
   "system-mutation",
-  "protected-specra",
+  "protected-path",
   "parser-uncertain",
   "execute-code",
 ]);
@@ -55,8 +55,8 @@ function hasExactOnlyEffect(request: NormalizedShellRequest): boolean {
   return request.effects.some((effect) => EXACT_ONLY_EFFECTS.has(effect.kind));
 }
 
-function isProtectedSpecraMutation(request: NormalizedShellRequest): boolean {
-  return request.effects.some((effect) => effect.kind === "protected-specra");
+function isProtectedPathMutation(request: NormalizedShellRequest): boolean {
+  return request.effects.some((effect) => effect.kind === "protected-path");
 }
 
 function hasParserUncertainty(request: NormalizedShellRequest): boolean {
@@ -122,7 +122,7 @@ function broadScopeForInvocation(invocation: NormalizedShellInvocation): Permiss
 }
 
 export function deriveShellApprovalScope(request: NormalizedShellRequest): PermissionApprovalScope {
-  if (hasParserUncertainty(request) || isProtectedSpecraMutation(request)) return exactScope(request);
+  if (hasParserUncertainty(request) || isProtectedPathMutation(request)) return exactScope(request);
   if (hasWriteRedirection(request) || hasExactOnlyEffect(request)) return exactScope(request);
 
   const invocation = singleInvocation(request);

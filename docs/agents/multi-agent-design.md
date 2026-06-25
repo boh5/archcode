@@ -1,4 +1,4 @@
-# Specra Multi-Agent Pipeline — 最终设计方案
+# ArchCode Multi-Agent Pipeline — 最终设计方案
 
 > 状态：已确认，待实施
 > 日期：2026-05-17
@@ -11,7 +11,7 @@ This document is retained as the original multi-agent pipeline design record. So
 - **Updated depth architecture:** `MAX_SUB_AGENT_DEPTH` is now `3`, not `2`. Depth 2 workflow agents such as Builder and Reviewer may delegate to depth 3 Explorer/Librarian-style read-only investigation, while depth 3 strips delegation tools.
 - **Workflow agents:** the implemented workflow roles are `product`, `spec`, `critic`, `foreman`, `builder`, `reviewer`, and `librarian`.
 - **Workflow tools:** the current workflow tool set is `workflow_create`, `workflow_read`, `workflow_update_stage`, `artifact_read`, `artifact_write`, and `workflow_task_check`.
-- **Workflow state:** durable workflow metadata is stored at `.specra/workflows/{workflowId}/workflow.json`; there is no separate global `workflows.json` requirement in the current design.
+- **Workflow state:** durable workflow metadata is stored at `.archcode/workflows/{workflowId}/workflow.json`; there is no separate global `workflows.json` requirement in the current design.
 - **Artifacts:** there is **no `PLAN.md` artifact**. `TASKS.md` is the Markdown-only source of truth for executable task state.
 - **TASKS.md format:** executable tasks are top-level `- [ ] Tn. Title` / `- [x] Tn. Title` entries with required `Agent`, `Dependencies`, `Description`, `Acceptance`, and `QA` fields. Nested checkboxes under Acceptance/QA are validation details only, not executable tasks.
 
@@ -133,7 +133,7 @@ Critic 审核内容：
 
 ## 4. Artifact 格式
 
-所有 Artifact 使用 YAML frontmatter + Markdown 格式，存储在 `.specra/workflows/{workflowId}/` 目录。
+所有 Artifact 使用 YAML frontmatter + Markdown 格式，存储在 `.archcode/workflows/{workflowId}/` 目录。
 
 ### PRD.md（Product Brief）
 
@@ -387,7 +387,7 @@ decision: approved  # approved | changes_requested | rejected
 ### 文件结构
 
 ```
-.specra/workflows/
+.archcode/workflows/
 ├── workflows.json              # 全局索引（对象格式，key=workflowId）
 ├── auth-system/                # workflowId
 │   ├── workflow.json            # 工作流状态
@@ -579,7 +579,7 @@ src/tools/
 
 | 工具 | 谁用 | 做什么 | 关键行为 |
 |------|------|--------|---------|
-| `workflow_create` | Orchestrator | 创建新 workflow，生成目录和初始 workflow.json | 自动生成 slug，创建 `.specra/workflows/{id}/` 目录 + workflow.json |
+| `workflow_create` | Orchestrator | 创建新 workflow，生成目录和初始 workflow.json | 自动生成 slug，创建 `.archcode/workflows/{id}/` 目录 + workflow.json |
 | `workflow_read` | 所有 pipeline agent | 读取当前 workflow 状态 | 返回 parsed WorkflowSchema 对象 |
 | `workflow_update_stage` | 当前阶段的 Agent | 更新自己阶段的状态 | 只允许更新自己负责的 stage，自动带 timestamp |
 | `artifact_write` | 有写权限的 Agent | 写入 artifact 文件 | 自动注入 frontmatter（stage, attempt, actorClock, timestamps, status），同步更新 workflow.json |
@@ -606,7 +606,7 @@ src/tools/
 [自动提取的 PRD 关键内容：需求、验收标准、优先级]
 
 ## 你的任务
-1. 读取完整 PRD: .specra/workflows/{id}/PRD.md
+1. 读取完整 PRD: .archcode/workflows/{id}/PRD.md
 2. 基于代码库现状，生成 SPEC.md、PLAN.md、TASKS.md
 3. 确保每个验收标准都有对应的技术方案和任务
 ```
@@ -636,10 +636,10 @@ Orchestrator 重启时：
 ## 11. 完整工作流示例
 
 ```
-用户: "我想给 Specra 加一个 auth 系统"
+用户: "我想给 ArchCode 加一个 auth 系统"
 
 1. Orchestrator 创建 workflow "auth-system"
-   → 写入 .specra/workflows/auth-system/workflow.json (status: "product")
+   → 写入 .archcode/workflows/auth-system/workflow.json (status: "product")
 
 2. Orchestrator 委派 Product Agent
    → Product 多轮讨论需求

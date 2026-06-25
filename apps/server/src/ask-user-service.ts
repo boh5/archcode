@@ -1,9 +1,9 @@
-import type { AskUserRequest, AskUserResponse, SpecraRuntime } from "@specra/agent-core";
+import type { AskUserRequest, AskUserResponse, AgentRuntime } from "@archcode/agent-core";
 
 export class AskUserService {
-  readonly #runtime: SpecraRuntime;
+  readonly #runtime: AgentRuntime;
 
-  constructor(runtime: SpecraRuntime) {
+  constructor(runtime: AgentRuntime) {
     this.#runtime = runtime;
   }
 

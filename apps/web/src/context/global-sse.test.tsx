@@ -7,7 +7,7 @@ import type {
   GlobalSSELaggedEvent,
   GlobalSSEShutdownEvent,
   WorkflowStateChangeEvent,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
 import { parseSSEEvent, handleSSEEvent } from "./global-sse";
 import type { SSEEventHandlerDeps } from "./global-sse";

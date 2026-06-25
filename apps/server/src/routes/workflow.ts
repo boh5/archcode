@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import {
   ArtifactPathError,
   isMultiFileWorkflowArtifactKind,
@@ -8,8 +8,8 @@ import {
   WorkflowArtifactKindSchema,
   WorkflowInvalidIdError,
   WorkflowStateManager,
-} from "@specra/agent-core";
-import { WorkflowArtifactManager } from "@specra/agent-core";
+} from "@archcode/agent-core";
+import { WorkflowArtifactManager } from "@archcode/agent-core";
 import {
   ArtifactNotFoundError,
   BadRequestError,
@@ -17,7 +17,7 @@ import {
 } from "../errors";
 import { resolveProject } from "../resolve";
 
-export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
+export function createWorkflowRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.get("/:slug/workflows/:workflowId", async (c) => {
@@ -97,7 +97,7 @@ export function createWorkflowRoutes(runtime: SpecraRuntime): Hono {
 }
 
 async function readRouteArtifact(
-  runtime: SpecraRuntime,
+  runtime: AgentRuntime,
   input: {
     slug: string;
     workflowId: string;

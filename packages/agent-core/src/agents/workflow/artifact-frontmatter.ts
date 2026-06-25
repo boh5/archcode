@@ -30,16 +30,16 @@ export function buildWorkflowArtifactFrontmatter(
   provenance: WorkflowArtifactWriteProvenance = {},
 ): Record<string, string> {
   return {
-    "specra.schema": frontmatterScalar("specra.schema", "1"),
-    "specra.workflowId": frontmatterScalar("specra.workflowId", state.id),
-    "specra.workflowType": frontmatterScalar("specra.workflowType", state.type),
-    "specra.artifactKind": frontmatterScalar("specra.artifactKind", input.kind ?? "NOTE"),
-    "specra.artifactPath": frontmatterScalar("specra.artifactPath", input.path),
-    "specra.workflowStage": frontmatterScalar("specra.workflowStage", state.stage),
-    "specra.writerAgent": frontmatterScalar("specra.writerAgent", provenance.writerAgent ?? "system"),
-    "specra.writerSessionId": frontmatterScalar("specra.writerSessionId", provenance.writerSessionId ?? "unknown"),
-    "specra.toolCallId": frontmatterScalar("specra.toolCallId", provenance.toolCallId ?? "direct"),
-    "specra.writtenAt": frontmatterScalar("specra.writtenAt", provenance.writtenAt ?? new Date().toISOString()),
+    "archcode.schema": frontmatterScalar("archcode.schema", "1"),
+    "archcode.workflowId": frontmatterScalar("archcode.workflowId", state.id),
+    "archcode.workflowType": frontmatterScalar("archcode.workflowType", state.type),
+    "archcode.artifactKind": frontmatterScalar("archcode.artifactKind", input.kind ?? "NOTE"),
+    "archcode.artifactPath": frontmatterScalar("archcode.artifactPath", input.path),
+    "archcode.workflowStage": frontmatterScalar("archcode.workflowStage", state.stage),
+    "archcode.writerAgent": frontmatterScalar("archcode.writerAgent", provenance.writerAgent ?? "system"),
+    "archcode.writerSessionId": frontmatterScalar("archcode.writerSessionId", provenance.writerSessionId ?? "unknown"),
+    "archcode.toolCallId": frontmatterScalar("archcode.toolCallId", provenance.toolCallId ?? "direct"),
+    "archcode.writtenAt": frontmatterScalar("archcode.writtenAt", provenance.writtenAt ?? new Date().toISOString()),
   };
 }
 

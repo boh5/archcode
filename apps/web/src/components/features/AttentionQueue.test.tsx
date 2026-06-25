@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { PermissionRequest, PermissionDecision, QuestionRequest } from "@specra/protocol";
+import type { PermissionRequest, PermissionDecision, QuestionRequest } from "@archcode/protocol";
 
 // ─── Test helpers ───
 
@@ -131,28 +131,28 @@ describe("ConfirmationCard", () => {
   test("renders bash with description as primary and command as secondary", () => {
     const perm = makePermission({
       toolName: "bash",
-      input: { description: "List project files", command: "ls -la /tmp/specra-test" },
+      input: { description: "List project files", command: "ls -la /tmp/archcode-test" },
     });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("List project files");
-    expect(text).toContain("ls -la /tmp/specra-test");
+    expect(text).toContain("ls -la /tmp/archcode-test");
   });
 
   test("renders bash without description — command shown in code block", () => {
     const perm = makePermission({
       toolName: "bash",
-      input: { command: "rm -rf /tmp/specra-test" },
+      input: { command: "rm -rf /tmp/archcode-test" },
     });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
-    expect(text).toContain("rm -rf /tmp/specra-test");
+    expect(text).toContain("rm -rf /tmp/archcode-test");
   });
 
   test("destructive bash command gets error border styling", () => {
     const perm = makePermission({
       toolName: "bash",
-      input: { description: "Remove temp dir", command: "rm -rf /tmp/specra-test" },
+      input: { description: "Remove temp dir", command: "rm -rf /tmp/archcode-test" },
     });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const outerDiv = findAll(result, (el) => {

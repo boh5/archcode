@@ -34,14 +34,14 @@ function argAfter(argv: string[], option: string): string | undefined {
   return index >= 0 ? argv[index + 1] : undefined;
 }
 
-function isSpecraPath(rawPath: string): boolean {
+function isProjectPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".specra" || normalized.startsWith(".specra/") || normalized.includes("/.specra/") || normalized.endsWith("/.specra");
+  return normalized === ".archcode" || normalized.startsWith(".archcode/") || normalized.includes("/.archcode/") || normalized.endsWith("/.archcode");
 }
 
 function isPermissionsPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".specra/permissions.json" || normalized.endsWith("/.specra/permissions.json");
+  return normalized === ".archcode/permissions.json" || normalized.endsWith("/.archcode/permissions.json");
 }
 
 function hasCredentialPath(argv: string[]): boolean {
@@ -107,9 +107,9 @@ function invocationEffects(invocation: NormalizedShellInvocation, next?: Normali
 
   for (const path of invocation.paths) {
     if (isPermissionsPath(path.path)) {
-      effects.push(effect("protected-specra", "Protected permission file access is blocked", path.path));
-    } else if (isSpecraPath(path.path) && path.operation !== "read") {
-      effects.push(effect("protected-specra", "Direct mutation of .specra is blocked", path.path));
+      effects.push(effect("protected-path", "Protected permission file access is blocked", path.path));
+    } else if (isProjectPath(path.path) && path.operation !== "read") {
+      effects.push(effect("protected-path", "Direct mutation of .archcode is blocked", path.path));
     }
     if (path.operation === "read") effects.push(effect("read", "Command reads a path", path.path));
     if (path.operation === "write") effects.push(effect("write", "Command writes a path", path.path));
@@ -149,11 +149,11 @@ function invocationEffects(invocation: NormalizedShellInvocation, next?: Normali
   if (hasCredentialExfil(invocation, next)) {
     effects.push(effect("credential-exfil", "Credential material exfiltration is blocked"));
   }
-  if (SPEC_LINKED_MUTATORS.has(command) && invocation.argv.some(isSpecraPath)) {
-    effects.push(effect("protected-specra", "Direct mutation of .specra is blocked"));
+  if (SPEC_LINKED_MUTATORS.has(command) && invocation.argv.some(isProjectPath)) {
+    effects.push(effect("protected-path", "Direct mutation of .archcode is blocked"));
   }
-  if (command === "git" && invocation.argv[1] === "clean" && invocation.argv.some(isSpecraPath)) {
-    effects.push(effect("protected-specra", "Direct mutation of .specra is blocked"));
+  if (command === "git" && invocation.argv[1] === "clean" && invocation.argv.some(isProjectPath)) {
+    effects.push(effect("protected-path", "Direct mutation of .archcode is blocked"));
   }
   if (["sh", "bash", "zsh", "eval", "source", ".", "npx", "bunx"].includes(command)) effects.push(effect("execute-code", `${command} may execute code`));
   for (const uncertain of invocation.uncertainty) effects.push(effect("parser-uncertain", uncertain.reason, uncertain.token));

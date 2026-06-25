@@ -208,8 +208,8 @@ function createAgent(options: {
 describe("ConfiguredAgent", () => {
   beforeAll(async () => {
     await rm(tmpRoot, { recursive: true, force: true });
-    await mkdir(join(tmpRoot, ".specra", "memory"), { recursive: true });
-    await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), "");
+    await mkdir(join(tmpRoot, ".archcode", "memory"), { recursive: true });
+    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), "");
     await writeFile(join(tmpRoot, "AGENTS.md"), "# Test Project\n\nMinimal project context.");
     __setSessionsDirForTest(() => join(tmpRoot, "sessions"));
   });
@@ -392,7 +392,7 @@ describe("ConfiguredAgent", () => {
         })),
       ],
     });
-    await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
+    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({ definition: orchestratorAgentDefinition, store, btm });
     await agent.run("root run");
@@ -423,7 +423,7 @@ describe("ConfiguredAgent", () => {
         },
       ],
     });
-    await writeFile(join(tmpRoot, ".specra", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
+    await writeFile(join(tmpRoot, ".archcode", "memory", "index.md"), `${Array.from({ length: 251 }, (_, index) => `topic-${index}`).join("\n")}\n`);
 
     const agent = createAgent({
       definition: orchestratorAgentDefinition,
@@ -526,12 +526,12 @@ describe("ConfiguredAgent", () => {
     const withMemoryStreamFn = setupMockStreamText("memory ok");
     await createAgent({ definition: exploreAgentDefinition }).run("with memory");
     const withMemory = withMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withMemory.system).toContain("<specra-memory-context>");
+    expect(withMemory.system).toContain("<archcode-memory-context>");
 
     const withoutMemoryStreamFn = setupMockStreamText("memory off ok");
     await createAgent({ definition: definitionWith({ includeMemoryInPrompt: false }) }).run("without memory");
     const withoutMemory = withoutMemoryStreamFn.mock.calls[0]![0] as { system: string };
-    expect(withoutMemory.system).not.toContain("<specra-memory-context>");
+    expect(withoutMemory.system).not.toContain("<archcode-memory-context>");
   });
 
   test("active workflow context is omitted for agents without workflow tools", async () => {

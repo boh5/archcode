@@ -105,7 +105,7 @@ const HINTS: Record<ToolErrorKind, string> = {
   "edit-identical": "oldString and newString are identical; provide a meaningful change.",
   "grep-error": "The search command failed; check the pattern and try again.",
   "glob-error": "The file listing command failed; check the pattern and try again.",
-  "binary-not-found": "Install the required binary, ensure it is on PATH, or let Specra install it into the binary cache.",
+  "binary-not-found": "Install the required binary, ensure it is on PATH, or let ArchCode install it into the binary cache.",
   "binary-download-failed": "Check network access to the binary release URL and retry later.",
   "binary-checksum-mismatch": "Do not use this download; retry later or verify the pinned binary manifest before proceeding.",
   "binary-install-failed": "Check cache directory permissions and available disk space, then retry.",

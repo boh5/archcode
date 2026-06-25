@@ -11,21 +11,21 @@ import { getBinarySpec } from "../manifest";
 
 describe("binary cache layout", () => {
   test("uses XDG_CACHE_HOME when present", () => {
-    expect(getBinaryCacheBaseDir({ XDG_CACHE_HOME: "/xdg/cache", HOME: "/home/specra" })).toBe("/xdg/cache/specra/bin");
+    expect(getBinaryCacheBaseDir({ XDG_CACHE_HOME: "/xdg/cache", HOME: "/home/archcode" })).toBe("/xdg/cache/archcode/bin");
   });
 
   test("falls back to HOME .cache", () => {
-    expect(getBinaryCacheBaseDir({ HOME: "/home/specra" })).toBe("/home/specra/.cache/specra/bin");
+    expect(getBinaryCacheBaseDir({ HOME: "/home/archcode" })).toBe("/home/archcode/.cache/archcode/bin");
   });
 
   test("builds versioned target-specific binary paths", () => {
     const rg = getBinarySpec("rg");
 
     expect(getBinaryCacheDir({ spec: rg, targetTriple: "aarch64-apple-darwin", env: { XDG_CACHE_HOME: "/cache" } })).toBe(
-      "/cache/specra/bin/aarch64-apple-darwin/rg/15.1.0",
+      "/cache/archcode/bin/aarch64-apple-darwin/rg/15.1.0",
     );
     expect(getBinaryCachePath({ spec: rg, targetTriple: "aarch64-apple-darwin", env: { XDG_CACHE_HOME: "/cache" } })).toBe(
-      "/cache/specra/bin/aarch64-apple-darwin/rg/15.1.0/rg",
+      "/cache/archcode/bin/aarch64-apple-darwin/rg/15.1.0/rg",
     );
   });
 

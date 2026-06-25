@@ -16,7 +16,7 @@ const request: ToolConfirmationRequest = {
 
 function createService() {
   const sessionId = `session-${crypto.randomUUID()}`;
-  const workspaceRoot = `/tmp/specra-deferred-permission-${crypto.randomUUID()}`;
+  const workspaceRoot = `/tmp/archcode-deferred-permission-${crypto.randomUUID()}`;
   const store = manager.create(sessionId, workspaceRoot);
   const service = new DeferredPermissionService({
     submitDeferredEvent(root: string, id: string, event: DeferredSessionEvent) {

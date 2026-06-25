@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "@specra/agent-core";
-import { WorkflowArtifactManager } from "@specra/agent-core";
-import { WorkflowStateManager } from "@specra/agent-core";
-import { ProjectRegistry, silentLogger } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
+import { WorkflowArtifactManager } from "@archcode/agent-core";
+import { WorkflowStateManager } from "@archcode/agent-core";
+import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "workflow-routes");
@@ -60,7 +60,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     respondQuestion: () => false,
     cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 
   return { runtime };
 }

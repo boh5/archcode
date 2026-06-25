@@ -253,13 +253,13 @@ describe("ast_grep_replace tool", () => {
     }
   });
 
-  test("apply mode refuses preview matches under .specra before mutation", async () => {
+  test("apply mode refuses preview matches under .archcode before mutation", async () => {
     const workspace = tempWorkspace();
     try {
-      const artifact = join(workspace, ".specra", "workflows", "00000000-0000-0000-0000-000000000001", "TASKS.md");
-      mkdirSync(join(workspace, ".specra", "workflows", "00000000-0000-0000-0000-000000000001"), { recursive: true });
+      const artifact = join(workspace, ".archcode", "workflows", "00000000-0000-0000-0000-000000000001", "TASKS.md");
+      mkdirSync(join(workspace, ".archcode", "workflows", "00000000-0000-0000-0000-000000000001"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
-      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".specra/workflows/00000000-0000-0000-0000-000000000001/TASKS.md")); });
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".archcode/workflows/00000000-0000-0000-0000-000000000001/TASKS.md")); });
       setProcessRunnerForTest(run);
 
       const result = await astGrepReplaceTool.execute(
@@ -269,7 +269,7 @@ describe("ast_grep_replace tool", () => {
 
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).not.toContain("--update-all");
-      expectToolError(result, { kind: "permission-denied", code: "SPECRA_PROTECTED_PATH_WRITE_DENIED", messageIncludes: "system-managed .specra path" });
+      expectToolError(result, { kind: "permission-denied", code: "PROTECTED_PATH_WRITE_DENIED", messageIncludes: "system-managed .archcode path" });
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -458,12 +458,12 @@ describe("ast_grep_replace tool", () => {
     expect(applyScope.operation).toBe("write");
   });
 
-  test("checks protected .specra permission for explicit paths", async () => {
+  test("checks protected .archcode permission for explicit paths", async () => {
     const protectedPermission = astGrepReplaceTool.permissions![1];
 
-    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".specra/workflows/wf/TASKS.md"] }, ctx());
+    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/workflows/wf/TASKS.md"] }, ctx());
 
     expect(decision.outcome).toBe("deny");
-    expect(decision.errorCode).toBe("SPECRA_PROTECTED_PATH_WRITE_DENIED");
+    expect(decision.errorCode).toBe("PROTECTED_PATH_WRITE_DENIED");
   });
 });

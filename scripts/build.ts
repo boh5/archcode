@@ -173,7 +173,7 @@ async function compileBinary(): Promise<void> {
   };
 
   const entrypoint = join(rootDir, "apps", "server", "src", "main.ts");
-  const outfile = join(rootDir, "dist", "specra");
+  const outfile = join(rootDir, "dist", "archcode");
 
   const result = await Bun.build({
     entrypoints: [entrypoint],

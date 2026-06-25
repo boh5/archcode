@@ -5,7 +5,7 @@ import {
   type SessionTodo,
   type StreamEvent,
 } from "./types";
-import { reduceStreamEvent as protocolReduceStreamEvent } from "@specra/protocol";
+import { reduceStreamEvent as protocolReduceStreamEvent } from "@archcode/protocol";
 
 const TODO_STATUSES = new Set<SessionTodo["status"]>([
   "pending",

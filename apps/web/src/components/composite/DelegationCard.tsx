@@ -2,7 +2,7 @@ import { getWebSessionStore } from "../../store/session-store";
 import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType, type AgentType, BADGE_CLASSES, BADGE_LABELS, type BadgeStatus } from "../../lib/agent-constants";
 import { formatElapsed } from "../../lib/time-format";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
-import { getToolCategory } from "@specra/protocol";
+import { getToolCategory } from "@archcode/protocol";
 
 type ToolStatus = "success" | "error" | "default";
 

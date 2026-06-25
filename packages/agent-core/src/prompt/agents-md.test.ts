@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { findAgentsMd, loadAgentsMd, AgentsMdLoadError } from "./agents-md";
 
-const TMP = join(tmpdir(), "specra-agents-md-test");
+const TMP = join(tmpdir(), "archcode-agents-md-test");
 
 afterAll(async () => {
   await rm(TMP, { recursive: true, force: true });

@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { ProjectRegistry, silentLogger } from "@specra/agent-core";
-import type { ActiveSessionExecution, CommandResult, SpecraRuntime } from "@specra/agent-core";
+import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
+import type { ActiveSessionExecution, CommandResult, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "commands-routes");
@@ -20,7 +20,7 @@ function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionE
   };
 }
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
+function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   const running = new Set<string>();
   const dispatch = mock(async (_workspaceRoot: string, sessionId: string, name: string, _args?: string): Promise<CommandResult | null> => {
     if (!running.has(sessionId)) return null;
@@ -63,7 +63,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     respondQuestion: mock(() => false),
     cleanupDeferredSession: mock(() => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 async function createTestApp(testName: string) {

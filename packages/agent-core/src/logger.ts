@@ -1,4 +1,4 @@
-import { formatIsoTime } from "@specra/utils";
+import { formatIsoTime } from "@archcode/utils";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -67,7 +67,7 @@ export function createConsoleLogger(options: {
     (level, entry) => {
       const moduleName = entry.module ?? "agent-core";
       const time = formatIsoTime(entry.timestamp);
-      sink[level](`[${time}] [specra:${moduleName}] ${entry.event}`, entry);
+      sink[level](`[${time}] [archcode:${moduleName}] ${entry.event}`, entry);
     },
   );
 }

@@ -58,7 +58,7 @@ file_edit guard:
 
 **为什么这样设计**: 明确的职责分离。Write = 创建，Edit = 修改。消除 LLM 意图歧义（"是要覆盖还是修改？"），让工具语义唯一。
 
-**参照**: Claude Code FileStateCache 双检查（validateInput + call mtime），oh-my-openagent per-session read set。Specra 融合两者：read-snapshot after hook 记录 + edit guard mtime 校验。
+**参照**: Claude Code FileStateCache 双检查（validateInput + call mtime），oh-my-openagent per-session read set。ArchCode 融合两者：read-snapshot after hook 记录 + edit guard mtime 校验。
 
 ### D2: 两阶段 Fuzzy Exact Replace
 
@@ -100,7 +100,7 @@ Phase 2 不含: NFKC Unicode 规范化（v2 预留）
 
 **read-snapshot 生命周期**: per-session Map（session store 中持有），LRU 1024 路径。写入后使该路径 snapshot 失效（mtime 已变）。
 
-**参照**: oh-my-openagent per-session Set + LRU；Claude Code FileStateCache + mtime 双检查。Specra 融合：用 after hook 注册（解耦），guard 校验 mtime（检测外部修改）。
+**参照**: oh-my-openagent per-session Set + LRU；Claude Code FileStateCache + mtime 双检查。ArchCode 融合：用 after hook 注册（解耦），guard 校验 mtime（检测外部修改）。
 
 ### D4: 文件变异队列 — per-file 串行化
 
@@ -134,14 +134,14 @@ batch 3:  [read_e]                   ← 并发
 
 **实现位置**: QueryLoop 层（不是工具层），因为调度决策依赖 agent 上下文。
 
-**参照**: Claude Code `partitionToolCalls()` 最多 10 并发。Specra v1 可用较小并发上限。
+**参照**: Claude Code `partitionToolCalls()` 最多 10 并发。ArchCode v1 可用较小并发上限。
 
 ### D6: Ripgrep 集成 — 二进制发现 + 自动下载
 
 ```
 RipgrepService.ensure():
   1. Bun.which("rg") → 找到 → 使用系统 rg
-  2. 未找到 → ~/.specra/bin/rg-v15.1.0/{platform}/rg 存在?
+  2. 未找到 → ~/.archcode/bin/rg-v15.1.0/{platform}/rg 存在?
      → 是 → 使用缓存
      → 否 → 下载 GitHub release → 解压 → 缓存 → 使用
 
@@ -309,7 +309,7 @@ interface RipgrepService {
 }
 ```
 
-**自动下载**: GitHub API → release asset → platfrom/arch 映射 → 缓存到 `~/.specra/bin/`。
+**自动下载**: GitHub API → release asset → platfrom/arch 映射 → 缓存到 `~/.archcode/bin/`。
 
 **搜索结果解析**: `rg --json` NDJSON → Zod 验证 → 结构化 `Match[]`。
 

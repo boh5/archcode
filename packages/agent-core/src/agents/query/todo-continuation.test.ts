@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type { WorkflowInteraction, WorkflowStage, WorkflowState } from "../workflow/state";
 import type { Reminder, SessionStoreState, StoredMessage, StoredPart } from "../../store/types";
 import {

@@ -11,8 +11,8 @@ const mockGetLastCompletedAt = mock((_name: string) => undefined as number | und
 const mockBtm = { dispatch: mockDispatch, getLastCompletedAt: mockGetLastCompletedAt };
 
 const mockMemoryRoots: MemoryRoots = {
-  project: "/tmp/test-project/.specra/memory",
-  user: "/tmp/test-user/.specra/memory",
+  project: "/tmp/test-project/.archcode/memory",
+  user: "/tmp/test-user/.archcode/memory",
 };
 
 function makeUserMessage(text: string, now: number): StoredMessage {

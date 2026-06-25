@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { RecoveryNoticePart } from "@specra/protocol";
+import type { RecoveryNoticePart } from "@archcode/protocol";
 
 const Fragment = Symbol.for("react.fragment");
 const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?: unknown) => {

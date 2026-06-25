@@ -1,6 +1,24 @@
-# Specra
+# ArchCode
 
-Long-running coding agent with a Hono server, React Web UI, two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
+> **You architect. AI codes.**
+
+Programming is splitting into two jobs: **architecting intent** and **writing code**. ArchCode is the workbench where the architect hands the blueprint to AI for execution — not another tool to help you *write code faster*, but one that lets you **stop writing code**.
+
+The name carries two meanings at once: **arch**itect (your role) and **arch** (the oldest bridge form) — the bridge between your intent and AI's execution.
+
+## How It Works
+
+Work happens in two phases:
+
+1. **You architect, with the agents.** Product, Spec, and Critic agents converse with you — asking, clarifying, refining — until intent is captured as a spec. This is the dialogue side of architecting.
+2. **AI codes, autonomously.** Foreman hands the spec to Builder, who writes the code; Reviewer checks it. This is the execution side.
+
+```
+[Product → Spec → Critic]   ==  You architect.
+[Foreman → Builder → Reviewer]  ==  AI codes.
+```
+
+ArchCode is a long-running coding agent with a Hono server + React Web UI, two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Quick Start
 
@@ -13,7 +31,7 @@ bun test             # Run tests
 | Scenario | Command | Description |
 |---|---|---|
 | Development | `bun run dev` | Starts both server and web via Turborepo |
-| Production | `bun run build` | Build production binary at dist/specra |
+| Production | `bun run build` | Build production binary at dist/archcode |
 
 `bun run dev` starts the Hono API/SSE server (from `apps/server/src/main.ts`) and the Vite React frontend (from `apps/web`) in parallel via Turborepo.
 
@@ -21,21 +39,21 @@ bun test             # Run tests
 
 | Variable | Default | Description |
 |---|---|---|
-| `SPECRA_PORT` | `4096` | Hono server port. If the preferred port is unavailable, the server falls back to an ephemeral port. |
-| `SPECRA_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Unset means development mode with permissive CORS. |
-| `SPECRA_HOST` | unset | Host value for deployments or clients that need an externally advertised host. |
-| `SPECRA_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
-| `SPECRA_PROJECTS_DIR` | unset | Base directory used by project-selection flows that need a projects root. |
+| `ARCHCODE_PORT` | `4096` | Hono server port. If the preferred port is unavailable, the server falls back to an ephemeral port. |
+| `ARCHCODE_SERVER_PASSWORD` | unset | Enables Basic auth for `/api/*` when set. Unset means development mode with permissive CORS. |
+| `ARCHCODE_HOST` | unset | Host value for deployments or clients that need an externally advertised host. |
+| `ARCHCODE_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
+| `ARCHCODE_PROJECTS_DIR` | unset | Base directory used by project-selection flows that need a projects root. |
 
 ### Projects and Web UI
 
-Specra is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, memory, workflow state, approvals, and artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
+ArchCode is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, memory, workflow state, approvals, and artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
 
 Use the Web UI **Add Project** flow to register an existing workspace directory. The server validates that the path is an absolute existing directory, stores it in the registry, assigns a stable slug, and then opens project-specific sessions against that workspace.
 
-## Configuration (`.specra.json`)
+## Configuration (`.archcode.json`)
 
-Specra is configured via `.specra.json` in the project root. The config uses strict validation — unknown fields are rejected to catch typos.
+ArchCode is configured via `.archcode.json` in the project root. The config uses strict validation — unknown fields are rejected to catch typos.
 
 ### Minimal Example
 
@@ -163,7 +181,7 @@ AI SDK-style camelCase option names. Unknown fields are rejected to prevent typo
 | `frequencyPenalty` | number | Frequency penalty (-2–2) |
 | `stopSequences` | string[] | Sequences that stop generation |
 | `seed` | number | Deterministic sampling seed |
-| `maxRetries` | number | AI SDK provider-call retry hint only; Specra-managed LLM runtime calls force this to `0` and run their own recovery path |
+| `maxRetries` | number | AI SDK provider-call retry hint only; ArchCode-managed LLM runtime calls force this to `0` and run their own recovery path |
 | `timeout` | number | Request timeout in milliseconds |
 | `providerOptions` | object | Provider-specific settings (e.g., `{ "openai": { "reasoningEffort": "high" } }`) |
 
@@ -171,13 +189,13 @@ AI SDK-style camelCase option names. Unknown fields are rejected to prevent typo
 
 #### LLM Retry and Recovery Boundary
 
-Specra routes model execution through `packages/agent-core/src/llm/` (`runLlmStream`, `runLlmText`, and `runLlmObject`). Application code outside that runtime must not import `streamText` or `generateText` directly from `"ai"`; architecture tests enforce this boundary.
+ArchCode routes model execution through `packages/agent-core/src/llm/` (`runLlmStream`, `runLlmText`, and `runLlmObject`). Application code outside that runtime must not import `streamText` or `generateText` directly from `"ai"`; architecture tests enforce this boundary.
 
-`maxRetries` in `.specra.json` remains an AI SDK-style model option, but it is **not** Specra's managed retry mechanism. Managed LLM calls intentionally pass `maxRetries: 0` to the AI SDK so Specra owns retry classification, recovery notices, interrupted-output handling, and durable session state.
+`maxRetries` in `.archcode.json` remains an AI SDK-style model option, but it is **not** ArchCode's managed retry mechanism. Managed LLM calls intentionally pass `maxRetries: 0` to the AI SDK so ArchCode owns retry classification, recovery notices, interrupted-output handling, and durable session state.
 
-This matters for streaming: AI SDK `maxRetries` only applies before a successful response is established. It cannot recover failures that happen inside an HTTP 200 streaming response body, such as EOF, truncated SSE, or stream parser failures after partial output has already arrived. Specra handles those cases at the runtime/query-loop layer instead.
+This matters for streaming: AI SDK `maxRetries` only applies before a successful response is established. It cannot recover failures that happen inside an HTTP 200 streaming response body, such as EOF, truncated SSE, or stream parser failures after partial output has already arrived. ArchCode handles those cases at the runtime/query-loop layer instead.
 
-Retry constants are internal v1 implementation details. There is currently **no** `.specra.json` recovery retry configuration, and the config schema must not grow retry fields until that behavior is intentionally productized. Existing auto-compaction behavior is preserved; automated emergency compaction specifically for context-overflow recovery is a follow-up and out of scope for the current refactor.
+Retry constants are internal v1 implementation details. There is currently **no** `.archcode.json` recovery retry configuration, and the config schema must not grow retry fields until that behavior is intentionally productized. Existing auto-compaction behavior is preserved; automated emergency compaction specifically for context-overflow recovery is a follow-up and out of scope for the current refactor.
 
 #### Manual Streaming Recovery Test Server
 
@@ -187,7 +205,7 @@ For local manual testing, `scripts/mock-llm-server.ts` starts a Bun/OpenAI-compa
 MOCK_LLM_SCENARIO=partial-eof-once bun run scripts/mock-llm-server.ts
 ```
 
-When testing through Specra, prefer failing the first two streamed requests so provider/client-level connection retries cannot hide the failure from Specra's query loop:
+When testing through ArchCode, prefer failing the first two streamed requests so provider/client-level connection retries cannot hide the failure from ArchCode's query loop:
 
 ```sh
 MOCK_LLM_SCENARIO=partial-eof-once \
@@ -223,7 +241,7 @@ curl -s -X POST http://localhost:19998/__mock/reset \
   -d '{"scenario":"zero-eof-once","failStreamAttempts":2}'
 ```
 
-For EOF scenarios, `curl` may only show a truncated response. The meaningful signal is in Specra/AI SDK behavior: the first failed streamed request should surface a stream error such as “socket connection was closed unexpectedly”, and Specra should then emit retry/recovery events and recover on the next streamed request for the `*-once` scenarios.
+For EOF scenarios, `curl` may only show a truncated response. The meaningful signal is in ArchCode/AI SDK behavior: the first failed streamed request should surface a stream error such as “socket connection was closed unexpectedly”, and ArchCode should then emit retry/recovery events and recover on the next streamed request for the `*-once` scenarios.
 
 The server logs both total requests and `streamAttempt`. Non-streaming background calls such as title generation do not consume `streamAttempt` and will not use up the intentional EOF failures.
 
@@ -242,7 +260,7 @@ The `variant` field is consumed during resolution — it is **never** passed to 
 
 ### Memory Configuration
 
-Memory extraction runs automatically after each query loop on the root orchestrator agent. Sub-agents (explore, etc.) do not trigger memory extraction. You can control its behavior via the `memory` section in `.specra.json`:
+Memory extraction runs automatically after each query loop on the root orchestrator agent. Sub-agents (explore, etc.) do not trigger memory extraction. You can control its behavior via the `memory` section in `.archcode.json`:
 
 ```json
 {
@@ -297,7 +315,7 @@ All errors fail fast at agent creation time — not mid-stream.
 ## Architecture
 
 ```
-apps/server/src/main.ts                           # Headless server entry: createSpecraRuntime() → config → providers → tools → MCP → boot Hono
+apps/server/src/main.ts                           # Headless server entry: createRuntime() → config → providers → tools → MCP → boot Hono
 packages/agent-core/src/config/                   # Config loading (JSON), Zod validation (.strict() on all schemas)
 packages/agent-core/src/provider/                  # Provider registry & ModelInfo (wraps AI SDK instances)
 packages/agent-core/src/agents/definitions/        # AgentDefinition records for orchestrator, explore, and workflow roles
@@ -316,7 +334,7 @@ packages/agent-core/src/tools/                     # 21 builtin tools with guard
 
 **Data flow:**
 ```
-.specra.json → config → resolveAgentModel() → ModelInfo + resolvedOptions
+.archcode.json → config → resolveAgentModel() → ModelInfo + resolvedOptions
   → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
 ```
 

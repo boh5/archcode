@@ -8,10 +8,10 @@ describe("buildIdentitySection", () => {
     expect(result).toContain("default");
   });
 
-  test("contains 'Specra'", () => {
+  test("contains 'ArchCode'", () => {
     const ctx = { promptProfileId: "test" } as any;
     const result = buildIdentitySection(ctx);
-    expect(result).toContain("Specra");
+    expect(result).toContain("ArchCode");
   });
 
   test("different prompt profiles produce different outputs", () => {

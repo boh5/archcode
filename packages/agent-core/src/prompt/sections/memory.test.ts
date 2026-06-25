@@ -75,9 +75,9 @@ describe("buildSystemPrompt — Memory section", () => {
       makeCtx({ memoryRoots: roots }),
     );
     expect(result).toContain("## Memory");
-    expect(result).toContain("<specra-memory-context>");
-    expect(result).toContain("</specra-memory-context>");
-    expect(result).not.toContain("<specra-memory-preferences>");
+    expect(result).toContain("<archcode-memory-context>");
+    expect(result).toContain("</archcode-memory-context>");
+    expect(result).not.toContain("<archcode-memory-preferences>");
   });
 
   test("includes Memory section with user preferences only", async () => {
@@ -88,10 +88,10 @@ describe("buildSystemPrompt — Memory section", () => {
       makeCtx({ memoryRoots: roots }),
     );
     expect(result).toContain("## Memory");
-    expect(result).toContain("<specra-memory-preferences>");
+    expect(result).toContain("<archcode-memory-preferences>");
     expect(result).toContain("I prefer dark mode");
-    expect(result).toContain("</specra-memory-preferences>");
-    expect(result).not.toContain("<specra-memory-context>");
+    expect(result).toContain("</archcode-memory-preferences>");
+    expect(result).not.toContain("<archcode-memory-context>");
   });
 
   test("includes all memory sections when both user preferences and index exist", async () => {
@@ -102,8 +102,8 @@ describe("buildSystemPrompt — Memory section", () => {
     const result = await buildSystemPrompt(
       makeCtx({ memoryRoots: roots }),
     );
-    expect(result).toContain("<specra-memory-preferences>");
-    expect(result).toContain("<specra-memory-context>");
+    expect(result).toContain("<archcode-memory-preferences>");
+    expect(result).toContain("<archcode-memory-context>");
   });
 
   test("injection order: user preferences → index", async () => {
@@ -114,8 +114,8 @@ describe("buildSystemPrompt — Memory section", () => {
     const result = await buildSystemPrompt(
       makeCtx({ memoryRoots: roots }),
     );
-    const userPrefIdx = result.indexOf("<specra-memory-preferences>");
-    const contextIdx = result.indexOf("<specra-memory-context>");
+    const userPrefIdx = result.indexOf("<archcode-memory-preferences>");
+    const contextIdx = result.indexOf("<archcode-memory-context>");
 
     expect(userPrefIdx).toBeLessThan(contextIdx);
   });
@@ -192,8 +192,8 @@ describe("buildSystemPrompt — Memory section", () => {
         memoryRoots: roots,
       }),
     );
-    const startTag = "<specra-memory-preferences>\n";
-    const endTag = "\n</specra-memory-preferences>";
+    const startTag = "<archcode-memory-preferences>\n";
+    const endTag = "\n</archcode-memory-preferences>";
     const startIdx = result.indexOf(startTag) + startTag.length;
     const endIdx = result.indexOf(endTag, startIdx);
     const content = result.slice(startIdx, endIdx);
@@ -222,8 +222,8 @@ describe("buildSystemPrompt — Memory section", () => {
       makeCtx({ memoryRoots: roots }),
     );
     expect(result).toContain("## Memory");
-    expect(result).toContain("<specra-memory-preferences>");
-    expect(result).not.toContain("<specra-memory-context>");
+    expect(result).toContain("<archcode-memory-preferences>");
+    expect(result).not.toContain("<archcode-memory-context>");
   });
 
   test("gracefully handles missing preferences files", async () => {
@@ -234,7 +234,7 @@ describe("buildSystemPrompt — Memory section", () => {
       makeCtx({ memoryRoots: roots }),
     );
     expect(result).toContain("## Memory");
-    expect(result).toContain("<specra-memory-context>");
-    expect(result).not.toContain("<specra-memory-preferences>");
+    expect(result).toContain("<archcode-memory-context>");
+    expect(result).not.toContain("<archcode-memory-preferences>");
   });
 });

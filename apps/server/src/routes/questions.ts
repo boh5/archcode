@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AskUserResponse } from "@specra/agent-core";
+import type { AskUserResponse } from "@archcode/agent-core";
 import type { AskUserService } from "../ask-user-service";
 import { BadRequestError, QuestionNotFoundError } from "../errors";
 

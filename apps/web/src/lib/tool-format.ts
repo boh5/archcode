@@ -34,8 +34,8 @@ import {
   TOOL_VIEW_TOOL_OUTPUT,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
-} from "@specra/protocol";
-import type { ToolDiffMetadata } from "@specra/protocol";
+} from "@archcode/protocol";
+import type { ToolDiffMetadata } from "@archcode/protocol";
 
 // ─── Threshold constants ───
 

@@ -1,4 +1,4 @@
-import type { SpecraConfig } from "../config/index";
+import type { ArchCodeConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -22,7 +22,7 @@ export interface SessionAgentManagerConfig {
   readonly providerRegistry: ProviderRegistry;
   readonly toolRegistry: ToolRegistry;
   readonly skillService: SkillService;
-  readonly config?: SpecraConfig;
+  readonly config?: ArchCodeConfig;
   readonly projectContextResolver?: ProjectContextResolver;
   readonly maxConcurrentSessions?: number;
   readonly tombstoneTtlMs?: number;

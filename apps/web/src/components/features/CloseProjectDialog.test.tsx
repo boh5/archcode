@@ -66,9 +66,9 @@ const onClosed = mock((_project: Project) => {});
 const deleteMutate = mock((_slug: string, _options?: { onSuccess?: () => void }) => {});
 
 const project: Project = {
-  slug: "specra",
-  name: "Specra",
-  workspaceRoot: "/workspace/specra",
+  slug: "archcode",
+  name: "ArchCode",
+  workspaceRoot: "/workspace/archcode",
 };
 
 let CloseProjectDialog: CloseProjectDialogComponent;
@@ -134,7 +134,7 @@ describe("CloseProjectDialog", () => {
 
     expect(textContent(findAll(tree, (element) => typeName(element) === "DialogTitle")[0])).toBe("Close project");
     expect(textContent(findAll(tree, (element) => typeName(element) === "DialogDescription")[0])).toContain(
-      "Remove Specra from the project list",
+      "Remove ArchCode from the project list",
     );
     expect(copy).toContain("The workspace folder will");
     expect(copy).toContain("not");
@@ -155,7 +155,7 @@ describe("CloseProjectDialog", () => {
     expect(confirm?.props?.disabled).toBe(false);
     (confirm?.props?.onClick as () => void)();
 
-    expect(deleteMutate.mock.calls[0]?.[0]).toBe("specra");
+    expect(deleteMutate.mock.calls[0]?.[0]).toBe("archcode");
     expect(onClosed).toHaveBeenCalledWith(project);
     expect(onClose).toHaveBeenCalled();
   });

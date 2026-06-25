@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { ToolPart, DiffFile } from "@specra/protocol";
+import type { ToolPart, DiffFile } from "@archcode/protocol";
 import {
   getToolSummary,
   formatToolInputDetails,

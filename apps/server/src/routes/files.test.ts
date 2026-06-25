@@ -2,19 +2,19 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createProcessRunner, type SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry, silentLogger } from "@specra/agent-core";
+import { createProcessRunner, type AgentRuntime } from "@archcode/agent-core";
+import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 import { parseUnifiedDiff, type DiffFile } from "./files";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "files-routes");
-const isolatedTemp = resolve(tmpdir(), "specra-test-files-routes");
+const isolatedTemp = resolve(tmpdir(), "archcode-test-files-routes");
 
 interface DiffResponseBody {
   files: DiffFile[];
 }
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
+function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   return {
     projectRegistry,
     mcpManager: undefined,
@@ -46,7 +46,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     respondQuestion: () => false,
     cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 async function createTestApp(testName: string) {
@@ -68,8 +68,8 @@ async function createTestApp(testName: string) {
 async function initGitRepo(workspaceRoot: string): Promise<void> {
   await mkdir(workspaceRoot, { recursive: true });
   await run(workspaceRoot, ["git", "init"]);
-  await run(workspaceRoot, ["git", "config", "user.email", "specra@example.test"]);
-  await run(workspaceRoot, ["git", "config", "user.name", "Specra Test"]);
+  await run(workspaceRoot, ["git", "config", "user.email", "archcode@example.test"]);
+  await run(workspaceRoot, ["git", "config", "user.name", "ArchCode Test"]);
   await Bun.write(join(workspaceRoot, "README.md"), "# Test Repo\n");
   await run(workspaceRoot, ["git", "add", "README.md"]);
   await run(workspaceRoot, ["git", "commit", "-m", "initial"]);

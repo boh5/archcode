@@ -18,8 +18,8 @@ export function createTestProjectContext(workspaceRoot: string): ProjectContext 
     },
     workflowState,
     memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".specra", "memory"),
-      user: join(workspaceRoot, ".specra", "user-memory"),
+      project: join(workspaceRoot, ".archcode", "memory"),
+      user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),

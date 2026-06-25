@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError } from "./errors";
 import { sessionFileInternals } from "./helpers";
@@ -273,7 +273,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "tool-child-session-link", link });
 
     const raw = await waitForSessionJson(
-      join(TMP_DIR, ".specra", "sessions", `${parentSessionId}.json`),
+      join(TMP_DIR, ".archcode", "sessions", `${parentSessionId}.json`),
       (json) => Array.isArray(json.childSessionLinks) && json.childSessionLinks.length === 1,
     );
     expect(raw.childSessionLinks).toEqual([link]);
@@ -299,7 +299,7 @@ describe("SessionStoreManager", () => {
       destructive: true,
     });
 
-    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
     const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("attempt-1"));
     expect(JSON.stringify(raw)).toContain("attempt-1");
 
@@ -379,7 +379,7 @@ describe("SessionStoreManager", () => {
     });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false });
 
-    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -405,7 +405,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
 
-    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
     const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
     expect(JSON.stringify(raw)).toContain(errorMsg);
   });
@@ -420,7 +420,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
 
-    const filePath = join(TMP_DIR, ".specra", "sessions", `${id}.json`);
+    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -528,8 +528,8 @@ describe("SessionStoreManager", () => {
       parentSessionId: rootSessionId,
       title: "child-title",
     });
-    expect(await Bun.file(join(TMP_DIR, ".specra", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
-    const childPath = join(TMP_DIR, ".specra", "sessions", rootSessionId, `${childSessionId}.json`);
+    expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
+    const childPath = join(TMP_DIR, ".archcode", "sessions", rootSessionId, `${childSessionId}.json`);
     await waitForFile(childPath);
     const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
     expect(childFile).toMatchObject({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId });
@@ -738,7 +738,7 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
     await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
 
-    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
     await Bun.write(join(rootDir, `${rootMismatchId}.json`), JSON.stringify({
       sessionId: rootMismatchId,
       createdAt: 1000,
@@ -786,7 +786,7 @@ describe("SessionStoreManager", () => {
     const fileSessionId = sessionId();
     const jsonSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
     await Bun.write(join(rootDir, `${fileSessionId}.json`), JSON.stringify({
       sessionId: jsonSessionId,
       createdAt: 1000,
@@ -816,7 +816,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    const rootDir = join(TMP_DIR, ".specra", "sessions", rootSessionId);
+    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
     await Bun.write(join(rootDir, `${rootSessionId}.json`), JSON.stringify({
       sessionId: rootSessionId,
       createdAt: 1000,
@@ -918,12 +918,12 @@ describe("SessionStoreManager", () => {
       rootSessionId,
       parentSessionId: childSessionId,
     });
-    const sessionsDirEntries = await readdir(join(TMP_DIR, ".specra", "sessions"), { withFileTypes: true });
+    const sessionsDirEntries = await readdir(join(TMP_DIR, ".archcode", "sessions"), { withFileTypes: true });
     expect(sessionsDirEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([`${rootSessionId}.json`]);
     expect(sessionsDirEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)).toEqual([rootSessionId]);
 
     const childAsRootManager = new SessionStoreManager({ logger: silentLogger });
-    await Bun.write(join(TMP_DIR, ".specra", "sessions", `${childSessionId}.json`), JSON.stringify({
+    await Bun.write(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`), JSON.stringify({
       ...childFile,
       rootSessionId: childSessionId,
       parentSessionId: rootSessionId,

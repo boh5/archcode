@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { DiffFile, DiffHunk, DiffLine } from "@specra/protocol";
+import type { DiffFile, DiffHunk, DiffLine } from "@archcode/protocol";
 
 const STATUS_STYLES: Record<string, string> = {
   modified: "bg-warning-muted text-warning",

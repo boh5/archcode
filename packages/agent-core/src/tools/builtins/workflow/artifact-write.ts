@@ -18,7 +18,7 @@ import { guardCurrentWorkflow } from "./guard-current-workflow";
 export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
     name: "artifact_write",
-    description: "Write a workflow artifact and update artifact metadata. Does not change workflow stage or status. Content is markdown body only (no YAML frontmatter — Specra generates it). Single-file kinds (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT): pass workflowId+kind+content. Multi-file kinds (CRITIC_REPORT, EVIDENCE): also pass name (kebab-case slug, no path separators or .md suffix).",
+    description: "Write a workflow artifact and update artifact metadata. Does not change workflow stage or status. Content is markdown body only (no YAML frontmatter — ArchCode generates it). Single-file kinds (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT): pass workflowId+kind+content. Multi-file kinds (CRITIC_REPORT, EVIDENCE): also pass name (kebab-case slug, no path separators or .md suffix).",
     inputSchema: WorkflowArtifactWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {

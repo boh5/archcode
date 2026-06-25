@@ -17,7 +17,7 @@ export const memoryExtractionConfigSchema = z.strictObject({
   cooldownMs: z.number().int().min(0).default(300_000),
 }).optional();
 
-export const specraConfigSchema = z
+export const archcodeConfigSchema = z
   .object({
     $schema: z.string().optional(),
     provider: providersConfigSchema,
@@ -29,4 +29,4 @@ export const specraConfigSchema = z
 
 export type AgentConfig = z.infer<typeof agentConfigSchema>;
 export type MemoryExtractionConfig = NonNullable<z.infer<typeof memoryExtractionConfigSchema>>;
-export type SpecraConfig = z.infer<typeof specraConfigSchema>;
+export type ArchCodeConfig = z.infer<typeof archcodeConfigSchema>;

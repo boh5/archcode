@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Logger } from "../logger";
 import type { CompletedToolPart, ErrorToolPart } from "../store/types";
 
-export const TOOL_OUTPUT_DIR = join(homedir(), ".specra", "tool-output");
+export const TOOL_OUTPUT_DIR = join(homedir(), ".archcode", "tool-output");
 
 const DEFAULT_PREVIEW_LINES = 5;
 

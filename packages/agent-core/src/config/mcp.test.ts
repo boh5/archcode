@@ -509,9 +509,9 @@ describe("resolveMcpConfig - URL validation", () => {
 
 // ─── Config Schema Integration ───────────────────────────────────────────────
 
-import { specraConfigSchema } from "./index";
+import { archcodeConfigSchema } from "./index";
 
-describe("specraConfigSchema with mcp", () => {
+describe("archcodeConfigSchema with mcp", () => {
   const BASE = {
     $schema: "http://schema",
     provider: {
@@ -531,12 +531,12 @@ describe("specraConfigSchema with mcp", () => {
   };
 
   test("accepts config without mcp key", () => {
-    const result = specraConfigSchema.safeParse(BASE);
+    const result = archcodeConfigSchema.safeParse(BASE);
     expect(result.success).toBe(true);
   });
 
   test("accepts config with valid mcp", () => {
-    const result = specraConfigSchema.safeParse({
+    const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: { servers: { s: { transport: "http", url: "http://localhost" } } },
     });
@@ -544,7 +544,7 @@ describe("specraConfigSchema with mcp", () => {
   });
 
   test("rejects unknown keys when mcp is present (strict on both levels)", () => {
-    const result = specraConfigSchema.safeParse({
+    const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: {
         servers: { s: { transport: "http", url: "http://localhost" } },
@@ -555,7 +555,7 @@ describe("specraConfigSchema with mcp", () => {
   });
 
   test("rejects mcp with stdio transport in full config", () => {
-    const result = specraConfigSchema.safeParse({
+    const result = archcodeConfigSchema.safeParse({
       ...BASE,
       mcp: {
         servers: { s: { transport: "stdio", url: "http://localhost" } },

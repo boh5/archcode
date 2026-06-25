@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";

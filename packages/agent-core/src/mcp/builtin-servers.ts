@@ -11,7 +11,7 @@ import type { ResolvedMcpServerConfig } from "../config/mcp";
  * - grep.app: no documented rate limit; fully free code search
  * - exa: ~150 requests/day unauthenticated; 3 QPS; paid plans for higher limits
  *
- * User-configured servers in `.specra.json` can override these defaults
+ * User-configured servers in `.archcode.json` can override these defaults
  * (e.g., adding API key headers for higher rate limits).
  */
 export const BUILTIN_MCP_SERVERS: Record<string, ResolvedMcpServerConfig> = {

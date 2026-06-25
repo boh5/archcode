@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
-import { createEmptySessionStats, MAX_EVENTS } from "@specra/protocol";
+import { createEmptySessionStats, MAX_EVENTS } from "@archcode/protocol";
 import type { SessionStoreState } from "../store/types";
 import { SessionEventBridge } from "./session-event-bridge";
 

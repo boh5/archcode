@@ -17,7 +17,7 @@ export { createWorkspacePermission } from "./workspace";
 export type { WorkspacePermissionOptions } from "./workspace";
 export { createSensitiveFilePermission, isSensitiveFile, SENSITIVE_PATTERNS } from "./sensitive-file";
 export { createMemoryIndexPermission } from "./memory-index";
-export { createProtectedSpecraPermission, isProtectedSpecraPath } from "./protected-specra";
+export { createProtectedPathPermission, isProtectedProjectPath as isProtectedProjectPath } from "./protected-path";
 export { createReadBeforeEditPermission } from "./read-before-edit";
 export { createFileExistsPermission } from "./file-exists";
 export { createBashPermission } from "./bash";

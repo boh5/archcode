@@ -7,7 +7,7 @@
 ## 数据流
 
 ```
-.specra.json → loadConfig → createRegistry
+.archcode.json → loadConfig → createRegistry
                                 ↓
 用户输入 → main.ts → runQueryLoop() → store.append() → useStore → Ink 渲染
 ```
@@ -33,7 +33,7 @@
 ## 组件职责
 
 ### `src/main.ts` — 启动入口
-1. 加载配置（硬编码 `.specra.json`），无配置时明确报错
+1. 加载配置（硬编码 `.archcode.json`），无配置时明确报错
 2. 创建 registry，取第一个 model（无 model 时报错）
 3. 创建 store
 4. `render(<App store={store} model={model.model} tools={} toolExecutors={} />)`

@@ -1,14 +1,14 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistry, silentLogger } from "@specra/agent-core";
-import type { ProjectInfo } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
+import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
+import type { ProjectInfo } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "projects-routes");
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
+function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   return {
     projectRegistry,
     mcpManager: undefined,
@@ -40,7 +40,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     respondQuestion: () => false,
     cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 async function makeWorkspace(name: string): Promise<string> {

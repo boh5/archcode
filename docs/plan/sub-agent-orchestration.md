@@ -2,7 +2,7 @@
 
 ## 问题
 
-Specra 当前是单代理架构（TestAgent + 单个 SessionStore + 单个 query loop）。要支持子代理委托，需要解决：
+ArchCode 当前是单代理架构（TestAgent + 单个 SessionStore + 单个 query loop）。要支持子代理委托，需要解决：
 
 1. 子代理怎么跑？（进程模型、状态隔离、生命周期管理）
 2. 父代理怎么拿到子代理的结果？（同步 vs 异步、通知机制）
@@ -140,7 +140,7 @@ if status.status === "timeout":
 
 ### 超时：硬编码常量
 
-**选择**：V1 直接硬编码 `maxDepth=2`、`maxConcurrent=10`、`timeoutMs=300000`（5 分钟）。不做 `.specra.json` 配置。
+**选择**：V1 直接硬编码 `maxDepth=2`、`maxConcurrent=10`、`timeoutMs=300000`（5 分钟）。不做 `.archcode.json` 配置。
 
 **理由**：配置项是 YAGNI。等真正需要调参时再加配置。硬编码值在 V1 够用。
 
@@ -296,7 +296,7 @@ delegate 工具 schema 生成时：
 
 **考虑过的替代方案**：
 - **硬编码 enum**：不灵活，加新代理要改工具定义。但 V1 可以先用硬编码，后面迁移到注册模式
-- **配置文件驱动**：`.specra.json` 定义代理名称和对应模型。但代理不只是模型——它包含 prompt 模板、工具集、行为配置，不适合放在配置文件里
+- **配置文件驱动**：`.archcode.json` 定义代理名称和对应模型。但代理不只是模型——它包含 prompt 模板、工具集、行为配置，不适合放在配置文件里
 - **LLM 自由文本**：让 LLM 任意输入代理名，运行时再校验。太宽松，LLM 容易幻觉出不存在的代理名
 
 **V1 策略**：先用硬编码 enum（`explore` | `general`），同时建好 AgentRegistry 接口。V2 开放注册。

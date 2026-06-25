@@ -6,7 +6,7 @@ export type ShellEffectKind =
   | "remote-exec"
   | "credential-exfil"
   | "system-mutation"
-  | "protected-specra"
+  | "protected-path"
   | "parser-uncertain"
   | "execute-code";
 

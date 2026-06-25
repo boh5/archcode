@@ -1,6 +1,6 @@
 export class NoModelsConfiguredError extends Error {
   constructor() {
-    super("No models configured in .specra.json");
+    super("No models configured in .archcode.json");
     this.name = "NoModelsConfiguredError";
   }
 }

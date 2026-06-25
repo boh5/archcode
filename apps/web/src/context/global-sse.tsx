@@ -8,7 +8,7 @@ import type {
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
   GlobalSSEResetEvent,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 
 export type GlobalSSEConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 

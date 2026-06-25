@@ -12,10 +12,10 @@ let tmpWorkspaceB: string;
 let tmpWorkspaceC: string;
 
 beforeEach(async () => {
-  tmpHome = await mkdtemp(join(tmpdir(), "specra-registry-"));
-  tmpWorkspaceA = await mkdtemp(join(tmpdir(), "specra-ws-a-"));
-  tmpWorkspaceB = await mkdtemp(join(tmpdir(), "specra-ws-b-"));
-  tmpWorkspaceC = await mkdtemp(join(tmpdir(), "specra-ws-c-"));
+  tmpHome = await mkdtemp(join(tmpdir(), "archcode-registry-"));
+  tmpWorkspaceA = await mkdtemp(join(tmpdir(), "archcode-ws-a-"));
+  tmpWorkspaceB = await mkdtemp(join(tmpdir(), "archcode-ws-b-"));
+  tmpWorkspaceC = await mkdtemp(join(tmpdir(), "archcode-ws-c-"));
 });
 
 afterEach(async () => {
@@ -78,9 +78,9 @@ describe("ProjectRegistry", () => {
 
   test("slug conflict appends -2 and -3 suffixes", async () => {
     const registry = new ProjectRegistry({ homeDir: tmpHome, logger: silentLogger });
-    const parentA = await mkdtemp(join(tmpdir(), "specra-same-a-"));
-    const parentB = await mkdtemp(join(tmpdir(), "specra-same-b-"));
-    const parentC = await mkdtemp(join(tmpdir(), "specra-same-c-"));
+    const parentA = await mkdtemp(join(tmpdir(), "archcode-same-a-"));
+    const parentB = await mkdtemp(join(tmpdir(), "archcode-same-b-"));
+    const parentC = await mkdtemp(join(tmpdir(), "archcode-same-c-"));
     const workspaceA = join(parentA, "api");
     const workspaceB = join(parentB, "api");
     const workspaceC = join(parentC, "api");
@@ -200,7 +200,7 @@ describe("ProjectRegistry", () => {
 
   test("defensive load returns empty list and logs warning for malformed JSON", async () => {
     const { logger, entries } = createInMemoryLogger();
-    const registryDir = join(tmpHome, ".specra", "projects");
+    const registryDir = join(tmpHome, ".archcode", "projects");
     await mkdir(registryDir, { recursive: true });
     await writeFile(join(registryDir, "index.json"), "{ malformed json");
 

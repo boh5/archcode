@@ -1,4 +1,4 @@
-import type { GlobalSSEEvent } from "@specra/protocol";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 
 export type GlobalEventBusListener = (event: GlobalSSEEvent) => void;
 

@@ -1,13 +1,13 @@
 import type {
-  SpecraRuntime,
+  AgentRuntime,
   ToolConfirmationRequest,
   ToolConfirmationResult,
-} from "@specra/agent-core";
+} from "@archcode/agent-core";
 
 export class PermissionService {
-  readonly #runtime: SpecraRuntime;
+  readonly #runtime: AgentRuntime;
 
-  constructor(runtime: SpecraRuntime) {
+  constructor(runtime: AgentRuntime) {
     this.#runtime = runtime;
   }
 

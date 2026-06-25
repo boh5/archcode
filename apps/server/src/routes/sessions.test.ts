@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { SpecraRuntime } from "@specra/agent-core";
-import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, silentLogger } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
+import { NotRootSessionError, ProjectRegistry, SessionDeleteConflictError, silentLogger } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "sessions-routes");
@@ -161,7 +161,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     respondQuestion: () => false,
     cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 
   return { runtime, sessions, calls };
 }

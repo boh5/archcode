@@ -95,7 +95,7 @@ describe("fileEditTool", () => {
     const ctx = await makeReadCtx("single.txt");
 
     const output = await fileEditTool.execute(
-      { path: "single.txt", edits: [{ oldString: "world", newString: "specra" }] },
+      { path: "single.txt", edits: [{ oldString: "world", newString: "archcode" }] },
       ctx,
     );
 
@@ -114,7 +114,7 @@ describe("fileEditTool", () => {
         },
       ],
     });
-    expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello specra\n");
+    expect(await Bun.file(join(testDir, "single.txt")).text()).toBe("hello archcode\n");
   });
 
   test("successfully applies multiple edits", async () => {

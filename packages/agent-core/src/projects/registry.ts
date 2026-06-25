@@ -79,7 +79,7 @@ export class ProjectRegistry {
   #logger: Logger;
 
   constructor(options: ProjectRegistryOptions) {
-    this.#indexFile = join(options.homeDir ?? homedir(), ".specra", "projects", "index.json");
+    this.#indexFile = join(options.homeDir ?? homedir(), ".archcode", "projects", "index.json");
     this.#logger = options.logger;
   }
 

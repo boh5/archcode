@@ -97,7 +97,7 @@ function makeProjectContext(stateManager: WorkflowStateManager, artifactManager:
   return {
     project: { slug: "workflow-tools", name: "Workflow Tools", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
     workflowState: stateManager,
-    memory: new MemoryFileManager({ project: join(TMP_DIR, ".specra", "memory"), user: join(TMP_DIR, ".specra", "user-memory") }),
+    memory: new MemoryFileManager({ project: join(TMP_DIR, ".archcode", "memory"), user: join(TMP_DIR, ".archcode", "user-memory") }),
     approvals: new ProjectApprovalManager(silentLogger),
     artifacts: artifactManager,
   };
@@ -622,14 +622,14 @@ describe("workflow builtin tools", () => {
     expect(JSON.parse(read.output)).toMatchObject({
       path: "PRD.md",
       frontmatter: {
-        "specra.schema": "1",
-        "specra.workflowId": wf_artifact.id,
-        "specra.workflowType": "full_feature",
-        "specra.artifactKind": "PRD",
-        "specra.artifactPath": "PRD.md",
-        "specra.workflowStage": "product_drafting",
-        "specra.writerSessionId": "test",
-        "specra.toolCallId": "artifact_write-call",
+        "archcode.schema": "1",
+        "archcode.workflowId": wf_artifact.id,
+        "archcode.workflowType": "full_feature",
+        "archcode.artifactKind": "PRD",
+        "archcode.artifactPath": "PRD.md",
+        "archcode.workflowStage": "product_drafting",
+        "archcode.writerSessionId": "test",
+        "archcode.toolCallId": "artifact_write-call",
       },
       body: "# Product\n",
     });

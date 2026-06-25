@@ -1,5 +1,5 @@
 import type { StoreApi } from "zustand";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type { SessionStoreState } from "./types";
 
 export function createMockStore(

@@ -203,15 +203,15 @@ describe("AddProjectModal", () => {
 
     useDirectoryList.mockClear();
     useDirectorySearch.mockClear();
-    renderWithState(["specra", "specra", null, -1]);
+    renderWithState(["archcode", "archcode", null, -1]);
 
     expect(useDirectoryList.mock.calls[0]?.[0]).toBe("");
-    expect(useDirectorySearch.mock.calls[0]?.[0]).toBe("specra");
+    expect(useDirectorySearch.mock.calls[0]?.[0]).toBe("archcode");
     expect(useDirectorySearch.mock.calls[0]?.[1]).toBe(50);
   });
 
   test("renders one directory input, no project name input, and submits only selected path", () => {
-    const tree = renderWithState(["", "", "/workspace/specra", -1]);
+    const tree = renderWithState(["", "", "/workspace/archcode", -1]);
     const inputs = findAll(tree, (element) => element.type === "input");
 
     expect(inputs).toHaveLength(1);
@@ -226,26 +226,26 @@ describe("AddProjectModal", () => {
     expect(submit?.props?.disabled).toBe(false);
     (submit?.props?.onClick as () => void)();
 
-    expect(addProjectMutate.mock.calls[0]?.[0]).toEqual({ path: "/workspace/specra" });
+    expect(addProjectMutate.mock.calls[0]?.[0]).toEqual({ path: "/workspace/archcode" });
     expect("name" in (addProjectMutate.mock.calls[0]?.[0] as Record<string, unknown>)).toBe(false);
   });
 
   test("manages directory selection from click, input change, Enter, and Tab", () => {
-    directoryEntries = [{ name: "specra", path: "/workspace/specra", kind: "directory" }];
+    directoryEntries = [{ name: "archcode", path: "/workspace/archcode", kind: "directory" }];
     const tree = renderWithState(["/workspace", "/workspace", null, 0]);
     const candidate = findAll(tree, (element) => element.props?.["data-index"] === 0)[0];
     const input = findAll(tree, (element) => element.type === "input")[0];
 
     (candidate?.props?.onClick as () => void)();
-    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/specra");
+    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
     expect(setActiveIndex).toHaveBeenCalledWith(0);
 
     setInput.mockClear();
     setSelectedPath.mockClear();
     (input?.props?.onChange as (event: { target: { value: string } }) => void)({
-      target: { value: "/workspace/specra/src" },
+      target: { value: "/workspace/archcode/src" },
     });
-    expect(setInput).toHaveBeenCalledWith("/workspace/specra/src");
+    expect(setInput).toHaveBeenCalledWith("/workspace/archcode/src");
     expect(setSelectedPath).toHaveBeenCalledWith(null);
 
     const preventEnter = mock(() => {});
@@ -255,7 +255,7 @@ describe("AddProjectModal", () => {
       preventDefault: preventEnter,
     });
     expect(preventEnter).toHaveBeenCalled();
-    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/specra");
+    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
 
     const preventTab = mock(() => {});
     setInput.mockClear();
@@ -265,8 +265,8 @@ describe("AddProjectModal", () => {
       preventDefault: preventTab,
     });
     expect(preventTab).toHaveBeenCalled();
-    expect(setInput).toHaveBeenCalledWith("/workspace/specra/");
-    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/specra");
+    expect(setInput).toHaveBeenCalledWith("/workspace/archcode/");
+    expect(setSelectedPath).toHaveBeenCalledWith("/workspace/archcode");
   });
 
   test("input Escape handler closes the dialog", () => {

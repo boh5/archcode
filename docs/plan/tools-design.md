@@ -1,4 +1,4 @@
-# Specra Tools 系统设计规划
+# ArchCode Tools 系统设计规划
 
 > **核心决策**: Core Tools + 安全底座先行；Per-agent allowedTools + Hard Guards 权限模型；Orchestration 远期规划；MCP 暂缓。
 
@@ -6,7 +6,7 @@
 
 ## 背景
 
-Specra 已实现统一 Tools 基础框架（`defineTool` + `ToolRegistry` + Hooks 系统），Tier 0 权限基础设施和 Tier 1 七个基石工具（`file_read`、`file_write`、`file_edit`、`grep`、`glob`、`git_status`、`git_diff`）均已实现。本文档基于对 Claude Code、OpenCode、oh-my-openagent、pi-mono 的调研，制定工具系统建设方案。
+ArchCode 已实现统一 Tools 基础框架（`defineTool` + `ToolRegistry` + Hooks 系统），Tier 0 权限基础设施和 Tier 1 七个基石工具（`file_read`、`file_write`、`file_edit`、`grep`、`glob`、`git_status`、`git_diff`）均已实现。本文档基于对 Claude Code、OpenCode、oh-my-openagent、pi-mono 的调研，制定工具系统建设方案。
 
 核心架构优势：Hooks 系统（global + per-tool before/after 管道）比竞品更灵活，Hard Guards 作为独立的 `GuardHook` 阶段实现三档安全判定，不复用 `BeforeHook` 通道。
 
@@ -262,7 +262,7 @@ global after hook 覆盖常见 secret pattern（`.env`、Bearer token、private 
 
 ### 9. 大输出持久化
 
-超出 50KB / 2000 行时截取前 5 行预览，完整输出写入 `~/.specra/tool-output/`。
+超出 50KB / 2000 行时截取前 5 行预览，完整输出写入 `~/.archcode/tool-output/`。
 
 ---
 
@@ -306,7 +306,7 @@ global after hook 覆盖常见 secret pattern（`.env`、Bearer token、private 
 
 ## 与竞品对比
 
-| 维度 | Claude Code | OpenCode | oh-my-openagent | pi-mono | **Specra** |
+| 维度 | Claude Code | OpenCode | oh-my-openagent | pi-mono | **ArchCode** |
 |------|-------------|----------|-----------------|---------|------------|
 | 工具数量 | 45+ | 17 | 39+ | 7 | ~15 |
 | 编辑策略 | search/replace | dual-mode | hashline | fuzzy exact | fuzzy exact (v1) |

@@ -58,9 +58,9 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, key?:
 }));
 
 const project: Project = {
-  slug: "specra",
-  name: "Specra",
-  workspaceRoot: "/workspace/specra",
+  slug: "archcode",
+  name: "ArchCode",
+  workspaceRoot: "/workspace/archcode",
 };
 
 const navigate = mock((_path: string) => {});
@@ -215,17 +215,17 @@ describe("Sidebar", () => {
     const tree = render();
 
     expect(textContent(tree)).toContain("missing-project");
-    expect(textContent(tree)).not.toContain("/workspace/specra");
+    expect(textContent(tree)).not.toContain("/workspace/archcode");
     expect(findAll(tree, (element) => typeName(element) === "ProjectActionDropdown")).toHaveLength(0);
   });
 
   test("active project renders action menu and workspace path", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "" }));
     const tree = render();
 
-    expect(textContent(tree)).toContain("Specra");
-    expect(textContent(tree)).toContain("/workspace/specra");
+    expect(textContent(tree)).toContain("ArchCode");
+    expect(textContent(tree)).toContain("/workspace/archcode");
     expect(findAll(tree, (element) => typeName(element) === "ProjectActionDropdown")).toHaveLength(1);
   });
 
@@ -280,13 +280,13 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "child-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "child-session" }));
 
     const tree = render();
     const sessionItems = findAll(tree, (element) => typeName(element) === "SessionItem");
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
 
-    expect(useSessionTree).toHaveBeenCalledWith("specra", "root-session");
+    expect(useSessionTree).toHaveBeenCalledWith("archcode", "root-session");
     expect(textContent(tree)).toContain("Agent Tree");
     expect(sessionItems).toHaveLength(1);
     expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
@@ -334,7 +334,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "root-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session" }));
 
     const tree = render();
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
@@ -394,7 +394,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "specra", sessionId: "root-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session" }));
 
     // focusSessionId is null → root is active
     focusSessionId = null;

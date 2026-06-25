@@ -8,7 +8,7 @@ import {
   MAX_DIFF_OUTPUT_LINES,
   summarizeDiffFailure,
 } from "./diff";
-import type { DiffLine } from "@specra/protocol";
+import type { DiffLine } from "@archcode/protocol";
 
 // ── isProbablyBinaryText ──────────────────────────────────────────────────
 

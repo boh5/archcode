@@ -8,7 +8,7 @@ import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
 import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
-import { createProtectedSpecraPermission, isProtectedSpecraPath } from "../../permission";
+import { createProtectedPathPermission, isProtectedProjectPath } from "../../permission";
 import { resolveAndValidatePath } from "../../security";
 import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
 
@@ -111,7 +111,7 @@ export const astGrepReplaceTool = defineTool({
     destructive: true,
     concurrencySafe: false,
   },
-  permissions: [createAstGrepReplaceWorkspacePermission(), createProtectedSpecraPermission()],
+  permissions: [createAstGrepReplaceWorkspacePermission(), createProtectedPathPermission()],
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");
@@ -123,8 +123,8 @@ export const astGrepReplaceTool = defineTool({
         if ("isError" in previewResult) return previewResult;
         matches = previewResult;
 
-        const protectedSpecraCheck = checkApplyProtectedSpecra(matches, ctx);
-        if (protectedSpecraCheck) return protectedSpecraCheck;
+        const protectedProtectedCheck = checkApplyProtectedPath(matches, ctx);
+        if (protectedProtectedCheck) return protectedProtectedCheck;
 
         const snapshotCheck = checkApplyReadSnapshots(matches, ctx);
         if (snapshotCheck) return snapshotCheck;
@@ -177,18 +177,18 @@ async function runAstGrepReplace(
   return parseAstGrepReplacementMatches(output.stdout);
 }
 
-function checkApplyProtectedSpecra(
+function checkApplyProtectedPath(
   matches: AstGrepReplacementMatch[],
   ctx: ToolExecutionContext,
 ): ToolExecutionResult | undefined {
-  const protectedMatch = matches.find((match) => isProtectedSpecraPath(match.file, ctx.workspaceRoot));
+  const protectedMatch = matches.find((match) => isProtectedProjectPath(match.file, ctx.workspaceRoot));
   if (!protectedMatch) return undefined;
 
   return createToolErrorResult({
     kind: "permission-denied",
-    code: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+    code: "PROTECTED_PATH_WRITE_DENIED",
     message:
-      `Cannot apply ast-grep replacement to system-managed .specra path "${protectedMatch.file}". ` +
+      `Cannot apply ast-grep replacement to system-managed .archcode path "${protectedMatch.file}". ` +
       "Use the appropriate workflow or memory tool instead.",
   });
 }

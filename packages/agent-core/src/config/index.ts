@@ -1,10 +1,10 @@
 export {
   agentConfigSchema,
   memoryExtractionConfigSchema,
-  specraConfigSchema,
+  archcodeConfigSchema,
   type AgentConfig,
   type MemoryExtractionConfig,
-  type SpecraConfig,
+  type ArchCodeConfig,
 } from "./schema";
 export {
   ConfigLoadError,

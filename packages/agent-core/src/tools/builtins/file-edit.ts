@@ -6,7 +6,7 @@ import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createEditErrorRecoveryHook, refreshReadSnapshot } from "../hooks";
-import { createProtectedSpecraPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
+import { createProtectedPathPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 
@@ -313,7 +313,7 @@ export const fileEditTool = defineTool({
   inputSchema: FileEditInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   prepareInput: prepareEditInput,
-  permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createProtectedSpecraPermission()],
+  permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createProtectedPathPermission()],
   hooks: { after: [createEditErrorRecoveryHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { DiffFile, DiffHunk, DiffLine } from "@specra/protocol";
+import type { DiffFile, DiffHunk, DiffLine } from "@archcode/protocol";
 
 interface ElementLike {
   type?: unknown;

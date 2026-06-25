@@ -4,8 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import { TOOL_DELEGATE } from "@specra/protocol";
-import type { ToolChildSessionLink } from "@specra/protocol";
+import { TOOL_DELEGATE } from "@archcode/protocol";
+import type { ToolChildSessionLink } from "@archcode/protocol";
 import type { Session } from "../api/types";
 import {
   __resetWebSessionStoresForTest,

@@ -1,4 +1,4 @@
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope } from "@specra/protocol";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import { scopedKey } from "../store/key";
 import type { SessionEventEnvelope, SessionStoreState } from "../store/types";

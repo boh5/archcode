@@ -120,7 +120,7 @@ function expandHeaders(
 // ─── Resolver ───────────────────────────────────────────────────────────────
 
 /**
- * Resolve an MCP config from the parsed `.specra.json` object.
+ * Resolve an MCP config from the parsed `.archcode.json` object.
  *
  * - Applies env expansion to `url` and header values.
  * - Validates URL scheme (only http: / https:).

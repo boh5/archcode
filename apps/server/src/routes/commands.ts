@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { BadRequestError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
 
@@ -9,7 +9,7 @@ const CommandRequestSchema = z.object({
   args: z.string().optional(),
 }).strict();
 
-export function createCommandsRoutes(runtime: SpecraRuntime): Hono {
+export function createCommandsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.post("/", async (c) => {

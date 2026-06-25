@@ -5,7 +5,7 @@ import type { ToolExecutionContext } from "../types";
 import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import type { ChildExecutionHandle } from "../../delegation/types";
-import type { SessionExecutionRecord } from "@specra/protocol";
+import type { SessionExecutionRecord } from "@archcode/protocol";
 import { WorkflowArtifactKindSchema, WorkflowUuidSchema } from "../../agents/workflow/state";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";

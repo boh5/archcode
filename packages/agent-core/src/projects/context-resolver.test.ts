@@ -129,7 +129,7 @@ describe("ProjectContextResolver", () => {
     expect(context.workflowState).toBeInstanceOf(WorkflowStateManager);
     expect(context.artifacts).toBeInstanceOf(WorkflowArtifactManager);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
-    expect(context.memory.projectRoot).toBe(join(workspace, ".specra", "memory"));
+    expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
     expect(context.project.slug).toBe(basename(workspace));
     expect(context.project.name).toBe(context.project.slug);
     expect(context.project.workspaceRoot).toBe(workspace);

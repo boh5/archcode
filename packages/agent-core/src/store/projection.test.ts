@@ -93,7 +93,7 @@ function runningToolPart(): StoredPart {
     state: "running",
     toolCallId: nextId("call"),
     toolName: "search",
-    input: { query: "specra" },
+    input: { query: "archcode" },
     createdAt: idCounter,
     startedAt: idCounter + 1,
   };

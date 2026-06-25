@@ -26,7 +26,7 @@ const CANCELLED_RESPONSE: AskUserResponse = { isError: true, reason: "Cancelled"
 
 function createService() {
   const sessionId = `session-${crypto.randomUUID()}`;
-  const workspaceRoot = `/tmp/specra-deferred-question-${crypto.randomUUID()}`;
+  const workspaceRoot = `/tmp/archcode-deferred-question-${crypto.randomUUID()}`;
   const store = manager.create(sessionId, workspaceRoot);
   const service = new DeferredQuestionService({
     submitDeferredEvent(root: string, id: string, event: DeferredSessionEvent) {

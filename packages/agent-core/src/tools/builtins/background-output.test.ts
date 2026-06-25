@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import { silentLogger } from "../../logger";
 import { SessionStoreManager } from "../../store/session-store-manager";
 import { sessionFileInternals } from "../../store/helpers";

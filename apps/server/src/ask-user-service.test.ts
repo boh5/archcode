@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AskUserRequest, SpecraRuntime } from "@specra/agent-core";
+import type { AskUserRequest, AgentRuntime } from "@archcode/agent-core";
 import { AskUserService } from "./ask-user-service";
 
 const request: AskUserRequest = {
@@ -20,7 +20,7 @@ function createRuntime() {
     requestQuestion: mock(async () => ({ answers: [["Yes"]] })),
     respondQuestion: mock(() => true),
     cleanupDeferredSession: mock(() => undefined),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 describe("AskUserService", () => {

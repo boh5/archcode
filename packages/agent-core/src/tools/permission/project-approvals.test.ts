@@ -10,7 +10,7 @@ import {
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "project-approvals");
 const WORKSPACE = join(TMP_DIR, "workspace");
-const PERMISSIONS_PATH = join(WORKSPACE, ".specra", "permissions.json");
+const PERMISSIONS_PATH = join(WORKSPACE, ".archcode", "permissions.json");
 
 const FILE_SCOPE: PermissionApprovalScope = {
   kind: "file-path",
@@ -55,7 +55,7 @@ describe("ProjectApprovalManager", () => {
   });
 
   test("malformed permissions file loads empty approvals and logs a warning", async () => {
-    mkdirSync(join(WORKSPACE, ".specra"), { recursive: true });
+    mkdirSync(join(WORKSPACE, ".archcode"), { recursive: true });
     writeFileSync(PERMISSIONS_PATH, "{ malformed json");
     const logger: Logger = {
       debug: mock(),

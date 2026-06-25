@@ -8,7 +8,7 @@
 2. **无谓重连** — 即使目标 session 没有活跃 agent，切换时也会建立 SSE 连接
 3. **服务端泄漏** — `sessionStreams` Map 在连接断开后不清理；客户端 `sessionRegistry` Map 永不驱逐
 4. **不支持多项目并发** — 每个 session 独占一个 SSE 连接，多项目同时活跃时连接数线性增长
-5. **Auth 不可用** — 浏览器 `EventSource` 无法发送 `Authorization` header，导致 `SPECRA_SERVER_PASSWORD` 开启时 SSE 连接被 auth 中间件 401 拒绝
+5. **Auth 不可用** — 浏览器 `EventSource` 无法发送 `Authorization` header，导致 `ARCHCODE_SERVER_PASSWORD` 开启时 SSE 连接被 auth 中间件 401 拒绝
 
 ## 目标架构
 
@@ -58,7 +58,7 @@
 连接不带任何查询参数。服务端推送所有项目的所有事件，客户端按 `{slug, sessionId}` 自行路由到对应 store。
 
 **为什么不过滤：**
-- Specra 是单用户系统（`SPECRA_SERVER_PASSWORD`），所有项目属同一用户，无隔离需求
+- ArchCode 是单用户系统（`ARCHCODE_SERVER_PASSWORD`），所有项目属同一用户，无隔离需求
 - 空闲项目产生零事件，不存在无效带宽消耗
 - 客户端丢弃没有 store 的事件，成本仅一次 `JSON.parse` + `Map.get()`
 - 避免了"新增项目需要重连 SSE"的问题
@@ -83,7 +83,7 @@
 选择 `eventsource-parser` 的原因：
 - SSE 解析最难的部分是 **跨 chunk 的 event boundary**（一个 SSE 帧可能被拆成两个 TCP packet），`eventsource-parser` 作为 TransformStream 正确处理了这个问题
 - Opencode 手写的 `split("\n\n")` 方案有 chunk-boundary bug 风险
-- `@microsoft/fetch-event-source` 的核心卖点是 Last-Event-ID + visibilitychange 自动处理，但 Specra 不用 Last-Event-ID，这两个功能都需要自定义逻辑
+- `@microsoft/fetch-event-source` 的核心卖点是 Last-Event-ID + visibilitychange 自动处理，但 ArchCode 不用 Last-Event-ID，这两个功能都需要自定义逻辑
 - 2KB 依赖，Vercel AI SDK 背书
 
 **服务端零改动。** SSE wire format 完全相同（`text/event-stream`），`hono/streaming` 的 `streamSSE` 不变。客户端只是换了接收方式。

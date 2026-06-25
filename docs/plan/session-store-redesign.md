@@ -173,7 +173,7 @@ Store 持久层格式与 AI SDK `ModelMessage[]` 不同，需要投影转换。
 
 ## 与 opencode 的差异
 
-| 方面 | opencode | Specra |
+| 方面 | opencode | ArchCode |
 |---|---|---|
 | 存储后端 | SQLite (Drizzle ORM) | Zustand 内存 |
 | 消息格式 | MessageV2.WithParts | StoredMessage + StoredPart[] |

@@ -66,9 +66,9 @@ const updateMutate = mock((_variables: { slug: string; name: string }, _options?
 const setName = mock((_value: unknown) => {});
 
 const project: Project = {
-  slug: "specra",
-  name: "Specra",
-  workspaceRoot: "/workspace/specra",
+  slug: "archcode",
+  name: "ArchCode",
+  workspaceRoot: "/workspace/archcode",
 };
 
 let EditProjectDialog: EditProjectDialogComponent;
@@ -148,7 +148,7 @@ describe("EditProjectDialog", () => {
 
     expect(textContent(findAll(tree, (element) => typeName(element) === "DialogTitle")[0])).toBe("Edit project");
     expect(textContent(findAll(tree, (element) => typeName(element) === "DialogDescription")[0])).toContain(
-      "Change the display name for Specra",
+      "Change the display name for ArchCode",
     );
     expect(textContent(findAll(tree, (element) => element.type === "label")[0])).toBe("Name");
     expect(findAll(tree, (element) => element.type === "input")[0]?.props?.id).toBe("edit-project-name");
@@ -157,15 +157,15 @@ describe("EditProjectDialog", () => {
   test("disables Save when name is empty or unchanged", () => {
     expect(saveButton(render(""))?.props?.disabled).toBe(true);
     expect(saveButton(render("   "))?.props?.disabled).toBe(true);
-    expect(saveButton(render("Specra"))?.props?.disabled).toBe(true);
-    expect(saveButton(render(" Specra "))?.props?.disabled).toBe(true);
+    expect(saveButton(render("ArchCode"))?.props?.disabled).toBe(true);
+    expect(saveButton(render(" ArchCode "))?.props?.disabled).toBe(true);
   });
 
   test("trims changed names on submit and closes after mutation success", () => {
     updateMutate.mockImplementation((_variables, options) => {
       options?.onSuccess?.();
     });
-    const tree = render("  Renamed Specra  ");
+    const tree = render("  Renamed ArchCode  ");
     const form = findAll(tree, (element) => element.type === "form")[0];
     const preventDefault = mock(() => {});
 
@@ -173,12 +173,12 @@ describe("EditProjectDialog", () => {
     (form?.props?.onSubmit as (event: { preventDefault: () => void }) => void)({ preventDefault });
 
     expect(preventDefault).toHaveBeenCalled();
-    expect(updateMutate.mock.calls[0]?.[0]).toEqual({ slug: "specra", name: "Renamed Specra" });
+    expect(updateMutate.mock.calls[0]?.[0]).toEqual({ slug: "archcode", name: "Renamed ArchCode" });
     expect(onClose).toHaveBeenCalled();
   });
 
   test("does not submit unchanged names", () => {
-    const tree = render("Specra");
+    const tree = render("ArchCode");
     const form = findAll(tree, (element) => element.type === "form")[0];
 
     (form?.props?.onSubmit as (event: { preventDefault: () => void }) => void)({

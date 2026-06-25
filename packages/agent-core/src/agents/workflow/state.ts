@@ -314,7 +314,7 @@ export class WorkflowStateManager {
   }
 
   async listWorkflows(options: ListWorkflowsOptions = {}): Promise<WorkflowState[]> {
-    const workflowsRoot = resolve(this.workspaceRoot, ".specra", "workflows");
+    const workflowsRoot = resolve(this.workspaceRoot, ".archcode", "workflows");
     const allowedStatuses = this.normalizeStatusFilter(options.status);
     const entries = await readdir(workflowsRoot, { withFileTypes: true }).catch((error: unknown) => {
       if (this.isMissingDirectoryError(error)) return [];
@@ -463,7 +463,7 @@ export class WorkflowStateManager {
   }
 
   private async workflowStatePath(workflowId: string): Promise<string> {
-    const workflowsRoot = resolve(this.workspaceRoot, ".specra", "workflows");
+    const workflowsRoot = resolve(this.workspaceRoot, ".archcode", "workflows");
     try {
       return await resolveContainedPath(join(workflowId, "workflow.json"), workflowsRoot);
     } catch (error) {
@@ -473,7 +473,7 @@ export class WorkflowStateManager {
   }
 
   private async workflowArtifactPath(workflowId: string, artifactPath: string): Promise<string> {
-    const workflowRoot = resolve(this.workspaceRoot, ".specra", "workflows", workflowId);
+    const workflowRoot = resolve(this.workspaceRoot, ".archcode", "workflows", workflowId);
     try {
       return await resolveContainedPath(artifactPath, workflowRoot);
     } catch (error) {

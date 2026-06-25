@@ -122,8 +122,8 @@ describe("connectSSE", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  test("sends Basic auth header from SPECRA_SERVER_PASSWORD cookie", async () => {
-    document.cookie = "SPECRA_SERVER_PASSWORD=secret%20value";
+  test("sends Basic auth header from ARCHCODE_SERVER_PASSWORD cookie", async () => {
+    document.cookie = "ARCHCODE_SERVER_PASSWORD=secret%20value";
     const fetchMock: FetchMock = mock(async () => createOpenSseResponse());
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 

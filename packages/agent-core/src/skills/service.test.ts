@@ -24,8 +24,8 @@ async function writeSkill(root: string, name: string, content: string): Promise<
 
 describe("SkillService", () => {
   const projectRoot = join(tmpRoot, "project");
-  const projectSkillsRoot = join(projectRoot, ".specra", "skills");
-  const userSkillsRoot = join(tmpRoot, "user", ".specra", "skills");
+  const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
+  const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
   beforeEach(async () => {
     await rm(tmpRoot, { recursive: true, force: true });

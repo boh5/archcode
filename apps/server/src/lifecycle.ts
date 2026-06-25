@@ -1,4 +1,4 @@
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { globalEventBus } from "./events/global-event-bus";
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10000;
@@ -30,7 +30,7 @@ export interface GracefulShutdownHandle {
 
 export function setupGracefulShutdown(
   server: LifecycleServer,
-  runtime: SpecraRuntime,
+  runtime: AgentRuntime,
   options: GracefulShutdownOptions = {},
 ): GracefulShutdownHandle {
   const processRef = options.process ?? process;
@@ -68,7 +68,7 @@ export function setupGracefulShutdown(
 
 async function runShutdown(
   server: LifecycleServer,
-  runtime: SpecraRuntime,
+  runtime: AgentRuntime,
   timeoutMs: number,
   log: (message: string) => void,
   error: (message: string) => void,
@@ -90,7 +90,7 @@ async function runShutdown(
   return exitCode;
 }
 
-function pushShutdownEvents(runtime: SpecraRuntime): void {
+function pushShutdownEvents(runtime: AgentRuntime): void {
   globalEventBus.emit({ type: "shutdown", reason: "server_shutdown" });
   runtime.notifyRuntimeShutdown("server_shutdown");
 }

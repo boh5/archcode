@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
@@ -245,7 +245,7 @@ async function writeSessionFile(input: {
   if (input.sessionId !== rootSessionId) {
     await mkdir(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true });
   } else {
-    await mkdir(join(workspaceRoot, ".specra", "sessions"), { recursive: true });
+    await mkdir(join(workspaceRoot, ".archcode", "sessions"), { recursive: true });
   }
   await Bun.write(getSessionPath(workspaceRoot, rootSessionId, input.sessionId), JSON.stringify(file, null, 2));
 }

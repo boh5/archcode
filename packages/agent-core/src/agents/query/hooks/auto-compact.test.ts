@@ -2,7 +2,7 @@ import { describe, expect, mock, test, beforeEach } from "bun:test";
 import type { StoreApi } from "zustand";
 import type { BeforeModelBuildContext } from "../loop-hooks";
 import { silentLogger } from "../../../logger";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type { SessionStoreState, StoredMessage, StepInfo } from "../../../store/types";
 import { createAutoCompactHook } from "./auto-compact";
 import { COMPACT_MIN_NEW_MESSAGES } from "../../../compact/token-estimation";

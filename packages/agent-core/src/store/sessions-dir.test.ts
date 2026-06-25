@@ -18,9 +18,9 @@ const CHILD_UUID = "660e8400-e29b-41d4-a716-446655440001";
 // ---------------------------------------------------------------------------
 
 describe("getSessionsDir", () => {
-  test("returns workspaceRoot/.specra/sessions/", () => {
+  test("returns workspaceRoot/.archcode/sessions/", () => {
     expect(getSessionsDir("/tmp/project-a")).toBe(
-      join("/tmp/project-a", ".specra", "sessions"),
+      join("/tmp/project-a", ".archcode", "sessions"),
     );
   });
 
@@ -28,8 +28,8 @@ describe("getSessionsDir", () => {
     const dirA = getSessionsDir("/tmp/project-a");
     const dirB = getSessionsDir("/tmp/project-b");
     expect(dirA).not.toBe(dirB);
-    expect(dirA).toBe(join("/tmp/project-a", ".specra", "sessions"));
-    expect(dirB).toBe(join("/tmp/project-b", ".specra", "sessions"));
+    expect(dirA).toBe(join("/tmp/project-a", ".archcode", "sessions"));
+    expect(dirB).toBe(join("/tmp/project-b", ".archcode", "sessions"));
   });
 });
 
@@ -49,7 +49,7 @@ describe("__setSessionsDirForTest", () => {
 
     __setSessionsDirForTest(undefined);
     expect(getSessionsDir("/tmp/project")).toBe(
-      join("/tmp/project", ".specra", "sessions"),
+      join("/tmp/project", ".archcode", "sessions"),
     );
   });
 });
@@ -185,10 +185,10 @@ describe("getRootSessionPath", () => {
     __setSessionsDirForTest(undefined);
   });
 
-  test("returns .specra/sessions/{sessionId}.json", () => {
+  test("returns .archcode/sessions/{sessionId}.json", () => {
     const path = getRootSessionPath("/tmp/project", VALID_UUID);
     expect(path).toBe(
-      join("/tmp/project", ".specra", "sessions", `${VALID_UUID}.json`),
+      join("/tmp/project", ".archcode", "sessions", `${VALID_UUID}.json`),
     );
   });
 
@@ -210,10 +210,10 @@ describe("getRootSessionPath", () => {
 // ---------------------------------------------------------------------------
 
 describe("getRootSessionDir", () => {
-  test("returns .specra/sessions/{rootSessionId}", () => {
+  test("returns .archcode/sessions/{rootSessionId}", () => {
     const path = getRootSessionDir("/tmp/project", VALID_UUID);
     expect(path).toBe(
-      join("/tmp/project", ".specra", "sessions", VALID_UUID),
+      join("/tmp/project", ".archcode", "sessions", VALID_UUID),
     );
   });
 
@@ -235,12 +235,12 @@ describe("getRootSessionDir", () => {
 // ---------------------------------------------------------------------------
 
 describe("getChildSessionPath", () => {
-  test("returns .specra/sessions/{rootSessionId}/{sessionId}.json", () => {
+  test("returns .archcode/sessions/{rootSessionId}/{sessionId}.json", () => {
     const path = getChildSessionPath("/tmp/project", VALID_UUID, CHILD_UUID);
     expect(path).toBe(
       join(
         "/tmp/project",
-        ".specra",
+        ".archcode",
         "sessions",
         VALID_UUID,
         `${CHILD_UUID}.json`,
@@ -269,7 +269,7 @@ describe("getSessionPath", () => {
   test("returns root path when rootSessionId equals sessionId", () => {
     const path = getSessionPath("/tmp/project", VALID_UUID, VALID_UUID);
     expect(path).toBe(
-      join("/tmp/project", ".specra", "sessions", `${VALID_UUID}.json`),
+      join("/tmp/project", ".archcode", "sessions", `${VALID_UUID}.json`),
     );
   });
 
@@ -278,7 +278,7 @@ describe("getSessionPath", () => {
     expect(path).toBe(
       join(
         "/tmp/project",
-        ".specra",
+        ".archcode",
         "sessions",
         VALID_UUID,
         `${CHILD_UUID}.json`,

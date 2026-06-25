@@ -91,10 +91,10 @@ function extractImports(filePath: string): ImportRecord[] {
 
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
   if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(filePath, "..", importPath)));
-  if (importPath.startsWith("@specra/protocol")) return "packages/protocol/src";
-  if (importPath.startsWith("@specra/agent-core")) return "packages/agent-core/src";
-  if (importPath.startsWith("@specra/server")) return "apps/server/src";
-  if (importPath.startsWith("@specra/web")) return "apps/web/src";
+  if (importPath.startsWith("@archcode/protocol")) return "packages/protocol/src";
+  if (importPath.startsWith("@archcode/agent-core")) return "packages/agent-core/src";
+  if (importPath.startsWith("@archcode/server")) return "apps/server/src";
+  if (importPath.startsWith("@archcode/web")) return "apps/web/src";
   return undefined;
 }
 
@@ -153,7 +153,7 @@ function expectNoViolations(violations: Violation[]): void {
 }
 
 const utilsForbiddenPatterns = [
-  /^@specra\/(agent-core|server|web)(\/|$)/,
+  /^@archcode\/(agent-core|server|web)(\/|$)/,
   /^apps\//,
   /^packages\/(agent-core|server|web)(\/|$)/,
   /^packages\/(agent-core|server|web)\/src(\/|$)/,
@@ -169,7 +169,7 @@ const utilsForbiddenPatterns = [
 
 const utilsAllowedExceptions: RegExp[] = [];
 
-describe("@specra/utils package boundaries", () => {
+describe("@archcode/utils package boundaries", () => {
   test("utils has zero runtime dependencies", () => {
     expect(readPackageDependencies("packages/utils")).toEqual({});
   });

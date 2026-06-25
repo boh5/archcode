@@ -3,7 +3,7 @@ import { join, resolve, sep } from "node:path";
 import type { PermissionDecision, ToolPermission, ToolExecutionContext } from "../types";
 import type { ToolErrorKind } from "../errors";
 
-const MEMORY_INDEX_SUFFIX = join(".specra", "memory", "index.md");
+const MEMORY_INDEX_SUFFIX = join(".archcode", "memory", "index.md");
 
 function resolveRealPath(filePath: string): string {
   try {

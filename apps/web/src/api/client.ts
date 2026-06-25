@@ -118,8 +118,8 @@ function readServerPasswordCookie(): string | undefined {
   const cookie = document.cookie
     .split(";")
     .map((part) => part.trim())
-    .find((part) => part.startsWith("SPECRA_SERVER_PASSWORD="));
+    .find((part) => part.startsWith("ARCHCODE_SERVER_PASSWORD="));
 
   if (!cookie) return undefined;
-  return decodeURIComponent(cookie.slice("SPECRA_SERVER_PASSWORD=".length));
+  return decodeURIComponent(cookie.slice("ARCHCODE_SERVER_PASSWORD=".length));
 }

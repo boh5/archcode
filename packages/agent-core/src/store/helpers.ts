@@ -3,7 +3,7 @@ import { mkdir, readdir, rename } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
-import type { SessionModelInfo } from "@specra/protocol";
+import type { SessionModelInfo } from "@archcode/protocol";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
 import { WorkflowUuidSchema } from "../agents/workflow/state";
 

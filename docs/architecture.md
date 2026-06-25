@@ -11,11 +11,11 @@
 ```
 specra/
 ├── apps/
-│   ├── server/      — @specra/server — Hono/Bun host, binary entry point
-│   └── web/         — @specra/web    — React/Vite frontend
+│   ├── server/      — @archcode/server — Hono/Bun host, binary entry point
+│   └── web/         — @archcode/web    — React/Vite frontend
 ├── packages/
-│   ├── protocol/    — @specra/protocol — browser-safe session types + pure reducer
-│   └── agent-core/  — @specra/agent-core — runtime: agents, tools, store, config,
+│   ├── protocol/    — @archcode/protocol — browser-safe session types + pure reducer
+│   └── agent-core/  — @archcode/agent-core — runtime: agents, tools, store, config,
 │                                            provider, MCP, LSP, memory, compact, etc.
 ├── scripts/
 │   └── build.ts     — production binary build (Vite → web-manifest → Bun.build)
@@ -27,10 +27,10 @@ specra/
 
 | Package | `package.json` name | Entry | Purpose |
 |---------|--------------------|-------|---------|
-| `apps/server` | `@specra/server` | `src/main.ts` | Hono HTTP server, API routes, SSE, web asset serving, binary target |
-| `apps/web` | `@specra/web` | Vite build | React SPA frontend with Tailwind |
-| `packages/protocol` | `@specra/protocol` | `src/index.ts` | Session protocol types, `StreamEvent` reducer — zero runtime deps |
-| `packages/agent-core` | `@specra/agent-core` | `src/index.ts` | Agent loop, tool system, config, providers, MCP, LSP, memory, store, context compaction |
+| `apps/server` | `@archcode/server` | `src/main.ts` | Hono HTTP server, API routes, SSE, web asset serving, binary target |
+| `apps/web` | `@archcode/web` | Vite build | React SPA frontend with Tailwind |
+| `packages/protocol` | `@archcode/protocol` | `src/index.ts` | Session protocol types, `StreamEvent` reducer — zero runtime deps |
+| `packages/agent-core` | `@archcode/agent-core` | `src/index.ts` | Agent loop, tool system, config, providers, MCP, LSP, memory, store, context compaction |
 
 ---
 
@@ -39,21 +39,21 @@ specra/
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        apps/server                           │
-│  @specra/server                                              │
+│  @archcode/server                                              │
 │    ↑                        ↑                                │
 │    │                        │                                │
 │    │ depends on             │ depends on                     │
 │    ↓                        ↓                                │
-│  @specra/agent-core ──→  @specra/protocol                    │
+│  @archcode/agent-core ──→  @archcode/protocol                    │
 │       │                                                      │
 │       │ depends on                                           │
 │       ↓                                                      │
-│  @specra/protocol                                            │
+│  @archcode/protocol                                            │
 │       ↑                                                      │
 │       │ depends on                                           │
 │       │                                                      │
 │  apps/web                                                    │
-│  @specra/web                                                 │
+│  @archcode/web                                                 │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,9 +61,9 @@ specra/
 
 | Source | Can import | Reason |
 |--------|-----------|--------|
-| `apps/web` | `@specra/protocol` | Web only needs session types + pure reducer |
-| `packages/agent-core` | `@specra/protocol` | Runtime uses protocol types for store and events |
-| `apps/server` | `@specra/agent-core`, `@specra/protocol` | Server wires runtime and serves protocol types over SSE |
+| `apps/web` | `@archcode/protocol` | Web only needs session types + pure reducer |
+| `packages/agent-core` | `@archcode/protocol` | Runtime uses protocol types for store and events |
+| `apps/server` | `@archcode/agent-core`, `@archcode/protocol` | Server wires runtime and serves protocol types over SSE |
 | `packages/protocol` | _(none)_ | Standalone leaf — zero runtime dependencies |
 
 ---
@@ -72,9 +72,9 @@ specra/
 
 | Source | Cannot import | Why |
 |--------|--------------|-----|
-| `apps/web` | `@specra/agent-core` | Prevents browser bundle from pulling in Node/Bun runtime, AI SDK, LSP, MCP, Zustand runtime store, etc. |
+| `apps/web` | `@archcode/agent-core` | Prevents browser bundle from pulling in Node/Bun runtime, AI SDK, LSP, MCP, Zustand runtime store, etc. |
 | `apps/web` | `apps/server` | Web must never depend on server internals |
-| `packages/protocol` | `@specra/agent-core` | Protocol is the leaf — must stay runtime-free |
+| `packages/protocol` | `@archcode/agent-core` | Protocol is the leaf — must stay runtime-free |
 | `packages/agent-core` | `apps/server` | Runtime must not depend on HTTP server |
 | `packages/agent-core` | `apps/web` | Runtime must not depend on browser UI |
 
@@ -84,7 +84,7 @@ Boundary rules are codified in `packages/agent-core/src/__arch__/architecture.te
 
 ---
 
-## Why `@specra/protocol` Exists
+## Why `@archcode/protocol` Exists
 
 The protocol package serves as the **shared type boundary** between the frontend and the runtime:
 
@@ -95,14 +95,14 @@ The protocol package serves as the **shared type boundary** between the frontend
 
 ---
 
-## Why Web Cannot Import `@specra/agent-core`
+## Why Web Cannot Import `@archcode/agent-core`
 
 The browser bundle must remain lightweight and runtime-independent:
 
 - **Size** — agent-core pulls in AI SDK, `@modelcontextprotocol/sdk`, `vscode-languageserver-*`, `jsdom`, `turndown`, etc. Shipping these to the browser is unacceptable.
 - **Environment** — agent-core depends on Node/Bun APIs (`Bun.spawn`, `node:fs`, `node:child_process`, etc.) that do not exist in the browser.
 - **Security** — Web UI must never access tool execution, shell commands, or filesystem operations.
-- **Constraint** — If web needs new types or a new reducer function, the change goes into `@specra/protocol`, not `@specra/agent-core`.
+- **Constraint** — If web needs new types or a new reducer function, the change goes into `@archcode/protocol`, not `@archcode/agent-core`.
 
 ---
 
@@ -124,16 +124,16 @@ The root `package.json` previously had:
 "start": "bun run apps/server/src/main.ts"
 ```
 
-This was removed because production uses the **compiled binary** (`dist/specra`) directly. The binary is built via `bun run build`:
+This was removed because production uses the **compiled binary** (`dist/archcode`) directly. The binary is built via `bun run build`:
 
 | Step | Script | Output |
 |------|--------|--------|
 | 1. TypeCheck | `tsc --noEmit` | Pass/fail |
 | 2. Vite build | `scripts/build.ts` → `runWebBuild()` | `apps/web/dist/` |
 | 3. Generate manifest | `scripts/build.ts` → `generateManifest()` | `apps/server/src/web-manifest.ts` |
-| 4. Compile binary | `scripts/build.ts` → `compileBinary()` | `dist/specra` |
+| 4. Compile binary | `scripts/build.ts` → `compileBinary()` | `dist/archcode` |
 
-No `bun run start` script is needed because `dist/specra` is the deployment artifact.
+No `bun run start` script is needed because `dist/archcode` is the deployment artifact.
 
 ---
 
@@ -146,7 +146,7 @@ bun run build
         ├── runWebBuild()         (Vite build → apps/web/dist/)
         ├── generateManifest()    (scan dist/ → web-manifest.ts with Bun.file() imports)
         └── compileBinary()       (Bun.build({ compile: true, plugins: [cssTreePatchPlugin] }))
-                                    → dist/specra
+                                    → dist/archcode
 ```
 
 ### Key details
@@ -162,7 +162,7 @@ bun run build
    - Serves embedded assets from the `Map` by request path
    - Falls back to SPA mode (serves `index.html` for non-`/api`/`/assets/` paths)
    - API routes (`/api/*`) take precedence and skip asset handling
-5. **Output**: Single portable binary at `dist/specra`.
+5. **Output**: Single portable binary at `dist/archcode`.
 
 ---
 
@@ -186,8 +186,8 @@ The following packages and concerns are **explicitly out of scope** for this mig
 The following situations **require an architecture decision** (documented update to this file or a new ADR):
 
 1. **Any new circular dependency** not covered by the current boundary rules.
-2. **More than 10 new public exports** proposed for `@specra/protocol` — indicates scope creep.
-3. **Any proposal for `apps/web` to import `@specra/agent-core`** — must be denied unless there is an extremely strong justification.
+2. **More than 10 new public exports** proposed for `@archcode/protocol` — indicates scope creep.
+3. **Any proposal for `apps/web` to import `@archcode/agent-core`** — must be denied unless there is an extremely strong justification.
 4. **Bun compile cannot embed or serve Web assets** — if the binary embedding strategy breaks, the production build needs re-architecting.
 5. **Any new package proposal** (`packages/tools`, `packages/workflow`, `apps/docs`, etc.) — each requires scoping, boundary analysis, and ADR.
 6. **A consumer genuinely needs a subset of agent-core independently** (e.g., a CLI plugin) — may justify splitting agent-core.

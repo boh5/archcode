@@ -1,14 +1,14 @@
 import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
-import { createEmptySessionStats } from "@specra/protocol";
+import { createEmptySessionStats } from "@archcode/protocol";
 import type {
   SessionModelInfo,
   SessionTreeDiagnostic,
   SessionTreeDiagnosticType,
   SessionTreeNode,
   SessionTreeResponse,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "../logger";

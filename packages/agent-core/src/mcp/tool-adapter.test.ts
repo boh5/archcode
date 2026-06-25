@@ -54,7 +54,7 @@ afterEach(() => {
 // ─── Descriptor Shape ────────────────────────────────────────────────────────
 
 describe("adaptMcpTool descriptor", () => {
-  test("converts an MCP tool into a Specra ToolDescriptor", () => {
+  test("converts an MCP tool into a ArchCode ToolDescriptor", () => {
     const descriptor = adaptMcpTool(
       {
         name: "resolve-library-id",
@@ -95,7 +95,7 @@ describe("adaptMcpTool descriptor", () => {
       [],
     );
 
-    // inputSchema remains the loose Zod schema for Specra's validation pipeline
+    // inputSchema remains the loose Zod schema for ArchCode's validation pipeline
     expect(descriptor.inputSchema).toBeInstanceOf(z.ZodObject);
 
     // aiInputSchema carries the real JSON Schema for the LLM
@@ -326,7 +326,7 @@ describe("adaptMcpTool execute", () => {
     expect(result.output).toBe("Structured content:\n[object Object]");
   });
 
-  test("returns Specra tool error result when MCP result isError=true", async () => {
+  test("returns ArchCode tool error result when MCP result isError=true", async () => {
     const descriptor = adaptMcpTool(
       { name: "fail" },
       "server",
@@ -346,7 +346,7 @@ describe("adaptMcpTool execute", () => {
     );
   });
 
-  test("returns redacted Specra tool error result when MCP client throws", async () => {
+  test("returns redacted ArchCode tool error result when MCP client throws", async () => {
     const descriptor = adaptMcpTool(
       { name: "fail" },
       "server",

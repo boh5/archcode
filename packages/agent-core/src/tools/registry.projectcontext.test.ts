@@ -46,8 +46,8 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
     },
     workflowState,
     memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".specra", "memory"),
-      user: join(workspaceRoot, ".specra", "user-memory"),
+      project: join(workspaceRoot, ".archcode", "memory"),
+      user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals,
     artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),

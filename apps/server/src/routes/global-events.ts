@@ -5,8 +5,8 @@ import type {
   GlobalSSEHeartbeatEvent,
   GlobalSSELaggedEvent,
   GlobalSessionEventEnvelope,
-} from "@specra/protocol";
-import { MAX_EVENTS } from "@specra/protocol";
+} from "@archcode/protocol";
+import { MAX_EVENTS } from "@archcode/protocol";
 import { globalEventBus, type GlobalEventBus } from "../events/global-event-bus";
 
 export interface GlobalEventsRoutesOptions {

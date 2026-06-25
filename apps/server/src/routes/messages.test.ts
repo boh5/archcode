@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { AgentRunningError, ProjectRegistry, silentLogger } from "@specra/agent-core";
-import type { ActiveSessionExecution, SpecraRuntime } from "@specra/agent-core";
+import { AgentRunningError, ProjectRegistry, silentLogger } from "@archcode/agent-core";
+import type { ActiveSessionExecution, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 import { globalEventBus } from "../events/global-event-bus";
 
@@ -21,7 +21,7 @@ function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionE
   };
 }
 
-function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
+function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   const running = new Set<string>();
   return {
     projectRegistry,
@@ -60,7 +60,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): SpecraRuntime {
     respondQuestion: mock(() => false),
     cleanupDeferredSession: mock(() => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 async function createTestApp(testName: string) {

@@ -190,7 +190,7 @@ export type PermissionErrorCode =
  * When `aiInputSchema` is set on a `ToolDescriptor`, it takes precedence over
  * `inputSchema` when presenting the tool to the LLM. This allows MCP tools to
  * expose their real JSON Schema parameter definitions to the model while still
- * using a loose Zod schema for Specra's internal validation pipeline.
+ * using a loose Zod schema for ArchCode's internal validation pipeline.
  */
 export type AiToolInputSchema = ZodTypeAny | AiSchema<unknown>;
 
@@ -198,7 +198,7 @@ export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult 
   name: string;
   description: string;
   /**
-   * Zod schema used by Specra's internal validation pipeline (`safeParse`).
+   * Zod schema used by ArchCode's internal validation pipeline (`safeParse`).
    * For builtin tools this is a precise schema; for MCP tools it's a loose
    * `z.object({}).catchall(z.unknown())` that accepts any object — real
    * validation is delegated to the MCP server.
@@ -209,7 +209,7 @@ export interface ToolDescriptor<I = any, O extends string | ToolExecutionResult 
    * `inputSchema` when presenting the tool definition to the AI model via
    * `toAITools()`. This allows MCP tools to expose their real JSON Schema
    * parameter definitions so the model knows what arguments to pass, while
-   * keeping the loose Zod `inputSchema` for Specra's execution pipeline.
+   * keeping the loose Zod `inputSchema` for ArchCode's execution pipeline.
    *
    * Builtin tools leave this undefined — their Zod `inputSchema` serves both
    * roles.

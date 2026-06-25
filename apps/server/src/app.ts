@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@specra/protocol";
+import type { AgentRuntime } from "@archcode/agent-core";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { AskUserService } from "./ask-user-service";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
@@ -26,7 +26,7 @@ export interface CreateServerAppOptions {
 }
 
 export function createServerApp(
-  runtime: SpecraRuntime,
+  runtime: AgentRuntime,
   options: CreateServerAppOptions = {},
 ): { app: Hono } {
   const app = new Hono();
@@ -107,7 +107,7 @@ export function createServerApp(
   return { app };
 }
 
-export function createServerEventRuntime(runtime: SpecraRuntime): SpecraRuntime {
+export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
   return {
     ...runtime,
     startSessionExecution(input) {

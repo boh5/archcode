@@ -12,7 +12,7 @@ export interface ClassifyCommandOptions {
 }
 
 const ASK_PROMPT = "Review this bash command before execution.";
-const DENY_EFFECTS = new Set(["system-mutation", "remote-exec", "credential-exfil", "protected-specra"]);
+const DENY_EFFECTS = new Set(["system-mutation", "remote-exec", "credential-exfil", "protected-path"]);
 
 interface DenyRule {
   ruleId: string;
@@ -40,7 +40,7 @@ const RULE_REASONS = {
   securityWrites: "System service, firewall, or security setting writes are blocked",
   credentialExfil: "Credential material exfiltration is blocked",
   permissionsFile: "Protected permission file access is blocked",
-  specraMutation: "Direct mutation of .specra is blocked",
+  pathMutation: "Direct mutation of .archcode is blocked",
   background: "Background execution with & is not supported",
   outOfWorkspace: "Bash path access outside the workspace requires confirmation",
   sensitivePath: "Sensitive file access requires confirmation",
@@ -57,7 +57,7 @@ const SHELL_EXECUTORS = new Set(["sh", "bash", "zsh", "python", "python3", "node
 const DOWNLOAD_COMMANDS = new Set(["curl", "wget", "fetch", "http"]);
 const SECURITY_WRITE_COMMANDS = new Set(["iptables", "nft", "csrutil"]);
 const CATASTROPHIC_DELETE_TARGETS = new Set(["/", "~", "$HOME", "${HOME}", "/Users", "/home", "/etc", "/usr", "/bin", "/sbin", "/var", "/opt", "/System", "/Library", "/Applications"]);
-const SPECRA_MUTATORS = new Set(["rm", "mv", "cp", "tee", "mkdir", "touch", "chmod", "chown"]);
+const FILE_MUTATORS = new Set(["rm", "mv", "cp", "tee", "mkdir", "touch", "chmod", "chown"]);
 const CREDENTIAL_PATH_PATTERNS = [/^\.env(?:\..*)?$/, /(?:^|\/)\.env(?:\..*)?$/, /(?:^|\/)\.ssh(?:\/|$)/, /(?:^|\/)\.aws(?:\/|$)/, /(?:^|\/)\.config\/gcloud(?:\/|$)/, /(?:^|\/)\.azure(?:\/|$)/];
 const SENSITIVE_PATH_PATTERNS = [
   /^\.env(?:\..*)?$/,
@@ -86,7 +86,7 @@ const COMMON_ALLOWED_COMMANDS = new Set([
   "deno",
   "tsc",
 ]);
-const PROTECTED_PERMISSIONS_TEXT_PATTERN = /(?:\.\/)?\.specra\/permissions\.json/;
+const PROTECTED_PERMISSIONS_TEXT_PATTERN = /(?:\.\/)?\.archcode\/permissions\.json/;
 
 function ask(reason: string, display?: string, eligible = true, request?: NormalizedShellRequest, ruleId?: string, scope?: PermissionApprovalScope): PermissionDecision {
   return {
@@ -158,14 +158,14 @@ function stripTrailingSlash(path: string): string {
   return stripped.length === 0 ? "/" : stripped;
 }
 
-function isSpecraPath(rawPath: string): boolean {
+function isProjectPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".specra" || normalized.startsWith(".specra/") || normalized.includes("/.specra/") || normalized.endsWith("/.specra");
+  return normalized === ".archcode" || normalized.startsWith(".archcode/") || normalized.includes("/.archcode/") || normalized.endsWith("/.archcode");
 }
 
 function isPermissionsPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".specra/permissions.json" || normalized.endsWith("/.specra/permissions.json");
+  return normalized === ".archcode/permissions.json" || normalized.endsWith("/.archcode/permissions.json");
 }
 
 function mentionsPermissionsPath(rawText: string): boolean {
@@ -359,11 +359,11 @@ const DENY_RULES: DenyRule[] = [
     }),
   },
   {
-    ruleId: "deny-direct-specra-mutation",
-    reason: RULE_REASONS.specraMutation,
+    ruleId: "deny-direct-path-mutation",
+    reason: RULE_REASONS.pathMutation,
     matches: (request) =>
-      request.effects.some((effect) => effect.kind === "protected-specra" && (effect.target ? isSpecraPath(effect.target) && !isPermissionsPath(effect.target) : effect.reason.toLowerCase().includes("mutation"))) ||
-      request.invocations.some((invocation) => (SPECRA_MUTATORS.has(invocation.command) && invocation.argv.some(isSpecraPath)) || (invocation.command === "git" && invocation.argv[1] === "clean" && invocation.argv.some(isSpecraPath)) || invocation.redirections.some((redirection) => redirection.operation !== "read" && isSpecraPath(redirection.target))),
+      request.effects.some((effect) => effect.kind === "protected-path" && (effect.target ? isProjectPath(effect.target) && !isPermissionsPath(effect.target) : effect.reason.toLowerCase().includes("mutation"))) ||
+      request.invocations.some((invocation) => (FILE_MUTATORS.has(invocation.command) && invocation.argv.some(isProjectPath)) || (invocation.command === "git" && invocation.argv[1] === "clean" && invocation.argv.some(isProjectPath)) || invocation.redirections.some((redirection) => redirection.operation !== "read" && isProjectPath(redirection.target))),
   },
 ];
 
@@ -466,7 +466,7 @@ function isAllowedNetworkInvocation(name: string): boolean {
 
 function isAllowedPackageRunnerInvocation(name: string, request: NormalizedShellRequest, validator: PathValidator): boolean {
   if (!["npx", "bunx"].includes(name)) return false;
-  if (request.effects.some((effect) => ["remote-exec", "credential-exfil", "protected-specra"].includes(effect.kind))) return false;
+  if (request.effects.some((effect) => ["remote-exec", "credential-exfil", "protected-path"].includes(effect.kind))) return false;
   if (hasUnsafePathEffect(request, validator)) return false;
   if (request.invocations.some(hasRemoteShellPayload)) return false;
   return true;

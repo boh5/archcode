@@ -1,5 +1,5 @@
 {
-  "name": "@specra/agent-core",
+  "name": "@archcode/agent-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,8 +16,8 @@
     "@ai-sdk/openai-compatible": "^2.0.45",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
-    "@specra/protocol": "workspace:*",
-    "@specra/utils": "workspace:*",
+    "@archcode/protocol": "workspace:*",
+    "@archcode/utils": "workspace:*",
     "@truto/turndown-plugin-gfm": "^1.0.2",
     "ai": "^6.0.174",
     "diff": "^9.0.0",

@@ -1,4 +1,4 @@
-import type { SessionTodo, SessionTodoStatus } from "@specra/protocol";
+import type { SessionTodo, SessionTodoStatus } from "@archcode/protocol";
 import { useSessionStore } from "../../store/session-store";
 
 type Priority = "high" | "medium" | "low";

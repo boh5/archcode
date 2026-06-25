@@ -9,7 +9,7 @@ import type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
 import { storeManager } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
-import { createSpecraRuntime } from "./runtime";
+import { createRuntime } from "./runtime";
 import { createTestProjectContext } from "./tools/test-project-context";
 import { createInMemoryLogger } from "./logger";
 const tmpRoots: string[] = [];
@@ -42,13 +42,13 @@ function makeProviderConfig() {
 
 async function writeConfig(config: Record<string, unknown>): Promise<string> {
   const root = await makeTempRoot();
-  const configPath = join(root, ".specra.json");
+  const configPath = join(root, ".archcode.json");
   await Bun.write(configPath, JSON.stringify(config));
   return configPath;
 }
 
 async function makeTempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "specra-main-"));
+  const root = await mkdtemp(join(tmpdir(), "archcode-main-"));
   tmpRoots.push(root);
   return root;
 }
@@ -104,11 +104,11 @@ function makeContext(toolName: string, input: unknown): ToolExecutionContext {
   };
 }
 
-describe("createSpecraRuntime", () => {
+describe("createRuntime", () => {
   test("constructs runtime without booting server concerns", async () => {
     const configPath = await writeConfig(makeConfig({ servers: {} }));
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -122,7 +122,7 @@ describe("createSpecraRuntime", () => {
     const configPath = await writeConfig(makeConfig({ servers: {} }));
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -138,7 +138,7 @@ describe("createSpecraRuntime", () => {
     let resolvedConfig: ResolvedMcpConfig | undefined;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: (config) => {
         resolvedConfig = config;
@@ -154,7 +154,7 @@ describe("createSpecraRuntime", () => {
     const configPath = await writeConfig(makeConfig());
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -167,7 +167,7 @@ describe("createSpecraRuntime", () => {
     const configPath = await writeConfig(makeConfig());
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -183,7 +183,7 @@ describe("createSpecraRuntime", () => {
     let resolvedConfig: ResolvedMcpConfig | undefined;
     const manager = makeFakeMcpManager({ descriptors: [], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: (config) => {
         resolvedConfig = config;
@@ -211,7 +211,7 @@ describe("createSpecraRuntime", () => {
     const { logger, entries } = createInMemoryLogger();
     const manager = makeFakeMcpManager(new Error(`boom ${secret}`));
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
       logger,
@@ -234,7 +234,7 @@ describe("createSpecraRuntime", () => {
     );
     const manager = makeFakeMcpManager(new Error(`connection refused: ${publicUrl}`));
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -252,7 +252,7 @@ describe("createSpecraRuntime", () => {
       warnings: [],
     });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -271,7 +271,7 @@ describe("createSpecraRuntime", () => {
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });
@@ -287,7 +287,7 @@ describe("createSpecraRuntime", () => {
     const mcpDescriptor = makeMcpDescriptor();
     const manager = makeFakeMcpManager({ descriptors: [mcpDescriptor], warnings: [] });
 
-    const runtime = await createSpecraRuntime({
+    const runtime = await createRuntime({
       configPath,
       mcpManagerFactory: () => manager,
     });

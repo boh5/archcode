@@ -71,7 +71,7 @@ export class Registry {
  * import { createRegistry } from "./provider/index";
  * import { generateText } from "ai";
  *
- * const config = await loadConfig(".specra.json");
+ * const config = await loadConfig(".archcode.json");
  * const registry = createRegistry(config.provider);
  *
  * const model = registry.getModel("xxx:gpt-5.2");

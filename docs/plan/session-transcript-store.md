@@ -142,7 +142,7 @@ store.getState().append({
 
 ### 格式
 
-`~/.specra/sessions/{sessionId}.json`
+`~/.archcode/sessions/{sessionId}.json`
 
 ```json
 {

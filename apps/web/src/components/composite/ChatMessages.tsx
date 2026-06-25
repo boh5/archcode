@@ -20,8 +20,8 @@ import type {
   ToolPart,
   ToolChildSessionLink,
   ToolChildSessionLinkStatus,
-} from "@specra/protocol";
-import { TOOL_DELEGATE } from "@specra/protocol";
+} from "@archcode/protocol";
+import { TOOL_DELEGATE } from "@archcode/protocol";
 import { RecoveryNotice } from "./RecoveryNotice";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";

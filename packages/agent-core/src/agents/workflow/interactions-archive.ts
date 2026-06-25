@@ -122,7 +122,7 @@ function formatArchiveEntry(interaction: WorkflowInteraction, archivedAt: string
   return [
     `## ${interaction.decisionKey}`,
     "",
-    `<!-- specra-interaction:${archiveKey(interaction)} -->`,
+    `<!-- archcode-interaction:${archiveKey(interaction)} -->`,
     "",
     `- Interaction ID: ${interaction.id}`,
     `- Decision Key: ${interaction.decisionKey}`,
@@ -159,7 +159,7 @@ function formatConstraintEntry(interaction: WorkflowInteraction): string {
 
 function extractArchivedInteractionKeys(body: string): Set<string> {
   const keys = new Set<string>();
-  for (const match of body.matchAll(/<!--\s*specra-interaction:([^\s]+)\s*-->/g)) {
+  for (const match of body.matchAll(/<!--\s*archcode-interaction:([^\s]+)\s*-->/g)) {
     if (match[1]) keys.add(match[1]);
   }
   return keys;

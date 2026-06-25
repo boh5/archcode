@@ -72,17 +72,17 @@ describe("WorkflowArtifactManager", () => {
     expect(written).toMatchObject({ workflowId: wf_prd.id, kind: "PRD", path: "PRD.md" });
     const read = await artifacts.readByKind(wf_prd.id, "PRD");
     expect(read.frontmatter).toMatchObject({
-      "specra.schema": "1",
-      "specra.workflowId": wf_prd.id,
-      "specra.workflowType": "full_feature",
-      "specra.artifactKind": "PRD",
-      "specra.artifactPath": "PRD.md",
-      "specra.workflowStage": "product_drafting",
-      "specra.writerAgent": "system",
-      "specra.writerSessionId": "unknown",
-      "specra.toolCallId": "direct",
+      "archcode.schema": "1",
+      "archcode.workflowId": wf_prd.id,
+      "archcode.workflowType": "full_feature",
+      "archcode.artifactKind": "PRD",
+      "archcode.artifactPath": "PRD.md",
+      "archcode.workflowStage": "product_drafting",
+      "archcode.writerAgent": "system",
+      "archcode.writerSessionId": "unknown",
+      "archcode.toolCallId": "direct",
     });
-    expect(read.frontmatter["specra.writtenAt"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(read.frontmatter["archcode.writtenAt"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(read.body).toBe("# PRD\n\nRequirements.");
 
     const state = await stateManager.read(wf_prd.id);
@@ -109,12 +109,12 @@ describe("WorkflowArtifactManager", () => {
 
     const read = await artifacts.read(wf_frontmatter.id, "SPEC.md");
     expect(read.frontmatter).toMatchObject({
-      "specra.artifactKind": "SPEC",
-      "specra.artifactPath": "SPEC.md",
-      "specra.writerAgent": "spec",
-      "specra.writerSessionId": "spec-session",
-      "specra.toolCallId": "artifact-write-call",
-      "specra.writtenAt": "2026-01-02T03:04:05.000Z",
+      "archcode.artifactKind": "SPEC",
+      "archcode.artifactPath": "SPEC.md",
+      "archcode.writerAgent": "spec",
+      "archcode.writerSessionId": "spec-session",
+      "archcode.toolCallId": "artifact-write-call",
+      "archcode.writtenAt": "2026-01-02T03:04:05.000Z",
     });
     expect(read.body).toBe("# SPEC\n");
   });
@@ -125,7 +125,7 @@ describe("WorkflowArtifactManager", () => {
     const wf_provenance = await stateManager.create({ title: "Provenance Test", type: "full_feature" });
 
     for (const toolCallId of [
-      "call\nspecra.writerAgent: forged",
+      "call\narchcode.writerAgent: forged",
       "call\n---\nforged",
     ]) {
       const error = await captureAsyncError(() => artifacts.write({
@@ -135,7 +135,7 @@ describe("WorkflowArtifactManager", () => {
       }, { toolCallId }));
 
       expect(error).toBeInstanceOf(WorkflowArtifactFrontmatterValueError);
-      expect(await Bun.file(join(TMP_DIR, ".specra", "workflows", wf_provenance.id, "PRD.md")).exists()).toBe(false);
+      expect(await Bun.file(join(TMP_DIR, ".archcode", "workflows", wf_provenance.id, "PRD.md")).exists()).toBe(false);
     }
   });
 
@@ -271,8 +271,8 @@ describe("WorkflowArtifactManager", () => {
     expect(result.warning).toBeUndefined();
     const archived = await artifacts.readByKind(wf.id, "INTERACTIONS");
     expect(archived.frontmatter).toMatchObject({
-      "specra.artifactKind": "INTERACTIONS",
-      "specra.writerAgent": "system",
+      "archcode.artifactKind": "INTERACTIONS",
+      "archcode.writerAgent": "system",
     });
     expect(archived.body).toContain("Decision Key: requirements.scope");
     expect(archived.body).toContain("Stage: product_drafting");

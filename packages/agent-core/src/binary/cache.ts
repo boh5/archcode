@@ -27,7 +27,7 @@ export class UnsupportedBinaryPlatformError extends Error {
 
 export function getBinaryCacheBaseDir(env: BinaryCacheEnv = currentBinaryCacheEnv()): string {
   const base = env.XDG_CACHE_HOME ?? (env.HOME ? join(env.HOME, ".cache") : import.meta.dir);
-  return join(base, "specra", "bin");
+  return join(base, "archcode", "bin");
 }
 
 export function getBinaryCacheDir(params: {

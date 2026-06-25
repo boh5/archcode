@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import type { SpecraRuntime } from "@specra/agent-core";
-import { ProjectRegistryError } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
+import { ProjectRegistryError } from "@archcode/agent-core";
 import { BadRequestError, ProjectNotFoundError } from "../errors";
 
 interface CreateProjectBody {
@@ -12,7 +12,7 @@ interface UpdateProjectBody {
   name?: unknown;
 }
 
-export function createProjectsRoutes(runtime: SpecraRuntime): Hono {
+export function createProjectsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => {

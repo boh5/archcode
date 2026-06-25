@@ -196,7 +196,7 @@ function findServerBoundaryViolations(): Violation[] {
         }
       }
 
-      if (importRecord.importPath === "@specra/agent-core") {
+      if (importRecord.importPath === "@archcode/agent-core") {
         for (const symbol of forbiddenServerSymbols) {
           if (new RegExp(`\\b${symbol}\\b`).test(importRecord.source)) {
             violations.push({ file: relativeFile(file), importPath: `${symbol} from ${importRecord.importPath}` });
@@ -222,7 +222,7 @@ function findServerInternalAgentCoreImportViolations(): Violation[] {
       if (
         importRecord.importPath.startsWith("../../../packages/agent-core/src/")
         || importRecord.importPath.startsWith("packages/agent-core/src/")
-        || importRecord.importPath.startsWith("@specra/agent-core/src/")
+        || importRecord.importPath.startsWith("@archcode/agent-core/src/")
       ) {
         violations.push({ file: relativeFile(file), importPath: importRecord.importPath });
       }
@@ -264,7 +264,7 @@ function findToolNameSourceViolations(): Violation[] {
   const source = readFileSync(file, "utf8");
   const violations: Violation[] = [];
 
-  if (!/from\s+["']@specra\/protocol["']/.test(source)) {
+  if (!/from\s+["']@archcode\/protocol["']/.test(source)) {
     violations.push({
       file: relativeFile(file),
       importPath: "source-pattern:tool names must re-export protocol constants",

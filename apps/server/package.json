@@ -1,12 +1,12 @@
 {
-  "name": "@specra/server",
+  "name": "@archcode/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./src/main.ts",
   "types": "./src/main.ts",
   "bin": {
-    "specra": "./src/main.ts"
+    "archcode": "./src/main.ts"
   },
   "scripts": {
     "dev": "cd ../.. && bun --hot apps/server/src/main.ts",
@@ -14,9 +14,9 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@specra/agent-core": "workspace:*",
-    "@specra/protocol": "workspace:*",
-    "@specra/utils": "workspace:*",
+    "@archcode/agent-core": "workspace:*",
+    "@archcode/protocol": "workspace:*",
+    "@archcode/utils": "workspace:*",
     "fuzzysort": "^3.1.0",
     "hono": "^4.12.19",
     "zod": "^4.4.2",

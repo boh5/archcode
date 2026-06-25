@@ -5,7 +5,7 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
-import { createFileExistsPermission, createProtectedSpecraPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
+import { createFileExistsPermission, createProtectedPathPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
 import { refreshReadSnapshot } from "../hooks";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionResult } from "../types";
@@ -27,7 +27,7 @@ export const fileWriteTool = defineTool({
     "Creates a new file at the specified path. Fails if the file already exists. Use file_edit to modify existing files.",
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
-  permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedSpecraPermission()],
+  permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedPathPermission()],
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths

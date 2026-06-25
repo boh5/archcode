@@ -9,7 +9,7 @@ import { attachShellEffects } from "./effects";
 import { parseShellRequest } from "./parse";
 import { deriveShellApprovalScope } from "./scopes";
 
-const workspaceRoot = join(tmpdir(), "specra-bash-scopes-tests");
+const workspaceRoot = join(tmpdir(), "archcode-bash-scopes-tests");
 
 function requestFor(command: string): NormalizedShellRequest {
   const parsed = parseShellRequest(command, { workspaceRoot });
@@ -104,10 +104,10 @@ describe("deriveShellApprovalScope", () => {
       normalized: "ssh host uptime",
       effects: ["network"],
     });
-    expect(scopeFor("rm -rf .specra/cache")).toEqual({
+    expect(scopeFor("rm -rf .archcode/cache")).toEqual({
       kind: "bash-exact",
-      normalized: "rm -rf .specra/cache",
-      effects: ["protected-specra", "delete"],
+      normalized: "rm -rf .archcode/cache",
+      effects: ["protected-path", "delete"],
     });
     expect(scopeFor("echo $(whoami)")).toEqual({
       kind: "bash-exact",

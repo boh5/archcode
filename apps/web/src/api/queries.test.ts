@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { SessionSummary, SessionTreeResponse, WorkflowState } from "@specra/protocol";
+import type { SessionSummary, SessionTreeResponse, WorkflowState } from "@archcode/protocol";
 import { focusedSessionQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions, workflowQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
@@ -38,12 +38,12 @@ describe("web session query contracts", () => {
       lastUpdatedAt: 1_700,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/specra/sessions");
+      expect(String(input)).toBe("/api/projects/archcode/sessions");
       return jsonResponse({ sessions: [rootSession, childSession] });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (sessionsQueryOptions("specra") as unknown as QueryOptionWithFn<unknown[]>).queryFn();
+    const result = await (sessionsQueryOptions("archcode") as unknown as QueryOptionWithFn<unknown[]>).queryFn();
 
     expect(result).toEqual([
       {
@@ -81,12 +81,12 @@ describe("web session query contracts", () => {
       lastUpdatedAt: 2_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/specra/sessions/child-session");
+      expect(String(input)).toBe("/api/projects/archcode/sessions/child-session");
       return jsonResponse(serverResponse);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (focusedSessionQueryOptions("specra", "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
+    const result = await (focusedSessionQueryOptions("archcode", "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
 
     expect(result).toMatchObject({
       id: "child-session",
@@ -101,7 +101,7 @@ describe("web session query contracts", () => {
   });
 
   test("focusedSessionQueryOptions is disabled when focusSessionId is null", () => {
-    const opts = focusedSessionQueryOptions("specra", null);
+    const opts = focusedSessionQueryOptions("archcode", null);
     expect(opts.enabled).toBe(false);
   });
 
@@ -126,12 +126,12 @@ describe("web session query contracts", () => {
       diagnostics: [],
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/specra/sessions/root-session/tree");
+      expect(String(input)).toBe("/api/projects/archcode/sessions/root-session/tree");
       return jsonResponse(tree);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (sessionTreeQueryOptions("specra", "root-session") as unknown as QueryOptionWithFn<SessionTreeResponse>).queryFn();
+    const result = await (sessionTreeQueryOptions("archcode", "root-session") as unknown as QueryOptionWithFn<SessionTreeResponse>).queryFn();
 
     expect(result.root.children[0].session).toMatchObject({
       sessionId: "child-session",
@@ -152,23 +152,23 @@ describe("web session query contracts", () => {
       sessionIds: { orchestrator: "session-1" },
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/specra/workflows/workflow-123");
+      expect(String(input)).toBe("/api/projects/archcode/workflows/workflow-123");
       return jsonResponse({ workflow });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = workflowQueryOptions("specra", "workflow-123");
+    const opts = workflowQueryOptions("archcode", "workflow-123");
     const result = await (opts as unknown as QueryOptionWithFn<WorkflowState>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "specra", "workflows", "workflow-123"]);
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "workflows", "workflow-123"]);
     expect(result).toEqual(workflow);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("queryKeys.workflow is keyed by workflowId", () => {
-    expect(queryKeys.workflow("specra", "workflow-abc")).toEqual([
+    expect(queryKeys.workflow("archcode", "workflow-abc")).toEqual([
       "projects",
-      "specra",
+      "archcode",
       "workflows",
       "workflow-abc",
     ]);

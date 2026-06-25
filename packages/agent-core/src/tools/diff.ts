@@ -5,7 +5,7 @@ import type {
   DiffLine,
   ToolDiffMetadata,
   ToolDiffUnsupportedReason,
-} from "@specra/protocol";
+} from "@archcode/protocol";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 

@@ -1,21 +1,21 @@
 # Web UI Architecture
 
-Specra runs as a headless server with a browser-based Web UI. The system is organized into five layers that keep startup, runtime orchestration, HTTP/SSE transport, and frontend state management separated while sharing the same project-scoped session model.
+ArchCode runs as a headless server with a browser-based Web UI. The system is organized into five layers that keep startup, runtime orchestration, HTTP/SSE transport, and frontend state management separated while sharing the same project-scoped session model.
 
 ## 1. CLI Layer (`src/main.ts`)
 
-The CLI layer is the headless entry point. It creates the `SpecraRuntime`, loads configuration, registers providers, tools, and MCP servers, then boots the Hono server. There is no terminal UI in this layer; all user interaction flows through the server and Web UI.
+The CLI layer is the headless entry point. It creates the `AgentRuntime`, loads configuration, registers providers, tools, and MCP servers, then boots the Hono server. There is no terminal UI in this layer; all user interaction flows through the server and Web UI.
 
 Responsibilities:
 
-- Load and validate `.specra.json`.
+- Load and validate `.archcode.json`.
 - Initialize provider and model configuration.
 - Register builtin tools, memory tools, LSP tools, and MCP tools.
 - Create project services and call `bootServer()`.
 
 ## 2. Runtime Layer (`src/core/`, `src/agents/`, `src/tools/`, `src/store/`)
 
-The runtime layer owns agent orchestration, tool execution, and session state. `SpecraRuntime` wires shared services, creates project-scoped orchestrator agents, and exposes the execution primitives used by the server routes.
+The runtime layer owns agent orchestration, tool execution, and session state. `AgentRuntime` wires shared services, creates project-scoped orchestrator agents, and exposes the execution primitives used by the server routes.
 
 Responsibilities:
 
@@ -65,14 +65,14 @@ Responsibilities:
 ## Data Flow
 
 ```text
-.specra.json → config → providers → tools → MCP → bootServer() → Hono → project-scoped Agent → query loop → store → SSE → Web UI
+.archcode.json → config → providers → tools → MCP → bootServer() → Hono → project-scoped Agent → query loop → store → SSE → Web UI
 ```
 
 ## Key Design Decisions
 
 ### Single server, multi-project model
 
-Specra runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context and root orchestrator agent.
+ArchCode runs one server process that can manage multiple registered workspace roots. The project registry stores known projects, derives stable slugs, and routes API calls through project-scoped contexts. Each workspace gets its own runtime context and root orchestrator agent.
 
 ### SSE replay with `Last-Event-ID`
 

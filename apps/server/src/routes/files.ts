@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { createProcessRunner, type SpecraRuntime } from "@specra/agent-core";
+import { createProcessRunner, type AgentRuntime } from "@archcode/agent-core";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
@@ -30,7 +30,7 @@ export interface DiffFile {
 const HUNK_HEADER_PATTERN = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 const processRunner = createProcessRunner();
 
-export function createFilesRoutes(runtime: SpecraRuntime): Hono {
+export function createFilesRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.get("/:slug/diff", async (c) => {

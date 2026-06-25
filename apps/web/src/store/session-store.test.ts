@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { GlobalSessionEventEnvelope, SessionEventPayload } from "@specra/protocol";
+import type { GlobalSessionEventEnvelope, SessionEventPayload } from "@archcode/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import {
   createWebSessionStore,

@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai";
-import { normalizeUsage, type NormalizedUsage } from "@specra/protocol";
+import { normalizeUsage, type NormalizedUsage } from "@archcode/protocol";
 
 export const TOKEN_CHARS_RATIO = 4;
 export const COMPACT_THRESHOLD = 0.75;

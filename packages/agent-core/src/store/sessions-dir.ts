@@ -4,7 +4,7 @@ let _override: ((workspaceRoot: string) => string) | undefined;
 
 export function getSessionsDir(workspaceRoot: string): string {
   if (_override) return _override(workspaceRoot);
-  return join(workspaceRoot, ".specra", "sessions");
+  return join(workspaceRoot, ".archcode", "sessions");
 }
 
 /**
@@ -56,7 +56,7 @@ function assertPathContained(target: string, parent: string): void {
 
 /**
  * Returns the file path for a root session JSON file.
- * Pattern: `.specra/sessions/{sessionId}.json`
+ * Pattern: `.archcode/sessions/{sessionId}.json`
  */
 export function getRootSessionPath(workspaceRoot: string, sessionId: string): string {
   assertSafeSessionId(sessionId);
@@ -68,7 +68,7 @@ export function getRootSessionPath(workspaceRoot: string, sessionId: string): st
 
 /**
  * Returns the directory path for a root session's descendant tree.
- * Pattern: `.specra/sessions/{rootSessionId}`
+ * Pattern: `.archcode/sessions/{rootSessionId}`
  */
 export function getRootSessionDir(workspaceRoot: string, rootSessionId: string): string {
   assertSafeSessionId(rootSessionId);
@@ -80,7 +80,7 @@ export function getRootSessionDir(workspaceRoot: string, rootSessionId: string):
 
 /**
  * Returns the file path for a child session JSON file nested under its root.
- * Pattern: `.specra/sessions/{rootSessionId}/{sessionId}.json`
+ * Pattern: `.archcode/sessions/{rootSessionId}/{sessionId}.json`
  */
 export function getChildSessionPath(
   workspaceRoot: string,

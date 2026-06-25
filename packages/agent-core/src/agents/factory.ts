@@ -1,10 +1,10 @@
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
-import type { SpecraConfig } from "../config/schema";
+import type { ArchCodeConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
-import type { SessionModelInfo } from "@specra/protocol";
+import type { SessionModelInfo } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
@@ -33,7 +33,7 @@ export interface AgentFactoryConfig {
   readonly skillService: SkillService;
   readonly storeManager: SessionStoreManager;
   readonly workspaceRoot: string;
-  readonly config?: SpecraConfig;
+  readonly config?: ArchCodeConfig;
   readonly backgroundTaskManager?: BackgroundTaskManager;
   readonly projectContextResolver?: ProjectContextResolver;
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
@@ -171,7 +171,7 @@ function createConfiguredAgent(
     throw new NoModelsConfiguredError();
   }
 
-  const resolvedConfig = config.config ?? ({ provider: {} } as SpecraConfig);
+  const resolvedConfig = config.config ?? ({ provider: {} } as ArchCodeConfig);
   const { modelInfo, options: modelOptions } = resolveAgentModel(definition.name, resolvedConfig, config.providerRegistry);
 
   store.setState({ modelInfo: toSessionModelInfo(modelInfo) });

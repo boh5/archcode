@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { formatIsoTime } from "@specra/utils";
+import { formatIsoTime } from "@archcode/utils";
 
 export function requestLogger(): MiddlewareHandler {
   return async (c, next) => {

@@ -1,10 +1,10 @@
-import type { ModelCallOptions, SpecraConfig } from "../config/index";
+import type { ModelCallOptions, ArchCodeConfig } from "../config/index";
 import type { ModelInfo, Registry as ProviderRegistry } from "../provider/index";
 import { MissingAgentModelConfigError, UnknownModelVariantError } from "./errors";
 
 export function resolveAgentModel(
   agentName: string,
-  config: SpecraConfig,
+  config: ArchCodeConfig,
   providerRegistry: ProviderRegistry,
 ): { modelInfo: ModelInfo; options: ModelCallOptions | undefined } {
   const agentConfig = config.agents?.[agentName];

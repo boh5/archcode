@@ -70,9 +70,9 @@ const ContextMenuItem = "ContextMenuItem";
 const ContextMenuSeparator = "ContextMenuSeparator";
 
 const project: Project = {
-  slug: "specra",
-  name: "Specra",
-  workspaceRoot: "/workspace/specra",
+  slug: "archcode",
+  name: "ArchCode",
+  workspaceRoot: "/workspace/archcode",
 };
 const onEdit = mock((_project: Project) => {});
 const onClose = mock((_project: Project) => {});

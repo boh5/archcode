@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ToolConfirmationResult } from "@specra/agent-core";
+import type { ToolConfirmationResult } from "@archcode/agent-core";
 import { BadRequestError } from "../errors";
 import type { PermissionService } from "../permission-service";
 

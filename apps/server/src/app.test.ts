@@ -1,10 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { GlobalSSEEvent } from "@specra/protocol";
+import type { AgentRuntime } from "@archcode/agent-core";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 import { createServerApp, createServerEventRuntime } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
-const mockRuntime = {} as SpecraRuntime;
+const mockRuntime = {} as AgentRuntime;
 
 describe("createServerApp", () => {
   test("returns the health endpoint response", async () => {
@@ -102,7 +102,7 @@ function createRuntimeWithManualSubscriptions() {
     resolveExecution: () => resolveExecution(),
   };
 
-  return runtime as unknown as SpecraRuntime & {
+  return runtime as unknown as AgentRuntime & {
     emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
     subscribedSessionIds: () => string[];
     resolveExecution: () => void;

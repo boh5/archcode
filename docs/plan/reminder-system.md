@@ -35,7 +35,7 @@
 
 **理由**：两种投递方式解决不同的问题。TODO 续跑需要保证 LLM 一定能看到，不能依赖 LLM 记得调某个工具。子代理完成的结果是 LLM 主动发起的异步操作，LLM 知道自己在等，显式消费更可控。
 
-**不需要优先级**：Specra 的消费端是显式工具调用，不存在 Claude Code 那种"用户输入和任务通知争抢同一队列"的问题。FIFO 足够。
+**不需要优先级**：ArchCode 的消费端是显式工具调用，不存在 Claude Code 那种"用户输入和任务通知争抢同一队列"的问题。FIFO 足够。
 
 ### 投递方式由来源决定
 
@@ -89,7 +89,7 @@
 
 **选择**：`wait_for_reminder` 的 `condition` 参数让 LLM 决定等待策略——`"all"`、`"any"`、或 `{ count: N }`。
 
-**不在系统层批处理**：OMO 等所有后台任务完成后发一条 "ALL BACKGROUND TASKS COMPLETE"。但 Specra 的 LLM 可以自己决定要不要等全部——可能先收集一部分结果就够用了。
+**不在系统层批处理**：OMO 等所有后台任务完成后发一条 "ALL BACKGROUND TASKS COMPLETE"。但 ArchCode 的 LLM 可以自己决定要不要等全部——可能先收集一部分结果就够用了。
 
 ## 数据流
 
@@ -179,7 +179,7 @@ TODO 续跑有**两个互补的触发时机**，覆盖不同场景：
 
 **理由**：
 
-- OMO 用 `session.idle` 事件触发（会话空闲 → 2s 倒计时 → 注入），Specra 没有 `session.idle` 事件，用「轮次级 hash 不变」作为「停滞」的替代指标
+- OMO 用 `session.idle` 事件触发（会话空闲 → 2s 倒计时 → 注入），ArchCode 没有 `session.idle` 事件，用「轮次级 hash 不变」作为「停滞」的替代指标
 - 3 轮无进展是 OMO 经 bug #2216 验证过的阈值——太少会误触，太多则 LLM 已经浪费了太多 step
 - hash 不变意味着 LLM 走了 3 轮但没更新任何 TODO 状态，说明它在无关工作上打转
 - 按轮次计数而非工具调用计数，因为一个 LLM 轮次内的多个工具调用是同一个决策的一部分

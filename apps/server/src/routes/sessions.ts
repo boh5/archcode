@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "@specra/agent-core";
-import type { SpecraRuntime } from "@specra/agent-core";
+import { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "@archcode/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { BadRequestError, ConflictError, SessionNotFoundError } from "../errors";
 import { resolveProject } from "../resolve";
 
-export function createSessionsRoutes(runtime: SpecraRuntime): Hono {
+export function createSessionsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.get("/", async (c) => {

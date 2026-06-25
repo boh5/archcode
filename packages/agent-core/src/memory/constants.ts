@@ -40,7 +40,7 @@ export const DEFAULT_MAX_MANIFEST_CHARS = 2000;
 
 export const MANIFEST_PREFERENCES_SNIPPET_LENGTH = 200;
 
-export const MEMORY_CONTEXT_START = "<specra-memory-context>";
-export const MEMORY_CONTEXT_END = "</specra-memory-context>";
-export const PREFERENCES_MARKER_START = "<specra-memory-preferences>";
-export const PREFERENCES_MARKER_END = "</specra-memory-preferences>";
+export const MEMORY_CONTEXT_START = "<archcode-memory-context>";
+export const MEMORY_CONTEXT_END = "</archcode-memory-context>";
+export const PREFERENCES_MARKER_START = "<archcode-memory-preferences>";
+export const PREFERENCES_MARKER_END = "</archcode-memory-preferences>";

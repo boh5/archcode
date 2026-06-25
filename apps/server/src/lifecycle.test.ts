@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { SpecraRuntime } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import { globalEventBus } from "./events/global-event-bus";
 import { setupGracefulShutdown, type ShutdownSignal, type SignalProcess } from "./lifecycle";
 
@@ -30,11 +30,11 @@ function createProcess() {
   return { handlers, processRef };
 }
 
-function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): SpecraRuntime {
+function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): AgentRuntime {
   return {
     abortAllSessionExecutions,
     notifyRuntimeShutdown: mock(() => undefined),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 describe("server lifecycle", () => {

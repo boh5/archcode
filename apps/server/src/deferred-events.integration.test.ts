@@ -2,16 +2,16 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { McpDiscoveryResult, McpManager, SpecraRuntime } from "@specra/agent-core";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, SessionEventPayload } from "@specra/protocol";
-import { createSpecraRuntime } from "@specra/agent-core";
+import type { McpDiscoveryResult, McpManager, AgentRuntime } from "@archcode/agent-core";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, SessionEventPayload } from "@archcode/protocol";
+import { createRuntime } from "@archcode/agent-core";
 import { createServerApp } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
 const roots: string[] = [];
 
 interface Fixture {
-  runtime: SpecraRuntime;
+  runtime: AgentRuntime;
   app: ReturnType<typeof createServerApp>["app"];
   workspaceRoot: string;
   sessionId: string;
@@ -254,13 +254,13 @@ describe("deferred events integration", () => {
 });
 
 async function createFixture(): Promise<Fixture> {
-  const root = await mkdtemp(join(tmpdir(), "specra-deferred-events-"));
+  const root = await mkdtemp(join(tmpdir(), "archcode-deferred-events-"));
   roots.push(root);
   const workspaceRoot = join(root, "workspace");
   await mkdir(workspaceRoot, { recursive: true });
 
   const configPath = await writeConfig(root);
-  const runtime = await createSpecraRuntime({
+  const runtime = await createRuntime({
     configPath,
     workspaceRoot,
     mcpManagerFactory: () => ({
@@ -286,7 +286,7 @@ async function createFixture(): Promise<Fixture> {
 }
 
 async function writeConfig(root: string): Promise<string> {
-  const configPath = join(root, ".specra.json");
+  const configPath = join(root, ".archcode.json");
   await Bun.write(configPath, JSON.stringify({
     provider: {
       local: {

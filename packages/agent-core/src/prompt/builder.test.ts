@@ -21,7 +21,7 @@ function makeCtx(overrides?: Partial<PromptContext>): PromptContext {
 describe("buildSystemPrompt", () => {
   test("includes identity section", async () => {
     const result = await buildSystemPrompt(makeCtx());
-    expect(result).toContain("Specra");
+    expect(result).toContain("ArchCode");
     expect(result).toContain("default");
   });
 
@@ -227,7 +227,7 @@ describe("buildSystemPrompt", () => {
       agentsMd: "AGENTSCONTENT",
       availableSkills: [{ name: "git-master", description: "Git expertise", when_to_use: "Use for git ops.", source: "builtin" }],
     }));
-    const identityIdx = result.indexOf("Specra");
+    const identityIdx = result.indexOf("ArchCode");
     const roleIdx = result.indexOf("## Workflow Role: Builder");
     const guidelinesIdx = result.indexOf("## Guidelines");
     const skillsIdx = result.indexOf("## Skills");

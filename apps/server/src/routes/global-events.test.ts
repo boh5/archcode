@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { GlobalSSEEvent } from "@specra/protocol";
+import type { AgentRuntime } from "@archcode/agent-core";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 import { Hono } from "hono";
 import { createServerApp } from "../app";
 import { errorHandler } from "../error-handler";
@@ -73,7 +73,7 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
 
 describe("global events route", () => {
   test("inherits /api auth middleware when mounted in the server app", async () => {
-    const { app } = createServerApp({} as SpecraRuntime, { dev: true, password: "secret" });
+    const { app } = createServerApp({} as AgentRuntime, { dev: true, password: "secret" });
 
     const unauthorized = await app.request("/api/events");
     expect(unauthorized.status).toBe(401);
@@ -165,7 +165,7 @@ describe("global events route", () => {
   });
 
   test("server app uses the shared global event bus singleton", async () => {
-    const { app } = createServerApp({} as SpecraRuntime, { dev: true });
+    const { app } = createServerApp({} as AgentRuntime, { dev: true });
     const response = await app.request("/api/events");
 
     globalEventBus.emit(sessionEvent({ slug: "shared", sessionId: "singleton", eventId: 1, message: "from-singleton" }));
@@ -175,7 +175,7 @@ describe("global events route", () => {
   });
 
   test("server app no longer registers the old per-session SSE endpoint", async () => {
-    const { app } = createServerApp({} as SpecraRuntime, { dev: true });
+    const { app } = createServerApp({} as AgentRuntime, { dev: true });
 
     const response = await app.request("/api/projects/project/sessions/session/events");
 

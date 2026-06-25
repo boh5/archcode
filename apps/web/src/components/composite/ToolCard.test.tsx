@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { DiffFile, PendingToolPart, RunningToolPart, CompletedToolPart, ErrorToolPart } from "@specra/protocol";
+import type { DiffFile, PendingToolPart, RunningToolPart, CompletedToolPart, ErrorToolPart } from "@archcode/protocol";
 
 // ─── Test helpers ───
 

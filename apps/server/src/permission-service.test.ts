@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { SpecraRuntime, ToolConfirmationRequest } from "@specra/agent-core";
+import type { AgentRuntime, ToolConfirmationRequest } from "@archcode/agent-core";
 import { PermissionService } from "./permission-service";
 
 const request: ToolConfirmationRequest = {
@@ -14,7 +14,7 @@ function createRuntime() {
     requestPermission: mock(async () => "approve_once" as const),
     respondPermission: mock(() => true),
     cleanupDeferredSession: mock(() => undefined),
-  } as unknown as SpecraRuntime;
+  } as unknown as AgentRuntime;
 }
 
 describe("PermissionService", () => {

@@ -1,5 +1,5 @@
-export { closeMcpManagerBestEffort, createSpecraRuntime } from "./runtime";
-export type { SpecraRuntime, SpecraRuntimeOptions } from "./runtime";
+export { closeMcpManagerBestEffort, createRuntime } from "./runtime";
+export type { AgentRuntime, AgentRuntimeOptions } from "./runtime";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { ToolChildSessionLinkStatus, RecoveryNoticePart, TextPart, ReasoningPart, ErrorToolPart } from "@specra/protocol";
+import type { ToolChildSessionLinkStatus, RecoveryNoticePart, TextPart, ReasoningPart, ErrorToolPart } from "@archcode/protocol";
 import { parseToolInput, parseToolOutput, mapLinkStatusToBadge, PartRenderer } from "./ChatMessages";
 
 const Fragment = Symbol.for("react.fragment");

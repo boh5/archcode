@@ -65,7 +65,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   }
 
   if (request.method === "GET" && url.pathname === "/v1/models") {
-    sendJson(response, { object: "list", data: [{ id: "mock-model", object: "model", owned_by: "specra-mock" }] });
+    sendJson(response, { object: "list", data: [{ id: "mock-model", object: "model", owned_by: "archcode-mock" }] });
     return;
   }
 

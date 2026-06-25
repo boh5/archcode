@@ -56,7 +56,7 @@ export interface McpClientFactories {
 export function createDefaultMcpClientFactories(): McpClientFactories {
   return {
     createClient(): McpSdkClientLike {
-      return new Client({ name: "specra", version: "0.1.0" }) as McpSdkClientLike;
+      return new Client({ name: "archcode", version: "0.1.0" }) as McpSdkClientLike;
     },
     createTransport(
       url: URL,

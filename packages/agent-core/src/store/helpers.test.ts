@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
-import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@specra/protocol";
+import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
 import type { CompactionPart, PendingInteraction, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");

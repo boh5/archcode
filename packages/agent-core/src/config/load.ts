@@ -1,7 +1,7 @@
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
-import type { SpecraConfig } from "./schema";
-import { specraConfigSchema } from "./schema";
+import type { ArchCodeConfig } from "./schema";
+import { archcodeConfigSchema } from "./schema";
 
 export class ConfigLoadError extends Error {
   constructor(
@@ -37,16 +37,16 @@ export class ConfigValidationError extends Error {
 }
 
 /**
- * Parse and validate a raw JSON value as a Specra config.
+ * Parse and validate a raw JSON value as a ArchCode config.
  * Use when the JSON has already been parsed (e.g. from an import or in-memory).
  */
 export function parseConfig(
   value: unknown,
   filePath?: string,
   options?: { logger?: Logger },
-): SpecraConfig {
+): ArchCodeConfig {
   const logger = options?.logger ?? silentLogger;
-  const result = specraConfigSchema.safeParse(value);
+  const result = archcodeConfigSchema.safeParse(value);
 
   if (result.success) {
     return result.data;
@@ -69,7 +69,7 @@ export function parseConfig(
   );
 }
 
-export async function loadConfig(filePath: string, options?: { logger?: Logger }): Promise<SpecraConfig> {
+export async function loadConfig(filePath: string, options?: { logger?: Logger }): Promise<ArchCodeConfig> {
   const logger = options?.logger ?? silentLogger;
   let raw: string;
 

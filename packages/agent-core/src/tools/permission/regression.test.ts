@@ -18,7 +18,7 @@ import type {
   ToolPermission,
 } from "../types";
 import { createBashPermission } from "./bash";
-import { createProtectedSpecraPermission } from "./protected-specra";
+import { createProtectedPathPermission } from "./protected-path";
 import { ProjectApprovalManager } from "./project-approvals";
 import type { PermissionApprovalScope } from "./policy-types";
 import { createTestProjectContext } from "../test-project-context";
@@ -78,10 +78,10 @@ const DENY_DECISION: PermissionDecision = {
 function resetWorkspace(): void {
   rmSync(TMP_DIR, { recursive: true, force: true });
   mkdirSync(join(WORKSPACE, "src"), { recursive: true });
-  mkdirSync(join(WORKSPACE, ".specra", "memory"), { recursive: true });
+  mkdirSync(join(WORKSPACE, ".archcode", "memory"), { recursive: true });
   mkdirSync(OUTSIDE, { recursive: true });
   writeFileSync(join(WORKSPACE, "src", "main.ts"), "export const value = 1;\n");
-  writeFileSync(join(WORKSPACE, ".specra", "permissions.json"), "{}\n");
+  writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), "{}\n");
   writeFileSync(join(OUTSIDE, "outside.txt"), "outside\n");
 }
 
@@ -129,13 +129,13 @@ function bashTool(): ToolDescriptor<{ command: string; cwd?: string }> {
   });
 }
 
-function specraProtectedTool(): ToolDescriptor<{ path: string; content?: string }> {
+function archcodeProtectedTool(): ToolDescriptor<{ path: string; content?: string }> {
   return defineTool({
     name: "regression_tool",
-    description: "Protected .specra mutation regression probe",
+    description: "Protected .archcode mutation regression probe",
     inputSchema: z.object({ path: z.string(), content: z.string().optional() }).strict(),
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
-    permissions: [createProtectedSpecraPermission()],
+    permissions: [createProtectedPathPermission()],
     execute: async () => "executed",
   });
 }
@@ -261,7 +261,7 @@ describe("permission integration regressions", () => {
   });
 
   test("malformed approvals file is safe and does not satisfy eligible Ask", async () => {
-    writeFileSync(join(WORKSPACE, ".specra", "permissions.json"), "{ malformed json");
+    writeFileSync(join(WORKSPACE, ".archcode", "permissions.json"), "{ malformed json");
     const warn = mock();
     const manager = new ProjectApprovalManager(makeLogger({ warn }));
     const confirmPermission = mock(async () => "approve_once" as ToolConfirmationResult);
@@ -279,38 +279,38 @@ describe("permission integration regressions", () => {
     expect(manager.listApprovals()).toEqual([]);
   });
 
-  test(".specra direct mutation is denied through registry file-tool style guard", async () => {
+  test(".archcode direct mutation is denied through registry file-tool style guard", async () => {
     const { result, confirmPermission } = await executeWithConfirmation(
-      specraProtectedTool(),
-      { path: ".specra/memory/index.md", content: "# hacked" },
+      archcodeProtectedTool(),
+      { path: ".archcode/memory/index.md", content: "# hacked" },
       "approve_always",
     );
 
     expect(result.isError).toBe(true);
-    expect(result.meta?.permissionErrorCode).toBe("SPECRA_PROTECTED_PATH_WRITE_DENIED");
+    expect(result.meta?.permissionErrorCode).toBe("PROTECTED_PATH_WRITE_DENIED");
     expect(result.meta?.[TOOL_ERROR_META_KEY]).toBeDefined();
     expect(confirmPermission).not.toHaveBeenCalled();
   });
 });
 
 describe("bash permission bypass regressions", () => {
-  test(".specra direct mutation and explicit permissions file reads are denied", async () => {
+  test(".archcode direct mutation and explicit permissions file reads are denied", async () => {
     for (const command of [
-      "rm -rf .specra/",
-      "mkdir .specra/tmp",
-      "echo hacked > .specra/memory/index.md",
-      "cat .specra/permissions.json",
-      "cat ./.specra/permissions.json",
+      "rm -rf .archcode/",
+      "mkdir .archcode/tmp",
+      "echo hacked > .archcode/memory/index.md",
+      "cat .archcode/permissions.json",
+      "cat ./.archcode/permissions.json",
     ]) {
       const decision = classify(command);
       expect(decision.outcome, command).toBe("deny");
     }
   });
 
-  test("bash registry integration denies explicit .specra/permissions.json mention including read", async () => {
+  test("bash registry integration denies explicit .archcode/permissions.json mention including read", async () => {
     const { result, confirmPermission } = await executeWithConfirmation(
       bashTool(),
-      { command: "cat .specra/permissions.json" },
+      { command: "cat .archcode/permissions.json" },
       "approve_always",
     );
 

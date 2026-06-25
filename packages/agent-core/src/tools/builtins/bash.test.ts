@@ -134,7 +134,7 @@ describe("bashTool", () => {
     });
 
     expect(env).toEqual({
-      SPECRA_CLI: "1",
+      ARCHCODE_CLI: "1",
       PATH: "/bin",
       HOME: "/home/test",
       SHELL: "/bin/bash",

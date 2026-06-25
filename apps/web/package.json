@@ -1,5 +1,5 @@
 {
-  "name": "@specra/web",
+  "name": "@archcode/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
-    "@specra/protocol": "workspace:*",
+    "@archcode/protocol": "workspace:*",
     "@streamdown/code": "^1.1.1",
     "@tanstack/react-query": "^5.100.10",
     "eventsource-parser": "^3.0.8",

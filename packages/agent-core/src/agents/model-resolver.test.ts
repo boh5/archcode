@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { SpecraConfig } from "../config/index";
+import type { ArchCodeConfig } from "../config/index";
 import { ModelInfo, UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
 import { MissingAgentModelConfigError, UnknownModelVariantError } from "./errors";
 import { resolveAgentModel } from "./model-resolver";
 
-const baseConfig: SpecraConfig = {
+const baseConfig: ArchCodeConfig = {
   provider: {
     test: {
       npm: "@ai-sdk/openai-compatible",
@@ -44,7 +44,7 @@ const baseConfig: SpecraConfig = {
   },
 };
 
-function makeRegistry(config: SpecraConfig): ProviderRegistry {
+function makeRegistry(config: ArchCodeConfig): ProviderRegistry {
   const models = new Map<string, ModelInfo>();
 
   for (const [providerId, providerConfig] of Object.entries(config.provider)) {
@@ -73,7 +73,7 @@ function makeRegistry(config: SpecraConfig): ProviderRegistry {
   } as ProviderRegistry;
 }
 
-function configWithAgents(agents: NonNullable<SpecraConfig["agents"]>): SpecraConfig {
+function configWithAgents(agents: NonNullable<ArchCodeConfig["agents"]>): ArchCodeConfig {
   return { ...baseConfig, agents };
 }
 

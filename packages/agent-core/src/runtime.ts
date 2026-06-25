@@ -27,7 +27,7 @@ import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
-import type { SessionTreeResponse } from "@specra/protocol";
+import type { SessionTreeResponse } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
@@ -38,16 +38,16 @@ import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
 
-const DEFAULT_CONFIG_PATH = ".specra.json";
+const DEFAULT_CONFIG_PATH = ".archcode.json";
 
-export interface SpecraRuntimeOptions {
+export interface AgentRuntimeOptions {
   configPath?: string;
   workspaceRoot?: string;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
   logger?: Logger;
 }
 
-export interface SpecraRuntime {
+export interface AgentRuntime {
   readonly mcpManager: McpManager;
   readonly toolRegistry: ToolRegistry;
   readonly providerRegistry: ProviderRegistry;
@@ -84,9 +84,9 @@ export interface SpecraRuntime {
   notifyRuntimeShutdown(reason: string): void;
 }
 
-export async function createSpecraRuntime(
-  options: SpecraRuntimeOptions = {},
-): Promise<SpecraRuntime> {
+export async function createRuntime(
+  options: AgentRuntimeOptions = {},
+): Promise<AgentRuntime> {
   const logger = options.logger ?? createConsoleLogger({ level: "info" });
   const runtimeLogger = logger.child({ module: "runtime" });
   const warnings: McpWarning[] = [];
@@ -287,9 +287,9 @@ export async function createSpecraRuntime(
   }
 }
 
-async function resolveWorkspaceRoot(options: SpecraRuntimeOptions): Promise<string> {
+async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {
   if (options.workspaceRoot) return options.workspaceRoot;
-  if (Bun.env.SPECRA_WORKSPACE_ROOT) return Bun.env.SPECRA_WORKSPACE_ROOT;
+  if (Bun.env.ARCHCODE_WORKSPACE_ROOT) return Bun.env.ARCHCODE_WORKSPACE_ROOT;
 
   return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
 }

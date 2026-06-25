@@ -1,13 +1,13 @@
 {
-  "name": "specra",
+  "name": "archcode",
   "version": "0.1.0",
   "private": true,
-  "description": "A long-running coding CLI agent that coordinates a virtual software company of AI roles — PM, backend, frontend, QA, PR review — all orchestrated from your terminal.",
+  "description": "ArchCode — You architect. AI codes. A long-running coding agent with Hono server + React Web UI; two-tier agent architecture, structured tool execution, LSP integration, persistent memory, and context compaction.",
   "type": "module",
   "packageManager": "bun@1.3.13",
   "workspaces": ["apps/*", "packages/*"],
   "bin": {
-    "specra": "./apps/server/src/main.ts"
+    "archcode": "./apps/server/src/main.ts"
   },
   "scripts": {
     "web:build": "bun run --cwd apps/web build",
@@ -17,11 +17,11 @@
     "test": "turbo run test"
   },
   "dependencies": {
-    "@specra/agent-core": "workspace:*",
-    "@specra/protocol": "workspace:*",
-    "@specra/server": "workspace:*",
-    "@specra/utils": "workspace:*",
-    "@specra/web": "workspace:*"
+    "@archcode/agent-core": "workspace:*",
+    "@archcode/protocol": "workspace:*",
+    "@archcode/server": "workspace:*",
+    "@archcode/utils": "workspace:*",
+    "@archcode/web": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",

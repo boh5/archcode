@@ -94,11 +94,11 @@ function extractImports(filePath: string): ImportRecord[] {
 
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
   if (importPath.startsWith(".")) return normalize(relative(projectRoot, resolve(dirname(filePath), importPath)));
-  if (importPath.startsWith("@specra/protocol")) return "packages/protocol/src";
-  if (importPath.startsWith("@specra/utils")) return "packages/utils/src";
-  if (importPath.startsWith("@specra/agent-core")) return "packages/agent-core/src";
-  if (importPath.startsWith("@specra/server")) return "apps/server/src";
-  if (importPath.startsWith("@specra/web")) return "apps/web/src";
+  if (importPath.startsWith("@archcode/protocol")) return "packages/protocol/src";
+  if (importPath.startsWith("@archcode/utils")) return "packages/utils/src";
+  if (importPath.startsWith("@archcode/agent-core")) return "packages/agent-core/src";
+  if (importPath.startsWith("@archcode/server")) return "apps/server/src";
+  if (importPath.startsWith("@archcode/web")) return "apps/web/src";
   return undefined;
 }
 
@@ -226,7 +226,7 @@ const protocolForbiddenPatterns = [
   /^react(\/|$)/,
   /^react-dom(\/|$)/,
   /^apps\//,
-  /^@specra\/(agent-core|server|web|utils)(\/|$)/,
+  /^@archcode\/(agent-core|server|web|utils)(\/|$)/,
   /^packages\/(agent-core|server|web|utils)(\/|$)/,
   /^packages\/(agent-core|server|web|utils)\/src(\/|$)/,
 ];
@@ -236,23 +236,23 @@ const agentCoreForbiddenPatterns = [
   /^apps\//,
   /^react(\/|$)/,
   /^react-dom(\/|$)/,
-  /^@specra\/(server|web)(\/|$)/,
+  /^@archcode\/(server|web)(\/|$)/,
   /^packages\/(server|web)(\/|$)/,
   /^packages\/(server|web)\/src(\/|$)/,
 ];
 
 const serverForbiddenPatterns = [
-  /^@specra\/web(\/|$)/,
+  /^@archcode\/web(\/|$)/,
   /^react(\/|$)/,
   /^react-dom(\/|$)/,
   /^apps\/web(\/|$)/,
   /^packages\/[^/]+\/src(\/|$)/,
 ];
 
-const serverAllowedExceptions = [/^@specra\/(protocol|agent-core|utils)(\/|$)/, /^apps\/web\/dist(\/|$)/];
+const serverAllowedExceptions = [/^@archcode\/(protocol|agent-core|utils)(\/|$)/, /^apps\/web\/dist(\/|$)/];
 
 const webForbiddenPatterns = [
-  /^@specra\/(agent-core|server)(\/|$)/,
+  /^@archcode\/(agent-core|server)(\/|$)/,
   /^node:/,
   /^bun:/,
   /^apps\/server(\/|$)/,
@@ -265,7 +265,7 @@ const webForbiddenPatterns = [
 const serverInternalAgentCorePatterns = [
   /^\.\.\/\.\.\/\.\.\/packages\/agent-core\/src\//,
   /^packages\/agent-core\/src\//,
-  /^@specra\/agent-core\/src\//,
+  /^@archcode\/agent-core\/src\//,
 ];
 
 describe("monorepo package boundaries", () => {
@@ -303,19 +303,19 @@ describe("monorepo package boundaries", () => {
     test("agent-core package does not depend on server or web packages", () => {
       const dependencies = readPackageDependencies("packages/agent-core");
 
-      expect(dependencies).not.toHaveProperty("@specra/server");
-      expect(dependencies).not.toHaveProperty("@specra/web");
+      expect(dependencies).not.toHaveProperty("@archcode/server");
+      expect(dependencies).not.toHaveProperty("@archcode/web");
     });
 
     test("web app does not depend on agent-core or server packages", () => {
       const dependencies = readPackageDependencies("apps/web");
 
-      expect(dependencies).not.toHaveProperty("@specra/agent-core");
-      expect(dependencies).not.toHaveProperty("@specra/server");
+      expect(dependencies).not.toHaveProperty("@archcode/agent-core");
+      expect(dependencies).not.toHaveProperty("@archcode/server");
     });
 
     test("server app does not depend on web package", () => {
-      expect(readPackageDependencies("apps/server")).not.toHaveProperty("@specra/web");
+      expect(readPackageDependencies("apps/server")).not.toHaveProperty("@archcode/web");
     });
   });
 
@@ -347,7 +347,7 @@ describe("monorepo package boundaries", () => {
           /^zod(\/|$)/,
           /^node:(fs|path|os)(\/|$)/,
           /^bun:/,
-          /^@specra\/(agent-core|server|web)(\/|$)/,
+          /^@archcode\/(agent-core|server|web)(\/|$)/,
           /^apps\/(server|web)(\/|$)/,
           /^packages\/(agent-core|server|web)\/src(\/|$)/,
         ]),
@@ -405,7 +405,7 @@ describe("monorepo package boundaries", () => {
       expectNoViolations(findViolations("packages/agent-core/src", [
         /^\.\.\/\.\.\/\.\.\/apps\/(server|web)\//,
         /^apps\/(server|web)(\/|$)/,
-        /^@specra\/(server|web)(\/|$)/,
+        /^@archcode\/(server|web)(\/|$)/,
       ]));
     });
 
@@ -456,12 +456,12 @@ describe("monorepo package boundaries", () => {
     test("protocol and web stats defaults keep strict package boundaries", () => {
       const violations = [
         ...findViolations("packages/protocol/src", [
-          /^@specra\/(agent-core|server|web)(\/|$)/,
+          /^@archcode\/(agent-core|server|web)(\/|$)/,
           /^packages\/(agent-core|server|web)\/src(\/|$)/,
           /^apps\/(server|web)(\/|$)/,
         ]),
         ...findViolations("apps/web/src", [
-          /^@specra\/agent-core(\/|$)/,
+          /^@archcode\/agent-core(\/|$)/,
           /^packages\/agent-core\/src(\/|$)/,
         ]),
       ];

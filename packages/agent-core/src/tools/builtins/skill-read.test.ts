@@ -12,8 +12,8 @@ import { SkillReadInputSchema, skillReadTool } from "./skill-read";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "skill-read-tool");
 const projectRoot = join(tmpRoot, "project");
-const projectSkillsRoot = join(projectRoot, ".specra", "skills");
-const userSkillsRoot = join(tmpRoot, "user", ".specra", "skills");
+const projectSkillsRoot = join(projectRoot, ".archcode", "skills");
+const userSkillsRoot = join(tmpRoot, "user", ".archcode", "skills");
 
 function makeContext(agentSkills: readonly string[]): ToolExecutionContext {
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "skill_read",

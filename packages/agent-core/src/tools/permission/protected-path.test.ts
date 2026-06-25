@@ -3,14 +3,14 @@ import { storeManager } from "../../store/store";
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolExecutionContext } from "../types";
-import { createProtectedSpecraPermission } from "./protected-specra";
+import { createProtectedPathPermission } from "./protected-path";
 import { createTestProjectContext } from "../test-project-context";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-specra-permission");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "protected-path-permission");
 const WORKSPACE = join(TMP_DIR, "workspace");
 const SYMLINK_DIR = join(TMP_DIR, "symlinks");
 
-const permission = createProtectedSpecraPermission();
+const permission = createProtectedPathPermission();
 
 function makeCtx(
   overrides: Partial<ToolExecutionContext> = {},
@@ -29,28 +29,28 @@ function makeCtx(
 }
 
 beforeAll(() => {
-  // Create workspace with various .specra sub-paths
-  mkdirSync(join(WORKSPACE, ".specra", "memory", "knowledge"), {
+  // Create workspace with various .archcode sub-paths
+  mkdirSync(join(WORKSPACE, ".archcode", "memory", "knowledge"), {
     recursive: true,
   });
-  mkdirSync(join(WORKSPACE, ".specra", "sessions"), {
+  mkdirSync(join(WORKSPACE, ".archcode", "sessions"), {
     recursive: true,
   });
   writeFileSync(
-    join(WORKSPACE, ".specra", "memory", "index.md"),
+    join(WORKSPACE, ".archcode", "memory", "index.md"),
     "# Memory Index\n\n- [Test](test.md) — A test entry\n",
   );
 
   // Create a symlink directory for symlink traversal tests
   mkdirSync(SYMLINK_DIR, { recursive: true });
   symlinkSync(
-    join(WORKSPACE, ".specra", "memory", "index.md"),
+    join(WORKSPACE, ".archcode", "memory", "index.md"),
     join(SYMLINK_DIR, "link-to-index.md"),
   );
-  // Symlink to .specra dir itself
+  // Symlink to .archcode dir itself
   symlinkSync(
-    join(WORKSPACE, ".specra"),
-    join(SYMLINK_DIR, "link-to-specra"),
+    join(WORKSPACE, ".archcode"),
+    join(SYMLINK_DIR, "link-to-archcode"),
   );
 });
 
@@ -58,108 +58,108 @@ afterAll(() => {
   rmSync(TMP_DIR, { recursive: true, force: true });
 });
 
-describe("createProtectedSpecraPermission", () => {
-  // ─── Deny: .specra/ paths ───
+describe("createProtectedPathPermission", () => {
+  // ─── Deny: .archcode/ paths ───
 
-  test("denies file_write to .specra/permissions.json", async () => {
+  test("denies file_write to .archcode/permissions.json", async () => {
     const decision = await permission(
-      { path: ".specra/permissions.json", content: "{}" },
+      { path: ".archcode/permissions.json", content: "{}" },
       makeCtx(),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
       errorKind: "permission-denied",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies file_edit to .specra/memory/index.md", async () => {
+  test("denies file_edit to .archcode/memory/index.md", async () => {
     const decision = await permission(
-      { path: ".specra/memory/index.md", edits: [{ oldString: "foo", newString: "bar" }] },
+      { path: ".archcode/memory/index.md", edits: [{ oldString: "foo", newString: "bar" }] },
       makeCtx({ toolName: "file_edit" }),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
       errorKind: "permission-denied",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies file_write to .specra/memory/knowledge/topic.md", async () => {
+  test("denies file_write to .archcode/memory/knowledge/topic.md", async () => {
     const decision = await permission(
-      { path: ".specra/memory/knowledge/topic.md", content: "# topic" },
+      { path: ".archcode/memory/knowledge/topic.md", content: "# topic" },
       makeCtx(),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
       errorKind: "permission-denied",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies file_write to .specra/sessions/abc.json", async () => {
+  test("denies file_write to .archcode/sessions/abc.json", async () => {
     const decision = await permission(
-      { path: ".specra/sessions/abc.json", content: "{}" },
+      { path: ".archcode/sessions/abc.json", content: "{}" },
       makeCtx(),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
       errorKind: "permission-denied",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
   // ─── Deny: traversal & symlink attacks ───
 
-  test("denies path traversal into .specra/", async () => {
+  test("denies path traversal into .archcode/", async () => {
     const decision = await permission(
-      { path: "src/../.specra/permissions.json" },
+      { path: "src/../.archcode/permissions.json" },
       makeCtx(),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies write via absolute path to .specra/", async () => {
+  test("denies write via absolute path to .archcode/", async () => {
     const decision = await permission(
-      { path: join(WORKSPACE, ".specra", "memory", "index.md") },
+      { path: join(WORKSPACE, ".archcode", "memory", "index.md") },
       makeCtx(),
     );
 
     expect(decision).toMatchObject({
       outcome: "deny",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies write to .specra/ via symlink target", async () => {
+  test("denies write to .archcode/ via symlink target", async () => {
     const symlinkPath = join(SYMLINK_DIR, "link-to-index.md");
     const decision = await permission({ path: symlinkPath }, makeCtx());
 
     expect(decision).toMatchObject({
       outcome: "deny",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  test("denies write to path under symlinked .specra/ dir", async () => {
-    const deviousPath = join(SYMLINK_DIR, "link-to-specra", "permissions.json");
+  test("denies write to path under symlinked .archcode/ dir", async () => {
+    const deviousPath = join(SYMLINK_DIR, "link-to-archcode", "permissions.json");
     const decision = await permission({ path: deviousPath }, makeCtx());
 
     expect(decision).toMatchObject({
       outcome: "deny",
-      errorCode: "SPECRA_PROTECTED_PATH_WRITE_DENIED",
+      errorCode: "PROTECTED_PATH_WRITE_DENIED",
     });
   });
 
-  // ─── Allow: non-.specra paths ───
+  // ─── Allow: non-.archcode paths ───
 
   test("allows file_write to normal workspace file", async () => {
     const decision = await permission(
@@ -202,7 +202,7 @@ describe("createProtectedSpecraPermission", () => {
     expect(decision).toEqual({ outcome: "allow" });
   });
 
-  test("allows non-.specra dotfile paths", async () => {
+  test("allows non-.archcode dotfile paths", async () => {
     const decision = await permission(
       { path: ".env", content: "SECRET=foo" },
       makeCtx(),

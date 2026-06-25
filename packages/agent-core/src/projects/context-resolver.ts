@@ -36,8 +36,8 @@ export class ProjectContextResolver {
     });
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
-        project: join(workspaceRoot, ".specra", "memory"),
-        user: join(homedir(), ".specra", "memory"),
+        project: join(workspaceRoot, ".archcode", "memory"),
+        user: join(homedir(), ".archcode", "memory"),
       });
     });
     this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));

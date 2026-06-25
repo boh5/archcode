@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { RecoveryNoticePart } from "@specra/protocol";
+import type { RecoveryNoticePart } from "@archcode/protocol";
 
 // ─── Status config ───
 

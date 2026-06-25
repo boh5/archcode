@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import type { SessionExecutionRecord, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@specra/protocol";
+import type { SessionExecutionRecord, SessionTreeNode, SessionTreeResponse, ToolChildSessionLink, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import {

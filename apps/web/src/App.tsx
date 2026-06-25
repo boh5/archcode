@@ -1,3 +1,3 @@
 export function App() {
-  return <div>Specra Web UI</div>;
+  return <div>ArchCode Web UI</div>;
 }

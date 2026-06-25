@@ -4,7 +4,7 @@ import type { Logger } from "../../logger";
 import { atomicWrite } from "../../utils/safe-file";
 import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
 
-const SPECRA_DIR = ".specra";
+const PROJECT_DIR_NAME = ".archcode";
 const PERMISSIONS_FILE = "permissions.json";
 
 const ShellEffectKindSchema = z.enum([
@@ -15,7 +15,7 @@ const ShellEffectKindSchema = z.enum([
   "remote-exec",
   "credential-exfil",
   "system-mutation",
-  "protected-specra",
+  "protected-path",
   "parser-uncertain",
   "execute-code",
 ] satisfies [ShellEffectKind, ...ShellEffectKind[]]);
@@ -90,7 +90,7 @@ function scopeKey(scope: PermissionApprovalScope): string {
 }
 
 function approvalsPath(workspaceRoot: string): string {
-  return join(workspaceRoot, SPECRA_DIR, PERMISSIONS_FILE);
+  return join(workspaceRoot, PROJECT_DIR_NAME, PERMISSIONS_FILE);
 }
 
 export class ProjectApprovalManager {

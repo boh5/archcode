@@ -1,11 +1,11 @@
 import { stat } from "node:fs/promises";
 
-import type { SpecraRuntime } from "@specra/agent-core";
-import type { ProjectInfo } from "@specra/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
+import type { ProjectInfo } from "@archcode/agent-core";
 import { ProjectNotFoundError, WorkspaceNotFoundError } from "./errors";
 
 export async function resolveProject(
-  runtime: SpecraRuntime,
+  runtime: AgentRuntime,
   slug: string,
 ): Promise<ProjectInfo> {
   const project = await runtime.projectRegistry.get(slug);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { GlobalSSEEvent } from "@specra/protocol";
+import type { GlobalSSEEvent } from "@archcode/protocol";
 import { GlobalEventBus } from "./global-event-bus";
 
 describe("GlobalEventBus", () => {

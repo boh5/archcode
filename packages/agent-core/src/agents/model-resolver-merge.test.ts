@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SpecraConfig } from "../config/index";
+import type { ArchCodeConfig } from "../config/index";
 import { ModelInfo, type Registry as ProviderRegistry } from "../provider/index";
 import { resolveAgentModel } from "./model-resolver";
 
@@ -7,12 +7,12 @@ const baseModel = {
   name: "Main Model",
   limit: { context: 1000, output: 100 },
   modalities: { input: ["text"], output: ["text"] },
-} satisfies SpecraConfig["provider"][string]["models"][string];
+} satisfies ArchCodeConfig["provider"][string]["models"][string];
 
 function makeConfig(
-  model: SpecraConfig["provider"][string]["models"][string],
-  agent: NonNullable<SpecraConfig["agents"]>[string],
-): SpecraConfig {
+  model: ArchCodeConfig["provider"][string]["models"][string],
+  agent: NonNullable<ArchCodeConfig["agents"]>[string],
+): ArchCodeConfig {
   return {
     provider: {
       test: {
@@ -26,7 +26,7 @@ function makeConfig(
   };
 }
 
-function makeRegistry(config: SpecraConfig): ProviderRegistry {
+function makeRegistry(config: ArchCodeConfig): ProviderRegistry {
   const models = new Map<string, ModelInfo>();
 
   for (const [providerId, providerConfig] of Object.entries(config.provider)) {
@@ -55,7 +55,7 @@ function makeRegistry(config: SpecraConfig): ProviderRegistry {
   } as ProviderRegistry;
 }
 
-function resolve(config: SpecraConfig) {
+function resolve(config: ArchCodeConfig) {
   return resolveAgentModel("orchestrator", config, makeRegistry(config)).options;
 }
 

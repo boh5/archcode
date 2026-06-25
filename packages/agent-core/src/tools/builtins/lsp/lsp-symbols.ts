@@ -112,7 +112,7 @@ async function handleWorkspaceSymbols(
     return createToolErrorResult({
       kind: "lsp-server-not-found",
       code: "TOOL_LSP_SERVER_NOT_FOUND",
-      message: "Workspace symbols require an available language server. No built-in workspace language server is configured; try scope=\"document\" with a specific filePath so Specra can choose a server from the file language.",
+      message: "Workspace symbols require an available language server. No built-in workspace language server is configured; try scope=\"document\" with a specific filePath so ArchCode can choose a server from the file language.",
     });
   }
 

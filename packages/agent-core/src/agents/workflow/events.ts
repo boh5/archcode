@@ -1,4 +1,4 @@
-import type { WorkflowStateChangeEvent } from "@specra/protocol";
+import type { WorkflowStateChangeEvent } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../../store/types";
 

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { AgentRunningError, ConcurrentSessionLimitError } from "@specra/agent-core";
-import type { SpecraRuntime } from "@specra/agent-core";
+import { AgentRunningError, ConcurrentSessionLimitError } from "@archcode/agent-core";
+import type { AgentRuntime } from "@archcode/agent-core";
 import {
   BadRequestError,
   ConcurrentSessionLimitHttpError,
@@ -19,7 +19,7 @@ class AgentAlreadyRunningError extends ServerError {
   }
 }
 
-export function createMessagesRoutes(runtime: SpecraRuntime): Hono {
+export function createMessagesRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.post("/messages", async (c) => {

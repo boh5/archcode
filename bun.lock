@@ -5,11 +5,11 @@
     "": {
       "name": "specra",
       "dependencies": {
-        "@specra/agent-core": "workspace:*",
-        "@specra/protocol": "workspace:*",
-        "@specra/server": "workspace:*",
-        "@specra/utils": "workspace:*",
-        "@specra/web": "workspace:*",
+        "@archcode/agent-core": "workspace:*",
+        "@archcode/protocol": "workspace:*",
+        "@archcode/server": "workspace:*",
+        "@archcode/utils": "workspace:*",
+        "@archcode/web": "workspace:*",
       },
       "devDependencies": {
         "@types/bun": "^1.3.13",
@@ -19,15 +19,15 @@
       },
     },
     "apps/server": {
-      "name": "@specra/server",
+      "name": "@archcode/server",
       "version": "0.1.0",
       "bin": {
-        "specra": "./src/main.ts",
+        "archcode": "./src/main.ts",
       },
       "dependencies": {
-        "@specra/agent-core": "workspace:*",
-        "@specra/protocol": "workspace:*",
-        "@specra/utils": "workspace:*",
+        "@archcode/agent-core": "workspace:*",
+        "@archcode/protocol": "workspace:*",
+        "@archcode/utils": "workspace:*",
         "fuzzysort": "^3.1.0",
         "hono": "^4.12.19",
         "zod": "^4.4.2",
@@ -39,13 +39,13 @@
       },
     },
     "apps/web": {
-      "name": "@specra/web",
+      "name": "@archcode/web",
       "version": "0.1.0",
       "dependencies": {
+        "@archcode/protocol": "workspace:*",
         "@radix-ui/react-context-menu": "^2.2.16",
         "@radix-ui/react-dialog": "^1.1.15",
         "@radix-ui/react-dropdown-menu": "^2.1.16",
-        "@specra/protocol": "workspace:*",
         "@streamdown/code": "^1.1.1",
         "@tanstack/react-query": "^5.100.10",
         "eventsource-parser": "^3.0.8",
@@ -69,14 +69,14 @@
       },
     },
     "packages/agent-core": {
-      "name": "@specra/agent-core",
+      "name": "@archcode/agent-core",
       "version": "0.1.0",
       "dependencies": {
         "@ai-sdk/openai-compatible": "^2.0.45",
+        "@archcode/protocol": "workspace:*",
+        "@archcode/utils": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@mozilla/readability": "^0.6.0",
-        "@specra/protocol": "workspace:*",
-        "@specra/utils": "workspace:*",
         "@truto/turndown-plugin-gfm": "^1.0.2",
         "ai": "^6.0.174",
         "diff": "^9.0.0",
@@ -97,14 +97,14 @@
       },
     },
     "packages/protocol": {
-      "name": "@specra/protocol",
+      "name": "@archcode/protocol",
       "version": "0.0.1",
       "devDependencies": {
         "typescript": "^6.0.3",
       },
     },
     "packages/utils": {
-      "name": "@specra/utils",
+      "name": "@archcode/utils",
       "version": "0.0.1",
       "devDependencies": {
         "typescript": "^6.0.3",
@@ -121,6 +121,16 @@
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@4.0.26", "", { "dependencies": { "@ai-sdk/provider": "3.0.10", "@standard-schema/spec": "^1.1.0", "eventsource-parser": "^3.0.8" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-CsKNLKsOpvPujRlIYvoz+Ybw+kGn7J4/fIZa/58+R7iWLLfwn6ifE2G6Yq8K9XvH/I/3bzaDAJ3NhRwEMsLBKQ=="],
 
     "@antfu/install-pkg": ["@antfu/install-pkg@1.1.0", "", { "dependencies": { "package-manager-detector": "^1.3.0", "tinyexec": "^1.0.1" } }, "sha512-MGQsmw10ZyI+EJo45CdSER4zEb+p31LpDAFp2Z3gkSd1yqVZGi0Ebx++YTEMonJy4oChEMLsxZ64j8FH6sSqtQ=="],
+
+    "@archcode/agent-core": ["@archcode/agent-core@workspace:packages/agent-core"],
+
+    "@archcode/protocol": ["@archcode/protocol@workspace:packages/protocol"],
+
+    "@archcode/server": ["@archcode/server@workspace:apps/server"],
+
+    "@archcode/utils": ["@archcode/utils@workspace:packages/utils"],
+
+    "@archcode/web": ["@archcode/web@workspace:apps/web"],
 
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@5.1.11", "", { "dependencies": { "@asamuzakjp/generational-cache": "^1.0.1", "@csstools/css-calc": "^3.2.0", "@csstools/css-color-parser": "^4.1.0", "@csstools/css-parser-algorithms": "^4.0.0", "@csstools/css-tokenizer": "^4.0.0" } }, "sha512-KVw6qIiCTUQhByfTd78h2yD1/00waTmm9uy/R7Ck/ctUyAPj+AEDLkQIdJW0T8+qGgj3j5bpNKK7Q3G+LedJWg=="],
 
@@ -395,16 +405,6 @@
     "@shikijs/types": ["@shikijs/types@3.23.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.4" } }, "sha512-3JZ5HXOZfYjsYSk0yPwBrkupyYSLpAE26Qc0HLghhZNGTZg/SKxXIIgoxOpmmeQP0RRSDJTk1/vPfw9tbw+jSQ=="],
 
     "@shikijs/vscode-textmate": ["@shikijs/vscode-textmate@10.0.2", "", {}, "sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg=="],
-
-    "@specra/agent-core": ["@specra/agent-core@workspace:packages/agent-core"],
-
-    "@specra/protocol": ["@specra/protocol@workspace:packages/protocol"],
-
-    "@specra/server": ["@specra/server@workspace:apps/server"],
-
-    "@specra/utils": ["@specra/utils@workspace:packages/utils"],
-
-    "@specra/web": ["@specra/web@workspace:apps/web"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 

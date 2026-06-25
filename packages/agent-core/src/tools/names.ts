@@ -37,4 +37,4 @@ export {
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
-} from "@specra/protocol";
+} from "@archcode/protocol";

@@ -2,7 +2,7 @@
 
 ## 目标
 
-为 Specra 构建统一的工具系统：定义、注册、执行、按 agent 派生工具集。替代当前 `agents/query/` 下 `tools + toolExecutors` 分离接口。
+为 ArchCode 构建统一的工具系统：定义、注册、执行、按 agent 派生工具集。替代当前 `agents/query/` 下 `tools + toolExecutors` 分离接口。
 
 ## 核心决策
 
@@ -17,7 +17,7 @@
 | Agent 工具集 | `tools: string[]`（必填，undefined=`[]`） | agent 作者知道需要什么；不默认全量开放（未来有 bash 等危险工具） |
 | Agent 视图 | `resolveForAgent()` → `ResolvedToolSet` | 包装对象带 `toAITools()` / `has()` / `get()` |
 | `toAITools()` | 只导出 description + inputSchema，不含 execute | QueryLoop 手动执行 tool calls，避免双执行 |
-| 大输出 | 截断预览 + 持久化磁盘，返回预览+路径 | 和 Claude Code/OpenCode 一致；`> 阈值存 ~/.specra/tool-output/` <!-- 参考: Claude Code `toolResultStorage` + `contentReplacementState` 按会话管理输出预算 (claude-code-sourcemap/restored-src/src/utils/toolResultStorage.ts)；OpenCode 截断 2000行/50KB + 持久化到 ~/.opencode/data/tool-output/ (opencode/packages/opencode/src/tools/truncate.ts) --> |
+| 大输出 | 截断预览 + 持久化磁盘，返回预览+路径 | 和 Claude Code/OpenCode 一致；`> 阈值存 ~/.archcode/tool-output/` <!-- 参考: Claude Code `toolResultStorage` + `contentReplacementState` 按会话管理输出预算 (claude-code-sourcemap/restored-src/src/utils/toolResultStorage.ts)；OpenCode 截断 2000行/50KB + 持久化到 ~/.opencode/data/tool-output/ (opencode/packages/opencode/src/tools/truncate.ts) --> |
 | 能力元数据 | `readOnly` / `destructive` / `concurrencySafe`（必填，无默认值） | 安全相关字段不给默认值，防止漏标；v1 自描述 + truncate/logger 可消费，不做权限过滤 <!-- 参考: Claude Code `isConcurrencySafe()` / `isReadOnly()` / `isDestructive()` 三元组 (claude-code-sourcemap/restored-src/src/Tool.ts)；Claude Code `partitionToolCalls()` 按并发安全分批执行 (claude-code-sourcemap/restored-src/src/query/tools.ts) --> |
 | 旧代码 | 不兼容，直接删除 | 无历史负担 |
 | AbortSignal | v1 传入 | bash/file/grep 需要取消能力 <!-- 参考: pi-mono 每个工具 execute(signal?) 统一取消模式 (pi-mono/packages/agent/src/types.ts)；OpenCode tool execute(args, ctx) ctx 含 abort signal --> |
@@ -109,7 +109,7 @@ Loop 内部：`resolveForAgent()` → `streamText({ tools: resolved.toAITools() 
 
 | Hook | 类型 | 作用 |
 |---|---|---|
-| outputTruncator | global after | > 阈值截断 + 持久化 `~/.specra/tool-output/`，返回预览+路径 |
+| outputTruncator | global after | > 阈值截断 + 持久化 `~/.archcode/tool-output/`，返回预览+路径 |
 | executionLogger | global after | 记录 name/duration/output size |
 | permissionGuard | global before | deny 规则（占位） <!-- 参考: Claude Code 多层权限: Deny rules → Allow rules → Ask rules → Mode decision (claude-code-sourcemap/restored-src/src/permissions/)；OpenCode `evaluate(permission, pattern, ...rulesets)` last-match-wins (opencode/packages/opencode/src/session/permission/) --> |
 

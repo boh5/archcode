@@ -331,11 +331,11 @@ describe("workflow schemas", () => {
 });
 
 describe("WorkflowStateManager", () => {
-  test("creates and reads .specra/workflows/{generatedUuid}/workflow.json", async () => {
+  test("creates and reads .archcode/workflows/{generatedUuid}/workflow.json", async () => {
     const manager = new WorkflowStateManager(TMP_DIR);
 
     const created = await manager.create({ title: "My workflow", type: "full_feature", maxRetries: 5 });
-    const filePath = join(TMP_DIR, ".specra", "workflows", created.id, "workflow.json");
+    const filePath = join(TMP_DIR, ".archcode", "workflows", created.id, "workflow.json");
 
     expect(await Bun.file(filePath).exists()).toBe(true);
     expect(created.title).toBe("My workflow");
@@ -423,7 +423,7 @@ describe("WorkflowStateManager", () => {
     const manager = new WorkflowStateManager(TMP_DIR);
     await manager.create({ title: "Valid", type: "full_feature" });
 
-    await mkdir(join(TMP_DIR, ".specra", "workflows", "old-slug-dir"), { recursive: true });
+    await mkdir(join(TMP_DIR, ".archcode", "workflows", "old-slug-dir"), { recursive: true });
 
     expect(await captureAsyncError(() => manager.listWorkflows())).toBeInstanceOf(WorkflowInvalidIdError);
   });
@@ -522,16 +522,16 @@ describe("WorkflowStateManager", () => {
     );
     expect(handoff.body).toBe(result.handoffSummary);
     expect(handoff.frontmatter).toMatchObject({
-      "specra.schema": "1",
-      "specra.workflowId": source.id,
-      "specra.workflowType": "research_only",
-      "specra.artifactKind": "HANDOFF_SUMMARY",
-      "specra.artifactPath": "HANDOFF_SUMMARY.md",
-      "specra.workflowStage": "research_consolidation",
-      "specra.writerAgent": "system",
-      "specra.writerSessionId": "source-session",
-      "specra.toolCallId": "createDerived",
-      "specra.writtenAt": result.source.updatedAt,
+      "archcode.schema": "1",
+      "archcode.workflowId": source.id,
+      "archcode.workflowType": "research_only",
+      "archcode.artifactKind": "HANDOFF_SUMMARY",
+      "archcode.artifactPath": "HANDOFF_SUMMARY.md",
+      "archcode.workflowStage": "research_consolidation",
+      "archcode.writerAgent": "system",
+      "archcode.writerSessionId": "source-session",
+      "archcode.toolCallId": "createDerived",
+      "archcode.writtenAt": result.source.updatedAt,
     });
     expect(await manager.read(source.id)).toEqual(result.source);
     expect(await manager.read(result.derived.id)).toEqual(result.derived);
@@ -584,8 +584,8 @@ describe("WorkflowStateManager", () => {
     const manager = new WorkflowStateManager(TMP_DIR);
     const valid = await manager.create({ title: "Valid", type: "full_feature" });
     const corruptId = "550e8400-e29b-41d4-a716-446655440099";
-    await mkdir(join(TMP_DIR, ".specra", "workflows", corruptId), { recursive: true });
-    await Bun.write(join(TMP_DIR, ".specra", "workflows", corruptId, "workflow.json"), "{broken json");
+    await mkdir(join(TMP_DIR, ".archcode", "workflows", corruptId), { recursive: true });
+    await Bun.write(join(TMP_DIR, ".archcode", "workflows", corruptId, "workflow.json"), "{broken json");
 
     expect(await captureAsyncError(() => manager.readWorkflow(corruptId))).toMatchObject({
       name: "WorkflowStateError",

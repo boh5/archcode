@@ -260,7 +260,7 @@ describe("persistToolOutput", () => {
   it("uses TOOL_OUTPUT_DIR as default outputDir", async () => {
     expect(typeof TOOL_OUTPUT_DIR).toBe("string");
     expect(TOOL_OUTPUT_DIR).toContain("tool-output");
-    expect(TOOL_OUTPUT_DIR).toContain(".specra");
+    expect(TOOL_OUTPUT_DIR).toContain(".archcode");
   });
 });
 

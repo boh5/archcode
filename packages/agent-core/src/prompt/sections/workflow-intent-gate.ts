@@ -35,7 +35,7 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 ### Artifacts
 - Use artifact_write for durable workflow artifacts: RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT, critic reports, and evidence.
 - Single-file artifacts (RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT) are written with workflowId, kind, and content only. Do not pass a path parameter.
-- Multi-file artifacts (CRITIC_REPORT, EVIDENCE) are written with workflowId, kind, name, and content. Do not pass a path parameter; Specra assigns and returns the path.
+- Multi-file artifacts (CRITIC_REPORT, EVIDENCE) are written with workflowId, kind, name, and content. Do not pass a path parameter; ArchCode assigns and returns the path.
 - Use artifact_read before relying on prior artifacts or referenced source-workflow artifacts. Child agents must also call artifact_read for referenced artifacts instead of relying only on summarized text.
 - For multi-file artifacts (CRITIC_REPORT, EVIDENCE), pass kind to artifact_read to list real paths from workflow state, then read a specific entry by a returned path. Do not invent paths.
 - Do not pass hidden artifact bodies through delegation prompts; pass references and require explicit artifact_read.

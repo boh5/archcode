@@ -50,7 +50,7 @@ describe("resolveServerBinary", () => {
 
     const result = await resolveServerBinary("typescript");
 
-    expect(result).toMatch(/specra\/lsp-servers\/typescript\/bin\/typescript-language-server$/);
+    expect(result).toMatch(/archcode\/lsp-servers\/typescript\/bin\/typescript-language-server$/);
     expect(calls.map((call) => call.command.join(" "))).toEqual([
       "which typescript-language-server",
       expect.stringMatching(/^npm install -g --prefix .* typescript-language-server$/),
@@ -129,7 +129,7 @@ describe("resolveServerBinary", () => {
       });
     }
 
-    const serverRoot = join(tmpDir, "specra", "lsp-servers", "typescript");
+    const serverRoot = join(tmpDir, "archcode", "lsp-servers", "typescript");
     expect(await Bun.file(serverRoot).exists()).toBe(false);
   });
 
@@ -178,7 +178,7 @@ describe("resolveServerBinary", () => {
       expect((error as Error).message).toContain("Timed out after 5ms");
     }
 
-    const serverRoot = join(tmpDir, "specra", "lsp-servers", "typescript");
+    const serverRoot = join(tmpDir, "archcode", "lsp-servers", "typescript");
     expect(await Bun.file(serverRoot).exists()).toBe(false);
   });
 
