@@ -1,3 +1,3 @@
 export function App() {
-  return <div>ArchCode Web UI</div>;
+  return <div>ArchCode</div>;
 }
