@@ -9,6 +9,8 @@ const webDistDir = join(rootDir, "apps", "web", "dist");
 const manifestPath = join(rootDir, "apps", "server", "src", "web-manifest.ts");
 const cssTreePatchPath = join(rootDir, "node_modules", "css-tree", "data", "patch.json");
 const cssTreePackagePath = join(rootDir, "node_modules", "css-tree", "package.json");
+const jsdomDefaultStyleSheetPath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "browser", "default-stylesheet.css");
+const jsdomComputedStylePath = join(rootDir, "node_modules", "jsdom", "lib", "jsdom", "living", "css", "helpers", "computed-style.js");
 
 async function collectFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -100,6 +102,28 @@ async function compileBinary(): Promise<void> {
     );
   }
 
+  // Guard: verify jsdom exists and load its default stylesheet contents.
+  // jsdom reads this CSS file via fs.readFileSync at module top-level using a
+  // path resolved relative to __dirname. When compiled into a Bun binary,
+  // __dirname points into the original build path, so the binary breaks when
+  // distributed to a different machine or path. We inline the CSS so the
+  // binary is self-contained.
+  const jsdomStyleSheetExists = await Bun.file(jsdomDefaultStyleSheetPath).exists();
+  if (!jsdomStyleSheetExists) {
+    throw new Error(
+      "jsdom default stylesheet not found at node_modules/jsdom/lib/jsdom/browser/default-stylesheet.css. " +
+      "Run `bun install` to ensure all dependencies are installed.",
+    );
+  }
+  const jsdomComputedStyleExists = await Bun.file(jsdomComputedStylePath).exists();
+  if (!jsdomComputedStyleExists) {
+    throw new Error(
+      "jsdom computed-style.js not found at node_modules/jsdom/lib/jsdom/living/css/helpers/computed-style.js. " +
+      "If jsdom was upgraded and this file moved, update the path in scripts/build.ts.",
+    );
+  }
+  const jsdomDefaultStyleSheetContents = await Bun.file(jsdomDefaultStyleSheetPath).text();
+
   const cssTreePatchJson = await Bun.file(cssTreePatchPath).text();
   const cssTreePackage = JSON.parse(await Bun.file(cssTreePackagePath).text()) as { version?: string };
 
@@ -169,6 +193,14 @@ async function compileBinary(): Promise<void> {
         contents: `export const version = ${JSON.stringify(cssTreePackage.version ?? "0.0.0")};\n`,
         loader: "js",
       }));
+      build.onLoad({ filter: /jsdom\/lib\/jsdom\/living\/css\/helpers\/computed-style\.js$/ }, async (args) => {
+        const source = await Bun.file(args.path).text();
+        const contents = source.replace(
+          /const defaultStyleSheet = fs\.readFileSync\([\s\S]*?\);\n/,
+          `const defaultStyleSheet = ${JSON.stringify(jsdomDefaultStyleSheetContents)};\n`,
+        );
+        return { contents, loader: "js" };
+      });
     },
   };
 

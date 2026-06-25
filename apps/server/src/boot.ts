@@ -4,7 +4,8 @@ import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
 
 export async function bootServer(runtime: AgentRuntime): Promise<void> {
-  const dev = !Bun.env.ARCHCODE_SERVER_PASSWORD;
+  const compiled = import.meta.url.startsWith("file:///$bunfs/");
+  const dev = !compiled && !Bun.env.ARCHCODE_SERVER_PASSWORD;
   const { app } = createServerApp(runtime, {
     dev,
     password: Bun.env.ARCHCODE_SERVER_PASSWORD,
