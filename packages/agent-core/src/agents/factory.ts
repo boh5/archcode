@@ -12,6 +12,7 @@ import { SkillNotFoundError, type SkillService } from "../skills";
 import { assertSkillName } from "../skills/schema";
 import type { ResolvedSkill } from "../skills/types";
 import type { ToolRegistry } from "../tools/index";
+import { sanitizeMcpServerNameForRegistry } from "../mcp/naming";
 import { ConfiguredAgent } from "./configured-agent";
 import {
   NoModelsConfiguredError,
@@ -206,11 +207,25 @@ function factoryResolveAllowedTools(
 ): string[] {
   const resolved = config.toolRegistry.resolveForAgent(definition.tools.tools).descriptors.map((tool) => tool.name);
 
-  if (depth >= MAX_SUB_AGENT_DEPTH) {
-    return resolved.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+  // Merge MCP tools for each server listed in definition.mcpTools.
+  // Server names are sanitized to match the registry name generation
+  // (dots and other unsafe chars become `_`), so "grep.app" → prefix "mcp__grep_app__".
+  const mcpToolNames: string[] = [];
+  if (definition.mcpTools) {
+    for (const serverName of definition.mcpTools) {
+      const prefix = `mcp__${sanitizeMcpServerNameForRegistry(serverName)}__`;
+      const tools = config.toolRegistry.listByPrefix(prefix);
+      mcpToolNames.push(...tools.map((t) => t.name));
+    }
   }
 
-  return resolved;
+  const all = [...resolved, ...mcpToolNames];
+
+  if (depth >= MAX_SUB_AGENT_DEPTH) {
+    return all.filter((name) => !(DELEGATION_TOOLS as readonly string[]).includes(name));
+  }
+
+  return all;
 }
 
 function prepareStore(config: AgentFactoryConfig, definition: AgentDefinition, options: CreateAgentOptions): StoreApi<SessionStoreState> {

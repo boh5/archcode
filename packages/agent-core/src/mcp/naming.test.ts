@@ -12,6 +12,7 @@ import type { McpWarning } from "./errors";
 import {
   validateMcpNameSegment,
   toMcpToolRegistryName,
+  sanitizeMcpServerNameForRegistry,
 } from "./naming";
 
 // ─── validateMcpNameSegment ───
@@ -77,6 +78,30 @@ describe("toMcpToolRegistryName", () => {
     );
   });
 
+  test('sanitizes dots in server name: "grep.app" + "search" => "mcp__grep_app__search"', () => {
+    expect(toMcpToolRegistryName("grep.app", "search")).toBe(
+      "mcp__grep_app__search",
+    );
+  });
+
+  test("sanitizes dots in both segments: my.server.name + my.tool => mcp__my_server_name__my_tool", () => {
+    expect(toMcpToolRegistryName("my.server.name", "my.tool")).toBe(
+      "mcp__my_server_name__my_tool",
+    );
+  });
+
+  test("preserves hyphens (provider-allowed): my-server + resolve-library-id", () => {
+    expect(toMcpToolRegistryName("my-server", "resolve-library-id")).toBe(
+      "mcp__my-server__resolve-library-id",
+    );
+  });
+
+  test("preserves underscores: my_server + my_tool", () => {
+    expect(toMcpToolRegistryName("my_server", "my_tool")).toBe(
+      "mcp__my_server__my_tool",
+    );
+  });
+
   test("throws McpServerNameError for invalid server", () => {
     expect(() =>
       toMcpToolRegistryName("bad server", "tool"),
@@ -87,6 +112,40 @@ describe("toMcpToolRegistryName", () => {
     expect(() =>
       toMcpToolRegistryName("server", "bad tool"),
     ).toThrow(McpToolNameError);
+  });
+});
+
+// ─── sanitizeMcpServerNameForRegistry ───
+
+describe("sanitizeMcpServerNameForRegistry", () => {
+  test("replaces dots with underscores: grep.app => grep_app", () => {
+    expect(sanitizeMcpServerNameForRegistry("grep.app")).toBe("grep_app");
+  });
+
+  test("leaves already-safe names unchanged: context7 => context7", () => {
+    expect(sanitizeMcpServerNameForRegistry("context7")).toBe("context7");
+  });
+
+  test("replaces multiple dots: a.b.c => a_b_c", () => {
+    expect(sanitizeMcpServerNameForRegistry("a.b.c")).toBe("a_b_c");
+  });
+
+  test("preserves hyphens (provider-allowed): my-server => my-server", () => {
+    expect(sanitizeMcpServerNameForRegistry("my-server")).toBe("my-server");
+  });
+
+  test("preserves underscores: my_server => my_server", () => {
+    expect(sanitizeMcpServerNameForRegistry("my_server")).toBe("my_server");
+  });
+
+  test("replaces spaces with underscores", () => {
+    expect(sanitizeMcpServerNameForRegistry("my server")).toBe("my_server");
+  });
+
+  test("is deterministic (same input → same output)", () => {
+    expect(sanitizeMcpServerNameForRegistry("grep.app")).toBe(
+      sanitizeMcpServerNameForRegistry("grep.app"),
+    );
   });
 });
 

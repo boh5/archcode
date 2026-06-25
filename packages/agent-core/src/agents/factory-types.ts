@@ -7,6 +7,7 @@ export interface AgentDefinition {
   readonly promptProfileId: string;
   readonly rolePrompt?: string;
   readonly tools: AgentToolPolicy;
+  readonly mcpTools?: readonly string[];
   readonly hooks: AgentHookPolicy;
   readonly childPolicy?: AgentChildPolicy;
   readonly includeMemoryInPrompt: boolean;

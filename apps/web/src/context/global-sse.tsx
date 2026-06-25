@@ -2,11 +2,14 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, cr
 import { useQueryClient } from "@tanstack/react-query";
 import { connectSSE } from "../lib/sse-client";
 import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
+import { useMcpStatusStore } from "../store/mcp-status-store";
+import { getMcpStatus } from "../api/mcp";
 import { queryKeys } from "../api/queries";
 import type {
   GlobalSSEEvent,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
+  GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
 } from "@archcode/protocol";
 
@@ -29,6 +32,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "reset":
       case "lagged":
       case "shutdown":
+      case "mcp_status":
         return parsed;
       default:
         return null;
@@ -44,6 +48,7 @@ export interface SSEEventHandlerDeps {
   invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void>;
   onShutdown: () => void;
   onHeartbeat: (createdAt: number) => void;
+  refreshMcpStatus: () => void;
 }
 
 export function handleSSEEvent(
@@ -98,6 +103,7 @@ export function handleSSEEvent(
     case "reset": {
       const reset = parsed as GlobalSSEResetEvent;
       deps.invalidateQueries({ queryKey: queryKeys.session(reset.slug, reset.sessionId) });
+      deps.refreshMcpStatus();
       break;
     }
     case "lagged": {
@@ -105,6 +111,11 @@ export function handleSSEEvent(
     }
     case "shutdown": {
       deps.onShutdown();
+      break;
+    }
+    case "mcp_status": {
+      const mcpEvent = parsed as GlobalSSEMcpStatusEvent;
+      useMcpStatusStore.getState().updateServer(mcpEvent.serverName, mcpEvent.status);
       break;
     }
   }
@@ -118,6 +129,12 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
   const abortRef = useRef<(() => void) | null>(null);
   const shutdownRef = useRef(false);
 
+  const refreshMcpStatus = useCallback(() => {
+    getMcpStatus()
+      .then((servers) => useMcpStatusStore.getState().setServers(servers))
+      .catch(() => {});
+  }, []);
+
   const handleEvent = useCallback(
     (sseEvent: { event: string; data: string; id?: string }) => {
       handleSSEEvent(sseEvent, {
@@ -130,9 +147,10 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
           abortRef.current?.();
         },
         onHeartbeat: (createdAt) => setLastHeartbeatAt(createdAt),
+        refreshMcpStatus,
       });
     },
-    [queryClient],
+    [queryClient, refreshMcpStatus],
   );
 
   const handleError = useCallback((error: unknown) => {
@@ -165,6 +183,10 @@ export function GlobalSSEProvider({ children }: { children: ReactNode }) {
       client.abort();
     };
   }, [handleEvent, handleError]);
+
+  useEffect(() => {
+    refreshMcpStatus();
+  }, [refreshMcpStatus]);
 
   const value: GlobalSSEContextValue = {
     connectionState,

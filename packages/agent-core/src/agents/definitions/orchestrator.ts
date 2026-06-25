@@ -105,6 +105,7 @@ LLM Intent Gate for workflow derivation:
     ],
     delegateTargets: ["explore", "product", "critic", "spec", "foreman", "librarian"],
   },
+  mcpTools: ["context7", "exa"],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,

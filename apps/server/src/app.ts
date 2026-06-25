@@ -12,6 +12,7 @@ import { createDirectoriesRoutes } from "./routes/directories";
 import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createMessagesRoutes } from "./routes/messages";
+import { createMcpRoutes } from "./routes/mcp";
 import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
 import { createQuestionsRoutes } from "./routes/questions";
@@ -83,6 +84,7 @@ export function createServerApp(
   const workflow = createWorkflowRoutes(serverRuntime);
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
+  const mcp = createMcpRoutes(serverRuntime);
 
   app.route("/api/projects", projects);
   app.route("/api/projects/:slug/sessions", sessions);
@@ -91,6 +93,7 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", workflow);
   app.route("/api/projects", files);
+  app.route("/api/mcp", mcp);
   app.route("/api/sessions", new Hono());
   app.route("/api/permissions", permissions);
   app.route("/api/questions", questions);
@@ -103,6 +106,8 @@ export function createServerApp(
   if (!options.dev) {
     app.use("/*", createEmbeddedAssetHandler());
   }
+
+  wireMcpStatusBridge(serverRuntime, globalEventBus);
 
   return { app };
 }
@@ -192,4 +197,26 @@ function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionE
 
 function isTerminalChildLinkStatus(status: ToolChildSessionLinkStatus): boolean {
   return TERMINAL_CHILD_LINK_STATUSES.has(status);
+}
+
+/**
+ * Bridges runtime MCP status changes to the global SSE event bus.
+ *
+ * Wired once at server creation. Runtime always provides
+ * `subscribeMcpStatusChanges` in production; the guard keeps partial test
+ * doubles (which omit MCP methods) from crashing during route-level tests.
+ */
+function wireMcpStatusBridge(
+  runtime: AgentRuntime,
+  bus: { emit(event: GlobalSSEEvent): void },
+): void {
+  if (typeof runtime.subscribeMcpStatusChanges !== "function") return;
+  runtime.subscribeMcpStatusChanges((serverName, status) => {
+    bus.emit({
+      type: "mcp_status",
+      serverName,
+      status,
+      createdAt: Date.now(),
+    });
+  });
 }

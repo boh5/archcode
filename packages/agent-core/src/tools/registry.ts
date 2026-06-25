@@ -60,6 +60,16 @@ export class ToolRegistry {
     return Array.from(this._descriptors.values());
   }
 
+  listByPrefix(prefix: string): AnyToolDescriptor[] {
+    const results: AnyToolDescriptor[] = [];
+    for (const [name, desc] of this._descriptors) {
+      if (name.startsWith(prefix)) {
+        results.push(desc);
+      }
+    }
+    return results;
+  }
+
   resolveForAgent(toolNames?: readonly string[]): ResolvedToolSet {
     if (!toolNames || toolNames.length === 0) {
       return new ResolvedToolSet([]);

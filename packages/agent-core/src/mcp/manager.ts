@@ -1,7 +1,8 @@
-import { McpConfigError, type ResolvedMcpServerConfig } from "../config/mcp";
+import type { ResolvedMcpServerConfig } from "../config/mcp";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import type { AnyToolDescriptor } from "../tools/types";
+import type { McpServerStatus } from "@archcode/protocol";
 import {
   createDefaultMcpClientFactories,
   McpClient,
@@ -26,6 +27,11 @@ interface ConnectedMcpClient {
   client: McpClient;
 }
 
+export type McpStatusListener = (serverName: string, status: McpServerStatus) => void;
+
+type DescriptorSink = (descriptors: AnyToolDescriptor[]) => void;
+type WarningSink = (warning: McpWarning) => void;
+
 // ─── Manager ─────────────────────────────────────────────────────────────────
 
 export class McpManager {
@@ -33,6 +39,10 @@ export class McpManager {
   private readonly clientFactories: McpClientFactories;
   private readonly connectedClients: ConnectedMcpClient[] = [];
   private readonly secrets: string[];
+  private readonly serverStatuses = new Map<string, McpServerStatus>();
+  private readonly statusListeners = new Set<McpStatusListener>();
+  #started = false;
+  #closed = false;
 
   constructor(
     private readonly builtinServers: Record<string, ResolvedMcpServerConfig>,
@@ -43,56 +53,83 @@ export class McpManager {
     this.#logger = logger.child({ module: "mcp.manager" });
     this.clientFactories = clientFactories;
     this.secrets = collectSecrets(builtinServers, userServers);
-  }
 
-  async discover(): Promise<McpDiscoveryResult> {
-    this.assertNoServerCollisions();
-
-    const servers = this.mergedServers();
-    const discoveries = await Promise.all(
-      Object.entries(servers).map(([serverName, config]) =>
-        this.discoverServer(serverName, config),
-      ),
-    );
-
-    return discoveries.reduce<McpDiscoveryResult>(
-      (acc, result) => {
-        acc.descriptors.push(...result.descriptors);
-        acc.warnings.push(...result.warnings);
-        return acc;
-      },
-      { descriptors: [], warnings: [] },
-    );
-  }
-
-  async closeAll(): Promise<McpWarning[]> {
-    const results = await Promise.allSettled(
-      this.connectedClients.map(async ({ serverName, client }) => {
-        await client.close();
-        return serverName;
-      }),
-    );
-
-    const warnings: McpWarning[] = [];
-    for (const [index, result] of results.entries()) {
-      if (result.status === "fulfilled") continue;
-
-      const serverName = this.connectedClients[index].serverName;
-      warnings.push({
-        serverName,
-        message: this.redactedMessage(
-          `Failed to close MCP client for server "${serverName}": ${errorMessage(result.reason)}`,
-        ),
-      });
+    for (const serverName of Object.keys(builtinServers)) {
+      this.serverStatuses.set(serverName, { state: "pending" });
     }
-
-    return warnings;
+    for (const serverName of Object.keys(userServers)) {
+      this.serverStatuses.set(serverName, { state: "pending" });
+    }
   }
 
-  private async discoverServer(
+  getStatus(): Map<string, McpServerStatus> {
+    return new Map(this.serverStatuses);
+  }
+
+  onStatusChange(listener: McpStatusListener): () => void {
+    this.statusListeners.add(listener);
+    return () => {
+      this.statusListeners.delete(listener);
+    };
+  }
+
+  private setStatus(serverName: string, status: McpServerStatus): void {
+    this.serverStatuses.set(serverName, status);
+    for (const listener of this.statusListeners) {
+      try {
+        listener(serverName, status);
+      } catch (err) {
+        this.#logger.warn("mcp.status.listener.failed", {
+          context: { serverId: serverName },
+          error: logError(err),
+        });
+      }
+    }
+  }
+
+  startBackgroundDiscovery(onDescriptors: DescriptorSink, onWarning: WarningSink): void {
+    if (this.#started) {
+      throw new Error("MCP background discovery already started");
+    }
+    this.#started = true;
+    void this.discoverBackground(onDescriptors, onWarning);
+  }
+
+  private async discoverBackground(
+    onDescriptors: DescriptorSink,
+    onWarning: WarningSink,
+  ): Promise<void> {
+    try {
+      const servers = this.mergedServers();
+      await Promise.all(
+        Object.entries(servers).map(([serverName, config]) =>
+          this.discoverServerBackground(serverName, config, onDescriptors, onWarning),
+        ),
+      );
+    } catch (err) {
+      this.#logger.warn("mcp.discovery.toplevel.failed", {
+        error: logError(err),
+      });
+      const message = this.redactedMessage(
+        `MCP background discovery failed: ${errorMessage(err)}`,
+      );
+      for (const [serverName, status] of this.serverStatuses) {
+        if (status.state === "pending") {
+          onWarning({ serverName, message });
+          this.setStatus(serverName, { state: "failed", error: message });
+        }
+      }
+    }
+  }
+
+  private async discoverServerBackground(
     serverName: string,
     config: ResolvedMcpServerConfig,
-  ): Promise<McpDiscoveryResult> {
+    onDescriptors: DescriptorSink,
+    onWarning: WarningSink,
+  ): Promise<void> {
+    if (this.#closed) return;
+
     const client = new McpClient(
       serverName,
       config,
@@ -102,41 +139,92 @@ export class McpManager {
 
     try {
       await client.connect();
+      if (this.#closed) {
+        await client.close();
+        return;
+      }
       this.connectedClients.push({ serverName, client });
 
       const tools = await client.listTools();
+      if (this.#closed) {
+        await client.close();
+        return;
+      }
       if (tools.length === 0) {
-        return {
-          descriptors: [],
-          warnings: [
-            {
-              serverName,
-              message: this.redactedMessage(
-                `MCP server "${serverName}" returned no tools`,
-              ),
-            },
-          ],
-        };
+        onWarning({
+          serverName,
+          message: this.redactedMessage(
+            `MCP server "${serverName}" returned no tools`,
+          ),
+        });
+        this.setStatus(serverName, { state: "ready", toolCount: 0 });
+        return;
       }
 
-      return this.adaptServerTools(serverName, client, tools);
+      const result = this.adaptServerTools(serverName, client, tools);
+      if (this.#closed) {
+        await client.close();
+        return;
+      }
+      for (const warning of result.warnings) {
+        onWarning(warning);
+      }
+      onDescriptors(result.descriptors);
+      this.setStatus(serverName, { state: "ready", toolCount: result.descriptors.length });
     } catch (err) {
+      if (this.#closed) {
+        try {
+          await client.close();
+        } catch {
+          // best-effort cleanup during shutdown
+        }
+        return;
+      }
       this.#logger.warn("mcp.discovery.server.failed", {
         context: { serverId: serverName },
         error: logError(err),
       });
-      return {
-        descriptors: [],
-        warnings: [
-          {
-            serverName,
-            message: this.redactedMessage(
-              `Failed to discover MCP server "${serverName}": ${errorMessage(err)}`,
-            ),
-          },
-        ],
-      };
+      onWarning({
+        serverName,
+        message: this.redactedMessage(
+          `Failed to discover MCP server "${serverName}": ${errorMessage(err)}`,
+        ),
+      });
+      this.setStatus(serverName, {
+        state: "failed",
+        error: this.redactedMessage(
+          `Failed to discover MCP server "${serverName}": ${errorMessage(err)}`,
+        ),
+      });
     }
+  }
+
+  async closeAll(): Promise<McpWarning[]> {
+    this.#closed = true;
+    const clients = [...this.connectedClients];
+    this.connectedClients.length = 0;
+
+    const results = await Promise.allSettled(
+      clients.map(async ({ serverName, client }) => {
+        await client.close();
+        return serverName;
+      }),
+    );
+
+    const warnings: McpWarning[] = [];
+    for (const [index, result] of results.entries()) {
+      if (result.status === "fulfilled") continue;
+
+      const serverName = clients[index].serverName;
+      warnings.push({
+        serverName,
+        message: this.redactedMessage(
+          `Failed to close MCP client for server "${serverName}": ${errorMessage(result.reason)}`,
+        ),
+      });
+    }
+
+    return warnings;
   }
 
   private adaptServerTools(
@@ -184,17 +272,6 @@ export class McpManager {
     }
 
     return { descriptors, warnings };
-  }
-
-  private assertNoServerCollisions(): void {
-    for (const serverName of Object.keys(this.builtinServers)) {
-      if (serverName in this.userServers) {
-        throw new McpConfigError(
-          `MCP server "${serverName}" is configured both as a built-in server and a user server`,
-          serverName,
-        );
-      }
-    }
   }
 
   private mergedServers(): Record<string, ResolvedMcpServerConfig> {

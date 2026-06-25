@@ -41,6 +41,7 @@ Refusal rules:
   tools: {
     tools: [...EXPLORER_READ_ONLY_TOOLS, "todo_write", ...SKILL_TOOLS],
   },
+  mcpTools: ["context7", "grep.app"],
   hooks: {
     autoCompact: true,
     autoInjectReminder: true,

@@ -345,12 +345,26 @@ export interface GlobalSSEShutdownEvent {
   reason?: string;
 }
 
+export type McpServerStatus =
+  | { state: "pending" }
+  | { state: "ready"; toolCount: number }
+  | { state: "failed"; error: string }
+  | { state: "disabled" };
+
+export interface GlobalSSEMcpStatusEvent {
+  type: "mcp_status";
+  serverName: string;
+  status: McpServerStatus;
+  createdAt: number;
+}
+
 export type GlobalSSEEvent =
   | GlobalSessionEventEnvelope
   | GlobalSSEHeartbeatEvent
   | GlobalSSEResetEvent
   | GlobalSSELaggedEvent
-  | GlobalSSEShutdownEvent;
+  | GlobalSSEShutdownEvent
+  | GlobalSSEMcpStatusEvent;
 
 export interface PermissionRequestEvent {
   type: "permission.request";

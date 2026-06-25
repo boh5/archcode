@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { ResolvedMcpConfig } from "./config/mcp";
-import type { McpDiscoveryResult, McpManager, McpWarning } from "./mcp/index";
+import { redactMcpMessage, type McpDiscoveryResult, type McpManager, type McpWarning } from "./mcp/index";
 import { storeManager } from "./store/store";
 import { defineTool, REDACTION_MARKER, type ToolExecutionContext } from "./tools/index";
 import type { AnyToolDescriptor } from "./tools/types";
@@ -77,13 +77,40 @@ function makeMcpDescriptor(name = "mcp__context7__lookup"): AnyToolDescriptor {
   });
 }
 
-function makeFakeMcpManager(result: McpDiscoveryResult | Error): McpManager {
+function makeFakeMcpManager(
+  result: McpDiscoveryResult | Error,
+  secrets: readonly string[] = [],
+): McpManager {
   return {
     discover: mock(async () => {
       if (result instanceof Error) throw result;
       return result;
     }),
     closeAll: mock(async () => []),
+    getStatus: mock(() => new Map<string, import("@archcode/protocol").McpServerStatus>()),
+    onStatusChange: mock(() => () => {}),
+    startBackgroundDiscovery: mock(
+      (
+        onDescriptors: (descriptors: AnyToolDescriptor[]) => void,
+        onWarning: (warning: McpWarning) => void,
+      ): void => {
+        if (result instanceof Error) {
+          onWarning({
+            message: redactMcpMessage(
+              `Failed to discover MCP tools during startup: ${result.message}`,
+              secrets,
+            ),
+          });
+          return;
+        }
+        for (const warning of result.warnings) {
+          onWarning(warning);
+        }
+        if (result.descriptors.length > 0) {
+          onDescriptors(result.descriptors);
+        }
+      },
+    ),
   } as unknown as McpManager;
 }
 
@@ -209,7 +236,7 @@ describe("createRuntime", () => {
       }),
     );
     const { logger, entries } = createInMemoryLogger();
-    const manager = makeFakeMcpManager(new Error(`boom ${secret}`));
+    const manager = makeFakeMcpManager(new Error(`boom ${secret}`), [secret]);
 
     const runtime = await createRuntime({
       configPath,

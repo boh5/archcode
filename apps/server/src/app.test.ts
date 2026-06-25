@@ -1,10 +1,13 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent } from "@archcode/protocol";
+import type { GlobalSSEEvent, McpServerStatus } from "@archcode/protocol";
 import { createServerApp, createServerEventRuntime } from "./app";
 import { globalEventBus } from "./events/global-event-bus";
 
-const mockRuntime = {} as AgentRuntime;
+const mockRuntime = {
+  subscribeMcpStatusChanges: mock(() => () => undefined),
+  getMcpServerStatuses: mock(() => new Map()),
+} as unknown as AgentRuntime;
 
 describe("createServerApp", () => {
   test("returns the health endpoint response", async () => {
@@ -108,6 +111,75 @@ function createRuntimeWithManualSubscriptions() {
     resolveExecution: () => void;
   };
 }
+
+describe("MCP status SSE bridge", () => {
+  test("emits mcp_status events to globalEventBus when runtime reports status changes", () => {
+    let mcpListener: ((serverName: string, status: McpServerStatus) => void) | undefined;
+    const runtime = {
+      subscribeMcpStatusChanges: mock((listener: (serverName: string, status: McpServerStatus) => void) => {
+        mcpListener = listener;
+        return () => {
+          mcpListener = undefined;
+        };
+      }),
+      getMcpServerStatuses: mock(() => new Map<string, McpServerStatus>()),
+    } as unknown as AgentRuntime;
+
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
+
+    createServerApp(runtime, { dev: true });
+
+    expect(mcpListener).toBeDefined();
+    expect(typeof mcpListener).toBe("function");
+
+    const readyStatus: McpServerStatus = { state: "ready", toolCount: 4 };
+    mcpListener!("context7", readyStatus);
+
+    expect(observed).toHaveLength(1);
+    const event = observed[0];
+    expect(event.type).toBe("mcp_status");
+    if (event.type === "mcp_status") {
+      expect(event.serverName).toBe("context7");
+      expect(event.status).toEqual(readyStatus);
+      expect(typeof event.createdAt).toBe("number");
+    }
+
+    unsubscribeBus();
+  });
+
+  test("globalEventBus subscribers receive mcp_status events emitted via the bridge", () => {
+    let mcpListener: ((serverName: string, status: McpServerStatus) => void) | undefined;
+    const runtime = {
+      subscribeMcpStatusChanges: mock((listener: (serverName: string, status: McpServerStatus) => void) => {
+        mcpListener = listener;
+        return () => {
+          mcpListener = undefined;
+        };
+      }),
+      getMcpServerStatuses: mock(() => new Map<string, McpServerStatus>()),
+    } as unknown as AgentRuntime;
+
+    const received: GlobalSSEEvent[] = [];
+    const unsubscribe = globalEventBus.subscribe((event) => {
+      if (event.type === "mcp_status") received.push(event);
+    });
+
+    createServerApp(runtime, { dev: true });
+
+    const failedStatus: McpServerStatus = { state: "failed", error: "timeout" };
+    mcpListener!("exa", failedStatus);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      type: "mcp_status",
+      serverName: "exa",
+      status: failedStatus,
+    });
+
+    unsubscribe();
+  });
+});
 
 function childLinkEvent(parentSessionId: string, childSessionId: string, status: "running" | "completed"): GlobalSSEEvent {
   return {

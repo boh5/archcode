@@ -43,6 +43,24 @@ export function validateMcpNameSegment(
   }
 }
 
+// ─── Registry Name Sanitization ───
+
+/**
+ * Sanitize an MCP name segment for use in the tool registry name.
+ *
+ * Replaces any character NOT matching `[A-Za-z0-9_-]` with `_` so the
+ * generated registry name satisfies the OpenAI-compatible provider
+ * tool/function name constraint `^[a-zA-Z0-9_-]{1,64}$`. Deterministic:
+ * same input → same output, so `factoryResolveAllowedTools` can compute
+ * the matching prefix from the user-facing config name.
+ *
+ * Only affects the OUTPUT (registry name). Config validation
+ * (`validateMcpNameSegment`) remains permissive and still allows `.`.
+ */
+export function sanitizeMcpServerNameForRegistry(name: string): string {
+  return name.replace(new RegExp("[^A-Za-z0-9_-]", "g"), "_");
+}
+
 // ─── Registry Name Generation ───
 
 /**
@@ -50,11 +68,18 @@ export function validateMcpNameSegment(
  *
  * Format: `mcp__{serverName}__{toolName}`
  *
- * Both segments are validated before joining.  Throws on invalid input.
+ * Both segments are validated before joining, then sanitized so the result
+ * satisfies the OpenAI-compatible provider tool/function name constraint
+ * `^[a-zA-Z0-9_-]{1,64}$` (dots and other unsafe chars become `_`).
+ * Throws on invalid input.
  *
  * @example
  * toMcpToolRegistryName("context7", "resolve-library-id")
  * // => "mcp__context7__resolve-library-id"
+ *
+ * @example
+ * toMcpToolRegistryName("grep.app", "search")
+ * // => "mcp__grep_app__search"
  */
 export function toMcpToolRegistryName(
   serverName: string,
@@ -62,5 +87,7 @@ export function toMcpToolRegistryName(
 ): string {
   validateMcpNameSegment(serverName, "server");
   validateMcpNameSegment(toolName, "tool");
-  return `mcp${MCP_REGISTRY_SEPARATOR}${serverName}${MCP_REGISTRY_SEPARATOR}${toolName}`;
+  const safeServer = sanitizeMcpServerNameForRegistry(serverName);
+  const safeTool = sanitizeMcpServerNameForRegistry(toolName);
+  return `mcp${MCP_REGISTRY_SEPARATOR}${safeServer}${MCP_REGISTRY_SEPARATOR}${safeTool}`;
 }

@@ -3,12 +3,15 @@ import type { StoreApi } from "zustand";
 import type {
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
+  GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
   GlobalSSEShutdownEvent,
+  McpServerStatus,
   WorkflowStateChangeEvent,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
+import { useMcpStatusStore } from "../store/mcp-status-store";
 import { parseSSEEvent, handleSSEEvent } from "./global-sse";
 import type { SSEEventHandlerDeps } from "./global-sse";
 
@@ -31,6 +34,7 @@ const mockCreateWebSessionStore = mock(
 const mockInvalidateQueries = mock((_opts: { queryKey: readonly unknown[] }) => Promise.resolve());
 const mockOnShutdown = mock(() => {});
 const mockOnHeartbeat = mock((_createdAt: number) => {});
+const mockRefreshMcpStatus = mock(() => {});
 
 function createDeps(): SSEEventHandlerDeps {
   return {
@@ -39,6 +43,7 @@ function createDeps(): SSEEventHandlerDeps {
     invalidateQueries: mockInvalidateQueries,
     onShutdown: mockOnShutdown,
     onHeartbeat: mockOnHeartbeat,
+    refreshMcpStatus: mockRefreshMcpStatus,
   };
 }
 
@@ -102,6 +107,26 @@ describe("parseSSEEvent", () => {
     expect(result!.type).toBe("shutdown");
   });
 
+  test("parses mcp_status event with serverName, status, and createdAt", () => {
+    const status: McpServerStatus = { state: "ready", toolCount: 4 };
+    const mcpEvent: GlobalSSEMcpStatusEvent = {
+      type: "mcp_status",
+      serverName: "context7",
+      status,
+      createdAt: 1700000000000,
+    };
+    const data = JSON.stringify(mcpEvent);
+
+    const result = parseSSEEvent("mcp_status", data);
+
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("mcp_status");
+    const parsed = result as GlobalSSEMcpStatusEvent;
+    expect(parsed.serverName).toBe("context7");
+    expect(parsed.status).toEqual(status);
+    expect(parsed.createdAt).toBe(1700000000000);
+  });
+
   test("returns null for malformed JSON", () => {
     const result = parseSSEEvent("event", "not-json");
     expect(result).toBeNull();
@@ -129,6 +154,8 @@ describe("handleSSEEvent", () => {
     mockInvalidateQueries.mockClear();
     mockOnShutdown.mockClear();
     mockOnHeartbeat.mockClear();
+    mockRefreshMcpStatus.mockClear();
+    useMcpStatusStore.getState().clear();
     deps = createDeps();
   });
 
@@ -271,6 +298,19 @@ describe("handleSSEEvent", () => {
     });
   });
 
+  test("refreshes MCP status snapshot on reset event", () => {
+    const resetEvent: GlobalSSEResetEvent = {
+      type: "reset",
+      slug: "proj",
+      sessionId: "s1",
+      reason: "stale_cursor",
+    };
+
+    handleSSEEvent({ event: "reset", data: JSON.stringify(resetEvent) }, deps);
+
+    expect(mockRefreshMcpStatus).toHaveBeenCalledTimes(1);
+  });
+
   test("does not call shutdown on reset event", () => {
     const resetEvent: GlobalSSEResetEvent = {
       type: "reset",
@@ -318,6 +358,40 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "shutdown", data: JSON.stringify(shutdown) }, deps);
 
     expect(mockOnShutdown).toHaveBeenCalled();
+  });
+
+  test("updates mcp status store on mcp_status event", () => {
+    const status: McpServerStatus = { state: "ready", toolCount: 7 };
+    const mcpEvent: GlobalSSEMcpStatusEvent = {
+      type: "mcp_status",
+      serverName: "context7",
+      status,
+      createdAt: 1700000000000,
+    };
+
+    handleSSEEvent({ event: "mcp_status", data: JSON.stringify(mcpEvent) }, deps);
+
+    expect(useMcpStatusStore.getState().servers).toEqual({ context7: status });
+  });
+
+  test("mcp_status event merges into existing servers without dropping them", () => {
+    useMcpStatusStore.getState().setServers({
+      grep: { state: "pending" },
+    });
+    const status: McpServerStatus = { state: "failed", error: "timeout" };
+    const mcpEvent: GlobalSSEMcpStatusEvent = {
+      type: "mcp_status",
+      serverName: "exa",
+      status,
+      createdAt: 1700000000001,
+    };
+
+    handleSSEEvent({ event: "mcp_status", data: JSON.stringify(mcpEvent) }, deps);
+
+    expect(useMcpStatusStore.getState().servers).toEqual({
+      grep: { state: "pending" },
+      exa: { state: "failed", error: "timeout" },
+    });
   });
 
   test("ignores malformed JSON in event data", () => {

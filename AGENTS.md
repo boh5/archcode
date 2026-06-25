@@ -132,7 +132,7 @@ packages/protocol/src/
 
 **Data flow:**
 ```
-.archcode.json → config → providers → registerBuiltinTools + MCP → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
+.archcode.json → config → providers → registerBuiltinTools → fire-and-forget MCP background load → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
 
 Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered tools, own store) → reminder to parent
 ```
@@ -249,6 +249,8 @@ Both implement `Agent`: `store: StoreApi<SessionStoreState>`, `run(userMessage, 
 - Explorer depth < 2: read-only tools + delegation tools (delegate, wait_for_reminder, background_output)
 - Explorer depth ≥ 2: read-only tools only (file_read, grep, glob, git_status, git_diff, lsp_*, web_fetch, ask_user, todo_write)
 
+**MCP tool resolution**: `AgentDefinition.mcpTools` lists MCP server names (e.g. `["context7", "exa"]`). `factoryResolveAllowedTools` merges matching `mcp__{server}__*` tools from the registry. MCP tools load in background; agents see them on the next `run()` call after registration. See MCP section below.
+
 **Query loop lifecycle:**
 ```
 beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-inject-reminder)
@@ -299,7 +301,13 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## MCP
 
-HTTP Streamable only. Built-in: context7, grep.app, exa. User servers in `.archcode.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
+HTTP Streamable only. Built-in: context7, grep.app, exa (hardcoded in `BUILTIN_MCP_SERVERS`). User servers in `.archcode.json → mcp.servers`. Tool names: `mcp__{server}__{tool}`. Failed discovery = warning, not crash.
+
+**Background loading** (non-blocking): `McpManager.startBackgroundDiscovery()` fires-and-forgets at `createRuntime()` — server boots immediately while MCP servers connect in background. Per-server status: `pending → ready | failed`. Status accessible via `AgentRuntime.getMcpServerStatuses()` and `AgentRuntime.subscribeMcpStatusChanges(listener)`.
+
+**Agent visibility**: agents opt into MCP tools via `mcpTools: ["context7", "exa"]` (server names) in their `AgentDefinition`. `factoryResolveAllowedTools` merges `mcp__{server}__*` tools from `ToolRegistry.listByPrefix()` — picks up tools registered after background load completes. Tools become visible on the next `run()` call (per-message resolution at `ConfiguredAgent.run()` line 189), not mid-message.
+
+**SSE bridge**: MCP status changes emit `GlobalSSEMcpStatusEvent` (`type: "mcp_status"`) via `globalEventBus` → Web `useMcpStatusStore`. API route: `GET /api/mcp/status` (global, not project-scoped). Web `GlobalSSEProvider` fetches the snapshot on mount and on SSE `reset` events (reconnect) to populate the store even when connecting after MCP servers became ready.
 
 ## Key Dependencies
 

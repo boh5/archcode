@@ -229,6 +229,81 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     });
   });
 
+  describe("listByPrefix()", () => {
+    test("returns descriptors whose names start with the given prefix", () => {
+      const desc1 = makeDescriptor("mcp__context7__resolve");
+      const desc2 = makeDescriptor("mcp__context7__search");
+      const desc3 = makeDescriptor("file_read");
+      registry.registerAll([desc1, desc2, desc3]);
+
+      const result = registry.listByPrefix("mcp__context7__");
+
+      expect(result).toHaveLength(2);
+      expect(result).toContain(desc1);
+      expect(result).toContain(desc2);
+      expect(result).not.toContain(desc3);
+    });
+
+    test("returns empty array when no descriptors match the prefix", () => {
+      registry.register(makeDescriptor("file_read"));
+
+      const result = registry.listByPrefix("nonexistent__");
+
+      expect(result).toEqual([]);
+    });
+
+    test("returns all matching descriptors when multiple match", () => {
+      const descs = [
+        makeDescriptor("mcp__a__tool1"),
+        makeDescriptor("mcp__a__tool2"),
+        makeDescriptor("mcp__a__tool3"),
+        makeDescriptor("mcp__b__other"),
+        makeDescriptor("bash"),
+      ];
+      registry.registerAll(descs);
+
+      const result = registry.listByPrefix("mcp__a__");
+
+      expect(result).toHaveLength(3);
+      expect(result).toContain(descs[0]);
+      expect(result).toContain(descs[1]);
+      expect(result).toContain(descs[2]);
+      expect(result).not.toContain(descs[3]);
+      expect(result).not.toContain(descs[4]);
+    });
+
+    test("preserves registration order in result", () => {
+      const descs = [
+        makeDescriptor("z_last"),
+        makeDescriptor("a_first"),
+        makeDescriptor("m_middle"),
+      ];
+      registry.registerAll(descs);
+
+      const result = registry.listByPrefix("");
+
+      expect(result).toHaveLength(3);
+      expect(result[0]).toBe(descs[0]);
+      expect(result[1]).toBe(descs[1]);
+      expect(result[2]).toBe(descs[2]);
+    });
+
+    test("exact name without trailing prefix chars does not match", () => {
+      const desc = makeDescriptor("mcp__context7");
+      registry.register(desc);
+
+      const result = registry.listByPrefix("mcp__context7__");
+
+      expect(result).toEqual([]);
+    });
+
+    test("returns empty array when registry is empty", () => {
+      const result = registry.listByPrefix("anything");
+
+      expect(result).toEqual([]);
+    });
+  });
+
   describe("globalHooks", () => {
     test("initializes to empty arrays", () => {
       expect(registry.globalHooks.before).toEqual([]);

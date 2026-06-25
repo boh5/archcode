@@ -265,6 +265,9 @@ async function createFixture(): Promise<Fixture> {
     workspaceRoot,
     mcpManagerFactory: () => ({
       discover: mock(async (): Promise<McpDiscoveryResult> => ({ descriptors: [], warnings: [] })),
+      startBackgroundDiscovery: mock((_onDescriptors: unknown, _onWarning: unknown) => {}),
+      getStatus: mock(() => new Map()),
+      onStatusChange: mock(() => () => {}),
       closeAll: mock(async () => []),
     } as unknown as McpManager),
   });

@@ -18,8 +18,6 @@ import { registerBuiltinTools } from "./core/index";
 import {
   BUILTIN_MCP_SERVERS,
   McpManager,
-  redactMcpMessage,
-  type McpDiscoveryResult,
   type McpWarning,
 } from "./mcp/index";
 import { createRegistry as createProviderRegistry, type Registry as ProviderRegistry } from "./provider/index";
@@ -27,7 +25,7 @@ import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
-import type { SessionTreeResponse } from "@archcode/protocol";
+import type { McpServerStatus, SessionTreeResponse } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
@@ -55,6 +53,8 @@ export interface AgentRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
+  subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
+  getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
@@ -100,10 +100,6 @@ export async function createRuntime(
   const mcpManager = options.mcpManagerFactory
     ? options.mcpManagerFactory(resolvedMcpConfig)
     : new McpManager(BUILTIN_MCP_SERVERS, resolvedMcpConfig.servers, undefined, runtimeLogger.child({ module: "mcp" }));
-  const secrets = collectMcpSecrets(
-    BUILTIN_MCP_SERVERS,
-    resolvedMcpConfig.servers,
-  );
 
   configureDefaultLspClientPoolLogger(runtimeLogger.child({ module: "lsp" }));
   configureDefaultBinaryManagerLogger(runtimeLogger.child({ module: "binary" }));
@@ -121,38 +117,33 @@ export async function createRuntime(
   };
 
   try {
-    const discovery = await discoverMcpTools(
-      mcpManager,
-      resolveMcpDiscoveryTimeout(resolvedMcpConfig),
-      secrets,
-      recordWarning,
-    );
-    for (const warning of discovery.warnings) {
-      recordWarning(warning);
-    }
+    mcpManager.startBackgroundDiscovery(
+      (descriptors) => {
+        for (const descriptor of descriptors) {
+          if (toolRegistry.get(descriptor.name)) {
+            recordWarning({
+              toolName: descriptor.name,
+              message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
+            });
+            continue;
+          }
 
-    for (const descriptor of discovery.descriptors) {
-      if (toolRegistry.get(descriptor.name)) {
-        recordWarning({
-          toolName: descriptor.name,
-          message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
-        });
-        continue;
-      }
-
-      try {
-        toolRegistry.register(descriptor);
-      } catch (err) {
-        if (err instanceof DuplicateToolError) {
-          recordWarning({
-            toolName: descriptor.name,
-            message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
-          });
-          continue;
+          try {
+            toolRegistry.register(descriptor);
+          } catch (err) {
+            if (err instanceof DuplicateToolError) {
+              recordWarning({
+                toolName: descriptor.name,
+                message: `Duplicate MCP tool descriptor "${descriptor.name}" skipped during startup`,
+              });
+              continue;
+            }
+            throw err;
+          }
         }
-        throw err;
-      }
-    }
+      },
+      (warning) => recordWarning(warning),
+    );
 
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ logger: logger.child({ module: "projects.registry" }) });
@@ -255,6 +246,8 @@ export async function createRuntime(
       warnings,
       projectRegistry,
       contextResolver,
+      subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
+      getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot) => sessionStoreManager.createSessionFile(workspaceRoot),
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
@@ -292,46 +285,6 @@ async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<strin
   if (Bun.env.ARCHCODE_WORKSPACE_ROOT) return Bun.env.ARCHCODE_WORKSPACE_ROOT;
 
   return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
-}
-
-async function discoverMcpTools(
-  mcpManager: McpManager,
-  timeoutMs: number,
-  secrets: readonly string[],
-  warn: (warning: McpWarning) => void,
-): Promise<McpDiscoveryResult> {
-  try {
-    return await withTimeout(mcpManager.discover(), timeoutMs);
-  } catch (err) {
-    warn({
-      message: redactMcpMessage(
-        `Failed to discover MCP tools during startup: ${errorMessage(err)}`,
-        secrets,
-      ),
-    });
-    return { descriptors: [], warnings: [] };
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`MCP discovery timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  return await Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
-
-function resolveMcpDiscoveryTimeout(config: ResolvedMcpConfig): number {
-  const serverTimeouts = Object.values(config.servers).map(
-    (server) => server.timeout,
-  );
-  return Math.max(30000, ...serverTimeouts);
 }
 
 function collectMcpSecrets(

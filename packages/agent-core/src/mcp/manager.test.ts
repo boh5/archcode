@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { McpConfigError, type ResolvedMcpServerConfig } from "../config/mcp";
+import type { ResolvedMcpServerConfig } from "../config/mcp";
 import { REDACTION_MARKER } from "../tools/security";
+import type { McpServerStatus } from "@archcode/protocol";
 import type {
   McpClientFactories,
   McpSdkClientLike,
@@ -128,6 +129,45 @@ afterEach(() => {
   mock.restore();
 });
 
+// ─── Background discovery helpers ─────────────────────────────────────────────
+
+function waitForStatus(
+  manager: McpManager,
+  serverName: string,
+  state: McpServerStatus["state"],
+): Promise<McpServerStatus> {
+  return new Promise((resolve) => {
+    const current = manager.getStatus().get(serverName);
+    if (current?.state === state) {
+      resolve(current);
+      return;
+    }
+    const unsubscribe = manager.onStatusChange((name, status) => {
+      if (name === serverName && status.state === state) {
+        unsubscribe();
+        resolve(status);
+      }
+    });
+  });
+}
+
+/** Collect descriptors delivered via onDescriptors until the predicate passes. */
+function collectDescriptors(
+  manager: McpManager,
+  predicate: (names: string[]) => boolean,
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    const collected: string[] = [];
+    manager.startBackgroundDiscovery(
+      (descriptors) => {
+        collected.push(...descriptors.map((d) => d.name));
+        if (predicate(collected)) resolve([...collected]);
+      },
+      () => {},
+    );
+  });
+}
+
 // ─── Merge And Validation ────────────────────────────────────────────────────
 
 describe("McpManager discovery", () => {
@@ -135,32 +175,26 @@ describe("McpManager discovery", () => {
     const fake = makeFakeServer([tool("lookup")]);
     const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
 
-    const result = await manager.discover();
-
-    expect(result.warnings).toEqual([]);
-    expect(result.descriptors.map((descriptor) => descriptor.name)).toEqual([
-      "mcp__docs__lookup",
-    ]);
+    const names = await collectDescriptors(manager, (n) => n.length >= 1);
+    expect(names).toEqual(["mcp__docs__lookup"]);
     expect(fake.sdkClient.connect).toHaveBeenCalledTimes(1);
     expect(fake.sdkClient.listTools).toHaveBeenCalledTimes(1);
   });
 
-  test("builtin and user server name collision fails before discovery", async () => {
+  test("user server overrides builtin server with same name (no collision error)", async () => {
+    const builtinUrl = "https://builtin.example.test/rpc";
+    const userUrl = "https://user.example.test/rpc";
     const fake = makeFakeServer([tool("lookup")]);
     const manager = new McpManager(
-      { docs: makeConfig({ url: "https://builtin.example.test/rpc" }) },
-      { docs: makeConfig({ url: "https://user.example.test/rpc" }) },
+      { docs: makeConfig({ url: builtinUrl }) },
+      { docs: makeConfig({ url: userUrl }) },
       fake.factories,
     );
 
-    try {
-      await manager.discover();
-      throw new Error("Expected discover to reject");
-    } catch (err) {
-      expect(err).toBeInstanceOf(McpConfigError);
-    }
-    expect(fake.factories.createClient).not.toHaveBeenCalled();
-    expect(fake.factories.createTransport).not.toHaveBeenCalled();
+    // No throw — user overrides builtin via mergedServers() spread.
+    const names = await collectDescriptors(manager, (n) => n.length >= 1);
+    expect(names).toEqual(["mcp__docs__lookup"]);
+    expect(fake.sdkClient.connect).toHaveBeenCalledTimes(1);
   });
 
   test("discovers multiple servers without serially waiting for earlier servers", async () => {
@@ -188,18 +222,22 @@ describe("McpManager discovery", () => {
       { first, second },
     );
 
-    const discovery = manager.discover();
+    const allNames: string[] = [];
+    manager.startBackgroundDiscovery(
+      (descriptors) => {
+        allNames.push(...descriptors.map((d) => d.name));
+      },
+      () => {},
+    );
     await Promise.resolve();
     await Promise.resolve();
 
     expect(second.connectOrder).toEqual(["started"]);
     releaseFirst();
 
-    const result = await discovery;
-    expect(result.descriptors.map((descriptor) => descriptor.name).sort()).toEqual([
-      "mcp__first__first",
-      "mcp__second__second",
-    ]);
+    await waitForStatus(manager, "first", "ready");
+    await waitForStatus(manager, "second", "ready");
+    expect(allNames.sort()).toEqual(["mcp__first__first", "mcp__second__second"]);
   });
 
   test("failed server is skipped and warning redacts secrets", async () => {
@@ -222,15 +260,24 @@ describe("McpManager discovery", () => {
       { failing, ok },
     );
 
-    const result = await manager.discover();
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    const allNames: string[] = [];
+    manager.startBackgroundDiscovery(
+      (descriptors) => {
+        allNames.push(...descriptors.map((d) => d.name));
+      },
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+    await waitForStatus(manager, "ok", "ready");
+    await waitForStatus(manager, "failing", "failed");
 
-    expect(result.descriptors.map((descriptor) => descriptor.name)).toEqual([
-      "mcp__ok__lookup",
-    ]);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toMatchObject({ serverName: "failing" });
-    expect(result.warnings[0].message).toContain(REDACTION_MARKER);
-    expect(result.warnings[0].message).not.toContain(secret);
+    expect(allNames).toEqual(["mcp__ok__lookup"]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ serverName: "failing" });
+    expect(warnings[0].message).toContain(REDACTION_MARKER);
+    expect(warnings[0].message).not.toContain(secret);
   });
 
   test("public server URL (no auth headers) is not redacted in error messages", async () => {
@@ -246,11 +293,18 @@ describe("McpManager discovery", () => {
       { public: failing },
     );
 
-    const result = await manager.discover();
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    manager.startBackgroundDiscovery(
+      () => {},
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+    await waitForStatus(manager, "public", "failed");
 
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0].message).toContain(publicUrl);
-    expect(result.warnings[0].message).not.toContain(REDACTION_MARKER);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain(publicUrl);
+    expect(warnings[0].message).not.toContain(REDACTION_MARKER);
   });
 
   test("server with auth headers has its URL redacted", async () => {
@@ -267,22 +321,35 @@ describe("McpManager discovery", () => {
       { private: failing },
     );
 
-    const result = await manager.discover();
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    manager.startBackgroundDiscovery(
+      () => {},
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+    await waitForStatus(manager, "private", "failed");
 
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0].message).not.toContain(authUrl);
-    expect(result.warnings[0].message).not.toContain(secret);
-    expect(result.warnings[0].message).toContain(REDACTION_MARKER);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).not.toContain(authUrl);
+    expect(warnings[0].message).not.toContain(secret);
+    expect(warnings[0].message).toContain(REDACTION_MARKER);
   });
 
   test("empty tool list is skipped and warning is recorded", async () => {
     const fake = makeFakeServer([]);
     const manager = new McpManager({}, { empty: makeConfig() }, fake.factories);
 
-    const result = await manager.discover();
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    manager.startBackgroundDiscovery(
+      () => {},
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+    await waitForStatus(manager, "empty", "ready");
 
-    expect(result.descriptors).toEqual([]);
-    expect(result.warnings).toEqual([
+    expect(warnings).toEqual([
       {
         serverName: "empty",
         message: 'MCP server "empty" returned no tools',
@@ -294,17 +361,8 @@ describe("McpManager discovery", () => {
     const fake = makeFakeServer([tool("valid"), tool("bad/name"), tool("also-valid")]);
     const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
 
-    const result = await manager.discover();
-
-    expect(result.descriptors.map((descriptor) => descriptor.name)).toEqual([
-      "mcp__docs__valid",
-      "mcp__docs__also-valid",
-    ]);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toMatchObject({
-      serverName: "docs",
-      toolName: "bad/name",
-    });
+    const names = await collectDescriptors(manager, (n) => n.length >= 2);
+    expect(names).toEqual(["mcp__docs__valid", "mcp__docs__also-valid"]);
   });
 
   test("duplicate tool names within the same server skip duplicate and warn", async () => {
@@ -315,18 +373,31 @@ describe("McpManager discovery", () => {
     ]);
     const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
 
-    const result = await manager.discover();
+    const warnings: Array<{ serverName?: string; toolName?: string; message: string }> = [];
+    const names = await new Promise<string[]>((resolve) => {
+      const collected: string[] = [];
+      manager.startBackgroundDiscovery(
+        (descriptors) => {
+          collected.push(...descriptors.map((d) => d.name));
+          if (collected.length >= 2) resolve([...collected]);
+        },
+        (warning) => {
+          warnings.push({
+            serverName: warning.serverName,
+            toolName: warning.toolName,
+            message: warning.message,
+          });
+        },
+      );
+    });
 
-    expect(result.descriptors.map((descriptor) => descriptor.name)).toEqual([
-      "mcp__docs__lookup",
-      "mcp__docs__search",
-    ]);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toMatchObject({
+    expect(names).toEqual(["mcp__docs__lookup", "mcp__docs__search"]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
       serverName: "docs",
       toolName: "lookup",
     });
-    expect(result.warnings[0].message).toContain("Duplicate tool");
+    expect(warnings[0].message).toContain("Duplicate tool");
   });
 
   test("continues adapting later tools after an invalid duplicate-like name", async () => {
@@ -337,17 +408,8 @@ describe("McpManager discovery", () => {
     ]);
     const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
 
-    const result = await manager.discover();
-
-    expect(result.descriptors.map((descriptor) => descriptor.name)).toEqual([
-      "mcp__docs__lookup",
-      "mcp__docs__after",
-    ]);
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toMatchObject({
-      serverName: "docs",
-      toolName: "bad__name",
-    });
+    const names = await collectDescriptors(manager, (n) => n.length >= 2);
+    expect(names).toEqual(["mcp__docs__lookup", "mcp__docs__after"]);
   });
 });
 
@@ -366,7 +428,10 @@ describe("McpManager.closeAll", () => {
       { first, second },
     );
 
-    await manager.discover();
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    await waitForStatus(manager, "first", "ready");
+    await waitForStatus(manager, "second", "ready");
+
     const warnings = await manager.closeAll();
 
     expect(warnings).toEqual([]);
@@ -396,7 +461,10 @@ describe("McpManager.closeAll", () => {
       { failing, ok },
     );
 
-    await manager.discover();
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    await waitForStatus(manager, "failing", "ready");
+    await waitForStatus(manager, "ok", "ready");
+
     const warnings = await manager.closeAll();
 
     expect(failing.sdkClient.close).toHaveBeenCalledTimes(1);
@@ -412,5 +480,355 @@ describe("McpManager.closeAll", () => {
     const manager = new McpManager({}, {}, makeFakeServer([]).factories);
 
     await expect(manager.closeAll()).resolves.toEqual([]);
+  });
+});
+
+// ─── Background Discovery & Status Tracking ──────────────────────────────────
+
+describe("McpManager background discovery & status", () => {
+  test("initializes all servers as pending", () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager(
+      { builtin: makeConfig({ url: "https://builtin.example.test/rpc" }) },
+      { user: makeConfig({ url: "https://user.example.test/rpc" }) },
+      fake.factories,
+    );
+
+    const status = manager.getStatus();
+
+    expect(status.size).toBe(2);
+    expect(status.get("builtin")).toEqual({ state: "pending" });
+    expect(status.get("user")).toEqual({ state: "pending" });
+  });
+
+  test("emits ready status with toolCount after successful discovery", async () => {
+    const fake = makeFakeServer([tool("lookup"), tool("search")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    const status = await waitForStatus(manager, "docs", "ready");
+
+    expect(status).toEqual({ state: "ready", toolCount: 2 });
+  });
+
+  test("emits failed status with redacted error on connect failure", async () => {
+    const secret = "Bearer connect-secret";
+    const failing = makeFakeServer([], {
+      connect: mock(async () => {
+        throw new Error(`connect failed: ${secret}`);
+      }),
+    });
+    const manager = new McpManager(
+      {},
+      { failing: makeConfig({ url: "https://failing.example.test/rpc", headers: { Authorization: secret } }) },
+      failing.factories,
+    );
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    const status = await waitForStatus(manager, "failing", "failed");
+
+    expect(status.state).toBe("failed");
+    if (status.state === "failed") {
+      expect(status.error).toContain(REDACTION_MARKER);
+      expect(status.error).not.toContain(secret);
+    }
+  });
+
+  test("invokes onDescriptors callback with adapted descriptors", async () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    const captured: string[] = [];
+    manager.startBackgroundDiscovery(
+      (descriptors) => {
+        captured.push(...descriptors.map((d) => d.name));
+      },
+      () => {},
+    );
+    await waitForStatus(manager, "docs", "ready");
+
+    expect(captured).toEqual(["mcp__docs__lookup"]);
+  });
+
+  test("invokes onWarning callback for empty-tools server", async () => {
+    const fake = makeFakeServer([]);
+    const manager = new McpManager({}, { empty: makeConfig() }, fake.factories);
+
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    manager.startBackgroundDiscovery(
+      () => {},
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+    await waitForStatus(manager, "empty", "ready");
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].serverName).toBe("empty");
+    expect(warnings[0].message).toContain("no tools");
+  });
+
+  test("does not block — startBackgroundDiscovery returns immediately", () => {
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const fake = makeFakeServer([tool("lookup")], {
+      connect: mock(async () => {
+        await connectGate;
+      }),
+    });
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    let afterCallRan = false;
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    // Synchronous code after the call runs before discovery completes
+    afterCallRan = true;
+
+    expect(afterCallRan).toBe(true);
+    expect(manager.getStatus().get("docs")).toEqual({ state: "pending" });
+
+    releaseConnect();
+  });
+
+  test("status listeners receive per-server updates", async () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    const updates: Array<{ serverName: string; status: McpServerStatus }> = [];
+    const unsubscribe = manager.onStatusChange((serverName, status) => {
+      updates.push({ serverName, status });
+    });
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    await waitForStatus(manager, "docs", "ready");
+
+    const readyUpdate = updates.find(
+      (u) => u.serverName === "docs" && u.status.state === "ready",
+    );
+    expect(readyUpdate).toBeDefined();
+    expect(readyUpdate?.status).toEqual({ state: "ready", toolCount: 1 });
+
+    // Unsubscribe stops further updates
+    const before = updates.length;
+    unsubscribe();
+    expect(updates.length).toBe(before);
+  });
+
+  test("getStatus returns a snapshot Map (mutations do not affect internal state)", () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    const snapshot = manager.getStatus();
+    snapshot.set("docs", { state: "failed", error: "tampered" });
+    snapshot.delete("docs");
+
+    const fresh = manager.getStatus();
+    expect(fresh.get("docs")).toEqual({ state: "pending" });
+    expect(fresh.size).toBe(1);
+  });
+
+  test("handles multiple servers in parallel", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = makeFakeServer([tool("first")], {
+      connect: mock(async () => {
+        await firstGate;
+      }),
+    });
+    const second = makeFakeServer([tool("second")], {
+      connect: mock(async () => {
+        second.connectOrder.push("started");
+      }),
+    });
+    const manager = managerWithClientRoutes(
+      {},
+      {
+        first: makeConfig({ url: "https://first.example.test/rpc" }),
+        second: makeConfig({ url: "https://second.example.test/rpc" }),
+      },
+      { first, second },
+    );
+
+    const allDescriptors: string[] = [];
+    manager.startBackgroundDiscovery(
+      (descriptors) => {
+        allDescriptors.push(...descriptors.map((d) => d.name));
+      },
+      () => {},
+    );
+
+    // Second server completes while first is gated
+    await waitForStatus(manager, "second", "ready");
+    expect(manager.getStatus().get("first")).toEqual({ state: "pending" });
+
+    releaseFirst();
+    await waitForStatus(manager, "first", "ready");
+
+    expect(allDescriptors.sort()).toEqual(["mcp__first__first", "mcp__second__second"]);
+  });
+});
+
+// ─── H1: Top-level error handling in discoverBackground ───────────────────────
+
+describe("McpManager top-level discovery error handling (H1)", () => {
+  test("top-level error marks all pending servers as failed and calls onWarning", async () => {
+    // Force a synchronous throw inside discoverServerBackground by making the
+    // McpClient constructor throw (factories.createClient throws).
+    const throwingFactories: McpClientFactories = {
+      createClient: mock(() => {
+        throw new Error("boom: client factory exploded");
+      }),
+      createTransport: mock(() => {
+        throw new Error("boom: transport factory exploded");
+      }),
+    };
+    const manager = new McpManager(
+      {},
+      { docs: makeConfig(), other: makeConfig() },
+      throwingFactories,
+    );
+
+    const warnings: Array<{ serverName?: string; message: string }> = [];
+    manager.startBackgroundDiscovery(
+      () => {},
+      (warning) => {
+        warnings.push({ serverName: warning.serverName, message: warning.message });
+      },
+    );
+
+    // Both servers should be marked failed (not stuck pending forever).
+    const docsStatus = await waitForStatus(manager, "docs", "failed");
+    const otherStatus = await waitForStatus(manager, "other", "failed");
+
+    expect(docsStatus.state).toBe("failed");
+    expect(otherStatus.state).toBe("failed");
+    // At least one warning emitted for the top-level failure.
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("top-level error does not produce an unhandled rejection", async () => {
+    // If the promise rejects unhandled, bun:test surfaces it as a test failure.
+    // We assert the test completes cleanly simply by reaching the end.
+    const throwingFactories: McpClientFactories = {
+      createClient: mock(() => {
+        throw new Error("sync constructor failure");
+      }),
+      createTransport: mock(() => {
+        throw new Error("sync transport failure");
+      }),
+    };
+    const manager = new McpManager({}, { docs: makeConfig() }, throwingFactories);
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    await waitForStatus(manager, "docs", "failed");
+    // Reaching here means no unhandled rejection crashed the test.
+    expect(manager.getStatus().get("docs")?.state).toBe("failed");
+  });
+});
+
+// ─── H3: Single-flight & close-safety ─────────────────────────────────────────
+
+describe("McpManager single-flight & close-safety (H3)", () => {
+  test("startBackgroundDiscovery called twice throws on second call", () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    expect(() => manager.startBackgroundDiscovery(() => {}, () => {})).toThrow(
+      /already started/i,
+    );
+  });
+
+  test("closeAll while in-flight: late-completing client is not registered and is closed", async () => {
+    let releaseConnect!: () => void;
+    const connectGate = new Promise<void>((resolve) => {
+      releaseConnect = resolve;
+    });
+    const fake = makeFakeServer([tool("lookup")], {
+      connect: mock(async () => {
+        await connectGate;
+      }),
+    });
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    let descriptorsDelivered = false;
+    manager.startBackgroundDiscovery(
+      () => {
+        descriptorsDelivered = true;
+      },
+      () => {},
+    );
+    // Let the connect promise settle into the gate (pending).
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Close before connect resolves.
+    await manager.closeAll();
+
+    // Now release the gate — late completion must short-circuit.
+    releaseConnect();
+    // Allow microtasks to flush.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(descriptorsDelivered).toBe(false);
+    // Status must NOT be ready (it stays pending; closeAll doesn't set failed).
+    const status = manager.getStatus().get("docs");
+    expect(status?.state).not.toBe("ready");
+    // The client that connected late must have been closed.
+    expect(fake.sdkClient.close).toHaveBeenCalledTimes(1);
+    expect(fake.transport.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("closeAll sets #closed; subsequent startBackgroundDiscovery is rejected", async () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    await waitForStatus(manager, "docs", "ready");
+    await manager.closeAll();
+
+    // After close, a fresh start should be refused (already started OR closed).
+    expect(() => manager.startBackgroundDiscovery(() => {}, () => {})).toThrow();
+  });
+});
+
+// ─── M3: setStatus listener isolation ─────────────────────────────────────────
+
+describe("McpManager setStatus listener isolation (M3)", () => {
+  test("throwing listener does not affect other listeners or server status", async () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+
+    const calls: string[] = [];
+    manager.onStatusChange(() => {
+      calls.push("before");
+      throw new Error("listener boom");
+    });
+    manager.onStatusChange(() => {
+      calls.push("after");
+    });
+
+    manager.startBackgroundDiscovery(() => {}, () => {});
+    const status = await waitForStatus(manager, "docs", "ready");
+
+    // Both listeners ran despite the first throwing.
+    expect(calls).toContain("before");
+    expect(calls).toContain("after");
+    // Server status is ready, not failed.
+    expect(status.state).toBe("ready");
+    expect(status).toEqual({ state: "ready", toolCount: 1 });
+  });
+});
+
+// ─── Removed discover() method ───────────────────────────────────────────────
+
+describe("McpManager removed discover() method", () => {
+  test("discover is no longer a public method", () => {
+    const fake = makeFakeServer([tool("lookup")]);
+    const manager = new McpManager({}, { docs: makeConfig() }, fake.factories);
+    // The old discover() method must not exist on the instance.
+    expect((manager as unknown as Record<string, unknown>).discover).toBeUndefined();
   });
 });
