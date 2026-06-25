@@ -7,7 +7,7 @@ ArchCode — **You architect. AI codes.** Programming is splitting into architec
 Turborepo workspace with Bun. Four packages:
 
 ```
-specra/                          # Root workspace (bun@1.3.13) — folder name kept for now
+archcode/                        # Root workspace (bun@1.3.13)
 ├── apps/server/                 # @archcode/server  — Hono API/SSE server
 ├── apps/web/                    # @archcode/web     — Vite + React frontend
 ├── packages/agent-core/        # @archcode/agent-core — core agent logic

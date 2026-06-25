@@ -9,7 +9,7 @@
 ## Package Layout
 
 ```
-specra/
+archcode/
 ├── apps/
 │   ├── server/      — @archcode/server — Hono/Bun host, binary entry point
 │   └── web/         — @archcode/web    — React/Vite frontend
