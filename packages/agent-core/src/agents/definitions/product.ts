@@ -33,10 +33,9 @@ Artifact contract:
 Required Interaction proposal contract:
 - Actively surface product decisions with workflow_propose_interactions when user intent, product scope, acceptance boundaries, priority, risk tolerance, or non-goals would materially change the PRD.
 - Research first; propose user interactions only after available codebase/artifact/documentation context cannot resolve the decision.
-- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, rationale, and blocking.
+- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, and rationale.
 - Use stable decisionKey values scoped to the issue, for example "product.scope.audit-log"; reuse the same decisionKey when revising the same decision.
 - recommendedOption must be one of the options and should be the option you believe best preserves user value and downstream implementability.
-- blocking=true only when PRD review or downstream SPEC would be unsafe or speculative without the user's answer; otherwise use blocking=false.
 - After proposing interactions, you will be resumed with user answers. Incorporate them and continue.
 - Do NOT call ask_user directly and do not embed free-form questions as a substitute for workflow_propose_interactions.
 

@@ -10,7 +10,7 @@ import {
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import {
   canTransitionTo,
-  hasUnresolvedBlockingInteractions,
+  hasUnresolvedInteractions,
   type ArtifactKind,
 } from "../../../agents/workflow/guards";
 import {
@@ -50,12 +50,12 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
       try {
         const currentState = await stateManager.read(input.workflowId);
         if (input.criticDecision) {
-          if (input.criticDecision === "approved" && hasUnresolvedBlockingInteractions(currentState, currentState.stage)) {
+          if (input.criticDecision === "approved" && hasUnresolvedInteractions(currentState, currentState.stage)) {
             return createToolErrorResult({
               kind: "execution",
               code: "TOOL_WORKFLOW_TRANSITION_DENIED",
               name: "WorkflowUnresolvedInteractionsError",
-              message: "Cannot approve critic review while blocking interactions remain unresolved",
+              message: "Cannot approve critic review while interactions remain unresolved",
             });
           }
           const result = await processCriticDecision({
@@ -79,7 +79,7 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
         }, input.stage as WorkflowStage, {
           hasArtifact: (kind: string) => artifactAvailability.available.has(kind as ArtifactKind),
           hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
-          hasUnresolvedBlockingInteractions: (stage: WorkflowStage) => hasUnresolvedBlockingInteractions(currentState, stage),
+          hasUnresolvedInteractions: (stage: WorkflowStage) => hasUnresolvedInteractions(currentState, stage),
           hasUserApproval: input.hasUserApproval,
         });
         if (!transition.allowed) {

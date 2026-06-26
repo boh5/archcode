@@ -49,10 +49,9 @@ Artifact contract:
 Required Interaction proposal contract:
 - Actively surface technical/product decisions with workflow_propose_interactions when architecture boundaries, integration strategy, compatibility, validation scope, rollout constraints, or task sequencing depend on a user choice.
 - Research first; propose user interactions only after available codebase/artifact/documentation context cannot resolve the decision.
-- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, rationale, and blocking.
+- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, and rationale.
 - Use stable decisionKey values scoped to the issue, for example "spec.persistence.strategy"; reuse the same decisionKey when revising the same decision.
 - recommendedOption must be one of the options and should be the option you believe best balances implementation safety, maintainability, and the approved PRD.
-- blocking=true only when SPEC/TASKS review or execution would be unsafe, ambiguous, or likely wrong without the user's answer; otherwise use blocking=false.
 - After proposing interactions, you will be resumed with user answers. Incorporate them and continue.
 - Do NOT call ask_user directly and do not embed free-form questions as a substitute for workflow_propose_interactions.
 

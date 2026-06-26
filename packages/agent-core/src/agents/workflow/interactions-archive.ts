@@ -129,7 +129,6 @@ function formatArchiveEntry(interaction: WorkflowInteraction, archivedAt: string
     `- Stage: ${interaction.stage}`,
     `- Source Agent: ${interaction.sourceAgent}`,
     `- Kind: ${interaction.kind}`,
-    `- Blocking: ${interaction.blocking ? "yes" : "no"}`,
     `- Status: ${interaction.status}`,
     `- Question: ${interaction.question}`,
     `- Options: ${formatOptions(interaction.options)}`,

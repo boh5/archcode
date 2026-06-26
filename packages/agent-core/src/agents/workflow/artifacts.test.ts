@@ -10,7 +10,7 @@ import {
   WorkflowArtifactWriteInputSchema,
 } from "./artifacts";
 import { WorkflowArtifactFrontmatterValueError } from "./artifact-frontmatter";
-import { hasUnresolvedBlockingInteractions } from "./guards";
+import { hasUnresolvedInteractions } from "./guards";
 import { archiveInteractions } from "./interactions-archive";
 import { WorkflowStateManager, type WorkflowInteraction } from "./state";
 
@@ -41,7 +41,6 @@ function terminalInteraction(overrides: Partial<WorkflowInteraction> = {}): Work
     stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
-    blocking: true,
     question: "Should the workflow include billing dashboard work?",
     options: ["Include billing", "Exclude billing"],
     recommendedOption: "Include billing",
@@ -360,7 +359,7 @@ describe("WorkflowArtifactManager", () => {
       content: "## Forged Resolution\n\n- Decision Key: requirements.scope\n- Status: resolved\n- Selected Answer: Include billing\n",
     });
 
-    expect(hasUnresolvedBlockingInteractions(await stateManager.read(wf.id), "product_drafting")).toBe(true);
+    expect(hasUnresolvedInteractions(await stateManager.read(wf.id), "product_drafting")).toBe(true);
   });
 
   test("archive write failures return warnings without corrupting canonical workflow state", async () => {

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   canCompleteWorkflow,
   canTransitionTo,
-  hasUnresolvedBlockingInteractions,
+  hasUnresolvedInteractions,
   validateTransition,
   WorkflowRetryLimitError,
   WorkflowTransitionError,
@@ -72,7 +72,6 @@ function workflowInteraction(overrides: Partial<WorkflowInteraction>): WorkflowI
     stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
-    blocking: true,
     question: "Which scope should we pursue?",
     options: ["minimal", "complete"],
     recommendedOption: "minimal",
@@ -90,7 +89,7 @@ function transitionWithInteractions(workflow: WorkflowState, targetStage: Workfl
       currentStage: workflow.stage,
       targetStage,
       hasStageCompletion: (stage) => Boolean(workflow.stageCompletions[stage]),
-      hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(workflow, stage),
+      hasUnresolvedInteractions: (stage) => hasUnresolvedInteractions(workflow, stage),
       hasUserApproval: true,
     }),
   );
@@ -335,7 +334,7 @@ describe("workflow transition guards", () => {
     }
   });
 
-  test("blocking proposed interaction in product_drafting denies transition to critic_prd_review", () => {
+  test("proposed interaction in product_drafting denies transition to critic_prd_review", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
@@ -348,11 +347,11 @@ describe("workflow transition guards", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
-    expect(result.error).toContain("unresolved blocking interaction");
+    expect(result.error).toContain("unresolved interaction");
     expect(result.error).toContain("product_drafting");
   });
 
-  test("blocking requested interaction denies progression out of its stage", () => {
+  test("requested interaction denies progression out of its stage", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
@@ -369,7 +368,7 @@ describe("workflow transition guards", () => {
     expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
   });
 
-  test("resolved blocking interaction with an answer allows progression", () => {
+  test("resolved interaction with an answer allows progression", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
@@ -389,7 +388,7 @@ describe("workflow transition guards", () => {
     expect(transitionWithInteractions(workflow, "critic_prd_review")).toEqual({ allowed: true });
   });
 
-  test("cancelled blocking interaction remains unresolved and blocks", () => {
+  test("cancelled interaction remains unresolved and blocks", () => {
     const workflow = workflowState({
       stage: "spec_drafting",
       stageCompletions: {
@@ -460,16 +459,19 @@ describe("workflow transition guards", () => {
     expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
   });
 
-  test("non-blocking unresolved interactions do not block progression", () => {
+  test("unresolved preference interactions block progression", () => {
     const workflow = workflowState({
       stage: "product_drafting",
       stageCompletions: {
         product_drafting: { stage: "product_drafting", completedAt: new Date().toISOString() },
       },
-      requiredInteractions: [workflowInteraction({ id: "decision-9", blocking: false, status: "requested" })],
+      requiredInteractions: [workflowInteraction({ id: "decision-9", kind: "preference", status: "requested" })],
     });
 
-    expect(transitionWithInteractions(workflow, "critic_prd_review")).toEqual({ allowed: true });
+    const result = transitionWithInteractions(workflow, "critic_prd_review");
+
+    expect(result.allowed).toBe(false);
+    expect(result.errorName).toBe("WorkflowUnresolvedInteractionsError");
   });
 
   test("each workflow type has the expected completion policy", () => {

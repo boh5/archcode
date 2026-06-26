@@ -25,7 +25,7 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 - The Orchestrator delegates Product, Spec, and Critic work to sub-agents via delegate(session_id=...). Sub-agents proactively research and may propose questions during their execution using workflow_propose_interactions.
 - The Orchestrator collects proposals, dedupes/merges related items, then calls workflow_request_interactions once per batch to ask the user. Do not ask one question at a time when multiple proposals exist for the same gate.
 - After the user responds, the Orchestrator resumes the sub-agent with answers using delegate(session_id=...) — passing the same session_id so the sub-agent continues from where it left off with the new information.
-- Do not advance while workflow_read reports unresolved blocking decisions. Persisted workflow state is canonical; do not rely solely on free-form artifact text parsing.
+- Do not advance while workflow_read reports unresolved interactions. Persisted workflow state is canonical; do not rely solely on free-form artifact text parsing.
 - The final awaiting_user_approval -> foreman_executing gate remains separate: use ask_user for explicit execution approval before Foreman even when all earlier Product/Spec/Critic decision gates are clear.
 
 ### Stage completion records

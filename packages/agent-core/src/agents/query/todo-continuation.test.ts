@@ -226,10 +226,10 @@ describe("shouldContinueAfterLoop", () => {
   });
 
   test.each(["proposed", "requested"] as const)(
-    "blocks continuation when workflow has %s blocking interactions",
+    "blocks continuation when workflow has %s interactions",
     (status) => {
       const workflow = workflowState({
-        requiredInteractions: [workflowInteraction({ status, blocking: true })],
+        requiredInteractions: [workflowInteraction({ status })],
       });
 
       expect(shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow })).toEqual({
@@ -250,17 +250,20 @@ describe("shouldContinueAfterLoop", () => {
     expect(result.should).toBe(true);
   });
 
-  test("does not block continuation on non-blocking unresolved workflow preferences", () => {
+  test("blocks continuation on unresolved workflow preferences", () => {
     const workflow = workflowState({
-      requiredInteractions: [workflowInteraction({ kind: "preference", blocking: false, status: "requested" })],
+      requiredInteractions: [workflowInteraction({ kind: "preference", status: "requested" })],
     });
 
     const result = shouldContinueAfterLoop(stateWithPendingTodo({ workflowId: workflow.id }), "completed", 10_000, { workflow });
 
-    expect(result.should).toBe(true);
+    expect(result).toEqual({
+      should: false,
+      reason: "unresolved_workflow_interactions",
+    });
   });
 
-  test("cancelled blocking workflow answer remains unresolved and blocks continuation", () => {
+  test("cancelled workflow answer remains unresolved and blocks continuation", () => {
     const workflow = workflowState({
       requiredInteractions: [workflowInteraction({ status: "cancelled", cancelledAt: "2026-06-23T00:00:00.000Z" })],
     });
@@ -284,7 +287,7 @@ describe("shouldContinueAfterLoop", () => {
     });
   });
 
-  test("allows autonomous coding after blocking decisions and final approval resolve", () => {
+  test("allows autonomous coding after decisions and final approval resolve", () => {
     const workflow = workflowState({
       stage: "foreman_executing",
       requiredInteractions: [],
@@ -453,7 +456,6 @@ function workflowInteraction(overrides: Partial<WorkflowInteraction> = {}): Work
     stage,
     sourceAgent: "product",
     kind: "decision",
-    blocking: true,
     question: "Choose the direction?",
     options: ["Option A", "Option B"],
     recommendedOption: "Option A",

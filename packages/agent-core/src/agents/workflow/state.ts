@@ -92,7 +92,6 @@ export const WorkflowInteractionSchema = z.strictObject({
   stage: WorkflowStageSchema,
   sourceAgent: z.string().trim().min(1),
   kind: WorkflowInteractionKindSchema,
-  blocking: z.boolean(),
   question: z.string().trim().min(1),
   options: z.array(z.string()),
   recommendedOption: z.string().optional(),

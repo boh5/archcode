@@ -40,13 +40,12 @@ TASKS.md validation:
 - Reject heading-based task blocks like "## T1", bold list fields like "- **Agent**:", localized required field names, and any separate JSON/frontmatter task graph.
 
 Required Interaction proposal contract:
-- Actively surface required user decisions with workflow_propose_interactions only when Critic review finds a user-owned issue in one of these categories: product scope, risk acceptance, major tradeoffs, or blocking ambiguity.
+- Actively surface required user decisions with workflow_propose_interactions only when Critic review finds a user-owned issue in one of these categories: product scope, risk acceptance, major tradeoffs, or unresolved ambiguity.
 - Research first; propose user interactions only after available codebase/artifact/documentation context cannot resolve the decision.
 - Do not propose user questions for normal implementation choices, style preferences, refactors, missing tests, malformed TASKS.md, or issues the artifact author can fix without user input; reject with required fixes instead.
-- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, rationale, and blocking.
+- Each proposal must include decisionKey, kind, question, concrete options (at least 2 for decisions), recommendedOption, and rationale.
 - Use stable decisionKey values scoped to the issue, for example "critic.risk.acceptance.data-loss"; reuse the same decisionKey when revising the same decision.
 - recommendedOption must be one of the options and should be the option you believe best preserves product intent, safety, and implementability.
-- blocking=true only when approval would be unsafe or misleading without the user's answer; otherwise use blocking=false.
 - After proposing interactions, you will be resumed with user answers. Incorporate them and continue.
 - Do NOT call ask_user directly and do not embed free-form questions as a substitute for workflow_propose_interactions.
 

@@ -21,7 +21,6 @@ const WorkflowInteractionProposalSchema = z.strictObject({
   stage: WorkflowStageSchema,
   sourceAgent: ProposalSourceAgentSchema,
   kind: WorkflowInteractionKindSchema,
-  blocking: z.boolean(),
   question: z.string().trim().min(1),
   options: z.array(z.string().trim().min(1)),
   recommendedOption: z.string().trim().min(1).optional(),

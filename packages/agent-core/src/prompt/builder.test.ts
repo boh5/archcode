@@ -86,7 +86,7 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("workflow_request_interactions");
     expect(result).toContain("calls workflow_request_interactions once per batch");
     expect(result).toContain("resumes the sub-agent with answers using delegate(session_id=...)");
-    expect(result).toContain("Do not advance while workflow_read reports unresolved blocking decisions");
+    expect(result).toContain("Do not advance while workflow_read reports unresolved interactions");
     expect(result).toContain("Sub-agents proactively research and may propose questions during their execution using workflow_propose_interactions");
     expect(result).toContain("Do not ask one question at a time when multiple proposals exist for the same gate");
   });
@@ -154,7 +154,6 @@ describe("buildSystemPrompt", () => {
           stage: "product_drafting",
           sourceAgent: "product",
           kind: "decision",
-          blocking: true,
           question: "Should billing be included?",
           options: ["Include billing", "Exclude billing"],
           rationale: "Defines implementation scope.",

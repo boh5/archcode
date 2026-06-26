@@ -714,7 +714,6 @@ export interface WorkflowInteraction {
   stage: string;
   sourceAgent: string;
   kind: "decision" | "preference" | "clarification" | "approval" | string;
-  blocking: boolean;
   question: string;
   options: string[];
   recommendedOption?: string;

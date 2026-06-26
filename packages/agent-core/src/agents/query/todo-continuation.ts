@@ -1,5 +1,5 @@
 import type { Reminder, ExecutionEndEvent, SessionStoreState, StoredTodo } from "../../store/types";
-import { hasUnresolvedBlockingInteractions } from "../workflow/guards";
+import { hasUnresolvedInteractions } from "../workflow/guards";
 import type { WorkflowState } from "../workflow/state";
 
 export const TODO_REMINDER_STEP_INTERVAL = 10;
@@ -133,7 +133,7 @@ export function shouldContinueAfterLoop(
     return { should: false, reason: "pending_question" };
   }
 
-  if (hasWorkflowBlockingInteractions(state, workflowContext)) {
+  if (hasWorkflowInteractions(state, workflowContext)) {
     return { should: false, reason: "unresolved_workflow_interactions" };
   }
 
@@ -170,7 +170,7 @@ export function hasPendingQuestion(state: Pick<SessionStoreState, "messages">): 
   ) ?? false;
 }
 
-export function hasWorkflowBlockingInteractions(
+export function hasWorkflowInteractions(
   state: Pick<SessionStoreState, "workflowId">,
   workflowContext: ContinuationWorkflowContext = {},
 ): boolean {
@@ -178,7 +178,7 @@ export function hasWorkflowBlockingInteractions(
   if (workflowContext.workflowReadFailed === true) return true;
   const workflow = workflowContext.workflow;
   if (!workflow || workflow.id !== state.workflowId) return false;
-  return hasUnresolvedBlockingInteractions(workflow, workflow.stage);
+  return hasUnresolvedInteractions(workflow, workflow.stage);
 }
 
 function hasStagnated(

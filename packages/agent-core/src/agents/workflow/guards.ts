@@ -18,14 +18,14 @@ export interface TransitionInput {
   maxRetries: number;
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion?: (stage: WorkflowStage) => boolean;
-  hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
+  hasUnresolvedInteractions?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
 export interface TransitionContext {
   hasArtifact: (kind: string) => boolean;
   hasStageCompletion: (stage: WorkflowStage) => boolean;
-  hasUnresolvedBlockingInteractions?: (stage: WorkflowStage) => boolean;
+  hasUnresolvedInteractions?: (stage: WorkflowStage) => boolean;
   hasUserApproval: boolean;
 }
 
@@ -78,7 +78,7 @@ export class WorkflowUnresolvedInteractionsError extends Error {
     public readonly targetStage: WorkflowStage,
   ) {
     super(
-      `Workflow ${workflowId} cannot advance from ${currentStage} to ${targetStage}: unresolved blocking interaction(s) remain in ${currentStage}`,
+      `Workflow ${workflowId} cannot advance from ${currentStage} to ${targetStage}: unresolved interaction(s) remain in ${currentStage}`,
     );
     this.name = "WorkflowUnresolvedInteractionsError";
   }
@@ -147,7 +147,7 @@ export function validateTransition(input: TransitionInput): TransitionResult {
     }
   }
 
-  if (input.hasUnresolvedBlockingInteractions?.(input.currentStage)) {
+  if (input.hasUnresolvedInteractions?.(input.currentStage)) {
     return denied(
       new WorkflowUnresolvedInteractionsError(
         input.workflowId,
@@ -196,12 +196,12 @@ export function canTransitionTo(
     maxRetries: workflow.maxRetries,
     hasArtifact: context.hasArtifact,
     hasStageCompletion: context.hasStageCompletion,
-    hasUnresolvedBlockingInteractions: context.hasUnresolvedBlockingInteractions,
+    hasUnresolvedInteractions: context.hasUnresolvedInteractions,
     hasUserApproval: context.hasUserApproval,
   });
 }
 
-export function hasUnresolvedBlockingInteractions(
+export function hasUnresolvedInteractions(
   workflow: Pick<WorkflowState, "requiredInteractions" | "resolvedInteractions">,
   stage: WorkflowStage,
 ): boolean {
@@ -211,7 +211,7 @@ export function hasUnresolvedBlockingInteractions(
   }
 
   return workflow.requiredInteractions.some((interaction) => {
-    if (interaction.stage !== stage || !interaction.blocking) return false;
+    if (interaction.stage !== stage) return false;
     if (interaction.status === "proposed" || interaction.status === "requested" || interaction.status === "cancelled") {
       return true;
     }

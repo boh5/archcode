@@ -176,7 +176,7 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
     expect(store.getState().reminders).toHaveLength(0);
   });
 
-  test("reads workflow state and blocks loop continuation on stale requested blocking interactions", async () => {
+  test("reads workflow state and blocks loop continuation on stale requested interactions", async () => {
     const workspaceRoot = `${import.meta.dir}/__test_tmp__/todo-continuation-hook`;
     const projectContext = createTestProjectContext(workspaceRoot);
     const workflow = await projectContext.workflowState.create({ type: "full_feature", title: "Feature" });
@@ -188,7 +188,6 @@ describe("createTodoContinuationHook - afterLoopEnd (loop continuation)", () => 
         stage: "product_drafting",
         sourceAgent: "product",
         kind: "decision",
-        blocking: true,
         question: "Choose the direction?",
         options: ["Option A", "Option B"],
         recommendedOption: "Option A",

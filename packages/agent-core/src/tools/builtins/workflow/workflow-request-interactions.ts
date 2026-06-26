@@ -15,7 +15,7 @@ import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowRequestInteractionsInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The current workflow id to update"),
-  stage: WorkflowStageSchema.optional().describe("Stage whose unresolved blocking interactions should be requested. Defaults to the workflow's current stage."),
+  stage: WorkflowStageSchema.optional().describe("Stage whose unresolved interactions should be requested. Defaults to the workflow's current stage."),
 });
 
 type WorkflowRequestInteractionsInput = z.infer<typeof WorkflowRequestInteractionsInputSchema>;
@@ -23,7 +23,7 @@ type WorkflowRequestInteractionsInput = z.infer<typeof WorkflowRequestInteractio
 export function createWorkflowRequestInteractionsTool(): AnyToolDescriptor {
   return defineTool({
     name: TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-    description: "Batch unresolved blocking workflow interactions for the current stage into one user request and persist the answers.",
+    description: "Batch unresolved workflow interactions for the current stage into one user request and persist the answers.",
     inputSchema: WorkflowRequestInteractionsInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     permissions: [allowOrchestratorOnly],
@@ -41,7 +41,7 @@ export function createWorkflowRequestInteractionsTool(): AnyToolDescriptor {
         const stateManager = ctx.projectContext.workflowState;
         const state = await stateManager.read(input.workflowId);
         const stage = input.stage ?? state.stage;
-        const targets = selectPendingBlockingInteractions(state.requiredInteractions, stage);
+        const targets = selectPendingInteractions(state.requiredInteractions, stage);
         if (targets.length === 0) {
           return JSON.stringify({
             workflowId: input.workflowId,
@@ -50,14 +50,14 @@ export function createWorkflowRequestInteractionsTool(): AnyToolDescriptor {
             resolved: 0,
             cancelled: 0,
             pending: 0,
-            message: "no blocking interactions to request",
+            message: "no interactions to request",
           }, null, 2);
         }
 
         const requestedIds = new Set(targets.map((interaction) => interaction.id));
         let requiredInteractions = state.requiredInteractions.map((interaction) =>
-          requestedIds.has(interaction.id) && interaction.status === "proposed"
-            ? { ...interaction, status: "requested" as const }
+          requestedIds.has(interaction.id) && (interaction.status === "proposed" || interaction.status === "cancelled")
+            ? { ...interaction, status: "requested" as const, cancelledAt: undefined }
             : interaction,
         );
         let resolvedInteractions = [...state.resolvedInteractions];
@@ -106,6 +106,7 @@ export function createWorkflowRequestInteractionsTool(): AnyToolDescriptor {
             status: "resolved",
             answer: answer.join(", "),
             resolvedAt: now,
+            cancelledAt: undefined,
           });
         }
 
@@ -134,12 +135,11 @@ export function createWorkflowRequestInteractionsTool(): AnyToolDescriptor {
   });
 }
 
-function selectPendingBlockingInteractions(interactions: readonly WorkflowInteraction[], stage: string): WorkflowInteraction[] {
+function selectPendingInteractions(interactions: readonly WorkflowInteraction[], stage: string): WorkflowInteraction[] {
   const selected = new Map<string, WorkflowInteraction>();
   for (const interaction of interactions) {
     if (interaction.stage !== stage) continue;
-    if (!interaction.blocking) continue;
-    if (interaction.status !== "proposed" && interaction.status !== "requested") continue;
+    if (interaction.status !== "proposed" && interaction.status !== "requested" && interaction.status !== "cancelled") continue;
     const existing = selected.get(interaction.decisionKey);
     if (!existing || compareInteractions(existing, interaction) < 0) selected.set(interaction.decisionKey, interaction);
   }

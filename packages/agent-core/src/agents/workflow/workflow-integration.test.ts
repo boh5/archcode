@@ -5,7 +5,7 @@ import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "./artifacts";
 import { processCriticDecision } from "./critic-protocol";
-import { canCompleteWorkflow, hasUnresolvedBlockingInteractions, validateTransition } from "./guards";
+import { canCompleteWorkflow, hasUnresolvedInteractions, validateTransition } from "./guards";
 import {
   createDerivedWorkflowWithOrchestrator,
   createWorkflowWithOrchestrator,
@@ -284,7 +284,7 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
 
     const requirementsRequest = parseToolJson<{ requested: number; resolved: number; pending: number; archive: { archived: number } }>(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
@@ -311,7 +311,7 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
       stage: "product_drafting",
@@ -354,7 +354,7 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "critic_spec_review",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
       stage: "spec_drafting",
@@ -381,7 +381,7 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "awaiting_user_approval",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
       stage: "critic_spec_review",
@@ -397,7 +397,7 @@ describe("end-to-end workflow lifecycle integration", () => {
       maxRetries: afterCriticDecision.maxRetries,
       hasArtifact: (kind) => Boolean(afterCriticDecision.artifacts[kind as keyof typeof afterCriticDecision.artifacts]),
       hasStageCompletion: (stage) => Boolean(afterCriticDecision.stageCompletions[stage]),
-      hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(afterCriticDecision, stage),
+      hasUnresolvedInteractions: (stage) => hasUnresolvedInteractions(afterCriticDecision, stage),
       hasUserApproval: false,
     })).toEqual({ allowed: true });
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
@@ -459,7 +459,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(implementationAskUser).not.toHaveBeenCalled();
   });
 
-  test("cancelled and empty batched decision answers remain blocking", async () => {
+  test("cancelled and empty batched decision answers remain unresolved", async () => {
     const cancelled = await createWorkflowAtProductDraftingGate("cancelled-decision");
     const cancelledResult = parseToolJson<{ cancelled: number; archive: { archived: number } }>(await executeWorkflowTool(
       cancelled.registry,
@@ -474,13 +474,13 @@ describe("end-to-end workflow lifecycle integration", () => {
     const cancelledState = await cancelled.stateManager.read(cancelled.workflowId);
     expect(cancelledState.requiredInteractions).toHaveLength(1);
     expect(cancelledState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.blocker", status: "cancelled" });
-    expect(hasUnresolvedBlockingInteractions(cancelledState, "product_drafting")).toBe(true);
+    expect(hasUnresolvedInteractions(cancelledState, "product_drafting")).toBe(true);
     expectToolError(await executeWorkflowTool(cancelled.registry, cancelled.root, cancelled.storeManager, cancelled.store, "workflow_update_stage", {
       workflowId: cancelled.workflowId,
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
     expect((await cancelled.artifactManager.readByKind(cancelled.workflowId, "INTERACTIONS")).body).toContain("- Status: cancelled");
 
     const empty = await createWorkflowAtProductDraftingGate("empty-decision");
@@ -497,13 +497,13 @@ describe("end-to-end workflow lifecycle integration", () => {
     const emptyState = await empty.stateManager.read(empty.workflowId);
     expect(emptyState.requiredInteractions).toHaveLength(1);
     expect(emptyState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.blocker", status: "requested" });
-    expect(hasUnresolvedBlockingInteractions(emptyState, "product_drafting")).toBe(true);
+    expect(hasUnresolvedInteractions(emptyState, "product_drafting")).toBe(true);
     expectToolError(await executeWorkflowTool(empty.registry, empty.root, empty.storeManager, empty.store, "workflow_update_stage", {
       workflowId: empty.workflowId,
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
-    }), "unresolved blocking interaction(s) remain");
+    }), "unresolved interaction(s) remain");
   });
 
   test("research_only lifecycle creates research, consolidates, and completes", async () => {
@@ -819,7 +819,7 @@ async function transition(
     maxRetries: state.maxRetries,
     hasArtifact: (kind: string) => Boolean(state.artifacts[kind as keyof typeof state.artifacts]),
     hasStageCompletion: (stage: WorkflowStage) => Boolean(state.stageCompletions[stage]),
-    hasUnresolvedBlockingInteractions: (stage: WorkflowStage) => hasUnresolvedBlockingInteractions(state, stage),
+    hasUnresolvedInteractions: (stage: WorkflowStage) => hasUnresolvedInteractions(state, stage),
     hasUserApproval,
   });
 
@@ -896,7 +896,6 @@ function interactionProposal(overrides: Record<string, unknown> = {}) {
     stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
-    blocking: true,
     question: "Which user-owned decision should planning use?",
     options: ["Option A", "Option B"],
     recommendedOption: "Option A",
@@ -966,7 +965,7 @@ async function advance(
     maxRetries: state.maxRetries,
     hasArtifact: (kind) => Boolean(state.artifacts[kind as keyof typeof state.artifacts]),
     hasStageCompletion: (stage) => Boolean(state.stageCompletions[stage]),
-    hasUnresolvedBlockingInteractions: (stage) => hasUnresolvedBlockingInteractions(state, stage),
+    hasUnresolvedInteractions: (stage) => hasUnresolvedInteractions(state, stage),
     hasUserApproval,
   });
 

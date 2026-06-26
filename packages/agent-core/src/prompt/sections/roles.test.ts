@@ -73,8 +73,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("Delegate→propose→ask→resume");
     expect(result).toContain("call workflow_request_interactions once per gate");
     expect(result).toContain("before PRD review, before SPEC review, and before accepting Critic approval");
-    expect(result).toContain("Never advance out of a stage while workflow_read shows unresolved blocking interactions for that stage");
-    expect(result).toContain("Persisted resolvedInteractions clear answered blockers");
+    expect(result).toContain("Never advance out of a stage while workflow_read shows unresolved interactions for that stage");
+    expect(result).toContain("Persisted resolvedInteractions clear answered interactions");
   });
 
   test("orchestrator routes Product, Spec, and Critic questions through interaction tools instead of direct ask_user", () => {
@@ -135,7 +135,8 @@ describe("buildRoleSection", () => {
     expect(result).toContain("at least 2 for decisions");
     expect(result).toContain("recommendedOption");
     expect(result).toContain("rationale");
-    expect(result).toContain("blocking");
+    expect(result).not.toContain("blocking=true");
+    expect(result).not.toContain("blocking=false");
     expect(result).toContain("After proposing interactions, you will be resumed with user answers");
     expect(result).toContain("Do NOT call ask_user directly");
   });
@@ -146,7 +147,7 @@ describe("buildRoleSection", () => {
     expect(result).toContain("product scope");
     expect(result).toContain("risk acceptance");
     expect(result).toContain("major tradeoffs");
-    expect(result).toContain("blocking ambiguity");
+    expect(result).toContain("unresolved ambiguity");
   });
 
   test("builder role prompt contains TDD instruction and verification order", () => {

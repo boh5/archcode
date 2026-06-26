@@ -168,7 +168,6 @@ function validInteractionProposal(overrides: Record<string, unknown> = {}) {
     stage: "product_drafting",
     sourceAgent: "product",
     kind: "decision",
-    blocking: true,
     question: "Should this workflow include the billing dashboard?",
     options: ["Include billing dashboard", "Exclude billing dashboard"],
     recommendedOption: "Include billing dashboard",
@@ -184,11 +183,10 @@ function workflowInteraction(overrides: Partial<WorkflowInteraction> = {}): Work
     stage: "critic_prd_review",
     sourceAgent: "critic",
     kind: "decision",
-    blocking: true,
     question: "Accept the PRD risk?",
     options: ["Accept", "Revise"],
     recommendedOption: "Accept",
-    rationale: "Critic approval depends on this blocking user-owned decision.",
+    rationale: "Critic approval depends on this user-owned decision.",
     status: "proposed",
     revision: 1,
     ...overrides,
@@ -476,7 +474,7 @@ describe("workflow builtin tools", () => {
     });
   });
 
-  test("workflow_update_stage critic approval rejects unresolved blocking interactions", async () => {
+  test("workflow_update_stage critic approval rejects unresolved interactions", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_critic_blocked = await stateManager.create({ title: "Critic Blocked", type: "full_feature" });
     await stateManager.updateStage(wf_critic_blocked.id, "critic_prd_review");
@@ -494,11 +492,11 @@ describe("workflow builtin tools", () => {
     }, store);
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain("Cannot approve critic review while blocking interactions remain unresolved");
+    expect(result.output).toContain("Cannot approve critic review while interactions remain unresolved");
     expect((await stateManager.read(wf_critic_blocked.id)).stage).toBe("critic_prd_review");
   });
 
-  test("workflow_update_stage critic approval is allowed when no unresolved blocking interactions remain", async () => {
+  test("workflow_update_stage critic approval is allowed when no unresolved interactions remain", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_critic_resolved = await stateManager.create({ title: "Critic Resolved", type: "full_feature" });
     await stateManager.updateStage(wf_critic_resolved.id, "critic_prd_review");
@@ -522,7 +520,7 @@ describe("workflow builtin tools", () => {
     });
   });
 
-  test("workflow_update_stage critic rejection is allowed with unresolved blocking interactions", async () => {
+  test("workflow_update_stage critic rejection is allowed with unresolved interactions", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_critic_rejected = await stateManager.create({ title: "Critic Rejected", type: "full_feature" });
     await stateManager.updateStage(wf_critic_rejected.id, "critic_prd_review");
@@ -1028,7 +1026,6 @@ describe("workflow builtin tools", () => {
       ["stage", { stage: "not_a_stage" }],
       ["sourceAgent", { sourceAgent: "foreman" }],
       ["kind", { kind: "note" }],
-      ["blocking", { blocking: "yes" }],
       ["question", { question: "" }],
       ["rationale", { rationale: "" }],
       ["options", { kind: "decision", options: ["Only one"] }],
@@ -1077,7 +1074,7 @@ describe("workflow builtin tools", () => {
     });
   });
 
-  test("workflow_request_interactions batches multiple blocking proposals into one askUser call", async () => {
+  test("workflow_request_interactions batches multiple proposals into one askUser call", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf = await stateManager.create({ title: "Interaction Batch", type: "full_feature" });
     await stateManager.updateStage(wf.id, "product_drafting");
@@ -1131,7 +1128,7 @@ describe("workflow builtin tools", () => {
     expect(state.resolvedInteractions[0]?.resolvedAt).toBeString();
   });
 
-  test("workflow_request_interactions leaves partially unanswered blocking decisions requested and cancels denied batches", async () => {
+  test("workflow_request_interactions leaves partially unanswered decisions requested and cancels denied batches", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const partialWorkflow = await stateManager.create({ title: "Partial Interactions", type: "full_feature" });
     const partialStore = createMockStore({ workflowId: partialWorkflow.id, agentName: "orchestrator" });
@@ -1174,15 +1171,48 @@ describe("workflow builtin tools", () => {
     expect(cancelledState.requiredInteractions[0]?.cancelledAt).toBeString();
   });
 
-  test("workflow_request_interactions no-ops when no pending blocking interactions exist", async () => {
+  test("workflow_request_interactions re-requests cancelled interactions and clears cancelledAt on retry", async () => {
+    const { registry, stateManager, projectContext } = createWorkflowRegistry();
+    const wf = await stateManager.create({ title: "Cancelled Retry", type: "full_feature" });
+    const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
+    await execute(registry, projectContext, "workflow_propose_interactions", {
+      workflowId: wf.id,
+      proposals: [validInteractionProposal({ decisionKey: "requirements.retry", options: ["A", "B"], recommendedOption: "A" })],
+    }, store);
+
+    // First request: askUser cancels
+    const first = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "product_drafting",
+    }, store, { askUser: mock(async () => ({ isError: true as const, reason: "User dismissed" })) });
+    expect(first.isError).toBe(false);
+    expect(JSON.parse(first.output)).toMatchObject({ requested: 1, resolved: 0, cancelled: 1, pending: 0 });
+    const cancelledState = await stateManager.read(wf.id);
+    expect(cancelledState.requiredInteractions[0]).toMatchObject({ decisionKey: "requirements.retry", status: "cancelled" });
+    expect(cancelledState.requiredInteractions[0]?.cancelledAt).toBeString();
+
+    // Second request: cancelled interaction should be selectable and re-requested
+    const second = await execute(registry, projectContext, "workflow_request_interactions", {
+      workflowId: wf.id,
+      stage: "product_drafting",
+    }, store, { askUser: mock(async () => ({ answers: [["A"]] })) });
+    expect(second.isError).toBe(false);
+    expect(JSON.parse(second.output)).toMatchObject({ requested: 1, resolved: 1, cancelled: 0, pending: 0 });
+    const resolvedState = await stateManager.read(wf.id);
+    expect(resolvedState.requiredInteractions).toHaveLength(0);
+    expect(resolvedState.resolvedInteractions[0]).toMatchObject({ decisionKey: "requirements.retry", status: "resolved", answer: "A" });
+    expect(resolvedState.resolvedInteractions[0]?.cancelledAt).toBeUndefined();
+  });
+
+  test("workflow_request_interactions asks pending preference and clarification interactions", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf = await stateManager.create({ title: "No Interaction Pending", type: "full_feature" });
     const store = createMockStore({ workflowId: wf.id, agentName: "orchestrator" });
     await execute(registry, projectContext, "workflow_propose_interactions", {
       workflowId: wf.id,
-      proposals: [validInteractionProposal({ decisionKey: "requirements.optional", blocking: false, kind: "clarification", options: [] })],
+      proposals: [validInteractionProposal({ decisionKey: "requirements.optional", kind: "clarification", options: ["Answered"], recommendedOption: "Answered" })],
     }, store);
-    const askUser = mock(async () => ({ answers: [] }));
+    const askUser = mock(async () => ({ answers: [["Answered"]] }));
 
     const result = await execute(registry, projectContext, "workflow_request_interactions", {
       workflowId: wf.id,
@@ -1190,9 +1220,8 @@ describe("workflow builtin tools", () => {
     }, store, { askUser });
 
     expect(result.isError).toBe(false);
-    expect(askUser).not.toHaveBeenCalled();
-    expect(JSON.parse(result.output)).toMatchObject({ requested: 0, resolved: 0, cancelled: 0, pending: 0 });
-    expect(result.output).toContain("no blocking interactions to request");
+    expect(askUser).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.output)).toMatchObject({ requested: 1, resolved: 1, cancelled: 0, pending: 0 });
   });
 
   test("workflow_request_interactions is denied for product role context", async () => {

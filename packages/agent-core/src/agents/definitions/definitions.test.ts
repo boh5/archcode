@@ -95,7 +95,8 @@ describe("agentDefinitions", () => {
       expect(prompt).toContain("at least 2 for decisions");
       expect(prompt).toContain("recommendedOption");
       expect(prompt).toContain("rationale");
-      expect(prompt).toContain("blocking");
+      expect(prompt).not.toContain("blocking=true");
+      expect(prompt).not.toContain("blocking=false");
       expect(prompt).toContain("After proposing interactions, you will be resumed with user answers");
       expect(prompt).toContain("Do NOT call ask_user directly");
     }
@@ -107,7 +108,7 @@ describe("agentDefinitions", () => {
     expect(prompt).toContain("product scope");
     expect(prompt).toContain("risk acceptance");
     expect(prompt).toContain("major tradeoffs");
-    expect(prompt).toContain("blocking ambiguity");
+    expect(prompt).toContain("unresolved ambiguity");
   });
 
   test("Foreman and Builder prompts default to autonomous coding after approval", () => {
