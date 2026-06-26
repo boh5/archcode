@@ -1264,7 +1264,7 @@ describe("SessionExecutionManager", () => {
     expect(await storeManager.resolveRootSessionId(siblingId, workspaceRoot)).toBe(rootId);
   });
 
-  test("resumeChildExecution on completed session appends new messages and updates existing link", async () => {
+  test("resumeChildExecution on completed session appends new messages and links the resume tool call", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
     const factory = makeFactory();
@@ -1273,7 +1273,7 @@ describe("SessionExecutionManager", () => {
     const first = await manager.startChildExecution(workspaceRoot, {
       parentStore,
       parentSessionId: parentId,
-      parentToolCallId: "resume-tool-call",
+      parentToolCallId: "initial-tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
       prompt: "first round",
@@ -1304,8 +1304,83 @@ describe("SessionExecutionManager", () => {
     expect(resumed.sessionId).toBe(childSessionId);
     expect(resumed.store).toBe(childStore);
     expect(childStore.getState().messages.length).toBeGreaterThan(messagesAfterFirst);
-    expect(parentStore.getState().childSessionLinks.length).toBe(linksAfterFirst);
-    expect(parentStore.getState().childSessionLinks.at(-1)).toMatchObject({
+    expect(parentStore.getState().childSessionLinks.length).toBe(linksAfterFirst + 1);
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "initial-tool-call")).toMatchObject({
+      childSessionId,
+      parentToolCallId: "initial-tool-call",
+      status: "completed",
+    });
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-tool-call")).toMatchObject({
+      childSessionId,
+      parentToolCallId: "resume-tool-call",
+      status: "completed",
+    });
+  });
+
+  test("resumeChildExecution exposes a running link for the current resume tool call", async () => {
+    const parentId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const childStore = storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Resume child",
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: parentId,
+        parentToolCallId: "initial-tool-call",
+        toolName: "delegate",
+        childSessionId,
+        childAgentName: "explore",
+        title: "Resume child",
+        depth: 1,
+        background: false,
+        status: "completed",
+        createdAt: 1,
+        startedAt: 1,
+        endedAt: 2,
+        durationMs: 1,
+      },
+    });
+    const factory = makeFactory();
+    const resumedRun = deferred<AgentResult>();
+    const childAgent = new MockAgent(childSessionId, resumedRun.promise, workspaceRoot);
+    childStore.setState({ append: childAgent.store.getState().append });
+    childAgent.store.setState({
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Resume child",
+    });
+    const { manager } = createManager({ [childSessionId]: childAgent }, { factory });
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-tool-call",
+      toolName: "delegate",
+      sessionId: childSessionId,
+      targetAgentName: "explore",
+      prompt: "second round",
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    const runningLink = parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-tool-call");
+    expect(runningLink).toMatchObject({
+      childSessionId,
+      parentToolCallId: "resume-tool-call",
+      status: "running",
+    });
+    expect(runningLink?.endedAt).toBeUndefined();
+    expect(runningLink?.durationMs).toBeUndefined();
+
+    resumedRun.resolve({ text: "resumed done", steps: 1 });
+    await resumed.result;
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-tool-call")).toMatchObject({
       childSessionId,
       parentToolCallId: "resume-tool-call",
       status: "completed",

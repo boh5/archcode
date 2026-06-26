@@ -351,11 +351,10 @@ export class SessionExecutionManager {
     }
 
     const existingLink = this.#findChildSessionLink(request.parentStore, request.sessionId);
-    if (existingLink !== undefined) {
-      this.#updateChildLinkStatus(request.parentStore, existingLink, "running");
-    }
+    const resumeLinkCreatedAt = Date.now();
+    this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
 
-    const agent = await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
+    await this.#config.sessionAgentManager.getOrCreate(workspaceRoot, request.sessionId);
     const execution = this.startExecution({
       slug: "",
       workspaceRoot,
@@ -374,10 +373,7 @@ export class SessionExecutionManager {
         const current = this.#active.get(scopedKey(workspaceRoot, request.sessionId));
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
-        const link = this.#findChildSessionLink(request.parentStore, request.sessionId);
-        if (link !== undefined) {
-          this.#updateChildLinkStatus(request.parentStore, link, status);
-        }
+        this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, status, resumeLinkCreatedAt);
       });
 
     return {
@@ -618,6 +614,37 @@ export class SessionExecutionManager {
     });
   }
 
+  #appendResumeChildLinkStatus(
+    workspaceRoot: string,
+    request: ResumeChildRequest,
+    existingLink: ToolChildSessionLink | undefined,
+    status: ToolChildSessionLinkStatus,
+    createdAt: number,
+  ): void {
+    const run = this.#config.getSessionStore(request.sessionId, workspaceRoot)?.getState().executions.at(-1);
+    const includeRunMetadata = TERMINAL_CHILD_LINK_STATUSES.has(status);
+    request.parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: request.parentSessionId,
+        parentToolCallId: request.parentToolCallId,
+        toolName: request.toolName,
+        childSessionId: request.sessionId,
+        childAgentName: request.targetAgentName,
+        ...(existingLink?.title === undefined ? {} : { title: existingLink.title }),
+        ...(existingLink?.description === undefined ? {} : { description: existingLink.description }),
+        depth: existingLink?.depth ?? (request.currentDepth ?? 0) + 1,
+        background: false,
+        status,
+        createdAt,
+        ...(includeRunMetadata && run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),
+        ...(includeRunMetadata && run?.endedAt !== undefined ? { endedAt: run.endedAt } : {}),
+        ...(includeRunMetadata && run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
+        ...(includeRunMetadata && run?.error !== undefined ? { error: run.error } : {}),
+      },
+    });
+  }
+
   #markParentLinkCancelling(workspaceRoot: string, childSessionId: string): void {
     const childStore = this.#config.getSessionStore(childSessionId, workspaceRoot);
     const childState = childStore?.getState();
@@ -662,17 +689,6 @@ export class SessionExecutionManager {
       if (candidate?.childSessionId === childSessionId) return candidate;
     }
     return undefined;
-  }
-
-  #updateChildLinkStatus(
-    parentStore: StoreApi<SessionStoreState>,
-    link: ToolChildSessionLink,
-    status: ToolChildSessionLinkStatus,
-  ): void {
-    parentStore.getState().append({
-      type: "tool-child-session-link",
-      link: { ...link, status },
-    });
   }
 
   async #resolveChildActiveWorkflow(

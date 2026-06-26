@@ -37,9 +37,9 @@ export interface ChildExecutionHandle {
  * Request to resume an existing (already-created) child session.
  *
  * Unlike {@link ChildExecutionRequest}, this does NOT create a new session,
- * store, agent, or child-session link. The session must already exist on disk
- * and in the session-agent cache. Resume re-runs the agent on the existing
- * store and updates the existing child-session link (no duplicate links).
+ * store, or agent. The session must already exist on disk and in the
+ * session-agent cache. Resume re-runs the agent on the existing store and
+ * creates a parent child-session link for the current resume tool call.
  */
 export interface ResumeChildRequest {
   readonly parentStore: StoreApi<SessionStoreState>;
