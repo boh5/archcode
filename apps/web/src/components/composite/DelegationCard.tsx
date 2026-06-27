@@ -128,7 +128,7 @@ export function DelegationCard({
       </div>
 
       {summary && (
-        <div className="px-3.5 py-2.5 text-[12.5px] text-text-secondary leading-[1.55]">
+        <div className="px-3.5 py-2.5 text-[12.5px] text-text-secondary leading-[1.55] whitespace-pre-wrap">
           {summary}
         </div>
       )}

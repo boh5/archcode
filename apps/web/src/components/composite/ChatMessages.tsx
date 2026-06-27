@@ -57,7 +57,7 @@ function MsgUser({ message }: { message: SessionMessage }) {
     <div className="flex gap-2.5 items-start justify-end">
       <div className="flex-1 min-w-0 flex flex-col items-end">
         {textParts.map((part) => (
-          <div key={part.id} className="text-[13.5px] leading-relaxed text-text-primary">
+          <div key={part.id} className="text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap">
             {part.text}
           </div>
         ))}
