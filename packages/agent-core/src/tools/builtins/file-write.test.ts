@@ -1,11 +1,14 @@
 import {
   afterAll,
+  afterEach,
   beforeEach,
   describe,
   expect,
   test,
 } from "bun:test";
 import { storeManager } from "../../store/store";
+import { setLspClientPoolForTest } from "../../lsp";
+import { FakeLspServer, installFakeLspServerPool } from "../../lsp/test-utils";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -62,6 +65,10 @@ beforeEach(async () => {
   await mkdir(testDir, { recursive: true });
 });
 
+afterEach(() => {
+  setLspClientPoolForTest(undefined);
+});
+
 afterAll(async () => {
   await rm(testDir, { recursive: true, force: true });
 });
@@ -104,6 +111,39 @@ describe("fileWriteTool", () => {
       version: 1,
       files: [{ path: "registry-new.txt", status: "created" }],
     });
+  });
+
+  test("appends LSP diagnostics after successful registry write when lsp_diagnostics is allowed", async () => {
+    const diagnostics = [
+      {
+        range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } },
+        severity: 1,
+        code: "TS2322",
+        message: "Type 'number' is not assignable to type 'string'.",
+      },
+    ];
+    const server = new FakeLspServer({ autoDiagnostics: diagnostics });
+    const pool = await installFakeLspServerPool(server, testDir);
+
+    try {
+      const result = await executeThroughRegistry(
+        {
+          path: "created.ts",
+          content: "const value: string = 1;\n",
+        },
+        makeCtx({ allowedTools: new Set(["file_write", "lsp_diagnostics"]) }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toContain("File written to created.ts");
+      expect(result.output).toContain("Post-edit diagnostics:");
+      expect(result.output).toContain(
+        "created.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.",
+      );
+      expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
+    } finally {
+      await server.stop();
+    }
   });
 
   test("file-exists permission denies existing files", async () => {

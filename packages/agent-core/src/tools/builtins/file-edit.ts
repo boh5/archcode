@@ -5,7 +5,7 @@ import { sharedMutationQueue } from "../concurrency/mutation-queue";
 import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
-import { createEditErrorRecoveryHook, refreshReadSnapshot } from "../hooks";
+import { createEditErrorRecoveryHook, createPostEditDiagnosticsHook, refreshReadSnapshot } from "../hooks";
 import { createProtectedPathPermission, createReadBeforeEditPermission, createWorkspacePermission } from "../permission";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -92,21 +92,42 @@ function prepareEditInput(raw: unknown, _ctx: ToolExecutionContext): unknown {
     "oldString" in raw
   ) {
     const { path: inputPath, oldString, newString } = raw as Record<string, unknown>;
-    return { path: inputPath, edits: [{ oldString, newString }] };
+    return normalizeEditInput({ path: inputPath, edits: [{ oldString, newString }] });
   }
 
-  return raw;
+  return normalizeEditInput(raw);
+}
+
+function normalizeEditInput(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || !("edits" in raw)) return raw;
+
+  const input = raw as Record<string, unknown>;
+  if (!Array.isArray(input.edits)) return raw;
+
+  return {
+    ...input,
+    edits: input.edits.map((edit) => {
+      if (typeof edit !== "object" || edit === null || !("oldString" in edit)) return edit;
+      const entry = edit as Record<string, unknown>;
+      if (typeof entry.oldString !== "string") return edit;
+      return { ...entry, oldString: normalizeEditSearchText(entry.oldString) };
+    }),
+  };
 }
 
 // ─── Fuzzy Matching ───
 
 function normalizeForFuzzyMatch(text: string): string {
-  return text
+  return normalizeEditSearchText(text)
     .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+$/gm, "");
+}
+
+function normalizeEditSearchText(text: string): string {
+  return text.normalize("NFKC")
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2013\u2014]/g, "-")
-    .replace(/[ \t]+$/gm, "");
+    .replace(/[\u2013\u2014]/g, "-");
 }
 
 function normalizeWithMapping(text: string): NormalizedMapping {
@@ -127,18 +148,18 @@ function normalizeWithMapping(text: string): NormalizedMapping {
       continue;
     }
 
-    chars.push(normalizeChar(char));
-    originalOffsets.push(index);
+    const normalizedChar = normalizeChar(char);
+    for (let offset = 0; offset < normalizedChar.length; offset++) {
+      chars.push(normalizedChar[offset]);
+      originalOffsets.push(index);
+    }
   }
 
   return { text: chars.join(""), originalOffsets };
 }
 
 function normalizeChar(char: string): string {
-  if (char === "\u2018" || char === "\u2019") return "'";
-  if (char === "\u201C" || char === "\u201D") return '"';
-  if (char === "\u2013" || char === "\u2014") return "-";
-  return char;
+  return normalizeEditSearchText(char);
 }
 
 function isTrailingWhitespace(text: string, index: number): boolean {
@@ -314,7 +335,7 @@ export const fileEditTool = defineTool({
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   prepareInput: prepareEditInput,
   permissions: [createWorkspacePermission(), createReadBeforeEditPermission(), createProtectedPathPermission()],
-  hooks: { after: [createEditErrorRecoveryHook()] },
+  hooks: { after: [createEditErrorRecoveryHook(), createPostEditDiagnosticsHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths
@@ -384,5 +405,6 @@ export const __testing = {
   findFuzzyMatch,
   findOriginalMatchEnd,
   normalizeForFuzzyMatch,
+  normalizeEditSearchText,
   prepareEditInput,
 };

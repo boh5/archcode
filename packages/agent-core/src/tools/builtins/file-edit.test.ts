@@ -1,5 +1,6 @@
 import {
   afterAll,
+  afterEach,
   beforeEach,
   describe,
   expect,
@@ -15,6 +16,8 @@ import {
 } from "node:fs/promises";
 import path, { join } from "node:path";
 import type { StoreApi } from "zustand";
+import { setLspClientPoolForTest } from "../../lsp";
+import { FakeLspServer, installFakeLspServerPool } from "../../lsp/test-utils";
 import type { SessionStoreState } from "../../store/index";
 import { createMockStore } from "../../store/test-helpers";
 import { inferToolErrorKindFromResult, TOOL_ERROR_META_KEY } from "../errors";
@@ -83,6 +86,10 @@ function expectToolErrorKind(
 beforeEach(async () => {
   await rm(testDir, { recursive: true, force: true });
   await mkdir(testDir, { recursive: true });
+});
+
+afterEach(() => {
+  setLspClientPoolForTest(undefined);
 });
 
 afterAll(async () => {
@@ -154,6 +161,42 @@ describe("fileEditTool", () => {
       files: [{ path: "compat.txt", status: "modified" }],
     });
     expect(await Bun.file(join(testDir, "compat.txt")).text()).toBe("after\n");
+  });
+
+  test("prepareInput normalizes smart punctuation in oldString", async () => {
+    await writeWorkspaceFile("quotes.ts", 'const label = "hello";\n');
+    const ctx = await makeReadCtx("quotes.ts");
+    let resolvedInput: unknown;
+
+    const result = await executeThroughRegistry(
+      {
+        path: "quotes.ts",
+        edits: [
+          {
+            oldString: "const label = “hello”;",
+            newString: 'const label = "bye";',
+          },
+        ],
+      },
+      makeCtx({
+        store: ctx.store,
+        onInputResolved(input) {
+          resolvedInput = input;
+        },
+      }),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(resolvedInput).toEqual({
+      path: "quotes.ts",
+      edits: [
+        {
+          oldString: 'const label = "hello";',
+          newString: 'const label = "bye";',
+        },
+      ],
+    });
+    expect(await Bun.file(join(testDir, "quotes.ts")).text()).toBe('const label = "bye";\n');
   });
 
   test("returns error when oldString is not found", async () => {
@@ -271,6 +314,94 @@ describe("fileEditTool", () => {
 
     expectToolErrorKind(result, "read-before-write");
     expect(result.output).toContain("not been read first");
+  });
+
+  test("appends LSP diagnostics after successful registry edit when lsp_diagnostics is allowed", async () => {
+    await writeWorkspaceFile("problem.ts", "const value: string = 1;\n");
+    const diagnostics = [
+      {
+        range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } },
+        severity: 1,
+        code: "TS2322",
+        message: "Type 'number' is not assignable to type 'string'.",
+      },
+    ];
+    const server = new FakeLspServer({ autoDiagnostics: diagnostics });
+    const pool = await installFakeLspServerPool(server, testDir);
+    const ctx = await makeReadCtx("problem.ts");
+
+    try {
+      const result = await executeThroughRegistry(
+        { path: "problem.ts", edits: [{ oldString: "1", newString: "2" }] },
+        makeCtx({
+          store: ctx.store,
+          allowedTools: new Set(["file_edit", "lsp_diagnostics"]),
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toContain("Successfully applied 1 edit(s) to problem.ts");
+      expect(result.output).toContain("Post-edit diagnostics:");
+      expect(result.output).toContain(
+        "problem.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.",
+      );
+      expect(pool.releaseKeys).toEqual([{ workspaceRoot: testDir, serverId: "typescript" }]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test("does not append LSP diagnostics when post-edit file is clean", async () => {
+    await writeWorkspaceFile("clean.ts", "const value = 1;\n");
+    const server = new FakeLspServer({ autoDiagnostics: [] });
+    const ctx = await makeReadCtx("clean.ts");
+
+    try {
+      await installFakeLspServerPool(server, testDir);
+      const result = await executeThroughRegistry(
+        { path: "clean.ts", edits: [{ oldString: "1", newString: "2" }] },
+        makeCtx({
+          store: ctx.store,
+          allowedTools: new Set(["file_edit", "lsp_diagnostics"]),
+        }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("Successfully applied 1 edit(s) to clean.ts");
+      expect(result.meta?.postEditDiagnostics).toBeUndefined();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test("skips post-edit diagnostics when lsp_diagnostics is not allowed", async () => {
+    await writeWorkspaceFile("not-allowed.ts", "const value: string = 1;\n");
+    const server = new FakeLspServer({
+      autoDiagnostics: [
+        {
+          range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } },
+          severity: 1,
+          message: "Type error",
+        },
+      ],
+    });
+    const ctx = await makeReadCtx("not-allowed.ts");
+
+    try {
+      const pool = await installFakeLspServerPool(server, testDir);
+      const result = await executeThroughRegistry(
+        { path: "not-allowed.ts", edits: [{ oldString: "1", newString: "2" }] },
+        makeCtx({ store: ctx.store }),
+      );
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toBe("Successfully applied 1 edit(s) to not-allowed.ts");
+      expect(result.meta?.postEditDiagnostics).toBeUndefined();
+      expect(pool.acquireOptions).toEqual([]);
+      expect(pool.releaseKeys).toEqual([]);
+    } finally {
+      await server.stop();
+    }
   });
 
   test("file_read equivalent normalized path snapshot allows file_edit direct path", async () => {

@@ -6,7 +6,7 @@ import { defineTool } from "../define-tool";
 import { computeToolDiff } from "../diff";
 import { createToolErrorResult } from "../errors";
 import { createFileExistsPermission, createProtectedPathPermission, createSensitiveFilePermission, createWorkspacePermission } from "../permission";
-import { refreshReadSnapshot } from "../hooks";
+import { createPostEditDiagnosticsHook, refreshReadSnapshot } from "../hooks";
 import { resolveAndValidatePath } from "../security";
 import type { ToolExecutionResult } from "../types";
 
@@ -28,6 +28,7 @@ export const fileWriteTool = defineTool({
   inputSchema: FileWriteInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   permissions: [createWorkspacePermission(), createFileExistsPermission(), createSensitiveFilePermission(), createProtectedPathPermission()],
+  hooks: { after: [createPostEditDiagnosticsHook()] },
   execute: async (input, ctx): Promise<string | ToolExecutionResult> => {
     // Workspace access is enforced by createWorkspacePermission() guard.
     // If the permission pipeline allows execution, out-of-workspace paths

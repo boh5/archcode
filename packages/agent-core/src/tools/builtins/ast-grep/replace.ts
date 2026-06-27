@@ -8,6 +8,7 @@ import { sharedMutationQueue } from "../../concurrency/mutation-queue";
 import { defineTool } from "../../define-tool";
 import { computeToolDiffs } from "../../diff";
 import { createToolErrorResult } from "../../errors";
+import { createPostEditDiagnosticsHook } from "../../hooks";
 import { createProtectedPathPermission, isProtectedProjectPath } from "../../permission";
 import { resolveAndValidatePath } from "../../security";
 import type { PermissionDecision, ToolExecutionContext, ToolExecutionResult, ToolPermission } from "../../types";
@@ -112,6 +113,7 @@ export const astGrepReplaceTool = defineTool({
     concurrencySafe: false,
   },
   permissions: [createAstGrepReplaceWorkspacePermission(), createProtectedPathPermission()],
+  hooks: { after: [createPostEditDiagnosticsHook({ inputPathKeys: [] })] },
   async execute(input, ctx): Promise<string | ToolExecutionResult> {
     try {
       const astGrepPath = await createBinaryManager().resolve("ast-grep");

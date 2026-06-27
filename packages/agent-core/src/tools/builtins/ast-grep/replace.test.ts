@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { BinaryManager, setBinaryManagerForTest } from "../../../binary/manager";
+import { setLspClientPoolForTest } from "../../../lsp";
+import { FakeLspServer, installFakeLspServerPool } from "../../../lsp/test-utils";
 import { setProcessRunnerForTest } from "../../../process/runner";
 import { SkillService } from "../../../skills";
 import { createMockStore } from "../../../store/test-helpers";
@@ -12,6 +14,7 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../../errors"
 import { createTestProjectContext } from "../../test-project-context";
 import type { FormattedToolError, ToolErrorKind } from "../../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
+import { ToolRegistry } from "../../registry";
 import { AstGrepReplaceInputSchema, astGrepReplaceTool, buildAstGrepReplaceArgs } from "./replace";
 
 function stream(data: string): ReadableStream<Uint8Array> {
@@ -111,6 +114,7 @@ describe("ast_grep_replace tool", () => {
   afterEach(() => {
     setBinaryManagerForTest(undefined);
     setProcessRunnerForTest(undefined);
+    setLspClientPoolForTest(undefined);
   });
 
   test("defines destructive non-read-only non-concurrency-safe traits", () => {
@@ -347,6 +351,58 @@ describe("ast_grep_replace tool", () => {
       expect(diffs?.files?.[0]).toMatchObject({ path: "success.ts", status: "modified" });
       expect(diffs?.files?.[0]?.hunks?.length).toBeGreaterThan(0);
     } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("apply mode appends LSP diagnostics after successful registry replacement when lsp_diagnostics is allowed", async () => {
+    const workspace = tempWorkspace();
+    const diagnostics = [
+      {
+        range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } },
+        severity: 1,
+        code: "TS2322",
+        message: "Type 'number' is not assignable to type 'string'.",
+      },
+    ];
+    const server = new FakeLspServer({ autoDiagnostics: diagnostics });
+
+    try {
+      const file = join(workspace, "success.ts");
+      writeFileSync(file, "console.log(message)", "utf-8");
+      const pool = await installFakeLspServerPool(server, workspace);
+      setProcessRunnerForTest(mock((cmd: readonly [string, ...string[]]) => {
+        if (cmd.includes("--update-all")) writeFileSync(file, "logger.info(message)", "utf-8");
+        return spawnResult(replacementJsonFor("success.ts"));
+      }));
+
+      const registry = new ToolRegistry();
+      registry.register(astGrepReplaceTool);
+      const context = ctx({
+        workspaceRoot: workspace,
+        projectContext: createTestProjectContext(workspace),
+        store: createSnapshotStore(file),
+        allowedTools: new Set(["ast_grep_replace", "lsp_diagnostics"]),
+      });
+
+      const result = await registry.execute(
+        {
+          toolCallId: context.toolCallId,
+          toolName: "ast_grep_replace",
+          input: { pattern: "console.log($MSG)", rewrite: "logger.info($MSG)", dryRun: false },
+        },
+        context,
+      );
+
+      expect(result.isError).toBe(false);
+      expect(result.output).toContain('"applied": true');
+      expect(result.output).toContain("Post-edit diagnostics:");
+      expect(result.output).toContain(
+        "success.ts:1:7 error TS2322: Type 'number' is not assignable to type 'string'.",
+      );
+      expect(pool.releaseKeys).toEqual([{ workspaceRoot: workspace, serverId: "typescript" }]);
+    } finally {
+      await server.stop();
       rmSync(workspace, { recursive: true, force: true });
     }
   });

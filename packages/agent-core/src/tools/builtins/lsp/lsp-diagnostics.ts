@@ -23,7 +23,7 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_DIR_FILES = 200;
 
-type LspDiagnosticSeverityFilter = LspDiagnosticSeverity | "all";
+export type LspDiagnosticSeverityFilter = LspDiagnosticSeverity | "all";
 
 interface SupportedFileEntry {
   filePath: string;
@@ -74,7 +74,7 @@ export const lspDiagnosticsTool = defineTool({
 
 // ─── Single-file handler (existing logic, extracted) ───
 
-async function handleFileDiagnostics(
+export async function handleFileDiagnostics(
   resolvedPath: string,
   displayPath: string,
   severity: LspDiagnosticSeverityFilter,
