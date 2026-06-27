@@ -28,6 +28,7 @@ describe("global SSE wire protocol types", () => {
       createdAt: 1,
       kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
+      agentName: "orchestrator",
     };
 
     const parsed = serializeRoundTrip(event);
@@ -40,6 +41,7 @@ describe("global SSE wire protocol types", () => {
     expect(parsed.createdAt).toBe(1);
     expect(parsed.kind).toBe("text-delta");
     expect(parsed.payload).toEqual({ type: "text-delta", text: "hello" });
+    expect(parsed.agentName).toBe("orchestrator");
   });
 
   test("distinguishes matching event IDs by composite identity", () => {
@@ -51,6 +53,7 @@ describe("global SSE wire protocol types", () => {
       createdAt: 1,
       kind: "text-delta",
       payload: { type: "text-delta", text: "hello" },
+      agentName: "orchestrator",
     };
     const second: GlobalSessionEventEnvelope<TextDeltaEvent> = {
       ...first,
@@ -96,6 +99,7 @@ describe("global SSE wire protocol types", () => {
         createdAt: 1,
         kind: "text-delta",
         payload: { type: "text-delta", text: "hello" },
+        agentName: "orchestrator",
       },
       { type: "heartbeat", createdAt: 2 },
       { type: "reset", slug: "proj-a", sessionId: "s1", reason: "store_unavailable" },

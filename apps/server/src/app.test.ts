@@ -73,6 +73,7 @@ describe("createServerApp", () => {
       createdAt: 2,
       kind: "text-delta",
       payload: { type: "text-delta", text: "live" },
+      agentName: "explore",
     });
 
     expect(runtime.subscribedSessionIds()).toEqual(["root", "child"]);
@@ -203,5 +204,6 @@ function childLinkEvent(parentSessionId: string, childSessionId: string, status:
         createdAt: 1,
       },
     },
+    agentName: "orchestrator",
   };
 }

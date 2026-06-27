@@ -237,6 +237,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
   const messages = useSessionStore(sessionId, (s) => s.messages, slug);
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
   const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
+  const agentName = useSessionStore(sessionId, (s) => s.agentName, slug);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -255,8 +256,8 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
     }
   }, [messages, isNearBottom]);
 
-  function getAgentName(_msg: SessionMessage): string {
-    return "orchestrator";
+  function getAgentName(): string {
+    return agentName;
   }
 
   if (messages.length === 0) {
@@ -277,7 +278,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }
-        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName(msg)} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
+        return <MsgAgent key={msg.id} message={msg} agentName={getAgentName()} projectSlug={slug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
       })}
       <div ref={sentinelRef} />
     </div>

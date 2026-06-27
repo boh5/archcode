@@ -320,6 +320,7 @@ export interface GlobalSessionEventEnvelope<P extends SessionEventPayload = Sess
   createdAt: number;
   kind: P["type"];
   payload: P;
+  agentName: string;
 }
 
 export interface GlobalSSEHeartbeatEvent {
@@ -671,6 +672,7 @@ export interface Session {
   parentSessionId?: string;
   eventCursor?: number;
   modelInfo?: SessionModelInfo | null;
+  agentName?: string;
 }
 
 export interface WorkflowState {

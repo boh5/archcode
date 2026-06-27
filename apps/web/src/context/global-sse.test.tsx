@@ -171,6 +171,7 @@ describe("handleSSEEvent", () => {
       createdAt: Date.now(),
       kind: "text-start",
       payload: { type: "text-start" },
+      agentName: "orchestrator",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -192,6 +193,7 @@ describe("handleSSEEvent", () => {
       createdAt: Date.now(),
       kind: "text-start",
       payload: { type: "text-start" },
+      agentName: "orchestrator",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -240,6 +242,7 @@ describe("handleSSEEvent", () => {
           createdAt: 123,
         },
       },
+      agentName: "orchestrator",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
@@ -250,6 +253,7 @@ describe("handleSSEEvent", () => {
     expect(mockInitializeFromSnapshot).toHaveBeenCalledWith({
       rootSessionId: "root-session",
       parentSessionId: "parent-session",
+      agentName: "explore",
       title: "Explore files",
       createdAt: 123,
     });
@@ -269,6 +273,7 @@ describe("handleSSEEvent", () => {
         changed: ["stage", "status"],
         updatedAt: "2026-06-03T00:00:00.000Z",
       },
+      agentName: "orchestrator",
     };
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);

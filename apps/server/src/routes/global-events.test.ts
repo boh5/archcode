@@ -68,6 +68,7 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
     createdAt: 123 + input.eventId,
     kind: "system-notice",
     payload: { type: "system-notice", message: input.message },
+    agentName: "orchestrator",
   };
 }
 

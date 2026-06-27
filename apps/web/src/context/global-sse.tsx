@@ -74,6 +74,7 @@ export function handleSSEEvent(
         childStore.getState().initializeFromSnapshot({
           rootSessionId: store.getState().rootSessionId,
           parentSessionId: link.parentSessionId,
+          agentName: link.childAgentName,
           title: link.title ?? link.description ?? null,
           createdAt: link.createdAt,
         });

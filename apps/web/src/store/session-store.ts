@@ -29,6 +29,7 @@ export interface WebSessionStoreState extends SessionProjection {
   createdAt: number;
   rootSessionId: string;
   parentSessionId: string | undefined;
+  agentName: string;
   focusSessionId: string | null;
   lastTodoWriteStepIndex: number | null;
   lastTodoReminderStepIndex: number | null;
@@ -61,6 +62,7 @@ export interface WebSessionStoreState extends SessionProjection {
     createdAt?: number;
     rootSessionId?: string;
     parentSessionId?: string;
+    agentName?: string;
     stats?: SessionStats;
     executions?: SessionExecutionRecord[];
     eventCursor?: number;
@@ -226,7 +228,13 @@ function drainBufferedRemoteEvents(store: StoreApi<WebSessionStoreState>): void 
     const envelope = buffer.get(state.nextEventId);
     if (!envelope) break;
     buffer.delete(state.nextEventId);
-    store.setState((current) => appendEnvelopeToState(current, toLocalEnvelope(envelope)));
+    store.setState((current) => {
+      const updates = appendEnvelopeToState(current, toLocalEnvelope(envelope));
+      if (envelope.agentName && current.agentName !== envelope.agentName) {
+        updates.agentName = envelope.agentName;
+      }
+      return updates;
+    });
   }
 }
 
@@ -258,6 +266,7 @@ export function createWebSessionStore(
     createdAt: Date.now(),
     title: null,
     modelInfo: null,
+    agentName: "orchestrator",
     messages: [],
     steps: [],
     stats: createEmptySessionStats(),
@@ -306,7 +315,11 @@ export function createWebSessionStore(
           bufferRemoteEnvelope(store, envelope);
           return {};
         }
-        return appendEnvelopeToState(state, toLocalEnvelope(envelope));
+        const updates = appendEnvelopeToState(state, toLocalEnvelope(envelope));
+        if (envelope.agentName && state.agentName !== envelope.agentName) {
+          updates.agentName = envelope.agentName;
+        }
+        return updates;
       });
       pruneBufferedRemoteEvents(store, store.getState().nextEventId);
       drainBufferedRemoteEvents(store);
@@ -399,6 +412,9 @@ export function createWebSessionStore(
         }
         if (data.parentSessionId !== undefined) {
           updates.parentSessionId = data.parentSessionId;
+        }
+        if (data.agentName !== undefined) {
+          updates.agentName = data.agentName;
         }
         if (data.modelInfo !== undefined) {
           updates.modelInfo = data.modelInfo;

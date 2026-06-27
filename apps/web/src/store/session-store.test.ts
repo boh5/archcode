@@ -18,6 +18,7 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
     createdAt: 1_700_000_000_000 + eventId,
     kind: payload.type,
     payload,
+    agentName: "orchestrator",
   };
 }
 
