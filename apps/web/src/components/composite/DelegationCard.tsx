@@ -1,6 +1,7 @@
 import { getWebSessionStore } from "../../store/session-store";
 import { AGENT_INITIALS, AGENT_ICON_COLORS, isValidAgentType, type AgentType, BADGE_CLASSES, BADGE_LABELS, type BadgeStatus } from "../../lib/agent-constants";
 import { formatElapsed } from "../../lib/time-format";
+import { Check, X } from "lucide-react";
 import { getToolSummary, getToolIcon } from "../../lib/tool-format";
 import { getToolCategory } from "@archcode/protocol";
 
@@ -15,7 +16,7 @@ const TOOL_CHIP_STATUS_CLASSES: Record<ToolStatus, string> = {
 export function ToolChip({ name, status, input }: { name: string; status: ToolStatus; input?: unknown }) {
   const summary = input !== undefined ? getToolSummary(name, input) : null;
   const category = getToolCategory(name);
-  const icon = getToolIcon(category);
+  const Icon = getToolIcon(category);
 
   const label = summary
     ? (summary.primary !== "—" ? `${name} · ${summary.primary}` : name)
@@ -26,9 +27,9 @@ export function ToolChip({ name, status, input }: { name: string; status: ToolSt
       className={`flex items-center gap-1 px-[7px] py-[2px] rounded-sm bg-bg-active text-[11px] font-mono ${TOOL_CHIP_STATUS_CLASSES[status]}`}
       title={name}
     >
-      {status === "success" && <span aria-hidden="true">✓</span>}
-      {status === "error" && <span aria-hidden="true">✗</span>}
-      <span className="text-[10px]" aria-hidden="true">{icon}</span>
+      {status === "success" && <Check size={11} aria-hidden="true" />}
+      {status === "error" && <X size={11} aria-hidden="true" />}
+      <Icon size={10} aria-hidden="true" />
       <span className="truncate max-w-[140px]">{label}</span>
     </span>
   );

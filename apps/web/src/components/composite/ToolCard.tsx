@@ -1,6 +1,15 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { ToolPart, DiffFile } from "@archcode/protocol";
 import {
+  Clock,
+  LoaderCircle,
+  Check,
+  X,
+  TriangleAlert,
+  ChevronRight,
+  type LucideIcon,
+} from "lucide-react";
+import {
   getToolSummary,
   formatToolInputDetails,
   getToolDiffMetadata,
@@ -12,12 +21,12 @@ import { DiffView } from "../diff/DiffView";
 
 const STATUS_CONFIG: Record<
   ToolPart["state"],
-  { icon: string; bgClass: string; textClass: string; animate?: string }
+  { icon: LucideIcon; bgClass: string; textClass: string; animate?: string }
 > = {
-  pending: { icon: "⏳", bgClass: "bg-warning-muted", textClass: "text-warning" },
-  running: { icon: "⟳", bgClass: "bg-info-muted", textClass: "text-info", animate: "animate-spin" },
-  completed: { icon: "✓", bgClass: "bg-success-muted", textClass: "text-success" },
-  error: { icon: "✗", bgClass: "bg-error-muted", textClass: "text-error" },
+  pending: { icon: Clock, bgClass: "bg-warning-muted", textClass: "text-warning" },
+  running: { icon: LoaderCircle, bgClass: "bg-info-muted", textClass: "text-info", animate: "animate-spin" },
+  completed: { icon: Check, bgClass: "bg-success-muted", textClass: "text-success" },
+  error: { icon: X, bgClass: "bg-error-muted", textClass: "text-error" },
 };
 
 const STATUS_LABEL: Record<ToolPart["state"], string> = {
@@ -47,7 +56,7 @@ export function ToolCard({ part }: ToolCardProps) {
 
   const isUnknownResult = part.state === "error" && (part.meta as Record<string, unknown> | undefined)?.unknownResult === true;
   const config = isUnknownResult
-    ? { icon: "⚠", bgClass: "bg-warning-muted", textClass: "text-warning" }
+    ? { icon: TriangleAlert, bgClass: "bg-warning-muted", textClass: "text-warning" }
     : STATUS_CONFIG[part.state];
   const nameClass = isUnknownResult ? "text-warning" : NAME_CLASS[part.state];
   const summary = getToolSummary(part.toolName, "input" in part ? part.input : undefined);
@@ -72,6 +81,8 @@ export function ToolCard({ part }: ToolCardProps) {
     "input" in part ? getToolInvalidInputMessage(part.toolName, part.input) : null;
 
   const statusLabel = isUnknownResult ? "unknown" : STATUS_LABEL[part.state];
+  const StatusIcon = config.icon;
+  const ToolIcon = summary.icon;
 
   // ─── Long-output detection ───
 
@@ -127,13 +138,13 @@ export function ToolCard({ part }: ToolCardProps) {
         }}
       >
         <span
-          className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`}
+          className={`w-[18px] h-[18px] rounded flex items-center justify-center shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`}
           aria-hidden="true"
         >
-          {config.icon}
+          <StatusIcon size={10} />
         </span>
-        <span className={`text-xs font-medium font-mono ${nameClass}`}>
-          <span aria-hidden="true">{summary.icon}</span> {part.toolName}
+        <span className={`text-xs font-medium font-mono shrink-0 whitespace-nowrap ${nameClass}`}>
+          {ToolIcon ? <ToolIcon size={12} className="inline-block align-text-bottom mr-0.5" /> : null}{part.toolName}
         </span>
         <span className="text-xs text-text-secondary truncate">{summary.primary}</span>
         {summary.secondary && (
@@ -141,12 +152,11 @@ export function ToolCard({ part }: ToolCardProps) {
         )}
         <span className="ml-auto text-[11px] text-text-muted">{statusLabel}</span>
         {isLong && (
-          <span
-            className="text-text-muted text-[10px] transition-transform duration-150"
-            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
-          >
-            ▶
-          </span>
+          <ChevronRight
+            size={10}
+            className={`text-text-muted transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+            aria-hidden="true"
+          />
         )}
       </button>
 
@@ -171,7 +181,10 @@ export function ToolCard({ part }: ToolCardProps) {
 
       {isUnknownResult && (
         <div className="border-t border-border-subtle px-2.5 py-1.5">
-          <span className="text-[11px] text-warning">⚠ Result unknown — execution was interrupted before completion</span>
+          <span className="text-[11px] text-warning inline-flex items-center gap-1">
+            <TriangleAlert size={11} className="inline" aria-hidden="true" />
+            Result unknown — execution was interrupted before completion
+          </span>
         </div>
       )}
 

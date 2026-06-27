@@ -1,3 +1,4 @@
+import { Check, Info, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import type { Toast as ToastData, ToastVariant } from "../../hooks/use-toast";
 
 const VARIANT_CLASSES: Record<ToastVariant, string> = {
@@ -7,11 +8,11 @@ const VARIANT_CLASSES: Record<ToastVariant, string> = {
   info: "bg-info-muted border-info text-info",
 };
 
-const VARIANT_ICON: Record<ToastVariant, string> = {
-  error: "✕",
-  success: "✓",
-  warning: "⚠",
-  info: "ℹ",
+const VARIANT_ICON: Record<ToastVariant, LucideIcon> = {
+  error: X,
+  success: Check,
+  warning: TriangleAlert,
+  info: Info,
 };
 
 interface ToastProps {
@@ -20,12 +21,13 @@ interface ToastProps {
 }
 
 export function Toast({ toast, onDismiss }: ToastProps) {
+  const Icon = VARIANT_ICON[toast.variant];
   return (
     <div
       role="alert"
       className={`flex items-center gap-2 px-3 py-2 rounded-md border text-sm font-medium shadow-md animate-[slideIn_0.2s_ease-out] ${VARIANT_CLASSES[toast.variant]}`}
     >
-      <span className="shrink-0 text-base leading-none">{VARIANT_ICON[toast.variant]}</span>
+      <Icon size={16} className="shrink-0" />
       <span className="flex-1 min-w-0 break-words">{toast.message}</span>
       <button
         type="button"
@@ -33,7 +35,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
         className="shrink-0 ml-1 opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
         aria-label="Dismiss"
       >
-        ✕
+        <X size={14} />
       </button>
     </div>
   );

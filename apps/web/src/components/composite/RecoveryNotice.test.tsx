@@ -25,6 +25,19 @@ const useEffect = mock((callback: () => void | (() => void), _deps?: unknown[]) 
 
 mock.module("react", () => ({
   default: {},
+  createContext: <T,>(defaultValue: T) => {
+    const context = { _currentValue: defaultValue, Provider: ({ children }: { children: unknown }) => children, Consumer: ({ children }: { children: (value: T) => unknown }) => children(defaultValue) };
+    return context;
+  },
+  createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => {
+    const resolvedProps = props ?? {};
+    if (typeof type === "string") {
+      return { type, props: { ...resolvedProps, children: children.length ? children : undefined } };
+    }
+    return { type, props: resolvedProps };
+  },
+  forwardRef: <T, P>(render: (props: P, ref: T) => unknown) => render as unknown as React.ForwardRefExoticComponent<P>,
+  useContext: <T,>(context: { _currentValue?: T }) => context._currentValue ?? null,
   useState,
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect,

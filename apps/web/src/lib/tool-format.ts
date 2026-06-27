@@ -36,6 +36,23 @@ import {
   TOOL_SKILL_READ,
 } from "@archcode/protocol";
 import type { ToolDiffMetadata } from "@archcode/protocol";
+import type { LucideIcon } from "lucide-react";
+import {
+  FileText,
+  Pencil,
+  Search,
+  GitBranch,
+  Terminal,
+  MessageSquare,
+  Wrench,
+  Globe,
+  Handshake,
+  Zap,
+  Brain,
+  ListTodo,
+  Plug,
+  CircleQuestionMark,
+} from "lucide-react";
 
 // ─── Threshold constants ───
 
@@ -46,31 +63,31 @@ export const CONTENT_SUMMARY_THRESHOLD_LINES = 8;
 
 // ─── Tool icon map ───
 
-const CATEGORY_ICONS: Record<ToolCategory, string> = {
-  fileRead: "📄",
-  fileWrite: "✏️",
-  search: "🔍",
-  git: "🔀",
-  shell: "💻",
-  interaction: "💬",
-  lsp: "🔧",
-  web: "🌐",
-  delegation: "🤝",
-  skill: "⚡",
-  memory: "🧠",
-  workflow: "📋",
-  mcp: "🔌",
-  other: "❓",
+const CATEGORY_ICONS: Record<ToolCategory, LucideIcon> = {
+  fileRead: FileText,
+  fileWrite: Pencil,
+  search: Search,
+  git: GitBranch,
+  shell: Terminal,
+  interaction: MessageSquare,
+  lsp: Wrench,
+  web: Globe,
+  delegation: Handshake,
+  skill: Zap,
+  memory: Brain,
+  workflow: ListTodo,
+  mcp: Plug,
+  other: CircleQuestionMark,
 };
 
-export function getToolIcon(category: ToolCategory): string {
-  return CATEGORY_ICONS[category] ?? "❓";
+export function getToolIcon(category: ToolCategory): LucideIcon {
+  return CATEGORY_ICONS[category] ?? CircleQuestionMark;
 }
 
 // ─── Tool summary model ───
 
 export interface ToolSummary {
-  icon: string;
+  icon: LucideIcon;
   primary: string;
   secondary?: string;
 }

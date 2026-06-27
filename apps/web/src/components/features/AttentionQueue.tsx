@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Bell, Lock, TriangleAlert, CircleQuestionMark, Check } from "lucide-react";
 import { useAttentionQueue } from "../../hooks/use-attention-queue";
 import type { PermissionRequest, QuestionRequest, PermissionDecision } from "../../api/types";
 import { AGENT_BADGE_COLORS, isValidAgentType, type AgentType } from "../../lib/agent-constants";
@@ -52,6 +53,7 @@ export function ConfirmationCard({
 }) {
   const borderType = getConfirmationBorderType(permission.toolName, permission.input);
   const summary = getToolSummary(permission.toolName, permission.input);
+  const ToolIcon = summary.icon;
   const details = formatToolInputDetails(permission.toolName, permission.input);
   const agentType = permission.agentName ?? "orchestrator";
   const resolvedAgent = isValidAgentType(agentType) ? agentType : ("explorer" as AgentType);
@@ -68,10 +70,10 @@ export function ConfirmationCard({
     <div className={`bg-bg-elevated border-[1.5px] ${BORDER_CLASSES[borderType]} rounded-md px-3.5 py-2.5 shrink-0`}>
       <div className="flex items-center gap-2 mb-1.5">
         <span className="text-sm shrink-0" aria-hidden="true">
-          {borderType === "destructive" ? "⚠️" : "🔒"}
+          {borderType === "destructive" ? <TriangleAlert size={16} className="text-error" /> : <Lock size={16} />}
         </span>
         <span className={`font-semibold text-[13px] ${borderType === "destructive" ? "text-error" : "text-text-primary"}`}>
-          <span aria-hidden="true">{summary.icon}</span> {permission.toolName}
+          <span aria-hidden="true">{ToolIcon ? <ToolIcon size={12} /> : null}</span> {permission.toolName}
         </span>
         {permission.reason && (
           <span className="text-[12px] text-text-secondary">— {permission.reason}</span>
@@ -208,7 +210,7 @@ export function QuestionCard({
   return (
     <div className="bg-bg-elevated border-[1.5px] border-accent rounded-md overflow-hidden shrink-0">
       <div className="flex items-center gap-2 px-3.5 py-2 bg-accent-subtle border-b border-accent-muted">
-        <span className="text-sm" aria-hidden="true">❓</span>
+        <CircleQuestionMark size={16} className="text-accent" aria-hidden="true" />
         <span className="font-semibold text-[13px] text-accent">Questions</span>
         {questionRequest.toolName && (
           <span className="text-[11px] text-text-muted">via {questionRequest.toolName}</span>
@@ -227,7 +229,7 @@ export function QuestionCard({
               onClick={() => setActiveTab(i)}
             >
               {q.header || `Q${i + 1}`}
-              {answers[i].length > 0 && " ✓"}
+              {answers[i].length > 0 && <Check size={12} className="text-success" aria-hidden="true" />}
             </button>
           ))}
           <button
@@ -352,7 +354,7 @@ function QuestionPane({
                     ${isSelected ? "border-accent bg-accent text-white" : "border-border-strong"}
                   `}
                 >
-                  {isSelected && (question.multiple ? "✓" : "●")}
+                  {isSelected && (question.multiple ? <Check size={10} className="text-white" /> : <span className="w-1.5 h-1.5 rounded-full bg-white" />)}
                 </span>
                 <input
                   type={question.multiple ? "checkbox" : "radio"}
@@ -434,7 +436,7 @@ export function AttentionQueue({ slug, sessionId }: AttentionQueueProps) {
   return (
     <div className="max-h-[min(500px,50vh)] overflow-y-auto bg-bg-surface shrink-0 border-t border-border-subtle px-5 py-2.5 flex flex-col gap-2">
       <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-warning mb-0.5">
-        <span aria-hidden="true">🔔</span>
+        <Bell size={14} className="text-warning" aria-hidden="true" />
         Attention Required
         <span className="bg-warning-muted text-warning px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
           {totalItems}

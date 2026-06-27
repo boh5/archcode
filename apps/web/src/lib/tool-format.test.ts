@@ -11,30 +11,46 @@ import {
   CONTENT_SUMMARY_THRESHOLD_LINES,
 } from "./tool-format";
 import type { ToolDiffMetadata } from "@archcode/protocol";
+import {
+  FileText,
+  Pencil,
+  Search,
+  GitBranch,
+  Terminal,
+  MessageSquare,
+  Wrench,
+  Globe,
+  Handshake,
+  Zap,
+  Brain,
+  ListTodo,
+  Plug,
+  CircleQuestionMark,
+} from "lucide-react";
 
 describe("getToolIcon", () => {
   test("returns correct icon for each category", () => {
-    expect(getToolIcon("fileRead")).toBe("📄");
-    expect(getToolIcon("fileWrite")).toBe("✏️");
-    expect(getToolIcon("search")).toBe("🔍");
-    expect(getToolIcon("git")).toBe("🔀");
-    expect(getToolIcon("shell")).toBe("💻");
-    expect(getToolIcon("interaction")).toBe("💬");
-    expect(getToolIcon("lsp")).toBe("🔧");
-    expect(getToolIcon("web")).toBe("🌐");
-    expect(getToolIcon("delegation")).toBe("🤝");
-    expect(getToolIcon("skill")).toBe("⚡");
-    expect(getToolIcon("memory")).toBe("🧠");
-    expect(getToolIcon("workflow")).toBe("📋");
-    expect(getToolIcon("mcp")).toBe("🔌");
-    expect(getToolIcon("other")).toBe("❓");
+    expect(getToolIcon("fileRead")).toBe(FileText);
+    expect(getToolIcon("fileWrite")).toBe(Pencil);
+    expect(getToolIcon("search")).toBe(Search);
+    expect(getToolIcon("git")).toBe(GitBranch);
+    expect(getToolIcon("shell")).toBe(Terminal);
+    expect(getToolIcon("interaction")).toBe(MessageSquare);
+    expect(getToolIcon("lsp")).toBe(Wrench);
+    expect(getToolIcon("web")).toBe(Globe);
+    expect(getToolIcon("delegation")).toBe(Handshake);
+    expect(getToolIcon("skill")).toBe(Zap);
+    expect(getToolIcon("memory")).toBe(Brain);
+    expect(getToolIcon("workflow")).toBe(ListTodo);
+    expect(getToolIcon("mcp")).toBe(Plug);
+    expect(getToolIcon("other")).toBe(CircleQuestionMark);
   });
 });
 
 describe("getToolSummary", () => {
   test("bash returns two-part model with description and command", () => {
     const result = getToolSummary("bash", { description: "Install deps", command: "bun install" });
-    expect(result.icon).toBe("💻");
+    expect(result.icon).toBe(Terminal);
     expect(result.primary).toBe("Install deps");
     expect(result.secondary).toBe("bun install");
   });
@@ -52,7 +68,7 @@ describe("getToolSummary", () => {
 
   test("file_read returns path", () => {
     const result = getToolSummary("file_read", { filePath: "/src/index.ts" });
-    expect(result.icon).toBe("📄");
+    expect(result.icon).toBe(FileText);
     expect(result.primary).toBe("/src/index.ts");
   });
 
@@ -66,25 +82,25 @@ describe("getToolSummary", () => {
 
   test("grep returns pattern", () => {
     const result = getToolSummary("grep", { pattern: "TODO", include: "*.ts" });
-    expect(result.icon).toBe("🔍");
+    expect(result.icon).toBe(Search);
     expect(result.primary).toBe("TODO");
   });
 
   test("delegate shows agent_type: prompt summary", () => {
     const result = getToolSummary("delegate", { agent_type: "explore", prompt: "Explore the codebase" });
-    expect(result.icon).toBe("🤝");
+    expect(result.icon).toBe(Handshake);
     expect(result.primary).toBe("explore: Explore the codebase");
   });
 
   test("background_output shows session_id", () => {
     const result = getToolSummary("background_output", { session_id: "ses_abc123" });
-    expect(result.icon).toBe("🤝");
+    expect(result.icon).toBe(Handshake);
     expect(result.primary).toBe("ses_abc123");
   });
 
   test("MCP tool renders as server/tool with primary value", () => {
     const result = getToolSummary("mcp__context7__resolve_library", { query: "react hooks" });
-    expect(result.icon).toBe("🔌");
+    expect(result.icon).toBe(Plug);
     expect(result.primary).toBe("react hooks");
   });
 
@@ -100,25 +116,25 @@ describe("getToolSummary", () => {
 
   test("web_fetch returns url", () => {
     const result = getToolSummary("web_fetch", { url: "https://docs.example.com" });
-    expect(result.icon).toBe("🌐");
+    expect(result.icon).toBe(Globe);
     expect(result.primary).toBe("https://docs.example.com");
   });
 
   test("LSP tools return path", () => {
     const result = getToolSummary("lsp_diagnostics", { filePath: "/src/app.ts" });
-    expect(result.icon).toBe("🔧");
+    expect(result.icon).toBe(Wrench);
     expect(result.primary).toBe("/src/app.ts");
   });
 
   test("git_status returns workdir", () => {
     const result = getToolSummary("git_status", { workdir: "/project" });
-    expect(result.icon).toBe("🔀");
+    expect(result.icon).toBe(GitBranch);
     expect(result.primary).toBe("/project");
   });
 
   test("unknown tool returns safe fallback", () => {
     const result = getToolSummary("custom_tool", { foo: "bar" });
-    expect(result.icon).toBe("❓");
+    expect(result.icon).toBe(CircleQuestionMark);
     expect(result.primary).toBe("bar");
   });
 

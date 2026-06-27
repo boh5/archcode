@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { Search, Terminal, Plug, FileText, Check, X } from "lucide-react";
 
 // ─── Test helpers ───
 
@@ -48,6 +49,10 @@ function findAllWithClass(value: unknown, className: string): ElementLike[] {
     const cls = el?.props?.className;
     return typeof cls === "string" && cls.includes(className);
   });
+}
+
+function findAllWithType(value: unknown, type: unknown): ElementLike[] {
+  return findAll(value, (el) => el.type === type);
 }
 
 // ─── Mocks ───
@@ -107,8 +112,7 @@ describe("ToolChip", () => {
 
   test("renders category icon for grep", () => {
     const result = ToolChip({ name: "grep", status: "success", input: { pattern: "needle" } });
-    const text = textContent(result);
-    expect(text).toContain("🔍");
+    expect(findAllWithType(result, Search).length).toBeGreaterThan(0);
   });
 
   test("renders tool name and primary summary for grep with input", () => {
@@ -120,22 +124,20 @@ describe("ToolChip", () => {
 
   test("renders bash with description as summary", () => {
     const result = ToolChip({ name: "bash", status: "default", input: { description: "List files", command: "ls" } });
+    expect(findAllWithType(result, Terminal).length).toBeGreaterThan(0);
     const text = textContent(result);
-    expect(text).toContain("💻");
     expect(text).toContain("bash");
     expect(text).toContain("List files");
   });
 
   test("renders success status icon", () => {
     const result = ToolChip({ name: "grep", status: "success", input: { pattern: "needle" } });
-    const text = textContent(result);
-    expect(text).toContain("✓");
+    expect(findAllWithType(result, Check).length).toBeGreaterThan(0);
   });
 
   test("renders error status icon", () => {
     const result = ToolChip({ name: "bash", status: "error", input: { description: "Run command", command: "pwd" } });
-    const text = textContent(result);
-    expect(text).toContain("✗");
+    expect(findAllWithType(result, X).length).toBeGreaterThan(0);
   });
 
   test("renders tool name when primary is dash", () => {
@@ -146,8 +148,7 @@ describe("ToolChip", () => {
 
   test("renders MCP tool with plug icon", () => {
     const result = ToolChip({ name: "mcp__context7__resolve", status: "success", input: { query: "react hooks" } });
-    const text = textContent(result);
-    expect(text).toContain("🔌");
+    expect(findAllWithType(result, Plug).length).toBeGreaterThan(0);
   });
 });
 
@@ -183,9 +184,8 @@ describe("DelegationCard", () => {
 
   test("renders tool chips with category icons", () => {
     const result = DelegationCard(baseProps);
-    const text = textContent(result);
-    expect(text).toContain("🔍");
-    expect(text).toContain("📄");
+    expect(findAllWithType(result, Search).length).toBeGreaterThan(0);
+    expect(findAllWithType(result, FileText).length).toBeGreaterThan(0);
   });
 
   test("renders running status with elapsed time", () => {

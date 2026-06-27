@@ -1,3 +1,4 @@
+import { Check, ListTodo, X, type LucideIcon } from "lucide-react";
 import type { SessionTodo, SessionTodoStatus } from "@archcode/protocol";
 import { useSessionStore } from "../../store/session-store";
 
@@ -33,11 +34,9 @@ const STATUS_CLASSES: Record<SessionTodoStatus, string> = {
   cancelled: "border-[1.5px] border-border-strong opacity-40",
 };
 
-const STATUS_ICON: Record<SessionTodoStatus, string> = {
-  completed: "✓",
-  in_progress: "",
-  pending: "",
-  cancelled: "✕",
+const STATUS_ICON: Partial<Record<SessionTodoStatus, LucideIcon>> = {
+  completed: Check,
+  cancelled: X,
 };
 
 const TEXT_CLASSES: Record<SessionTodoStatus, string> = {
@@ -61,7 +60,10 @@ function TodoItem({ todo }: { todo: SessionTodo }) {
         {todo.status === "in_progress" ? (
           <span className="w-[5px] h-[5px] rounded-full bg-accent animate-pulse" />
         ) : (
-          STATUS_ICON[todo.status]
+          (() => {
+            const Icon = STATUS_ICON[todo.status];
+            return Icon ? <Icon size={12} /> : null;
+          })()
         )}
       </div>
       <span className={`flex-1 text-[12.5px] leading-[1.4] min-w-0 ${TEXT_CLASSES[todo.status]}`}>
@@ -89,7 +91,7 @@ export function TodoTab({ slug, sessionId }: TodoTabProps) {
   if (todos.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-muted text-[12.5px] py-12">
-        <span className="text-lg mb-1.5">📋</span>
+        <ListTodo size={20} className="text-lg mb-1.5" />
         No tasks yet
       </div>
     );

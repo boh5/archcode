@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { PermissionRequest, PermissionDecision, QuestionRequest } from "@archcode/protocol";
+import { TriangleAlert, Lock, Terminal, Search } from "lucide-react";
 
 // ─── Test helpers ───
 
@@ -53,6 +54,10 @@ function findAllWithClass(value: unknown, className: string): ElementLike[] {
 
 function findWithClass(value: unknown, className: string): ElementLike | undefined {
   return findAllWithClass(value, className)[0];
+}
+
+function findAllWithType(value: unknown, type: unknown): ElementLike[] {
+  return findAll(value, (el) => el.type === type);
 }
 
 // ─── Mocks ───
@@ -124,7 +129,7 @@ describe("ConfirmationCard", () => {
     const perm = makePermission({ toolName: "bash", input: { description: "List files", command: "ls -la" } });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
-    expect(text).toContain("💻");
+    expect(findAllWithType(result, Terminal).length).toBeGreaterThan(0);
     expect(text).toContain("bash");
   });
 
@@ -213,7 +218,7 @@ describe("ConfirmationCard", () => {
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
     expect(text).toContain("TODO");
-    expect(text).toContain("🔍");
+    expect(findAllWithType(result, Search).length).toBeGreaterThan(0);
     expect(text).toContain("grep");
   });
 
@@ -242,7 +247,7 @@ describe("ConfirmationCard", () => {
     const perm = makePermission({ input: null });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
-    expect(text).toContain("💻");
+    expect(findAllWithType(result, Terminal).length).toBeGreaterThan(0);
     expect(text).toContain("bash");
   });
 
@@ -250,7 +255,7 @@ describe("ConfirmationCard", () => {
     const perm = makePermission({ input: undefined });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
     const text = textContent(result);
-    expect(text).toContain("💻");
+    expect(findAllWithType(result, Terminal).length).toBeGreaterThan(0);
     expect(text).toContain("bash");
   });
 
@@ -274,8 +279,7 @@ describe("ConfirmationCard", () => {
       input: { description: "Remove files", command: "rm -rf /tmp/test" },
     });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
-    const text = textContent(result);
-    expect(text).toContain("⚠️");
+    expect(findAllWithType(result, TriangleAlert).length).toBeGreaterThan(0);
   });
 
   test("non-destructive bash shows lock icon", () => {
@@ -284,8 +288,7 @@ describe("ConfirmationCard", () => {
       input: { description: "List files", command: "ls -la" },
     });
     const result = ConfirmationCard({ permission: perm, onRespond: respondPermission });
-    const text = textContent(result);
-    expect(text).toContain("🔒");
+    expect(findAllWithType(result, Lock).length).toBeGreaterThan(0);
   });
 });
 

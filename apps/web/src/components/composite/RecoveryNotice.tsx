@@ -1,33 +1,35 @@
 import { useEffect, useState } from "react";
+import { Clock, LoaderCircle, Check, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { RecoveryNoticePart } from "@archcode/protocol";
 
 // ─── Status config ───
 
 const STATUS_CONFIG: Record<
   RecoveryNoticePart["status"],
-  { icon: string; bgClass: string; textClass: string; label: string; animate?: string }
+  { icon: LucideIcon; bgClass: string; textClass: string; label: string; animate?: string }
 > = {
   scheduled: {
-    icon: "⏳",
+    icon: Clock,
     bgClass: "bg-warning-muted",
     textClass: "text-warning",
     label: "Scheduled retry",
   },
   retrying: {
-    icon: "⟳",
+    icon: LoaderCircle,
     bgClass: "bg-warning-muted",
     textClass: "text-warning",
     label: "Retrying",
     animate: "animate-spin",
   },
   recovered: {
-    icon: "✓",
+    icon: Check,
     bgClass: "bg-success-muted",
     textClass: "text-success",
     label: "Recovered",
   },
   failed: {
-    icon: "✗",
+    icon: X,
     bgClass: "bg-error-muted",
     textClass: "text-error",
     label: "Recovery failed",
@@ -82,10 +84,10 @@ export function RecoveryNotice({ part }: RecoveryNoticeProps) {
     <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden my-1.5 shrink-0">
       <div className="flex items-center gap-2 px-2.5 py-1.5">
         <span
-          className={`w-[18px] h-[18px] rounded flex items-center justify-center text-[10px] shrink-0 ${config.bgClass} ${config.textClass} ${config.animate ?? ""}`}
+          className={`w-[18px] h-[18px] rounded flex items-center justify-center shrink-0 ${config.bgClass} ${config.textClass}`}
           aria-hidden="true"
         >
-          {config.icon}
+          <config.icon size={10} className={config.animate ?? ""} />
         </span>
         <span className={`text-xs font-medium ${config.textClass}`}>
           {config.label}

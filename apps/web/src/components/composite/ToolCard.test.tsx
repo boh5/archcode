@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { DiffFile, PendingToolPart, RunningToolPart, CompletedToolPart, ErrorToolPart } from "@archcode/protocol";
+import { Clock, LoaderCircle, Check, X, TriangleAlert, Plug } from "lucide-react";
 
 // ─── Test helpers ───
 
@@ -53,6 +54,10 @@ function findAllWithClass(value: unknown, className: string): ElementLike[] {
 
 function findWithClass(value: unknown, className: string): ElementLike | undefined {
   return findAllWithClass(value, className)[0];
+}
+
+function findAllWithType(value: unknown, type: unknown): ElementLike[] {
+  return findAll(value, (el) => el.type === type);
 }
 
 // ─── Mocks ───
@@ -160,7 +165,7 @@ describe("ToolCard", () => {
     const part = makePending({ toolName: "bash", toolCallId: "call-pending" });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("⏳");
+    expect(findAllWithType(el, Clock).length).toBeGreaterThan(0);
     expect(text).toContain("bash");
     expect(text).toContain("pending");
   });
@@ -179,7 +184,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("⟳");
+    expect(findAllWithType(el, LoaderCircle).length).toBeGreaterThan(0);
     expect(text).toContain("bash");
     expect(text).toContain("Install deps");
     expect(text).toContain("running…");
@@ -193,7 +198,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("✓");
+    expect(findAllWithType(el, Check).length).toBeGreaterThan(0);
     expect(text).toContain("file_read");
     expect(text).toContain("done");
   });
@@ -206,7 +211,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("✗");
+    expect(findAllWithType(el, X).length).toBeGreaterThan(0);
     expect(text).toContain("error");
     expect(text).toContain("Command exited with code 1");
   });
@@ -403,7 +408,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("🔌");
+    expect(findAllWithType(el, Plug).length).toBeGreaterThan(0);
     expect(text).toContain("context7/search");
   });
 
@@ -416,7 +421,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("⚠");
+    expect(findAllWithType(el, TriangleAlert).length).toBeGreaterThan(0);
     expect(text).toContain("unknown");
     expect(text).toContain("Result unknown");
     const warningEls = findAllWithClass(el, "bg-warning-muted");
@@ -433,7 +438,7 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("✗");
+    expect(findAllWithType(el, X).length).toBeGreaterThan(0);
     expect(text).toContain("error");
     expect(text).not.toContain("unknown");
     const errorEls = findAllWithClass(el, "bg-error-muted");
@@ -449,7 +454,8 @@ describe("ToolCard", () => {
     });
     const el = ToolCard({ part });
     const text = textContent(el);
-    expect(text).toContain("⚠ Result unknown");
+    expect(findAllWithType(el, TriangleAlert).length).toBeGreaterThan(0);
+    expect(text).toContain("Result unknown");
     expect(text).toContain("execution was interrupted before completion");
   });
 

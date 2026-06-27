@@ -155,7 +155,7 @@ describe("PartRenderer", () => {
     };
     const el = PartRenderer({ part, ...defaultProps });
     const text = textContent(el);
-    expect(text).toContain("⚠ Response was interrupted");
+    expect(text).toContain("Response was interrupted");
     expect(text).toContain("Partial response content");
   });
 
@@ -169,7 +169,7 @@ describe("PartRenderer", () => {
     };
     const el = PartRenderer({ part, ...defaultProps });
     const text = textContent(el);
-    expect(text).not.toContain("⚠ Response was interrupted");
+    expect(text).not.toContain("Response was interrupted");
     expect(text).toContain("Normal response");
   });
 
@@ -184,7 +184,7 @@ describe("PartRenderer", () => {
     };
     const el = PartRenderer({ part, ...defaultProps });
     const text = textContent(el);
-    expect(text).toContain("⚠ Response was interrupted");
+    expect(text).toContain("Response was interrupted");
     expect(text).toContain("Reasoning");
   });
 

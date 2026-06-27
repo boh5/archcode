@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DiffFile, DiffHunk, DiffLine } from "@archcode/protocol";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -130,8 +131,8 @@ export function DiffFileAccordion({
         className="flex w-full items-center gap-2 px-3 py-[6px] cursor-pointer text-left transition-colors duration-150 bg-bg-elevated hover:bg-bg-hover"
         onClick={onToggle}
       >
-        <span className="text-[10px] text-text-muted shrink-0">
-          {isExpanded ? "▼" : "▶"}
+        <span className="text-text-muted shrink-0">
+          {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
         </span>
         <span
           className={`shrink-0 rounded-[3px] px-[6px] py-px text-[10px] font-semibold ${STATUS_STYLES[status] ?? "bg-bg-elevated text-text-muted"}`}

@@ -1,3 +1,4 @@
+import { CircleX, Menu } from "lucide-react";
 import { usePostCommand } from "../../api/mutations";
 import { useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
@@ -55,19 +56,19 @@ export function ChatHeader({ slug, sessionId, workflowId = "", onToggleDetail }:
       </div>
       <div className="flex items-center gap-1.5">
         <button
-          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
+          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
           title="Compact context"
           onClick={handleCompact}
           disabled={postCommand.isPending}
         >
-          ⦻
+          <CircleX size={16} />
         </button>
         <button
-          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center text-sm transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
+          className="w-[30px] h-[30px] rounded-sm border border-border-default bg-transparent text-text-tertiary cursor-pointer flex items-center justify-center transition-all duration-150 hover:bg-bg-hover hover:text-text-primary hover:border-border-strong"
           title="Toggle detail panel"
           onClick={onToggleDetail}
         >
-          ☰
+          <Menu size={16} />
         </button>
       </div>
     </div>

@@ -71,6 +71,45 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
 
 export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 
+export const AGENT_DOT_CLASS: Record<AgentType, string> = {
+  orchestrator: "bg-agent-orchestrator",
+  product: "bg-agent-product",
+  spec: "bg-agent-spec",
+  critic: "bg-agent-critic",
+  foreman: "bg-agent-foreman",
+  builder: "bg-agent-builder",
+  reviewer: "bg-agent-reviewer",
+  librarian: "bg-agent-librarian",
+  explore: "bg-agent-explorer",
+  explorer: "bg-agent-explorer",
+};
+
+export const AGENT_NAME_CLASS: Record<AgentType, string> = {
+  orchestrator: "text-agent-orchestrator font-semibold",
+  product: "text-agent-product font-semibold",
+  spec: "text-agent-spec font-semibold",
+  critic: "text-agent-critic font-semibold",
+  foreman: "text-agent-foreman font-semibold",
+  builder: "text-agent-builder font-semibold",
+  reviewer: "text-agent-reviewer font-semibold",
+  librarian: "text-agent-librarian font-semibold",
+  explore: "text-agent-explorer font-semibold",
+  explorer: "text-agent-explorer font-semibold",
+};
+
+export const AGENT_BORDER_CLASS: Record<AgentType, string> = {
+  orchestrator: "border-agent-orchestrator",
+  product: "border-agent-product",
+  spec: "border-agent-spec",
+  critic: "border-agent-critic",
+  foreman: "border-agent-foreman",
+  builder: "border-agent-builder",
+  reviewer: "border-agent-reviewer",
+  librarian: "border-agent-librarian",
+  explore: "border-agent-explorer",
+  explorer: "border-agent-explorer",
+};
+
 // ─── Type guard ───
 
 export function isValidAgentType(value: string): value is AgentType {

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { User, Ellipsis, ChevronRight, Sparkles, Info, TriangleAlert } from "lucide-react";
 import { useSessionStore } from "../../store/session-store";
 import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
 import { DelegationCard } from "./DelegationCard";
 import type { DelegationCardProps } from "./DelegationCard";
 import {
-  AGENT_INITIALS,
-  AGENT_ICON_COLORS,
   AGENT_DISPLAY_NAMES,
+  AGENT_DOT_CLASS,
+  AGENT_NAME_CLASS,
+  AGENT_BORDER_CLASS,
   isValidAgentType,
   type BadgeStatus,
 } from "../../lib/agent-constants";
@@ -23,11 +25,14 @@ import type {
 } from "@archcode/protocol";
 import { TOOL_DELEGATE } from "@archcode/protocol";
 import { RecoveryNotice } from "./RecoveryNotice";
+import { GroupedToolCard } from "./GroupedToolCard";
+import { groupReadOnlyToolParts } from "../../lib/group-tools";
 import type { AgentType } from "../../lib/agent-constants";
 import { formatRelativeTime } from "../../lib/time-format";
 
 function ReasoningBlock({ part }: { part: ReasoningPart }) {
   const [expanded, setExpanded] = useState(false);
+  const streaming = !part.completedAt;
 
   return (
     <div className="bg-bg-overlay border border-border-subtle rounded-md overflow-hidden mb-2 shrink-0">
@@ -36,14 +41,14 @@ function ReasoningBlock({ part }: { part: ReasoningPart }) {
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-text-tertiary cursor-pointer select-none hover:bg-bg-hover w-full text-left"
         onClick={() => setExpanded((v) => !v)}
       >
-        <span className="text-[10px] transition-transform duration-150" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>
-          ▶
-        </span>
-        <span>Reasoning</span>
+        <ChevronRight size={12} className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} />
+        <Sparkles size={12} className="text-text-muted" />
+        <span>{streaming ? "Thinking…" : "Reasoning"}</span>
+        {streaming && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-dot" />}
       </button>
       {expanded && (
         <div className="px-2.5 pb-2 text-[12.5px] text-text-secondary italic leading-relaxed border-t border-border-subtle">
-          <MarkdownContent isStreaming={!part.completedAt}>{part.text}</MarkdownContent>
+          <MarkdownContent isStreaming={streaming}>{part.text}</MarkdownContent>
         </div>
       )}
     </div>
@@ -55,15 +60,16 @@ function MsgUser({ message }: { message: SessionMessage }) {
 
   return (
     <div className="flex gap-2.5 items-start justify-end">
-      <div className="flex-1 min-w-0 flex flex-col items-end">
+      <div className="flex flex-col items-end gap-1 max-w-[80%]">
         {textParts.map((part) => (
-          <div key={part.id} className="text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap">
+          <div key={part.id} className="bg-bg-overlay border border-border-subtle rounded-2xl rounded-br-sm px-3.5 py-2 text-[13.5px] leading-relaxed text-text-primary whitespace-pre-wrap break-words">
             {part.text}
           </div>
         ))}
+        <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
       </div>
-      <div className="w-7 h-7 rounded-sm flex items-center justify-center text-[13px] shrink-0 bg-bg-active text-text-tertiary">
-        U
+      <div className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center shrink-0">
+        <User size={18} />
       </div>
     </div>
   );
@@ -83,24 +89,27 @@ function MsgAgent({
   childSessionLinks: ToolChildSessionLink[];
 }) {
   const agentType = isValidAgentType(agentName) ? (agentName as AgentType) : "orchestrator" as AgentType;
-  const initials = AGENT_INITIALS[agentType];
-  const colorClasses = AGENT_ICON_COLORS[agentType];
   const displayName = AGENT_DISPLAY_NAMES[agentType];
 
   return (
-    <div className="flex gap-2.5 items-start max-w-full">
-      <div className={`w-7 h-7 rounded-sm flex items-center justify-center text-[13px] shrink-0 ${colorClasses}`}>
-        {initials}
+    <div className="group flex flex-col gap-1.5 max-w-full">
+      <div className="flex items-center gap-2 mb-0.5">
+        <span className={`w-2 h-2 rounded-full ${AGENT_DOT_CLASS[agentType]}`} />
+        <span className={`text-[13px] ${AGENT_NAME_CLASS[agentType]}`}>{displayName}</span>
+        <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
+        <button type="button" className="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary ml-auto p-1" aria-label="More actions">
+          <Ellipsis size={14} />
+        </button>
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="font-semibold text-[13px]">{displayName}</span>
-          <span className="text-[11px] text-text-muted">{formatRelativeTime(message.createdAt)}</span>
-        </div>
+      <div className={`border-l-2 pl-3 bg-bg-surface/30 rounded-r-lg py-1.5 pr-3 ${AGENT_BORDER_CLASS[agentType]}`}>
         <div className="msg-parts">
-          {message.parts.map((part) => (
-            <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />
-          ))}
+          {groupReadOnlyToolParts(message.parts).map((entry) => {
+            if (entry.type === "grouped-tools") {
+              return <GroupedToolCard key={entry.id} tools={entry.tools} />;
+            }
+            const part = entry as SessionPart;
+            return <PartRenderer key={part.id} part={part} projectSlug={projectSlug} focusStoreSessionId={focusStoreSessionId} childSessionLinks={childSessionLinks} />;
+          })}
         </div>
       </div>
     </div>
@@ -109,16 +118,22 @@ function MsgAgent({
 
 function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
   return (
-    <div className="text-center text-[12px] text-text-muted italic py-1">
-      {part.notice}
+    <div className="flex items-center gap-3 my-1">
+      <div className="flex-1 h-px bg-border-subtle" />
+      <Info size={12} className="text-text-muted shrink-0" />
+      <span className="text-[11px] text-text-muted">{part.notice}</span>
+      <div className="flex-1 h-px bg-border-subtle" />
     </div>
   );
 }
 
 function CompactionBlock() {
   return (
-    <div className="text-center text-[11px] text-text-muted py-1">
-      Context compacted — earlier messages summarized
+    <div className="flex items-center gap-3 my-1">
+      <div className="flex-1 h-px bg-border-subtle" />
+      <Info size={12} className="text-text-muted shrink-0" />
+      <span className="text-[11px] text-text-muted">Context compacted</span>
+      <div className="flex-1 h-px bg-border-subtle" />
     </div>
   );
 }
@@ -185,7 +200,7 @@ function DelegateToolCard({ part, projectSlug, focusStoreSessionId, childSession
 function InterruptedBadge() {
   return (
     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[11px] font-medium bg-warning-muted text-warning border border-warning/20">
-      ⚠ Response was interrupted
+      <TriangleAlert size={12} /> Response was interrupted
     </span>
   );
 }
@@ -262,7 +277,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
 
   if (messages.length === 0) {
     return (
-      <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4 items-center justify-center text-text-muted text-sm">
+      <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full items-center justify-center text-text-muted text-sm">
         No messages yet
       </div>
     );
@@ -272,7 +287,7 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto p-5 flex flex-col gap-4"
+      className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full"
     >
       {messages.map((msg) => {
         if (msg.role === "user") {

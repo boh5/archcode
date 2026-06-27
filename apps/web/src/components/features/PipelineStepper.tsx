@@ -1,3 +1,4 @@
+import { Check } from "lucide-react";
 import { useWorkflow } from "../../api/queries";
 import type { WorkflowState } from "../../api/types";
 
@@ -22,7 +23,7 @@ const WORKFLOW_STAGES: Record<string, readonly { key: string; label: string; ico
     { key: "critic_spec_review", label: "Critic", icon: "C" },
     { key: "awaiting_user_approval", label: "Approval", icon: "!" },
     { key: "foreman_executing", label: "Foreman", icon: "F" },
-    { key: "final_review", label: "Review", icon: "✓" },
+    { key: "final_review", label: "Review", icon: "R" },
   ],
 };
 
@@ -59,7 +60,7 @@ function StepIcon({
   if (state === "completed") {
     return (
       <div className="w-[22px] h-[22px] rounded-full flex items-center justify-center text-[10px] font-semibold bg-success text-white shrink-0">
-        ✓
+        <Check size={12} />
       </div>
     );
   }

@@ -80,6 +80,20 @@ mock.module("react", () => ({
   useMemo: <T,>(factory: () => T) => factory(),
 }));
 
+// Mock lucide-react icons as simple span elements so tests can inspect layout/behavior
+// without pulling in the full react/lucide runtime.
+mock.module("lucide-react", () => {
+  const icon = (name: string) => (props: Record<string, unknown>) => ({
+    type: "span",
+    props: { ...props, "data-icon": name, children: name },
+    key: null,
+  });
+  return {
+    ChevronDown: icon("ChevronDown"),
+    ChevronRight: icon("ChevronRight"),
+  };
+});
+
 mock.module("react/jsx-dev-runtime", () => ({
   Fragment,
   jsxDEV,
