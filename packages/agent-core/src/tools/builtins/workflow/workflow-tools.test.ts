@@ -1262,4 +1262,425 @@ describe("workflow builtin tools", () => {
     expect(registry.get("artifact_write")).toBeDefined();
     expect(registry.get("workflow_task_check")).toBeDefined();
   });
+
+  describe("compact workflow output", () => {
+    // These tests define the expected compact output shape BEFORE implementation (T7).
+    // They FAIL against current code because tools return full JSON blobs.
+    // After T7 implements the compact formatter, these tests will pass.
+    //
+    // Compact output shape: { workflowId, type, stage, status, artifactSummary?, interactionSummary?, message? }
+    // Must NOT contain: requiredInteractions, resolvedInteractions, stageCompletions, artifacts (raw maps)
+
+    test("workflow_create returns compact output without full state arrays", async () => {
+      const { registry, projectContext } = createWorkflowRegistry();
+      const store = createMockStore({ sessionId: "compact-create" });
+
+      const result = await execute(registry, projectContext, "workflow_create", {
+        title: "Compact Create Test",
+        type: "full_feature",
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — these will fail against current full-state output
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("type");
+      expect(output).toHaveProperty("stage");
+      expect(output).toHaveProperty("status");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+
+    test("workflow_read returns compact output without full state arrays", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Compact Read Test", type: "quick_fix" });
+
+      const result = await execute(registry, projectContext, "workflow_read", {
+        workflowId: wf.id,
+      });
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — will fail against current full-state output
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("type");
+      expect(output).toHaveProperty("stage");
+      expect(output).toHaveProperty("status");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+
+    test("workflow_update_stage returns compact output without full state arrays", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Compact Stage Update", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
+        workflowId: wf.id,
+        stage: "product_drafting",
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — will fail against current full-state output
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("type");
+      expect(output).toHaveProperty("stage");
+      expect(output).toHaveProperty("status");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+
+    test("workflow_record_completion returns compact output without full state arrays", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Compact Completion Record", type: "quick_fix" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      const result = await execute(registry, projectContext, "workflow_record_completion", {
+        workflowId: wf.id,
+        stage: "quick_verify",
+        criticPassed: true,
+        evidence: ["evidence/check.md"],
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — will fail against current full-state output
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("type");
+      expect(output).toHaveProperty("stage");
+      expect(output).toHaveProperty("status");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+
+    test("workflow_complete returns compact output without full state arrays", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Compact Complete", type: "quick_fix" });
+      await stateManager.updateStage(wf.id, "quick_verify");
+      await stateManager.recordStageCompletion(wf.id, { stage: "quick_verify" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      const result = await execute(registry, projectContext, "workflow_complete", {
+        workflowId: wf.id,
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — will fail against current full-state output
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("type");
+      expect(output).toHaveProperty("stage");
+      expect(output).toHaveProperty("status");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+
+    test("workflow_propose_interactions does not embed full state in output", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Compact Propose", type: "full_feature" });
+      const store = createMockStore({ workflowId: wf.id, agentName: "product" });
+
+      const result = await execute(registry, projectContext, "workflow_propose_interactions", {
+        workflowId: wf.id,
+        proposals: [validInteractionProposal()],
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Compact shape assertions — will fail against current output which embeds full state
+      expect(output).toHaveProperty("workflowId");
+      expect(output).toHaveProperty("message");
+
+      // Must NOT embed full state field
+      expect(output).not.toHaveProperty("state");
+
+      // Must NOT contain full state arrays/maps
+      expect(output).not.toHaveProperty("requiredInteractions");
+      expect(output).not.toHaveProperty("resolvedInteractions");
+      expect(output).not.toHaveProperty("stageCompletions");
+      expect(output).not.toHaveProperty("artifacts");
+    });
+  });
+
+  describe("artifact_read truncation", () => {
+    // These tests define the expected truncation behavior BEFORE implementation (T8).
+    // They FAIL against current code because artifact_read returns full body
+    // with no truncation metadata. After T8 implements truncation, these tests will pass.
+    //
+    // Truncation output shape (default, unbounded):
+    //   { path, content?, frontmatter?, body?, truncated, bodyChars, returnedBodyChars, fullContentRequestHint }
+    // Multi-file list mode:
+    //   { workflowId, kind, paths } — must NOT be truncated
+
+    test("artifact_read with long body returns truncated output with metadata", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Truncation Test", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      const LONG_BODY = "# Long Artifact\n\n" + "x".repeat(5000);
+
+      await execute(registry, projectContext, "artifact_write", {
+        workflowId: wf.id,
+        kind: "PRD",
+        content: LONG_BODY,
+      }, store);
+
+      const result = await execute(registry, projectContext, "artifact_read", {
+        workflowId: wf.id,
+        kind: "PRD",
+      });
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Truncation metadata — will fail against current full-body output
+      expect(output).toHaveProperty("truncated");
+      expect(output.truncated).toBe(true);
+      expect(output).toHaveProperty("bodyChars");
+      expect(output.bodyChars).toBeGreaterThan(5000);
+      expect(output).toHaveProperty("returnedBodyChars");
+      expect(output.returnedBodyChars).toBeLessThan(output.bodyChars);
+      expect(output).toHaveProperty("fullContentRequestHint");
+      expect(typeof output.fullContentRequestHint).toBe("string");
+      expect(output.fullContentRequestHint.length).toBeGreaterThan(0);
+    });
+
+    test("artifact_read with includeFullContent: true returns complete body", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Full Content Test", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      const LONG_BODY = "# Full Artifact\n\n" + "y".repeat(3000);
+
+      await execute(registry, projectContext, "artifact_write", {
+        workflowId: wf.id,
+        kind: "PRD",
+        content: LONG_BODY,
+      }, store);
+
+      // includeFullContent is an unrecognized field in current strictObject schema.
+      // This call will fail because the schema rejects it, so the assertion
+      // expect(result.isError).toBe(false) will fail — this is the "red" phase.
+      const result = await execute(registry, projectContext, "artifact_read", {
+        workflowId: wf.id,
+        kind: "PRD",
+        includeFullContent: true,
+      });
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Full body must be present when includeFullContent is set
+      expect(output).toHaveProperty("body");
+      expect(output.body).toBe(LONG_BODY);
+      // No truncation metadata when full content requested
+      expect(output).not.toHaveProperty("truncated");
+    });
+
+    test("artifact_read rejects invalid maxChars values at schema level", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+
+      // Use a real workflow (artifact_write not needed — schema check happens first)
+      const wf = await stateManager.create({ title: "MaxChars Schema", type: "full_feature" });
+
+      // maxChars: 0 is rejected (must be positive)
+      const zeroResult = await execute(registry, projectContext, "artifact_read", {
+        workflowId: wf.id,
+        kind: "PRD",
+        maxChars: 0,
+      });
+      expect(zeroResult.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(zeroResult)).toBe("schema");
+
+      // maxChars: -1 is rejected (must be positive)
+      const negativeResult = await execute(registry, projectContext, "artifact_read", {
+        workflowId: wf.id,
+        kind: "PRD",
+        maxChars: -1,
+      });
+      expect(negativeResult.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(negativeResult)).toBe("schema");
+    });
+
+    test("artifact_read multi-file list mode returns paths without truncation", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Multi-file List", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      // Write two multi-file EVIDENCE artifacts
+      await execute(registry, projectContext, "artifact_write", {
+        workflowId: wf.id,
+        kind: "EVIDENCE",
+        name: "report1",
+        content: "Evidence content\n",
+      }, store);
+      await execute(registry, projectContext, "artifact_write", {
+        workflowId: wf.id,
+        kind: "EVIDENCE",
+        name: "report2",
+        content: "More evidence\n",
+      }, store);
+
+      // Read by kind to get paths list
+      const result = await execute(registry, projectContext, "artifact_read", {
+        workflowId: wf.id,
+        kind: "EVIDENCE",
+      });
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+
+      // Multi-file list shape must be preserved
+      expect(output).toMatchObject({
+        workflowId: wf.id,
+        kind: "EVIDENCE",
+      });
+      expect(output).toHaveProperty("paths");
+      expect(Array.isArray(output.paths)).toBe(true);
+      expect(output.paths.length).toBeGreaterThanOrEqual(1);
+
+      // Multi-file list mode must NOT have truncation metadata or body
+      expect(output).not.toHaveProperty("truncated");
+      expect(output).not.toHaveProperty("body");
+      expect(output).not.toHaveProperty("bodyChars");
+      expect(output).not.toHaveProperty("returnedBodyChars");
+      expect(output).not.toHaveProperty("fullContentRequestHint");
+    });
+  });
+
+  describe("clean-break critic lifecycle contract", () => {
+    // These tests define the NEW contract AFTER T10 removes criticDecision from
+    // workflow_update_stage. The Orchestrator will own Critic-result handling,
+    // and workflow_update_stage will support generic terminal lifecycle status
+    // (failed/paused + lastError).
+    //
+    // They FAIL against current code because:
+    // 1. criticDecision is still accepted by the schema (should be rejected)
+    // 2. status: "failed"/"paused" + lastError are not yet supported
+    // 3. After T10 implements the clean break, these tests will pass.
+
+    test("workflow_update_stage schema REJECTS criticDecision input", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Clean Break Critic", type: "full_feature" });
+      await stateManager.updateStage(wf.id, "critic_prd_review");
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      // After T10, criticDecision should be rejected by the schema.
+      // Currently it IS accepted, so this assertion FAILS (red phase).
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
+        workflowId: wf.id,
+        stage: "critic_prd_review",
+        criticDecision: "approved",
+      }, store);
+
+      expect(result.isError).toBe(true);
+      expect(inferToolErrorKindFromResult(result)).toBe("schema");
+      expect(result.output).toContain("criticDecision");
+    });
+
+    test("workflow_update_stage ACCEPTS status: failed with lastError (generic terminal lifecycle)", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "Generic Fail", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      // After T10, workflow_update_stage should accept status: "failed" + lastError.
+      // Currently these fields don't exist in the schema, so this FAILS (red phase).
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
+        workflowId: wf.id,
+        stage: "product_drafting",
+        status: "failed",
+        lastError: "Critic rejected PRD: missing acceptance criteria",
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+      expect(output).toMatchObject({
+        status: "failed",
+        lastError: "Critic rejected PRD: missing acceptance criteria",
+      });
+    });
+
+    test("workflow_update_stage ACCEPTS status: paused with reason (user withholding approval)", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "User Paused", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      // After T10, workflow_update_stage should accept status: "paused" with a reason.
+      // Currently these fields don't exist in the schema, so this FAILS (red phase).
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
+        workflowId: wf.id,
+        stage: "awaiting_user_approval",
+        status: "paused",
+        lastError: "User withheld execution approval pending clarification",
+      }, store);
+
+      expect(result.isError).toBe(false);
+      const output = JSON.parse(result.output);
+      expect(output).toMatchObject({
+        status: "paused",
+        lastError: "User withheld execution approval pending clarification",
+      });
+    });
+
+    test("workflow state reflects failed status and lastError after workflow_update_stage with status: failed", async () => {
+      const { registry, stateManager, projectContext } = createWorkflowRegistry();
+      const wf = await stateManager.create({ title: "State Reflects Fail", type: "full_feature" });
+      const store = createMockStore();
+      store.getState().setWorkflowId(wf.id);
+
+      // After T10, setting status: "failed" via workflow_update_stage should persist
+      // the failure to workflow state. Currently the schema doesn't support this, so FAILS.
+      await execute(registry, projectContext, "workflow_update_stage", {
+        workflowId: wf.id,
+        stage: "product_drafting",
+        status: "failed",
+        lastError: "Critic rejected PRD: missing acceptance criteria",
+      }, store);
+
+      const state = await stateManager.read(wf.id);
+      expect(state.status).toBe("failed");
+      expect(state.lastError).toBe("Critic rejected PRD: missing acceptance criteria");
+    });
+  });
 });

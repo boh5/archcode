@@ -637,3 +637,251 @@ describe("workflow transition guards", () => {
     expect(retryError.maxRetries).toBe(1);
   });
 });
+
+describe("workflow type matrix preservation", () => {
+  test("WORKFLOW_TYPE_REGISTRY contains exactly three types", () => {
+    const types = Object.keys(WORKFLOW_TYPE_REGISTRY);
+    expect(types).toEqual(["research_only", "quick_fix", "full_feature"]);
+    expect(types).toHaveLength(3);
+  });
+
+  test("each type has unique stage lists", () => {
+    const stagesByType = {
+      research_only: ["idle", "researching", "research_consolidation"],
+      quick_fix: ["idle", "quick_analysis", "quick_patch", "quick_verify"],
+      full_feature: [
+        "idle",
+        "product_drafting",
+        "critic_prd_review",
+        "spec_drafting",
+        "critic_spec_review",
+        "awaiting_user_approval",
+        "foreman_executing",
+        "final_review",
+      ],
+    } as const;
+
+    for (const [type, expectedStages] of Object.entries(stagesByType)) {
+      const definition = WORKFLOW_TYPE_REGISTRY[type as WorkflowType];
+      expect(definition.stages, `${type} stages mismatch`).toEqual(expectedStages);
+    }
+  });
+
+  test("each type has distinct transition graphs", () => {
+    // research_only: idle -> researching -> research_consolidation
+    const researchTransitions = WORKFLOW_TYPE_REGISTRY.research_only.transitions;
+    expect(researchTransitions.idle).toEqual(["researching"]);
+    expect(researchTransitions.researching).toEqual(["research_consolidation"]);
+    expect(researchTransitions.research_consolidation).toEqual([]);
+    // research_only should have no quick_fix or full_feature transitions
+    expect(researchTransitions.quick_analysis).toEqual([]);
+    expect(researchTransitions.product_drafting).toEqual([]);
+
+    // quick_fix: idle -> quick_analysis -> quick_patch -> quick_verify
+    const quickFixTransitions = WORKFLOW_TYPE_REGISTRY.quick_fix.transitions;
+    expect(quickFixTransitions.idle).toEqual(["quick_analysis"]);
+    expect(quickFixTransitions.quick_analysis).toEqual(["quick_patch"]);
+    expect(quickFixTransitions.quick_patch).toEqual(["quick_verify"]);
+    expect(quickFixTransitions.quick_verify).toEqual([]);
+    // quick_fix should have no research_only or full_feature transitions
+    expect(quickFixTransitions.researching).toEqual([]);
+    expect(quickFixTransitions.product_drafting).toEqual([]);
+
+    // full_feature: 8-stage pipeline with critic retry loops
+    const fullFeatureTransitions = WORKFLOW_TYPE_REGISTRY.full_feature.transitions;
+    expect(fullFeatureTransitions.idle).toEqual(["product_drafting"]);
+    expect(fullFeatureTransitions.product_drafting).toEqual(["critic_prd_review"]);
+    expect(fullFeatureTransitions.critic_prd_review).toEqual(["product_drafting", "spec_drafting"]);
+    expect(fullFeatureTransitions.spec_drafting).toEqual(["critic_spec_review"]);
+    expect(fullFeatureTransitions.critic_spec_review).toEqual(["spec_drafting", "awaiting_user_approval"]);
+    expect(fullFeatureTransitions.awaiting_user_approval).toEqual(["foreman_executing"]);
+    expect(fullFeatureTransitions.foreman_executing).toEqual(["final_review"]);
+    expect(fullFeatureTransitions.final_review).toEqual([]);
+    // full_feature should have no research_only or quick_fix transitions
+    expect(fullFeatureTransitions.researching).toEqual([]);
+    expect(fullFeatureTransitions.quick_analysis).toEqual([]);
+  });
+
+  test("type-specific prerequisites are enforced", () => {
+    // research_only requires RESEARCH before research_consolidation
+    expect(getStagePrerequisitesForType("research_only", "researching")).toEqual([]);
+    expect(getStagePrerequisitesForType("research_only", "research_consolidation")).toEqual(["RESEARCH"]);
+
+    // quick_fix has no stage prerequisites
+    expect(getStagePrerequisitesForType("quick_fix", "quick_analysis")).toEqual([]);
+    expect(getStagePrerequisitesForType("quick_fix", "quick_patch")).toEqual([]);
+    expect(getStagePrerequisitesForType("quick_fix", "quick_verify")).toEqual([]);
+
+    // full_feature has escalating prerequisites
+    expect(getStagePrerequisitesForType("full_feature", "product_drafting")).toEqual([]);
+    expect(getStagePrerequisitesForType("full_feature", "critic_prd_review")).toEqual(["PRD"]);
+    expect(getStagePrerequisitesForType("full_feature", "critic_spec_review")).toEqual(["SPEC", "TASKS"]);
+    expect(getStagePrerequisitesForType("full_feature", "awaiting_user_approval")).toEqual(["SPEC", "TASKS"]);
+    expect(getStagePrerequisitesForType("full_feature", "foreman_executing")).toEqual(["SPEC", "TASKS"]);
+  });
+
+  test("user approval gate before foreman_executing is enforced for full_feature", () => {
+    // full_feature requires user approval
+    const withoutApproval = validateTransition(
+      input({
+        workflowType: "full_feature",
+        currentStage: "awaiting_user_approval",
+        targetStage: "foreman_executing",
+        hasUserApproval: false,
+      }),
+    );
+    expect(withoutApproval.allowed).toBe(false);
+    expect(withoutApproval.error).toContain("without user approval");
+
+    const withApproval = validateTransition(
+      input({
+        workflowType: "full_feature",
+        currentStage: "awaiting_user_approval",
+        targetStage: "foreman_executing",
+        hasUserApproval: true,
+      }),
+    );
+    expect(withApproval).toEqual({ allowed: true });
+
+    // research_only and quick_fix have no path to foreman_executing at all
+    expect(getTransitionsForType("research_only", "research_consolidation")).not.toContain("foreman_executing");
+    expect(getTransitionsForType("quick_fix", "quick_verify")).not.toContain("foreman_executing");
+
+    // Attempting to reach foreman_executing from research_only or quick_fix is denied by transition graph
+    const researchToExec = validateTransition(
+      input({ workflowType: "research_only", currentStage: "research_consolidation", targetStage: "foreman_executing" }),
+    );
+    expect(researchToExec.allowed).toBe(false);
+    expect(researchToExec.errorName).toBe("WorkflowTransitionError");
+
+    const quickFixToExec = validateTransition(
+      input({ workflowType: "quick_fix", currentStage: "quick_verify", targetStage: "foreman_executing" }),
+    );
+    expect(quickFixToExec.allowed).toBe(false);
+    expect(quickFixToExec.errorName).toBe("WorkflowTransitionError");
+  });
+
+  test("unresolved interactions block stage transitions for all types", () => {
+    // research_only
+    const researchOnlyResult = validateTransition(
+      input({
+        workflowType: "research_only",
+        currentStage: "researching",
+        targetStage: "research_consolidation",
+        hasUnresolvedInteractions: () => true,
+      }),
+    );
+    expect(researchOnlyResult.allowed).toBe(false);
+    expect(researchOnlyResult.errorName).toBe("WorkflowUnresolvedInteractionsError");
+
+    // quick_fix
+    const quickFixResult = validateTransition(
+      input({
+        workflowType: "quick_fix",
+        currentStage: "quick_analysis",
+        targetStage: "quick_patch",
+        hasUnresolvedInteractions: () => true,
+      }),
+    );
+    expect(quickFixResult.allowed).toBe(false);
+    expect(quickFixResult.errorName).toBe("WorkflowUnresolvedInteractionsError");
+
+    // full_feature
+    const fullFeatureResult = validateTransition(
+      input({
+        workflowType: "full_feature",
+        currentStage: "product_drafting",
+        targetStage: "critic_prd_review",
+        hasUnresolvedInteractions: () => true,
+      }),
+    );
+    expect(fullFeatureResult.allowed).toBe(false);
+    expect(fullFeatureResult.errorName).toBe("WorkflowUnresolvedInteractionsError");
+  });
+
+  test("completion policies are type-specific", () => {
+    expect(getCompletionPolicyForType("research_only")).toEqual({ requiredStage: "research_consolidation" });
+    expect(getCompletionPolicyForType("quick_fix")).toEqual({ requiredStage: "quick_verify" });
+    expect(getCompletionPolicyForType("full_feature")).toEqual({ requiredStage: "final_review" });
+
+    // verify each type must reach its required stage before completion
+    // research_only can't complete before research_consolidation
+    const researchEarly = canCompleteWorkflow(
+      workflowState({ type: "research_only", stage: "researching" }),
+      () => false,
+    );
+    expect(researchEarly.allowed).toBe(false);
+    expect(researchEarly.error).toContain("research_consolidation");
+
+    // quick_fix can't complete before quick_verify
+    const quickFixEarly = canCompleteWorkflow(
+      workflowState({ type: "quick_fix", stage: "quick_patch" }),
+      () => false,
+    );
+    expect(quickFixEarly.allowed).toBe(false);
+    expect(quickFixEarly.error).toContain("quick_verify");
+
+    // full_feature can't complete before final_review
+    const fullFeatureEarly = canCompleteWorkflow(
+      workflowState({ type: "full_feature", stage: "foreman_executing" }),
+      () => false,
+    );
+    expect(fullFeatureEarly.allowed).toBe(false);
+    expect(fullFeatureEarly.error).toContain("final_review");
+  });
+
+  test("each type completes successfully at its required stage", () => {
+    // research_only completes at research_consolidation
+    const researchComplete = canCompleteWorkflow(
+      workflowState({
+        type: "research_only",
+        stage: "research_consolidation",
+        stageCompletions: {
+          research_consolidation: { stage: "research_consolidation", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+    expect(researchComplete).toEqual({ allowed: true });
+
+    // quick_fix completes at quick_verify
+    const quickFixComplete = canCompleteWorkflow(
+      workflowState({
+        type: "quick_fix",
+        stage: "quick_verify",
+        stageCompletions: {
+          quick_verify: { stage: "quick_verify", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+    expect(quickFixComplete).toEqual({ allowed: true });
+
+    // full_feature completes at final_review
+    const fullFeatureComplete = canCompleteWorkflow(
+      workflowState({
+        type: "full_feature",
+        stage: "final_review",
+        stageCompletions: {
+          final_review: { stage: "final_review", completedAt: new Date().toISOString() },
+        },
+      }),
+      () => true,
+    );
+    expect(fullFeatureComplete).toEqual({ allowed: true });
+
+    // Each type fails completion at its required stage without the completion record
+    for (const [type, stage] of [
+      ["research_only", "research_consolidation"],
+      ["quick_fix", "quick_verify"],
+      ["full_feature", "final_review"],
+    ] as Array<[WorkflowType, WorkflowStage]>) {
+      const result = canCompleteWorkflow(
+        workflowState({ type, stage, stageCompletions: {} }),
+        () => true,
+      );
+      expect(result.allowed, `${type}: missing completion record`).toBe(false);
+      expect(result.error, `${type}: should mention missing record`).toContain("no completion record");
+    }
+  });
+});
