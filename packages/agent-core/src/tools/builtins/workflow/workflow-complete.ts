@@ -5,6 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { canCompleteWorkflow } from "../../../agents/workflow/guards";
 import { WorkflowArtifactKindSchema, WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { formatCompactWorkflowOutput } from "./compact-output";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowCompleteInputSchema = z.strictObject({
@@ -51,7 +52,9 @@ export function createWorkflowCompleteTool(): AnyToolDescriptor {
 
         const state = await stateManager.complete(input.workflowId);
         emitWorkflowStateChange(ctx.store, state.id, ["status"]);
-        return JSON.stringify(state, null, 2);
+        return JSON.stringify(formatCompactWorkflowOutput(state, {
+          message: `Completed workflow ${state.id} at ${state.stage}.`,
+        }), null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {
           return createToolErrorResult({

@@ -4,6 +4,7 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError, WorkflowStageSchema, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { formatCompactWorkflowOutput } from "./compact-output";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const WorkflowRecordCompletionInputSchema = z.strictObject({
@@ -33,7 +34,10 @@ export function createWorkflowRecordCompletionTool(): AnyToolDescriptor {
           evidence: input.evidence,
         });
         emitWorkflowStateChange(ctx.store, state.id, ["stageCompletions"]);
-        return JSON.stringify(state, null, 2);
+        return JSON.stringify(formatCompactWorkflowOutput(state, {
+          message: `Recorded completion for ${input.stage} on workflow ${state.id}.`,
+          nextAction: "Use workflow_update_stage for the next valid transition.",
+        }), null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {
           return createToolErrorResult({

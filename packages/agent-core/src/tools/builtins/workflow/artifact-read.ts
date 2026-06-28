@@ -15,6 +15,8 @@ const ArtifactReadInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) owning the artifact"),
   kind: WorkflowArtifactKindSchema.optional().describe("Artifact kind. Single-file: RESEARCH, PRD, SPEC, TASKS, HANDOFF_SUMMARY, INTERACTIONS, FINAL_REPORT. Multi-file: CRITIC_REPORT, EVIDENCE."),
   path: z.string().min(1).optional().describe("For multi-file artifacts: a real path returned by a prior artifact_read call. Do not invent paths."),
+  maxChars: z.number().int().positive().optional().default(4000).describe("Maximum artifact body characters to return unless includeFullContent is true."),
+  includeFullContent: z.boolean().optional().default(false).describe("Set true to return the complete artifact body/content without truncation metadata."),
 }).superRefine((input, ctx) => {
   if (input.kind || input.path) return;
 
@@ -38,12 +40,12 @@ export function createArtifactReadTool(): AnyToolDescriptor {
         const kind = input.kind;
         if (input.path) {
           const artifact = await artifactManager.read(input.workflowId, input.path);
-          return JSON.stringify(formatArtifactReadOutput(artifact), null, 2);
+          return JSON.stringify(formatArtifactReadOutput(artifact, input), null, 2);
         }
 
         if (kind && isSingleFileWorkflowArtifactKind(kind)) {
           const artifact = await artifactManager.readByKind(input.workflowId, kind as SingleFileWorkflowArtifactKind);
-          return JSON.stringify(formatArtifactReadOutput(artifact), null, 2);
+          return JSON.stringify(formatArtifactReadOutput(artifact, input), null, 2);
         }
 
         if (kind && isMultiFileWorkflowArtifactKind(kind)) {
@@ -84,12 +86,34 @@ export function createArtifactReadTool(): AnyToolDescriptor {
   });
 }
 
-function formatArtifactReadOutput(artifact: Awaited<ReturnType<ToolExecutionContext["projectContext"]["artifacts"]["read"]>>) {
+function formatArtifactReadOutput(
+  artifact: Awaited<ReturnType<ToolExecutionContext["projectContext"]["artifacts"]["read"]>>,
+  input: ArtifactReadInput,
+) {
+  if (input.includeFullContent) {
+    return {
+      path: artifact.path,
+      content: artifact.content,
+      frontmatter: artifact.frontmatter,
+      body: artifact.body,
+    };
+  }
+
+  const bodyChars = artifact.body.length;
+  const body = artifact.body.slice(0, input.maxChars);
+  const truncated = bodyChars > body.length;
+
   return {
     path: artifact.path,
-    content: artifact.content,
+    content: truncated ? body : artifact.content,
     frontmatter: artifact.frontmatter,
-    body: artifact.body,
+    body,
+    truncated,
+    bodyChars,
+    returnedBodyChars: body.length,
+    ...(truncated
+      ? { fullContentRequestHint: "Call artifact_read again with includeFullContent: true to read the full content." }
+      : {}),
   };
 }
 

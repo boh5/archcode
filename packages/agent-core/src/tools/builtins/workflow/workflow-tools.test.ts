@@ -461,7 +461,12 @@ describe("workflow builtin tools", () => {
     }, store);
 
     expect(recorded.isError).toBe(false);
-    const state = JSON.parse(recorded.output);
+    expect(JSON.parse(recorded.output)).toMatchObject({
+      workflowId: wf_completion_record.id,
+      stage: "idle",
+      status: "active",
+    });
+    const state = await stateManager.read(wf_completion_record.id);
     expect(state.stageCompletions.quick_verify).toMatchObject({
       stage: "quick_verify",
       criticPassed: true,

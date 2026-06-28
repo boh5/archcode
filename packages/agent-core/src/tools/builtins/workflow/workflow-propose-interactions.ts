@@ -12,6 +12,7 @@ import {
   WorkflowUuidSchema,
   type WorkflowInteraction,
 } from "../../../agents/workflow/state";
+import { formatCompactWorkflowOutput } from "./compact-output";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 
 const ProposalSourceAgentSchema = z.enum(["product", "spec", "critic", "orchestrator"]);
@@ -106,12 +107,14 @@ export function createWorkflowProposeInteractionsTool(): AnyToolDescriptor {
         emitWorkflowStateChange(ctx.store, input.workflowId, ["requiredInteractions"]);
 
         return JSON.stringify({
-          workflowId: input.workflowId,
+          ...formatCompactWorkflowOutput(updatedState, {
+            message: `Accepted ${accepted.length} interaction proposal(s) for workflow ${updatedState.id}.`,
+            nextAction: "Orchestrator should batch unresolved interactions with workflow_request_interactions.",
+          }),
           accepted: accepted.length,
           created,
           updated,
-          state: updatedState,
-          interactions: accepted,
+          interactionChanges: accepted,
         }, null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {

@@ -5,6 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { createWorkflowWithOrchestrator } from "../../../agents/workflow/linking";
 import { WorkflowInvalidIdError, WorkflowPathError, WorkflowStateError, WorkflowTitleSchema, WorkflowTypeSchema } from "../../../agents/workflow/state";
+import { formatCompactWorkflowOutput } from "./compact-output";
 
 const WorkflowCreateInputSchema = z.strictObject({
   type: WorkflowTypeSchema.describe("Workflow type — determines the sequence of stages and completion policy"),
@@ -58,13 +59,18 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
       }
 
       try {
+        ctx.storeManager.create(orchestratorSessionId, ctx.workspaceRoot);
         const { workflow: state } = await createWorkflowWithOrchestrator(
           { title: input.title, type: input.type, orchestratorSessionId },
           stateManager,
           ctx.storeManager,
         );
+        ctx.store.getState().setWorkflowId(state.id);
         emitWorkflowStateChange(ctx.store, state.id, ["stage", "status", "sessionIds"]);
-        return JSON.stringify(state, null, 2);
+        return JSON.stringify(formatCompactWorkflowOutput(state, {
+          message: `Created ${state.type} workflow ${state.id} at ${state.stage}.`,
+          nextAction: "Advance the workflow to the first business stage when ready.",
+        }), null, 2);
       } catch (error) {
         if (error instanceof WorkflowPathError) {
           return createToolErrorResult({
