@@ -3,7 +3,6 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { WorkflowArtifactManager } from "./artifacts";
-import { processCriticDecision } from "./critic-protocol";
 import { validateTransition } from "./guards";
 import { WorkflowStateManager } from "./state";
 import {
@@ -116,18 +115,13 @@ describe("workflow error and partial failure behavior", () => {
       content: "Reject: scope is unsafe.",
     });
 
-    const result = await processCriticDecision({
-      workflowId: wf_critic_reject.id,
-      decision: "rejected",
-      currentStage: "critic_prd_review",
-      criticReportPath: criticReport.path,
-    }, stateManager);
+    const result = await stateManager.fail(wf_critic_reject.id, "Critic rejected workflow output. See " + criticReport.path);
 
-    expect(result.newState.stage).toBe("critic_prd_review");
-    expect(result.newState.status).toBe("failed");
-    expect(result.newState.lastError).toContain("Critic rejected");
-    expect(result.newState.lastError).toContain("critic-reports/prd-rejected.md");
-    expect(result.newState.artifacts.CRITIC_REPORT).toEqual(["critic-reports/prd-rejected.md"]);
+    expect(result.stage).toBe("critic_prd_review");
+    expect(result.status).toBe("failed");
+    expect(result.lastError).toContain("Critic rejected");
+    expect(result.lastError).toContain(criticReport.path);
+    expect(result.artifacts.CRITIC_REPORT).toEqual([criticReport.path]);
     const readCriticReport = await artifacts.read(wf_critic_reject.id, criticReport.path);
     expect(readCriticReport).toMatchObject({ body: "Reject: scope is unsafe." });
   });

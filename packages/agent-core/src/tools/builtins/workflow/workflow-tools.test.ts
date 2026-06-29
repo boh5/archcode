@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
-import { WorkflowStateManager, type WorkflowInteraction } from "../../../agents/workflow/state";
+import { WorkflowStateManager } from "../../../agents/workflow/state";
 import { MemoryFileManager } from "../../../memory/file-manager";
 import { ProjectApprovalManager } from "../../permission";
 import type { ProjectContext } from "../../../projects/types";
@@ -172,23 +172,6 @@ function validInteractionProposal(overrides: Record<string, unknown> = {}) {
     options: ["Include billing dashboard", "Exclude billing dashboard"],
     recommendedOption: "Include billing dashboard",
     rationale: "The PRD needs this scope decision before drafting acceptance criteria.",
-    ...overrides,
-  };
-}
-
-function workflowInteraction(overrides: Partial<WorkflowInteraction> = {}): WorkflowInteraction {
-  return {
-    id: "critic-decision-1",
-    decisionKey: "critic.risk",
-    stage: "critic_prd_review",
-    sourceAgent: "critic",
-    kind: "decision",
-    question: "Accept the PRD risk?",
-    options: ["Accept", "Revise"],
-    recommendedOption: "Accept",
-    rationale: "Critic approval depends on this user-owned decision.",
-    status: "proposed",
-    revision: 1,
     ...overrides,
   };
 }
@@ -476,76 +459,6 @@ describe("workflow builtin tools", () => {
       type: "workflow.state_change",
       workflowId: wf_completion_record.id,
       changed: ["stageCompletions"],
-    });
-  });
-
-  test("workflow_update_stage critic approval rejects unresolved interactions", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_critic_blocked = await stateManager.create({ title: "Critic Blocked", type: "full_feature" });
-    await stateManager.updateStage(wf_critic_blocked.id, "critic_prd_review");
-    await stateManager.updateInteractions(wf_critic_blocked.id, {
-      requiredInteractions: [workflowInteraction({ status: "requested" })],
-      resolvedInteractions: [],
-    });
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_critic_blocked.id);
-
-    const result = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: wf_critic_blocked.id,
-      stage: "spec_drafting",
-      criticDecision: "approved",
-    }, store);
-
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain("Cannot approve critic review while interactions remain unresolved");
-    expect((await stateManager.read(wf_critic_blocked.id)).stage).toBe("critic_prd_review");
-  });
-
-  test("workflow_update_stage critic approval is allowed when no unresolved interactions remain", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_critic_resolved = await stateManager.create({ title: "Critic Resolved", type: "full_feature" });
-    await stateManager.updateStage(wf_critic_resolved.id, "critic_prd_review");
-    await stateManager.updateInteractions(wf_critic_resolved.id, {
-      requiredInteractions: [workflowInteraction({ status: "resolved", answer: "Accept", resolvedAt: new Date().toISOString() })],
-      resolvedInteractions: [],
-    });
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_critic_resolved.id);
-
-    const result = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: wf_critic_resolved.id,
-      stage: "spec_drafting",
-      criticDecision: "approved",
-    }, store);
-
-    expect(result.isError).toBe(false);
-    expect(JSON.parse(result.output)).toMatchObject({
-      newState: { id: wf_critic_resolved.id, stage: "spec_drafting" },
-      transitionDescription: "critic approved PRD; advancing to SPEC drafting",
-    });
-  });
-
-  test("workflow_update_stage critic rejection is allowed with unresolved interactions", async () => {
-    const { registry, stateManager, projectContext } = createWorkflowRegistry();
-    const wf_critic_rejected = await stateManager.create({ title: "Critic Rejected", type: "full_feature" });
-    await stateManager.updateStage(wf_critic_rejected.id, "critic_prd_review");
-    await stateManager.updateInteractions(wf_critic_rejected.id, {
-      requiredInteractions: [workflowInteraction({ status: "requested" })],
-      resolvedInteractions: [],
-    });
-    const store = createMockStore();
-    store.getState().setWorkflowId(wf_critic_rejected.id);
-
-    const result = await execute(registry, projectContext, "workflow_update_stage", {
-      workflowId: wf_critic_rejected.id,
-      stage: "product_drafting",
-      criticDecision: "rejected",
-    }, store);
-
-    expect(result.isError).toBe(false);
-    expect(JSON.parse(result.output)).toMatchObject({
-      newState: { id: wf_critic_rejected.id, status: "failed" },
-      transitionDescription: "critic rejected; workflow failed",
     });
   });
 

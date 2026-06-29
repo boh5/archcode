@@ -1,5 +1,4 @@
 export * from "./artifacts";
-export * from "./critic-protocol";
 export * from "./guards";
 export * from "./interactions-archive";
 export * from "./linking";

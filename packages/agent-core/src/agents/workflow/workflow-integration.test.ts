@@ -4,7 +4,6 @@ import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
 import { WorkflowArtifactManager } from "./artifacts";
-import { processCriticDecision } from "./critic-protocol";
 import { canCompleteWorkflow, hasUnresolvedInteractions, validateTransition } from "./guards";
 import {
   createDerivedWorkflowWithOrchestrator,
@@ -90,16 +89,10 @@ describe("mocked workflow MVP integration", () => {
       name: "prd",
       content: "PRD approved.",
     });
-    const prdDecision = await processCriticDecision(
-      {
-        workflowId: createdWf.id,
-        decision: "approved",
-        currentStage: "critic_prd_review",
-        criticReportPath: prdReport.path,
-      },
-      stateManager,
-    );
-    expect(prdDecision.newState.stage).toBe("spec_drafting");
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "critic_prd_review", criticPassed: true, evidence: [prdReport.path] });
+    await stateManager.updateStage(createdWf.id, "spec_drafting");
+    const prdState = await stateManager.read(createdWf.id);
+    expect(prdState.stage).toBe("spec_drafting");
 
     await artifactManager.write({ workflowId: createdWf.id, kind: "SPEC", content: "# SPEC\n\nImplement the mocked path using workflow managers directly." });
     await artifactManager.write({
@@ -118,16 +111,10 @@ describe("mocked workflow MVP integration", () => {
       name: "spec-tasks",
       content: "SPEC and TASKS approved.",
     });
-    const specDecision = await processCriticDecision(
-      {
-        workflowId: createdWf.id,
-        decision: "approved",
-        currentStage: "critic_spec_review",
-        criticReportPath: specReport.path,
-      },
-      stateManager,
-    );
-    expect(specDecision.newState.stage).toBe("awaiting_user_approval");
+    await stateManager.recordStageCompletion(createdWf.id, { stage: "critic_spec_review", criticPassed: true, evidence: [specReport.path] });
+    await stateManager.updateStage(createdWf.id, "awaiting_user_approval");
+    const specState = await stateManager.read(createdWf.id);
+    expect(specState.stage).toBe("awaiting_user_approval");
 
     await stateManager.recordStageCompletion(createdWf.id, { stage: "awaiting_user_approval" });
     await transition(stateManager, createdWf.id, "awaiting_user_approval", "foreman_executing", true);
@@ -198,14 +185,16 @@ describe("end-to-end workflow lifecycle integration", () => {
     await stateManager.recordStageCompletion(wf_full.id, { stage: "product_drafting", evidence: ["PRD.md"] });
     await advance(stateManager, wf_full.id, "critic_prd_review");
     const fullPrdReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "prd", content: "approved" });
-    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_prd_review", criticReportPath: fullPrdReport.path }, stateManager);
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "critic_prd_review", criticPassed: true, evidence: [fullPrdReport.path] });
+    await stateManager.updateStage(wf_full.id, "spec_drafting");
 
     await artifactManager.write({ workflowId: wf_full.id, kind: "SPEC", content: "# SPEC" });
     await artifactManager.write({ workflowId: wf_full.id, kind: "TASKS", content: TASKS_MARKDOWN });
     await stateManager.recordStageCompletion(wf_full.id, { stage: "spec_drafting", evidence: ["SPEC.md", "TASKS.md"] });
     await advance(stateManager, wf_full.id, "critic_spec_review");
     const fullSpecReport = await artifactManager.write({ workflowId: wf_full.id, kind: "CRITIC_REPORT", name: "spec", content: "approved" });
-    await processCriticDecision({ workflowId: wf_full.id, decision: "approved", currentStage: "critic_spec_review", criticReportPath: fullSpecReport.path }, stateManager);
+    await stateManager.recordStageCompletion(wf_full.id, { stage: "critic_spec_review", criticPassed: true, evidence: [fullSpecReport.path] });
+    await stateManager.updateStage(wf_full.id, "awaiting_user_approval");
 
     await stateManager.recordStageCompletion(wf_full.id, { stage: "awaiting_user_approval", evidence: ["user-approved"] });
     await advance(stateManager, wf_full.id, "foreman_executing", true);
@@ -334,8 +323,6 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "spec_drafting",
       hasUserApproval: false,
       incrementRetry: false,
-      criticDecision: "approved",
-      criticReportPath: prdReport.path,
     }));
 
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
@@ -405,8 +392,6 @@ describe("end-to-end workflow lifecycle integration", () => {
       stage: "awaiting_user_approval",
       hasUserApproval: false,
       incrementRetry: false,
-      criticDecision: "approved",
-      criticReportPath: specReport.path,
     }));
 
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
