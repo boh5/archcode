@@ -58,8 +58,6 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("workflow_create");
     expect(tools).toContain("workflow_read");
     expect(tools).toContain("workflow_update_stage");
-    expect(tools).toContain("workflow_complete");
-    expect(tools).toContain("workflow_record_completion");
     expect(tools).toContain("workflow_propose_interactions");
     expect(tools).toContain("workflow_request_interactions");
     expect(tools).toContain("artifact_read");

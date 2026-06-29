@@ -28,8 +28,6 @@ import { createArtifactWriteTool } from "../../tools/builtins/workflow/artifact-
 import { createWorkflowCreateTool } from "../../tools/builtins/workflow/workflow-create";
 import { createWorkflowReadTool } from "../../tools/builtins/workflow/workflow-read";
 import { createWorkflowUpdateStageTool } from "../../tools/builtins/workflow/workflow-update-stage";
-import { createWorkflowCompleteTool } from "../../tools/builtins/workflow/workflow-complete";
-import { createWorkflowRecordCompletionTool } from "../../tools/builtins/workflow/workflow-record-completion";
 import { createWorkflowProposeInteractionsTool } from "../../tools/builtins/workflow/workflow-propose-interactions";
 import { createWorkflowRequestInteractionsTool } from "../../tools/builtins/workflow/workflow-request-interactions";
 import { SessionExecutionManager } from "../../execution/session-execution-manager";
@@ -263,16 +261,12 @@ describe("end-to-end workflow lifecycle integration", () => {
       ],
     }, { agentName: "product" }));
     await artifactManager.write({ workflowId, kind: "PRD", content: "# PRD\n\nBuild the billing dashboard with the selected scope." });
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "product_drafting",
-      evidence: ["PRD.md"],
-    }));
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: ["PRD.md"] },
     }), "unresolved interaction(s) remain");
 
     const requirementsRequest = parseToolJson<{ requested: number; resolved: number; pending: number; archive: { archived: number } }>(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
@@ -290,16 +284,12 @@ describe("end-to-end workflow lifecycle integration", () => {
       proposals: [interactionProposal({ decisionKey: "product.api", stage: "product_drafting", sourceAgent: "product", question: "Which API surface should the PRD require?", options: ["Public REST API", "Internal-only API"], recommendedOption: "Public REST API" })],
     }, { agentName: "product" }));
     await artifactManager.write({ workflowId, kind: "PRD", content: "# PRD\n\nBuild the billing dashboard with the selected scope and API surface." });
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "product_drafting",
-      evidence: ["PRD.md"],
-    }));
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "critic_prd_review",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: ["PRD.md"] },
     }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
@@ -313,16 +303,12 @@ describe("end-to-end workflow lifecycle integration", () => {
     }));
 
     const prdReport = await artifactManager.write({ workflowId, kind: "CRITIC_REPORT", name: "prd", content: "PRD approved after decision clearance." });
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "critic_prd_review",
-      evidence: [prdReport.path],
-    }));
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "spec_drafting",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: [prdReport.path] },
     }));
 
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_propose_interactions", {
@@ -331,16 +317,12 @@ describe("end-to-end workflow lifecycle integration", () => {
     }, { agentName: "spec" }));
     await artifactManager.write({ workflowId, kind: "SPEC", content: "# SPEC\n\nImplement the approved billing dashboard path." });
     await artifactManager.write({ workflowId, kind: "TASKS", content: TASKS_MARKDOWN });
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "spec_drafting",
-      evidence: ["SPEC.md", "TASKS.md"],
-    }));
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "critic_spec_review",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: ["SPEC.md", "TASKS.md"] },
     }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
@@ -358,16 +340,12 @@ describe("end-to-end workflow lifecycle integration", () => {
       proposals: [interactionProposal({ decisionKey: "critic.risk", stage: "critic_spec_review", sourceAgent: "critic", question: "Accept staged rollout risk noted by Critic?", options: ["Accept staged rollout risk", "Block release until all risk is eliminated"], recommendedOption: "Accept staged rollout risk" })],
     }, { agentName: "critic" }));
     const specReport = await artifactManager.write({ workflowId, kind: "CRITIC_REPORT", name: "spec", content: "SPEC/TASKS approved after risk decision." });
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "critic_spec_review",
-      evidence: [specReport.path],
-    }));
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "awaiting_user_approval",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: [specReport.path] },
     }), "unresolved interaction(s) remain");
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_request_interactions", {
       workflowId,
@@ -401,16 +379,12 @@ describe("end-to-end workflow lifecycle integration", () => {
       incrementRetry: false,
     }), "record completion for awaiting_user_approval");
     expect(beginForeman).not.toHaveBeenCalled();
-    parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-      workflowId,
-      stage: "awaiting_user_approval",
-      evidence: ["user-approved-final-plan"],
-    }));
     expectToolError(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
       workflowId,
       stage: "foreman_executing",
       hasUserApproval: false,
       incrementRetry: false,
+      completeCurrentStage: { evidence: ["user-approved-final-plan"] },
     }), "without user approval");
     expect(beginForeman).not.toHaveBeenCalled();
     parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_update_stage", {
@@ -666,8 +640,7 @@ describe("end-to-end workflow lifecycle integration", () => {
 
     const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "SSE Events", type: "quick_fix" }, ctx) as string);
     const workflowId = createdResult.id;
-    await createWorkflowRecordCompletionTool().execute({ workflowId, stage: "idle" }, ctx);
-    await createWorkflowUpdateStageTool().execute({ workflowId, stage: "quick_analysis", hasUserApproval: false, incrementRetry: false }, ctx);
+    await createWorkflowUpdateStageTool().execute({ workflowId, stage: "quick_analysis", hasUserApproval: false, incrementRetry: false, completeCurrentStage: {} }, ctx);
 
     const events = store.getState().events.filter((event) => event.kind === "workflow.state_change");
     expect(events.map((event) => event.payload)).toMatchObject([
@@ -776,7 +749,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     const createdResult = JSON.parse(await createWorkflowCreateTool().execute({ title: "Tool Errors", type: "full_feature" }, ctx) as string);
     const wfToolId = createdResult.id;
     const transitionResult = await createWorkflowUpdateStageTool().execute({ workflowId: wfToolId, stage: "final_review", hasUserApproval: false, incrementRetry: false }, ctx);
-    const completeResult = await createWorkflowCompleteTool().execute({ workflowId: wfToolId }, ctx);
+    const completeResult = await createWorkflowUpdateStageTool().execute({ workflowId: wfToolId, stage: "idle", status: "completed" }, ctx);
 
     expect(isToolError(transitionResult)).toBe(true);
     expect(isToolError(completeResult)).toBe(true);
@@ -826,8 +799,6 @@ function createWorkflowToolRegistry(): ReturnType<typeof createRegistry> {
     createWorkflowCreateTool(),
     createWorkflowReadTool(),
     createWorkflowUpdateStageTool(),
-    createWorkflowRecordCompletionTool(),
-    createWorkflowCompleteTool(),
     createWorkflowProposeInteractionsTool(),
     createWorkflowRequestInteractionsTool(),
     createArtifactReadTool(),
@@ -925,11 +896,7 @@ async function createWorkflowAtProductDraftingGate(name: string): Promise<{
       recommendedOption: "Resolve now",
     })],
   }, { agentName: "product" }));
-  parseToolJson(await executeWorkflowTool(registry, root, storeManager, store, "workflow_record_completion", {
-    workflowId: workflow.id,
-    stage: "product_drafting",
-    evidence: ["PRD.md"],
-  }));
+  await stateManager.recordStageCompletion(workflow.id, { stage: "product_drafting", evidence: ["PRD.md"] });
 
   return { root, storeManager, store, registry, stateManager, artifactManager, workflowId: workflow.id };
 }

@@ -62,7 +62,7 @@ describe("buildRoleSection", () => {
     expect(result).toContain("critic_spec_review");
     expect(result).toContain("delegate Foreman");
     expect(result).toContain("final verification/reporting");
-    expect(result).toContain("workflow_complete");
+    expect(result).toContain('workflow_update_stage with status: "completed"');
   });
 
   test("orchestrator role prompt owns batched interaction clearance before PRD, SPEC, and Critic gates", () => {

@@ -5,6 +5,7 @@ import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } fro
 import type { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import {
+  canCompleteWorkflow,
   canTransitionTo,
   hasUnresolvedInteractions,
   type ArtifactKind,
@@ -19,15 +20,19 @@ import {
 import { getStagePrerequisitesForType } from "../../../agents/workflow/workflow-types";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
-import { formatCompactWorkflowOutput } from "./compact-output";
+import { formatCompactWorkflowJsonOutput, formatCompactWorkflowOutput } from "./compact-output";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to update"),
-  stage: WorkflowStageSchema.describe("Target stage to advance to. Ignored when status is provided (but still required by schema)."),
+  stage: WorkflowStageSchema.describe("Target stage to advance to. Required by schema but ignored when status is set to a terminal value (failed/paused/completed)."),
   hasUserApproval: z.boolean().default(false).describe("Whether the user has explicitly approved this stage transition. Default false."),
-  status: z.enum(["failed", "paused"]).optional().describe("When set, records a terminal lifecycle update (failed or paused) instead of a plain stage advance. Use this for Critic rejection, user withholding approval, or retry exhaustion."),
+  status: z.enum(["failed", "paused", "completed"]).optional().describe("Terminal lifecycle update. 'failed' or 'paused': records terminal status with optional lastError. 'completed': completes the workflow after checking the type-specific completion policy (required stage reached, completion record exists, required artifacts present). When set, stage is ignored."),
   lastError: z.string().optional().describe("Error/reason message to persist when status is failed or paused."),
   incrementRetry: z.boolean().default(false).describe("Increment the workflow's retry counter for the current stage. Default false."),
+  completeCurrentStage: z.strictObject({
+    criticPassed: z.boolean().optional(),
+    evidence: z.array(z.string()).optional(),
+  }).optional().describe("When provided, records completion of the CURRENT stage (the stage the workflow is currently at) before attempting the transition. Use this before advancing forward from any non-idle stage. Not needed for backward transitions (critic retries) or when status is set to a terminal value."),
 });
 
 type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
@@ -35,9 +40,21 @@ type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
 export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_update_stage",
-    description: "Update workflow stage or record a terminal lifecycle status. You MUST record completion of the current stage with workflow_record_completion before advancing forward. For terminal lifecycle updates (Critic rejection, user withholding approval, retry exhaustion), use the status parameter with 'failed' or 'paused' and a lastError reason.",
+    description: "Update workflow stage, record stage completion, or set a terminal lifecycle status (failed/paused/completed). This is the single entry point for all workflow state mutations. To advance forward from a non-idle stage, set completeCurrentStage with the completion metadata (criticPassed, evidence) — this records the current stage as completed before the transition. To complete the workflow, set status: \"completed\" after the workflow type's completion policy is satisfied. For terminal lifecycle updates (Critic rejection, user withholding approval, retry exhaustion), use status: \"failed\" or \"paused\" with a lastError reason.",
     inputSchema: WorkflowUpdateStageInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
+    hooks: {
+      after: [
+        (result: ToolExecutionResult): ToolExecutionResult | void => {
+          if (result.isError) return undefined;
+          const compactOutput = formatCompactWorkflowJsonOutput(result.output, {
+            message: "Updated workflow stage.",
+          });
+          if (!compactOutput) return undefined;
+          return { ...result, output: compactOutput };
+        },
+      ],
+    },
     execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       const stateManager = ctx.projectContext.workflowState;
       const artifactManager = ctx.projectContext.artifacts;
@@ -60,27 +77,73 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
             emitWorkflowStateChange(ctx.store, state.id, ["status", "lastError"]);
             return JSON.stringify(formatCompactWorkflowOutput(state, { message: `Workflow paused: ${input.lastError ?? "Workflow paused"}` }), null, 2);
           }
+          if (input.status === "completed") {
+            const availableArtifacts = new Set<string>();
+            for (const kind of WorkflowArtifactKindSchema.options) {
+              const artifactPath = currentState.artifacts[kind];
+              if (typeof artifactPath !== "string") continue;
+              try {
+                await artifactManager.read(input.workflowId, artifactPath);
+                availableArtifacts.add(kind);
+              } catch (error) {
+                if (!isNotFoundError(error)) throw error;
+              }
+            }
+
+            const completion = canCompleteWorkflow(currentState, (kind) => availableArtifacts.has(kind));
+            if (!completion.allowed) {
+              return createToolErrorResult({
+                kind: "execution",
+                code: "TOOL_WORKFLOW_COMPLETION_DENIED",
+                name: completion.errorName,
+                message: completion.error ?? "Workflow completion denied",
+              });
+            }
+
+            const state = await stateManager.complete(input.workflowId);
+            emitWorkflowStateChange(ctx.store, state.id, ["status"]);
+            return JSON.stringify(formatCompactWorkflowOutput(state, {
+              message: `Completed workflow ${state.id} at ${state.stage}.`,
+            }), null, 2);
+          }
+        }
+
+        // Record completion of the CURRENT stage before attempting the transition.
+        // The completion is recorded for the stage the workflow is currently at,
+        // not the target stage.
+        if (input.completeCurrentStage) {
+          const completionState = await stateManager.recordStageCompletion(input.workflowId, {
+            stage: currentState.stage,
+            criticPassed: input.completeCurrentStage.criticPassed,
+            evidence: input.completeCurrentStage.evidence,
+          });
+          emitWorkflowStateChange(ctx.store, completionState.id, ["stageCompletions"]);
         }
 
         const artifactAvailability = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
+        // Re-read state to pick up the stage completion recorded above (if any),
+        // so the transition guard sees the updated stageCompletions map.
+        const stateForTransition = input.completeCurrentStage
+          ? await stateManager.read(input.workflowId)
+          : currentState;
         const transition = canTransitionTo({
-          id: currentState.id,
-          type: currentState.type,
-          status: currentState.status,
-          stage: currentState.stage,
-          retryCount: input.incrementRetry ? currentState.retryCount + 1 : currentState.retryCount,
-          maxRetries: currentState.maxRetries,
+          id: stateForTransition.id,
+          type: stateForTransition.type,
+          status: stateForTransition.status,
+          stage: stateForTransition.stage,
+          retryCount: input.incrementRetry ? stateForTransition.retryCount + 1 : stateForTransition.retryCount,
+          maxRetries: stateForTransition.maxRetries,
         }, input.stage as WorkflowStage, {
           hasArtifact: (kind: string) => artifactAvailability.available.has(kind as ArtifactKind),
-          hasStageCompletion: (stage: WorkflowStage) => Boolean(currentState.stageCompletions[stage]),
-          hasUnresolvedInteractions: (stage: WorkflowStage) => hasUnresolvedInteractions(currentState, stage),
+          hasStageCompletion: (stage: WorkflowStage) => Boolean(stateForTransition.stageCompletions[stage]),
+          hasUnresolvedInteractions: (stage: WorkflowStage) => hasUnresolvedInteractions(stateForTransition, stage),
           hasUserApproval: input.hasUserApproval,
         });
         if (!transition.allowed) {
           const invalidArtifactResult = createInvalidArtifactTransitionResult({
             workflowId: input.workflowId,
             targetStage: input.stage as WorkflowStage,
-            currentType: currentState.type,
+            currentType: stateForTransition.type,
             transitionError: transition.error,
             invalidArtifacts: artifactAvailability.invalid,
           });

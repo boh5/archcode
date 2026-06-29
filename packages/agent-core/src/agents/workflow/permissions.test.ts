@@ -10,11 +10,9 @@ import {
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
   TOOL_TODO_WRITE,
-  TOOL_WORKFLOW_COMPLETE,
   TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
   TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-  TOOL_WORKFLOW_RECORD_COMPLETION,
   TOOL_WORKFLOW_UPDATE_STAGE,
 } from "../../tools/names";
 import { workflowRoleToolPermissions } from "./permissions";
@@ -55,8 +53,6 @@ describe("workflow role tool permissions", () => {
       expect(tools).not.toContain(TOOL_WORKFLOW_CREATE);
       expect(tools).not.toContain(TOOL_WORKFLOW_REQUEST_INTERACTIONS);
       expect(tools).not.toContain(TOOL_WORKFLOW_UPDATE_STAGE);
-      expect(tools).not.toContain(TOOL_WORKFLOW_COMPLETE);
-      expect(tools).not.toContain(TOOL_WORKFLOW_RECORD_COMPLETION);
     }
   });
 
@@ -84,8 +80,6 @@ describe("workflow role tool permissions", () => {
     expect(workflowRoleToolPermissions.foreman).toContain(TOOL_ARTIFACT_READ);
     expect(workflowRoleToolPermissions.foreman).not.toContain(TOOL_ARTIFACT_WRITE);
     expect(workflowRoleToolPermissions.foreman).not.toContain(TOOL_WORKFLOW_UPDATE_STAGE);
-    expect(workflowRoleToolPermissions.foreman).not.toContain(TOOL_WORKFLOW_COMPLETE);
-    expect(workflowRoleToolPermissions.foreman).not.toContain(TOOL_WORKFLOW_RECORD_COMPLETION);
   });
 
   test("builder can read available artifacts and write evidence artifacts", () => {

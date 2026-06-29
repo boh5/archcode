@@ -19,11 +19,9 @@ import { createToolExecutionContext, type AnyToolDescriptor, type ToolExecutionC
 import {
   createArtifactReadTool,
   createArtifactWriteTool,
-  createWorkflowCompleteTool,
   createWorkflowCreateTool,
   createWorkflowReadTool,
   createWorkflowProposeInteractionsTool,
-  createWorkflowRecordCompletionTool,
   createWorkflowRequestInteractionsTool,
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
@@ -77,8 +75,6 @@ function createWorkflowRegistry(): {
     createWorkflowCreateTool(),
     createWorkflowReadTool(),
     createWorkflowUpdateStageTool(),
-    createWorkflowCompleteTool(),
-    createWorkflowRecordCompletionTool(),
     createWorkflowProposeInteractionsTool(),
     createWorkflowRequestInteractionsTool(),
     createArtifactReadTool(),
@@ -118,8 +114,6 @@ function makeCtx(
     "workflow_create",
     "workflow_read",
     "workflow_update_stage",
-    "workflow_complete",
-    "workflow_record_completion",
     "workflow_propose_interactions",
     "workflow_request_interactions",
     "artifact_read",
@@ -430,46 +424,56 @@ describe("workflow builtin tools", () => {
     });
   });
 
-  test("workflow_record_completion persists completion record and emits state change", async () => {
+  test("workflow_update_stage with completeCurrentStage persists completion record and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_completion_record = await stateManager.create({ title: "Completion Record", type: "quick_fix" });
+    await stateManager.updateStage(wf_completion_record.id, "quick_analysis");
     const store = createMockStore();
     store.getState().setWorkflowId(wf_completion_record.id);
 
-    const recorded = await execute(registry, projectContext, "workflow_record_completion", {
+    const recorded = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_completion_record.id,
-      stage: "quick_verify",
-      criticPassed: true,
-      evidence: ["evidence/check.md"],
+      stage: "quick_patch",
+      completeCurrentStage: {
+        criticPassed: true,
+        evidence: ["evidence/check.md"],
+      },
     }, store);
 
     expect(recorded.isError).toBe(false);
     expect(JSON.parse(recorded.output)).toMatchObject({
       workflowId: wf_completion_record.id,
-      stage: "idle",
+      stage: "quick_patch",
       status: "active",
     });
     const state = await stateManager.read(wf_completion_record.id);
-    expect(state.stageCompletions.quick_verify).toMatchObject({
-      stage: "quick_verify",
+    expect(state.stageCompletions.quick_analysis).toMatchObject({
+      stage: "quick_analysis",
       criticPassed: true,
       evidence: ["evidence/check.md"],
     });
-    expect(workflowEvents(store).at(-1)?.payload).toMatchObject({
+    const completionEvents = workflowEvents(store).filter((event) => {
+      const payload = event.payload as { changed?: string[] };
+      return payload.changed?.includes("stageCompletions");
+    });
+    expect(completionEvents.length).toBeGreaterThan(0);
+    expect(completionEvents.at(-1)?.payload).toMatchObject({
       type: "workflow.state_change",
       workflowId: wf_completion_record.id,
       changed: ["stageCompletions"],
     });
   });
 
-  test("workflow_complete denies before completion policy is satisfied", async () => {
+  test("workflow_update_stage with status completed denies before completion policy is satisfied", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_complete_denied = await stateManager.create({ title: "Complete Denied", type: "quick_fix" });
     const store = createMockStore();
     store.getState().setWorkflowId(wf_complete_denied.id);
 
-    const denied = await execute(registry, projectContext, "workflow_complete", {
+    const denied = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_complete_denied.id,
+      stage: "idle",
+      status: "completed",
     }, store);
 
     expect(denied.isError).toBe(true);
@@ -477,7 +481,7 @@ describe("workflow builtin tools", () => {
     expect(denied.output).toContain("required stage quick_verify");
   });
 
-  test("workflow_complete checks policy, completes workflow, and emits state change", async () => {
+  test("workflow_update_stage with status completed checks policy, completes workflow, and emits state change", async () => {
     const { registry, stateManager, projectContext } = createWorkflowRegistry();
     const wf_complete = await stateManager.create({ title: "Complete Test", type: "quick_fix" });
     await stateManager.updateStage(wf_complete.id, "quick_verify");
@@ -485,8 +489,10 @@ describe("workflow builtin tools", () => {
     const store = createMockStore();
     store.getState().setWorkflowId(wf_complete.id);
 
-    const completed = await execute(registry, projectContext, "workflow_complete", {
+    const completed = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_complete.id,
+      stage: "quick_verify",
+      status: "completed",
     }, store);
 
     expect(completed.isError).toBe(false);
@@ -734,22 +740,15 @@ describe("workflow builtin tools", () => {
     expect(updateStage.output).toContain(`can only write to current workflow ${wf_current.id}`);
     expect(updateStage.output).toContain(wf_other.id);
 
-    const recordCompletion = await execute(registry, projectContext, "workflow_record_completion", {
+    const completeViaUpdateStage = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf_other.id,
       stage: "idle",
+      status: "completed",
     }, store);
-    expect(recordCompletion.isError).toBe(true);
-    expect(recordCompletion.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
-    expect(recordCompletion.output).toContain(wf_current.id);
-    expect(recordCompletion.output).toContain(wf_other.id);
-
-    const complete = await execute(registry, projectContext, "workflow_complete", {
-      workflowId: wf_other.id,
-    }, store);
-    expect(complete.isError).toBe(true);
-    expect(complete.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
-    expect(complete.output).toContain(wf_current.id);
-    expect(complete.output).toContain(wf_other.id);
+    expect(completeViaUpdateStage.isError).toBe(true);
+    expect(completeViaUpdateStage.output).toContain("TOOL_WORKFLOW_WRONG_WORKFLOW");
+    expect(completeViaUpdateStage.output).toContain(wf_current.id);
+    expect(completeViaUpdateStage.output).toContain(wf_other.id);
 
     const taskCheck = await execute(registry, projectContext, "workflow_task_check", {
       workflowId: wf_other.id,
@@ -792,20 +791,14 @@ describe("workflow builtin tools", () => {
     expect(updateStage.output).toContain("requires the current session to be linked to a workflow");
     expect(updateStage.output).toContain(wf.id);
 
-    const recordCompletion = await execute(registry, projectContext, "workflow_record_completion", {
+    const completeViaUpdateStage = await execute(registry, projectContext, "workflow_update_stage", {
       workflowId: wf.id,
       stage: "idle",
+      status: "completed",
     }, store);
-    expect(recordCompletion.isError).toBe(true);
-    expect(recordCompletion.output).toContain("requires the current session to be linked to a workflow");
-    expect(recordCompletion.output).toContain(wf.id);
-
-    const complete = await execute(registry, projectContext, "workflow_complete", {
-      workflowId: wf.id,
-    }, store);
-    expect(complete.isError).toBe(true);
-    expect(complete.output).toContain("requires the current session to be linked to a workflow");
-    expect(complete.output).toContain(wf.id);
+    expect(completeViaUpdateStage.isError).toBe(true);
+    expect(completeViaUpdateStage.output).toContain("requires the current session to be linked to a workflow");
+    expect(completeViaUpdateStage.output).toContain(wf.id);
 
     const taskCheck = await execute(registry, projectContext, "workflow_task_check", {
       workflowId: wf.id,
@@ -1172,8 +1165,6 @@ describe("workflow builtin tools", () => {
     expect(registry.get("workflow_create")).toBeDefined();
     expect(registry.get("workflow_read")).toBeDefined();
     expect(registry.get("workflow_update_stage")).toBeDefined();
-    expect(registry.get("workflow_complete")).toBeDefined();
-    expect(registry.get("workflow_record_completion")).toBeDefined();
     expect(registry.get("workflow_propose_interactions")).toBeDefined();
     expect(registry.get("workflow_request_interactions")).toBeDefined();
     expect(registry.get("artifact_read")).toBeDefined();
@@ -1268,17 +1259,20 @@ describe("workflow builtin tools", () => {
       expect(output).not.toHaveProperty("artifacts");
     });
 
-    test("workflow_record_completion returns compact output without full state arrays", async () => {
+    test("workflow_update_stage with completeCurrentStage returns compact output without full state arrays", async () => {
       const { registry, stateManager, projectContext } = createWorkflowRegistry();
       const wf = await stateManager.create({ title: "Compact Completion Record", type: "quick_fix" });
+      await stateManager.updateStage(wf.id, "quick_analysis");
       const store = createMockStore();
       store.getState().setWorkflowId(wf.id);
 
-      const result = await execute(registry, projectContext, "workflow_record_completion", {
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
         workflowId: wf.id,
-        stage: "quick_verify",
-        criticPassed: true,
-        evidence: ["evidence/check.md"],
+        stage: "quick_patch",
+        completeCurrentStage: {
+          criticPassed: true,
+          evidence: ["evidence/check.md"],
+        },
       }, store);
 
       expect(result.isError).toBe(false);
@@ -1298,7 +1292,7 @@ describe("workflow builtin tools", () => {
       expect(output).not.toHaveProperty("artifacts");
     });
 
-    test("workflow_complete returns compact output without full state arrays", async () => {
+    test("workflow_update_stage with status completed returns compact output without full state arrays", async () => {
       const { registry, stateManager, projectContext } = createWorkflowRegistry();
       const wf = await stateManager.create({ title: "Compact Complete", type: "quick_fix" });
       await stateManager.updateStage(wf.id, "quick_verify");
@@ -1306,8 +1300,10 @@ describe("workflow builtin tools", () => {
       const store = createMockStore();
       store.getState().setWorkflowId(wf.id);
 
-      const result = await execute(registry, projectContext, "workflow_complete", {
+      const result = await execute(registry, projectContext, "workflow_update_stage", {
         workflowId: wf.id,
+        stage: "quick_verify",
+        status: "completed",
       }, store);
 
       expect(result.isError).toBe(false);

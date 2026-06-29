@@ -15,8 +15,8 @@ export function buildWorkflowIntentGateSection(ctx: PromptContext): string | nul
 - Use workflow_update_stage for every business-stage move. Never invent terminal stages; completion, pause, and failure are lifecycle status, not stage names.
 - Stage paths: research_only idle -> researching -> research_consolidation; quick_fix idle -> quick_analysis -> quick_patch -> quick_verify; full_feature idle -> product_drafting -> critic_prd_review -> spec_drafting -> critic_spec_review -> awaiting_user_approval -> foreman_executing -> final_review.
 - Read current state with workflow_read and read relevant artifacts with artifact_read before deciding a transition.
-- You MUST record the current stage as completed with workflow_record_completion after the stage is verified by artifacts, delegate results, tests, or explicit approval as appropriate.
-- Use workflow_complete only after the workflow type's completion policy is satisfied and the final business stage has a verified completion record.
+- You MUST set completeCurrentStage in workflow_update_stage after the stage is verified by artifacts, delegate results, tests, or explicit approval as appropriate.
+- Use workflow_update_stage with status: "completed" after the workflow type's completion policy is satisfied and the final business stage has a verified completion record.
 
 ### Delegate → Propose → Ask → Resume loop
 - full_feature workflows start at idle and transition directly to product_drafting. There is no separate requirements-gate stage.

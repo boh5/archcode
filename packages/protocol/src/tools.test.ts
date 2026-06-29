@@ -28,8 +28,6 @@ import {
   TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_READ,
   TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_COMPLETE,
-  TOOL_WORKFLOW_RECORD_COMPLETION,
   TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
   TOOL_WORKFLOW_REQUEST_INTERACTIONS,
   TOOL_WORKFLOW_TASK_CHECK,
@@ -69,8 +67,6 @@ const ALL_BUILTIN_NAMES = [
   TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_READ,
   TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_COMPLETE,
-  TOOL_WORKFLOW_RECORD_COMPLETION,
   TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
   TOOL_WORKFLOW_REQUEST_INTERACTIONS,
   TOOL_WORKFLOW_TASK_CHECK,
@@ -108,8 +104,6 @@ describe("tool name constants", () => {
     expect(TOOL_WORKFLOW_CREATE).toBe("workflow_create");
     expect(TOOL_WORKFLOW_READ).toBe("workflow_read");
     expect(TOOL_WORKFLOW_UPDATE_STAGE).toBe("workflow_update_stage");
-    expect(TOOL_WORKFLOW_COMPLETE).toBe("workflow_complete");
-    expect(TOOL_WORKFLOW_RECORD_COMPLETION).toBe("workflow_record_completion");
     expect(TOOL_WORKFLOW_PROPOSE_INTERACTIONS).toBe("workflow_propose_interactions");
     expect(TOOL_WORKFLOW_REQUEST_INTERACTIONS).toBe("workflow_request_interactions");
     expect(TOOL_WORKFLOW_TASK_CHECK).toBe("workflow_task_check");
@@ -138,8 +132,6 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
     expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_UPDATE_STAGE]).toBe("workflow");
-    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_COMPLETE]).toBe("workflow");
-    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_RECORD_COMPLETION]).toBe("workflow");
     expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_PROPOSE_INTERACTIONS]).toBe("workflow");
     expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_REQUEST_INTERACTIONS]).toBe("workflow");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
@@ -173,8 +165,6 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("bash")).toBe("shell");
     expect(getToolCategory("workflow_create")).toBe("workflow");
     expect(getToolCategory("workflow_update_stage")).toBe("workflow");
-    expect(getToolCategory("workflow_complete")).toBe("workflow");
-    expect(getToolCategory("workflow_record_completion")).toBe("workflow");
   });
 });
 

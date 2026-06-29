@@ -12,11 +12,9 @@ import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
   createArtifactReadTool,
   createArtifactWriteTool,
-  createWorkflowCompleteTool,
   createWorkflowCreateTool,
   createWorkflowReadTool,
   createWorkflowProposeInteractionsTool,
-  createWorkflowRecordCompletionTool,
   createWorkflowRequestInteractionsTool,
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
@@ -35,8 +33,6 @@ export function registerBuiltinTools(
   registry.register(createWorkflowCreateTool());
   registry.register(createWorkflowReadTool());
   registry.register(createWorkflowUpdateStageTool());
-  registry.register(createWorkflowCompleteTool());
-  registry.register(createWorkflowRecordCompletionTool());
   registry.register(createWorkflowProposeInteractionsTool());
   registry.register(createWorkflowRequestInteractionsTool());
   registry.register(createArtifactReadTool());

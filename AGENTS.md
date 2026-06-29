@@ -90,7 +90,7 @@ packages/agent-core/src/
 ├── agents/workflow/            # Workflow state machine, artifacts, permissions, guards, tasks format
 ├── tools/define-tool.ts        # defineTool() → ToolDescriptor (name, inputSchema, traits, hooks, guards, execute)
 ├── tools/registry.ts           # register/registerAll/execute, globalGuards, globalHooks
-├── tools/builtins/             # 29 builtin tools (19 base + 4 LSP + 2 memory + 10 workflow + 2 ast-grep; see Tool System section)
+├── tools/builtins/             # 34 builtin tools (24 base + 2 memory + 8 workflow; see Tool System section)
 ├── tools/hooks/                # Guards: workspace, read-snapshot, sensitive-file, memory-index, bash-classifier; After: edit-error-recovery, redact, truncate, audit, logger
 ├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches
 ├── tools/permission/           # Permission handling (15 files for tool access control)
@@ -261,7 +261,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Tool System
 
-**29 builtin tools** (21 base via `createBuiltinToolDescriptors()`, 4 LSP, 2 memory, 10 workflow, 2 ast-grep — all registered in `core/register-tools.ts`):
+**34 builtin tools** (24 base via `createBuiltinToolDescriptors()`, 2 memory, 8 workflow — all registered in `core/register-tools.ts`):
 
 | Category | Tools | Notes |
 |----------|-------|-------|
@@ -274,7 +274,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation | delegate❌, background_output✅, wait_for_reminder✅, view_tool_output✅ | — |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Workflow | workflow_create❌, workflow_read✅, workflow_update_stage❌, workflow_complete❌, workflow_record_completion❌, workflow_propose_interactions❌, workflow_request_interactions❌, workflow_task_check✅, artifact_read✅, artifact_write❌ | Factory-created with WorkflowState |
+| Workflow | workflow_create❌, workflow_read✅, workflow_update_stage❌, workflow_propose_interactions❌, workflow_request_interactions❌, workflow_task_check✅, artifact_read✅, artifact_write❌ | Factory-created with WorkflowState. `workflow_update_stage` is the single entry point for all workflow state mutations: stage advance (with optional `completeCurrentStage` to record completion of the current stage before transitioning), terminal status (`status: "failed"`/`"paused"`/`"completed"`), and retry increment. |
 | AST Grep | ast_grep_search✅, ast_grep_replace❌ | BinaryManager-resolved CLI subprocess. Search is read-only/concurrency-safe. Replace is destructive/preview-first. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)

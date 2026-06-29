@@ -141,7 +141,7 @@ export function validateTransition(input: TransitionInput): TransitionResult {
           input.workflowId,
           input.currentStage,
           input.targetStage,
-          `Workflow ${input.workflowId} cannot enter ${input.targetStage}: record completion for ${missingStage} with workflow_record_completion before advancing`,
+          `Workflow ${input.workflowId} cannot enter ${input.targetStage}: record completion for ${missingStage} with workflow_update_stage (set completeCurrentStage) before advancing`,
         ),
       );
     }

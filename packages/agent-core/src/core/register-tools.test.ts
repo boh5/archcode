@@ -12,7 +12,7 @@ import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
-import { createArtifactReadTool, createArtifactWriteTool, createWorkflowCompleteTool, createWorkflowCreateTool, createWorkflowReadTool, createWorkflowRecordCompletionTool, createWorkflowTaskCheckTool, createWorkflowUpdateStageTool } from "../tools/builtins/workflow";
+import { createArtifactReadTool, createArtifactWriteTool, createWorkflowCreateTool, createWorkflowReadTool, createWorkflowTaskCheckTool, createWorkflowUpdateStageTool } from "../tools/builtins/workflow";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import type { AuditEvent } from "../tools/hooks";
@@ -422,8 +422,6 @@ describe("registerBuiltinTools", () => {
         createWorkflowCreateTool(),
         createWorkflowReadTool(),
         createWorkflowUpdateStageTool(),
-        createWorkflowCompleteTool(),
-        createWorkflowRecordCompletionTool(),
         createArtifactReadTool(),
         createArtifactWriteTool(),
         createWorkflowTaskCheckTool(),
