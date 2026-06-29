@@ -55,14 +55,14 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("## Workflow Role: Orchestrator");
     expect(result).toContain("workflow_create");
-    expect(result).toContain("Move to product_drafting");
+    expect(result).toContain("move idle -> product_drafting");
     expect(result).toContain("Product to write the PRD");
-    expect(result).toContain("Critic to review the PRD");
+    expect(result).toContain("critic_prd_review");
     expect(result).toContain("Spec to write SPEC and TASKS");
-    expect(result).toContain("Critic to review SPEC/TASKS");
+    expect(result).toContain("critic_spec_review");
     expect(result).toContain("delegate Foreman");
     expect(result).toContain("final verification/reporting");
-    expect(result).toContain("mark workflow status completed");
+    expect(result).toContain("workflow_complete");
   });
 
   test("orchestrator role prompt owns batched interaction clearance before PRD, SPEC, and Critic gates", () => {
