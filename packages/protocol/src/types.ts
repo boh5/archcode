@@ -409,7 +409,7 @@ export interface QuestionTerminalEvent {
 export interface WorkflowStateChangeEvent {
   type: "workflow.state_change";
   workflowId: string;
-  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "sessionIds" | "derivedFrom" | "derivedWorkflows">;
+  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "sessionIds" | "derivedFrom" | "derivedWorkflows" | "lastError">;
   updatedAt: string;
 }
 

@@ -416,6 +416,13 @@ export class WorkflowStateManager {
     return updated;
   }
 
+  async updateLastError(workflowId: string, lastError: string): Promise<WorkflowState> {
+    const state = await this.read(workflowId);
+    const updated = WorkflowStateSchema.parse({ ...state, lastError, updatedAt: new Date().toISOString() });
+    await this.write(updated);
+    return updated;
+  }
+
   async updateArtifacts(
     workflowId: string,
     artifacts: WorkflowState["artifacts"],

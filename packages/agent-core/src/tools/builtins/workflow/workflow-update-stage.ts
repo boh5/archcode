@@ -3,10 +3,6 @@ import { defineTool } from "../../define-tool";
 import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import type { WorkflowArtifactManager } from "../../../agents/workflow/artifacts";
-import {
-  processCriticDecision,
-  type CriticDecision,
-} from "../../../agents/workflow/critic-protocol";
 import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import {
   canTransitionTo,
@@ -23,13 +19,14 @@ import {
 import { getStagePrerequisitesForType } from "../../../agents/workflow/workflow-types";
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
+import { formatCompactWorkflowOutput } from "./compact-output";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to update"),
-  stage: WorkflowStageSchema.describe("Target stage to advance to. Ignored when criticDecision is provided (but still required by schema)."),
+  stage: WorkflowStageSchema.describe("Target stage to advance to. Ignored when status is provided (but still required by schema)."),
   hasUserApproval: z.boolean().default(false).describe("Whether the user has explicitly approved this stage transition. Default false."),
-  criticDecision: z.enum(["approved", "changes_requested", "rejected"]).optional().describe("When set, records a critic outcome instead of a plain stage advance. Overrides stage."),
-  criticReportPath: z.string().min(1).optional().describe("Path to the critic report artifact (used with criticDecision)"),
+  status: z.enum(["failed", "paused"]).optional().describe("When set, records a terminal lifecycle update (failed or paused) instead of a plain stage advance. Use this for Critic rejection, user withholding approval, or retry exhaustion."),
+  lastError: z.string().optional().describe("Error/reason message to persist when status is failed or paused."),
   incrementRetry: z.boolean().default(false).describe("Increment the workflow's retry counter for the current stage. Default false."),
 });
 
@@ -38,7 +35,7 @@ type WorkflowUpdateStageInput = z.infer<typeof WorkflowUpdateStageInputSchema>;
 export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
   return defineTool({
     name: "workflow_update_stage",
-    description: "Update workflow stage. You MUST record completion of the current stage with workflow_record_completion before advancing forward. For all critic outcomes (approved, changes_requested, rejected), use the criticDecision parameter — the stage field is required but ignored when criticDecision is provided.",
+    description: "Update workflow stage or record a terminal lifecycle status. You MUST record completion of the current stage with workflow_record_completion before advancing forward. For terminal lifecycle updates (Critic rejection, user withholding approval, retry exhaustion), use the status parameter with 'failed' or 'paused' and a lastError reason.",
     inputSchema: WorkflowUpdateStageInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
@@ -49,23 +46,20 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
 
       try {
         const currentState = await stateManager.read(input.workflowId);
-        if (input.criticDecision) {
-          if (input.criticDecision === "approved" && hasUnresolvedInteractions(currentState, currentState.stage)) {
-            return createToolErrorResult({
-              kind: "execution",
-              code: "TOOL_WORKFLOW_TRANSITION_DENIED",
-              name: "WorkflowUnresolvedInteractionsError",
-              message: "Cannot approve critic review while interactions remain unresolved",
-            });
+        if (input.status) {
+          if (input.status === "failed") {
+            const state = await stateManager.fail(input.workflowId, input.lastError ?? "Workflow failed");
+            emitWorkflowStateChange(ctx.store, state.id, ["status", "lastError"]);
+            return JSON.stringify(formatCompactWorkflowOutput(state, { message: `Workflow ${input.status}: ${input.lastError ?? "Workflow failed"}` }), null, 2);
           }
-          const result = await processCriticDecision({
-            workflowId: input.workflowId,
-            decision: input.criticDecision as CriticDecision,
-            criticReportPath: input.criticReportPath,
-            currentStage: currentState.stage,
-          }, stateManager);
-          emitWorkflowStateChange(ctx.store, result.newState.id, ["stage", "status", "artifacts", "stageCompletions"]);
-          return JSON.stringify(result, null, 2);
+          if (input.status === "paused") {
+            let state = await stateManager.updateStatus(input.workflowId, "paused");
+            if (input.lastError) {
+              state = await stateManager.updateLastError(input.workflowId, input.lastError);
+            }
+            emitWorkflowStateChange(ctx.store, state.id, ["status", "lastError"]);
+            return JSON.stringify(formatCompactWorkflowOutput(state, { message: `Workflow paused: ${input.lastError ?? "Workflow paused"}` }), null, 2);
+          }
         }
 
         const artifactAvailability = await collectAvailableArtifacts(input.workflowId, currentState.artifacts, artifactManager);
