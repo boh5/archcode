@@ -2,18 +2,48 @@ export type HitlKind = "question" | "approval" | "review";
 
 export type HitlResolutionStatus = "resolved" | "cancelled" | "timeout";
 
-export type HitlPayload = {
-  title: string;
-  message: string;
+type HitlOption = {
+  label: string;
+  description?: string;
+};
+
+type LegacyHitlOption = HitlOption & {
+  id?: string;
+};
+
+type HitlDisplayFields = {
+  title?: string;
+  message?: string;
   details?: Record<string, unknown>;
-  options?: Array<{
-    id: string;
-    label: string;
-    description?: string;
-  }>;
+  options?: LegacyHitlOption[];
   recommendedOptionId?: string;
   rationale?: string;
 };
+
+export type HitlPayload = HitlDisplayFields & (
+  | {
+      kind: "question";
+      options?: HitlOption[];
+      multiple?: boolean;
+      custom?: boolean;
+      recommendedOption?: string;
+      rationale?: string;
+    }
+  | {
+      kind: "approval";
+      action: string;
+      context: Record<string, unknown>;
+    }
+  | {
+      kind: "review";
+      artifacts: Array<{ path: string; description: string }>;
+    }
+  | {
+      kind?: undefined;
+      title: string;
+      message: string;
+    }
+);
 
 export type HitlResponsePayload = {
   decision?: string;
