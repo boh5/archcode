@@ -41,8 +41,17 @@ const baseConfig: ArchCodeConfig = {
   },
   agents: {
     orchestrator: { model: "test:main" },
+    plan: { model: "test:main" },
+    build: { model: "test:main" },
+    reviewer: { model: "test:main" },
+    explore: { model: "test:main" },
+    librarian: { model: "test:main" },
   },
 };
+
+function configWithAgents(agents: Record<string, { model: string; variant?: string; options?: Record<string, unknown> }>): ArchCodeConfig {
+  return { ...baseConfig, agents: agents as unknown as ArchCodeConfig["agents"] };
+}
 
 function makeRegistry(config: ArchCodeConfig): ProviderRegistry {
   const models = new Map<string, ModelInfo>();
@@ -71,10 +80,6 @@ function makeRegistry(config: ArchCodeConfig): ProviderRegistry {
       return info;
     },
   } as ProviderRegistry;
-}
-
-function configWithAgents(agents: NonNullable<ArchCodeConfig["agents"]>): ArchCodeConfig {
-  return { ...baseConfig, agents };
 }
 
 describe("resolveAgentModel", () => {

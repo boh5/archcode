@@ -60,6 +60,13 @@ export const TOOL_WORKFLOW_TASK_CHECK = "workflow_task_check";
 export const TOOL_ARTIFACT_READ = "artifact_read";
 export const TOOL_ARTIFACT_WRITE = "artifact_write";
 
+// Goal (replaces Workflow in Phase 2 cutover)
+export const TOOL_GOAL_CREATE = "goal_create";
+export const TOOL_GOAL_LOCK = "goal_lock";
+export const TOOL_GOAL_RUN = "goal_run";
+export const TOOL_GOAL_RETRY = "goal_retry";
+export const TOOL_GOAL_CHECK_DONE = "goal_check_done";
+
 // ─── BuiltinToolName Union (derived from constants) ───
 export type BuiltinToolName =
   | typeof TOOL_FILE_READ
@@ -95,7 +102,12 @@ export type BuiltinToolName =
   | typeof TOOL_WORKFLOW_REQUEST_INTERACTIONS
   | typeof TOOL_WORKFLOW_TASK_CHECK
   | typeof TOOL_ARTIFACT_READ
-  | typeof TOOL_ARTIFACT_WRITE;
+  | typeof TOOL_ARTIFACT_WRITE
+  | typeof TOOL_GOAL_CREATE
+  | typeof TOOL_GOAL_LOCK
+  | typeof TOOL_GOAL_RUN
+  | typeof TOOL_GOAL_RETRY
+  | typeof TOOL_GOAL_CHECK_DONE;
 
 // ─── Tool Category (cross-package semantic classification) ───
 export type ToolCategory =
@@ -111,6 +123,7 @@ export type ToolCategory =
   | "skill"
   | "memory"
   | "workflow"
+  | "goal"
   | "mcp"
   | "other";
 
@@ -150,6 +163,11 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_WORKFLOW_TASK_CHECK]: "workflow",
   [TOOL_ARTIFACT_READ]: "fileRead",
   [TOOL_ARTIFACT_WRITE]: "fileWrite",
+  [TOOL_GOAL_CREATE]: "goal",
+  [TOOL_GOAL_LOCK]: "goal",
+  [TOOL_GOAL_RUN]: "goal",
+  [TOOL_GOAL_RETRY]: "goal",
+  [TOOL_GOAL_CHECK_DONE]: "goal",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;
 
 // ─── Helpers ───

@@ -78,6 +78,8 @@ export type {
 } from "@archcode/protocol";
 export { MAX_EVENTS } from "@archcode/protocol";
 
+export type SessionRole = "main" | "plan" | "build" | "review" | "explore" | "librarian" | "standalone";
+
 export interface SessionStoreState {
   sessionId: string;
   createdAt: number;
@@ -100,7 +102,9 @@ export interface SessionStoreState {
   // Descendant relationships are derived from child files, not parent-side caches.
   rootSessionId: string;
   parentSessionId?: string;
-  workflowId?: string;
+  goalId?: string;
+  loopId?: string;
+  sessionRole?: SessionRole;
 
   // Running state
   executionCount: number;
@@ -135,7 +139,9 @@ export interface SessionStoreState {
   expirePendingInteractions: (questionIds?: string[], expiredAt?: string) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
-  setWorkflowId: (workflowId: string | undefined) => void;
+  setGoalId: (goalId: string | undefined) => void;
+  setLoopId: (loopId: string | undefined) => void;
+  setSessionRole: (sessionRole: SessionRole | undefined) => void;
   toModelMessages: () => ModelMessage[];
 }
 

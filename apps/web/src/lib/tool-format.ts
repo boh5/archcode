@@ -52,6 +52,7 @@ import {
   ListTodo,
   Plug,
   CircleQuestionMark,
+  Target,
 } from "lucide-react";
 
 // ─── Threshold constants ───
@@ -76,6 +77,7 @@ const CATEGORY_ICONS: Record<ToolCategory, LucideIcon> = {
   skill: Zap,
   memory: Brain,
   workflow: ListTodo,
+  goal: Target,
   mcp: Plug,
   other: CircleQuestionMark,
 };

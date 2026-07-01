@@ -8,14 +8,18 @@ The name carries two meanings at once: **arch**itect (your role) and **arch** (t
 
 ## How It Works
 
-Work happens in two phases:
+Work happens through six specialized agents, each with a distinct role:
 
-1. **You architect, with the agents.** Product, Spec, and Critic agents converse with you — asking, clarifying, refining — until intent is captured as a spec. This is the dialogue side of architecting.
-2. **AI codes, autonomously.** Foreman hands the spec to Builder, who writes the code; Reviewer checks it. This is the execution side.
+1. **Orchestrator** — Plans and coordinates work, delegates to sub-agents, owns the session store.
+2. **Plan** — Analyzes requirements and creates structured execution plans.
+3. **Build** — Writes code, runs tools, implements features.
+4. **Reviewer** — Reviews code quality, runs tests, validates against requirements.
+5. **Explore** — Read-only research agent for searching, browsing, and gathering information.
+6. **Librarian** — Documentation and knowledge management agent.
 
 ```
-[Product → Spec → Critic]   ==  You architect.
-[Foreman → Builder → Reviewer]  ==  AI codes.
+[Orchestrator → Plan → Build → Reviewer]  ==  AI codes.
+[Explore + Librarian]                      ==  Supporting research & docs.
 ```
 
 ArchCode is a long-running coding agent with a Hono server + React Web UI, two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
@@ -78,7 +82,11 @@ ArchCode is configured via `.archcode.json` in the project root. The config uses
   },
   "agents": {
     "orchestrator": { "model": "local:glm-5" },
-    "explore": { "model": "local:glm-5" }
+    "plan": { "model": "local:glm-5" },
+    "build": { "model": "local:glm-5" },
+    "reviewer": { "model": "local:glm-5" },
+    "explore": { "model": "local:glm-5" },
+    "librarian": { "model": "local:glm-5" }
   }
 }
 ```
@@ -135,10 +143,30 @@ ArchCode is configured via `.archcode.json` in the project root. The config uses
       "variant": "deep",
       "options": { "temperature": 0.25, "maxRetries": 2 }
     },
+    "plan": {
+      "model": "local:glm-5",
+      "variant": "deep",
+      "options": { "temperature": 0.3 }
+    },
+    "build": {
+      "model": "local:glm-5",
+      "variant": "fast",
+      "options": { "temperature": 0.1 }
+    },
+    "reviewer": {
+      "model": "local:glm-5",
+      "variant": "deep",
+      "options": { "temperature": 0.2 }
+    },
     "explore": {
       "model": "local:glm-5",
       "variant": "fast",
       "options": { "temperature": 0, "maxOutputTokens": 12000 }
+    },
+    "librarian": {
+      "model": "local:glm-5",
+      "variant": "fast",
+      "options": { "temperature": 0, "maxOutputTokens": 8000 }
     }
   }
 }
@@ -284,13 +312,26 @@ Memory extraction also applies smart message filtering: only user messages and r
 
 ### Agent Configuration
 
+The `agents` section is **required** and must contain exactly six agent entries. Unknown agent keys are rejected.
+
 | Field | Required | Description |
 |-------|----------|-------------|
 | `model` | Yes | `provider:modelId` format (e.g., `"local:glm-5"`) |
 | `variant` | No | Named variant profile from the model config |
 | `options` | No | Per-agent option overrides |
 
-> **Important:** Every instantiated agent must have a `model` configured. Currently the required agents are `orchestrator` and `explore`. Missing agent config fails fast with an actionable error.
+**Required agents:**
+
+| Agent | Role |
+|-------|------|
+| `orchestrator` | Plans and coordinates work, delegates to sub-agents |
+| `plan` | Analyzes requirements and creates structured execution plans |
+| `build` | Writes code, runs tools, implements features |
+| `reviewer` | Reviews code quality, runs tests, validates against requirements |
+| `explore` | Read-only research agent for searching and gathering information |
+| `librarian` | Documentation and knowledge management agent |
+
+> **Important:** All six agents must have a `model` configured. Missing any agent fails fast with an actionable error naming the missing role.
 
 ### Option Merge Order
 
@@ -306,6 +347,9 @@ model.options → variants[agent.variant] → agents[agent].options
 
 | Scenario | Error | Details |
 |----------|-------|---------|
+| Missing `agents` section | `ConfigValidationError` | Schema validation rejects configs without `agents` |
+| Missing required agent key | `ConfigValidationError` | Error message names the missing role (e.g., `reviewer`) |
+| Unknown agent key | `ConfigValidationError` | Strict object rejects extra keys like `"product"` |
 | Missing `agents.<name>.model` | `MissingAgentModelConfigError` | Includes agent name and available agents |
 | Unknown model ID | `UnknownQualifiedIdError` | Includes the invalid ID and available models |
 | Unknown variant name | `UnknownModelVariantError` | Includes agent name, model ID, requested variant, and available variants |

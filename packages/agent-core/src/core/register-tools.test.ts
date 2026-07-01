@@ -23,6 +23,14 @@ import { silentLogger, type Logger } from "../logger";
 import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext } from "../tools/types";
 import { ProjectApprovalManager } from "../tools/permission";
 import { registerBuiltinTools } from "./register-tools";
+import {
+  TOOL_GOAL_CREATE,
+  TOOL_GOAL_LOCK,
+  TOOL_GOAL_RUN,
+  TOOL_GOAL_RETRY,
+  TOOL_GOAL_CHECK_DONE,
+  TOOL_ASK_USER,
+} from "@archcode/protocol";
 
 const tmpRoots: string[] = [];
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -449,6 +457,64 @@ describe("registerBuiltinTools", () => {
         "view_tool_output",
         "cancel_session",
       ]);
+    });
+  });
+
+  describe("Goal/HITL tool contract", () => {
+    it("goal tool constants resolve to correct string values", () => {
+      expect(TOOL_GOAL_CREATE).toBe("goal_create");
+      expect(TOOL_GOAL_LOCK).toBe("goal_lock");
+      expect(TOOL_GOAL_RUN).toBe("goal_run");
+      expect(TOOL_GOAL_RETRY).toBe("goal_retry");
+      expect(TOOL_GOAL_CHECK_DONE).toBe("goal_check_done");
+    });
+
+    it("all goal tool names follow goal_* prefix convention", () => {
+      const goalNames = [
+        TOOL_GOAL_CREATE,
+        TOOL_GOAL_LOCK,
+        TOOL_GOAL_RUN,
+        TOOL_GOAL_RETRY,
+        TOOL_GOAL_CHECK_DONE,
+      ];
+      for (const name of goalNames) {
+        expect(name).toMatch(/^goal_/);
+      }
+    });
+
+    it("ask_user is registered as the agent-facing question tool", () => {
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry, silentLogger);
+
+      const tool = registry.get(TOOL_ASK_USER);
+      expect(tool).toBeDefined();
+      expect(tool!.name).toBe("ask_user");
+    });
+
+    it("no human_check tool is registered (HITL uses ask_user in Phase 1)", () => {
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry, silentLogger);
+
+      const tool = registry.get("human_check");
+      expect(tool).toBeUndefined();
+    });
+
+    it("no human_check tool exists in any builtin descriptor", () => {
+      const descriptors = createBuiltinToolDescriptors();
+      const names = descriptors.map((d) => d.name);
+      expect(names).not.toContain("human_check");
+    });
+
+    it("ask_user is not replaced by human_check — agent questions flow through existing tool", () => {
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry, silentLogger);
+
+      const askUserTool = registry.get(TOOL_ASK_USER);
+      expect(askUserTool).toBeDefined();
+      expect(askUserTool!.name).toBe("ask_user");
+
+      const humanCheckTool = registry.get("human_check");
+      expect(humanCheckTool).toBeUndefined();
     });
   });
 });

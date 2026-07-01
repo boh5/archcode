@@ -1,4 +1,4 @@
-import type { ModelCallOptions, ArchCodeConfig } from "../config/index";
+import type { ModelCallOptions, ArchCodeConfig, AgentConfig } from "../config/index";
 import type { ModelInfo, Registry as ProviderRegistry } from "../provider/index";
 import { MissingAgentModelConfigError, UnknownModelVariantError } from "./errors";
 
@@ -7,9 +7,10 @@ export function resolveAgentModel(
   config: ArchCodeConfig,
   providerRegistry: ProviderRegistry,
 ): { modelInfo: ModelInfo; options: ModelCallOptions | undefined } {
-  const agentConfig = config.agents?.[agentName];
+  const agents = config.agents as Record<string, AgentConfig>;
+  const agentConfig = agents[agentName];
   if (!agentConfig?.model) {
-    throw new MissingAgentModelConfigError(agentName, Object.keys(config.agents ?? {}));
+    throw new MissingAgentModelConfigError(agentName, Object.keys(agents));
   }
 
   const modelInfo = providerRegistry.getModel(agentConfig.model);

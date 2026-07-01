@@ -207,7 +207,9 @@ type PersistedSessionState = Pick<
   | "childSessionLinks"
   | "rootSessionId"
   | "parentSessionId"
-  | "workflowId"
+  | "goalId"
+  | "loopId"
+  | "sessionRole"
 >;
 
 function persistedState(
@@ -221,8 +223,10 @@ function persistedState(
   rootSessionId?: string,
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
-  workflowId: string | undefined = undefined,
+  goalId: string | undefined = undefined,
   pendingInteractions: PendingInteraction[] = [],
+  loopId: string | undefined = undefined,
+  sessionRole: string | undefined = undefined,
 ): PersistedSessionState {
   return {
     sessionId,
@@ -239,7 +243,9 @@ function persistedState(
     childSessionLinks,
     rootSessionId: rootSessionId ?? sessionId,
     parentSessionId,
-    workflowId,
+    goalId,
+    loopId,
+    sessionRole,
   };
 }
 
@@ -371,19 +377,19 @@ describe("session transcript serialization", () => {
     expect(summaries[0]?.parentSessionId).toBeUndefined();
   });
 
-  test("listSessionSummaries includes workflowId when present", async () => {
-    const sessionId = uniqueSessionId("workflow-summary");
-    const workflowId = crypto.randomUUID();
+  test("listSessionSummaries includes goalId when present", async () => {
+    const sessionId = uniqueSessionId("goal-summary");
+    const goalId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(sessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], workflowId),
+      persistedState(sessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId),
       TMP_DIR,
     );
 
     const summaries = await sessionFileInternals.listSessionSummaries(TMP_DIR);
 
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({ sessionId, workflowId });
+    expect(summaries[0]).toMatchObject({ sessionId, goalId });
   });
 
   test("scanDescendants returns child session to root session mappings", async () => {
@@ -530,19 +536,19 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().parentSessionId).toBe(parentSessionId);
   });
 
-  test("load rejects non-UUID workflowId", async () => {
-    const sessionId = uniqueSessionId("invalid-workflow-id");
+  test("load rejects non-UUID goalId", async () => {
+    const sessionId = uniqueSessionId("invalid-goal-id");
     await writeSessionFile(sessionId, {
       ...persistedState(sessionId),
-      workflowId: "not-a-uuid",
+      goalId: "not-a-uuid",
     });
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("save/load serializes workflowId when set", async () => {
-    const sessionId = uniqueSessionId("workflow-roundtrip");
-    const workflowId = crypto.randomUUID();
+  test("save/load serializes goalId when set", async () => {
+    const sessionId = uniqueSessionId("goal-roundtrip");
+    const goalId = crypto.randomUUID();
     const state = persistedState(
       sessionId,
       sampleMessages(),
@@ -554,7 +560,7 @@ describe("session transcript serialization", () => {
       undefined,
       undefined,
       [],
-      workflowId,
+      goalId,
     );
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
@@ -562,18 +568,98 @@ describe("session transcript serialization", () => {
     const parsed: Record<string, unknown> = JSON.parse(raw);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
-    expect(parsed.workflowId).toBe(workflowId);
-    expect(loaded.getState().workflowId).toBe(workflowId);
+    expect(parsed.goalId).toBe(goalId);
+    expect(loaded.getState().goalId).toBe(goalId);
   });
 
-  test("save omits workflowId when undefined", async () => {
-    const sessionId = uniqueSessionId("workflow-undefined");
+  test("save omits goalId when undefined", async () => {
+    const sessionId = uniqueSessionId("goal-undefined");
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
 
-    expect("workflowId" in parsed).toBe(false);
+    expect("goalId" in parsed).toBe(false);
+  });
+
+  test("save/load serializes sessionRole when set", async () => {
+    const sessionId = uniqueSessionId("sessionrole-roundtrip");
+    const state = persistedState(
+      sessionId,
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      sampleReminders(),
+      undefined,
+      undefined,
+      [],
+      undefined,
+      [],
+      undefined,
+      "explore",
+    );
+
+    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    expect(parsed.sessionRole).toBe("explore");
+    expect(loaded.getState().sessionRole).toBe("explore");
+  });
+
+  test("save/load serializes loopId when set", async () => {
+    const sessionId = uniqueSessionId("loop-roundtrip");
+    const loopId = crypto.randomUUID();
+    const state = persistedState(
+      sessionId,
+      sampleMessages(),
+      sampleSteps(),
+      sampleTodos(),
+      createEmptySessionStats(),
+      [],
+      sampleReminders(),
+      undefined,
+      undefined,
+      [],
+      undefined,
+      [],
+      loopId,
+    );
+
+    await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
+    const parsed: Record<string, unknown> = JSON.parse(raw);
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    expect(parsed.loopId).toBe(loopId);
+    expect(loaded.getState().loopId).toBe(loopId);
+  });
+
+  test("child session inherits goalId with different sessionRole", async () => {
+    const rootSessionId = uniqueSessionId("root-inherit");
+    const childSessionId = uniqueSessionId("child-inherit");
+    const goalId = crypto.randomUUID();
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, [], undefined, "main"),
+      TMP_DIR,
+    );
+
+    await sessionFileInternals.saveSessionTranscript(
+      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, [], undefined, "explore"),
+      TMP_DIR,
+    );
+
+    const rootLoaded = await storeManager.getOrLoad(rootSessionId, TMP_DIR);
+    const childLoaded = await storeManager.getOrLoad(childSessionId, TMP_DIR);
+
+    expect(rootLoaded.getState().goalId).toBe(goalId);
+    expect(rootLoaded.getState().sessionRole).toBe("main");
+    expect(childLoaded.getState().goalId).toBe(goalId);
+    expect(childLoaded.getState().sessionRole).toBe("explore");
   });
 
   test("loaded store preserves methods and can continue appending", async () => {

@@ -21,6 +21,7 @@ import {
   type ReasoningPart,
   type SessionEventEnvelope,
   type SessionEventPayload,
+  type SessionRole,
   type SessionStoreState,
   type StreamEvent,
   type PendingInteraction,
@@ -35,7 +36,9 @@ export interface SessionStoreManagerOptions {
 export interface CreateSessionOptions {
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
-  readonly workflowId?: string;
+  readonly goalId?: string;
+  readonly loopId?: string;
+  readonly sessionRole?: SessionRole;
   readonly agentName?: string;
   readonly modelInfo?: SessionModelInfo | null;
   readonly title?: string;
@@ -87,7 +90,9 @@ export class SessionStoreManager {
     const persistWorkspaceRoot = workspaceRoot ?? "__test__";
     const rootSessionId = options.rootSessionId ?? sessionId;
     const parentSessionId = options.parentSessionId;
-    const workflowId = options.workflowId;
+    const goalId = options.goalId;
+    const loopId = options.loopId;
+    const sessionRole = options.sessionRole;
     let store: StoreApi<SessionStoreState>;
 
     const persist = () => {
@@ -143,7 +148,9 @@ export class SessionStoreManager {
       // Root/parent IDs are write-once session identity, not mutable tree state.
       rootSessionId,
       parentSessionId,
-      workflowId,
+      goalId,
+      loopId,
+      sessionRole,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -207,8 +214,16 @@ export class SessionStoreManager {
         set({ parentSessionId });
         persist();
       },
-      setWorkflowId: (workflowId: string | undefined) => {
-        set({ workflowId });
+      setGoalId: (goalId: string | undefined) => {
+        set({ goalId });
+        persist();
+      },
+      setLoopId: (loopId: string | undefined) => {
+        set({ loopId });
+        persist();
+      },
+      setSessionRole: (sessionRole: SessionRole | undefined) => {
+        set({ sessionRole });
         persist();
       },
       toModelMessages: (): ModelMessage[] =>
@@ -259,13 +274,13 @@ export class SessionStoreManager {
     return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
   }
 
-  async setWorkflowId(sessionId: string, workflowId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {
+  async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {
     const store = workspaceRoot === undefined
       ? this.findLoadedSession(sessionId)
       : await this.getOrLoad(sessionId, workspaceRoot);
 
     if (store === undefined) throw new SessionFileNotFoundError(sessionId);
-    store.getState().setWorkflowId(workflowId);
+    store.getState().setGoalId(goalId);
     return store.getState();
   }
 
@@ -391,7 +406,9 @@ export class SessionStoreManager {
       const store = this.create(sessionId, workspaceRoot, {
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
-        workflowId: parsed.workflowId,
+        goalId: parsed.goalId,
+        loopId: parsed.loopId,
+        sessionRole: parsed.sessionRole,
         agentName: parsed.agentName,
         ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
         ...(parsed.title === undefined || parsed.title === null ? {} : { title: parsed.title }),
@@ -413,7 +430,9 @@ export class SessionStoreManager {
         childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
         parentSessionId: parsed.parentSessionId,
-        workflowId: parsed.workflowId,
+        goalId: parsed.goalId,
+        loopId: parsed.loopId,
+        sessionRole: parsed.sessionRole,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
@@ -653,7 +672,9 @@ function toSessionSummary(file: SessionFile): SessionSummary {
     sessionId: file.sessionId,
     rootSessionId: file.rootSessionId,
     ...(file.parentSessionId === undefined ? {} : { parentSessionId: file.parentSessionId }),
-    ...(file.workflowId === undefined ? {} : { workflowId: file.workflowId }),
+    ...(file.goalId === undefined ? {} : { goalId: file.goalId }),
+    ...(file.loopId === undefined ? {} : { loopId: file.loopId }),
+    ...(file.sessionRole === undefined ? {} : { sessionRole: file.sessionRole }),
     agentName: file.agentName,
     ...(file.modelInfo === undefined ? {} : { modelInfo: file.modelInfo }),
     title: file.title ?? null,

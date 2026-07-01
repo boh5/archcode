@@ -300,7 +300,9 @@ export type StreamEvent =
   | LlmRetryEvent
   | LlmRecoveryEvent
   | LlmRecoveryFailedEvent
-  | CompactEvent;
+  | CompactEvent
+  | GoalStreamEvent
+  | HitlStreamEvent;
 
 export const MAX_EVENTS = 10000;
 
@@ -425,6 +427,8 @@ export type SessionEventPayload =
   | QuestionRequestEvent
   | QuestionTerminalEvent
   | WorkflowStateChangeEvent
+  | GoalStreamEvent
+  | HitlStreamEvent
   | ShutdownEvent;
 
 export interface TextPart {
@@ -588,6 +592,10 @@ export interface SessionProjection {
   currentExecutionId?: string;
   currentAssistantMessageId?: string;
   modelInfo?: SessionModelInfo | null;
+  /** Goal states indexed by goalId. Populated by goal.state_change events. */
+  goals?: Record<string, GoalState>;
+  /** Pending HITL requests. Append-only via hitl.request, updated via hitl.resolved. */
+  hitlRequests?: HitlRequest[];
 }
 
 export interface Project {
@@ -792,6 +800,127 @@ export interface QuestionRequest {
   toolCallId: string;
   questions: unknown[];
 }
+
+// ─── Goal Types ───
+
+export type GoalStatus =
+  | "draft" | "locked" | "running" | "verifying"
+  | "reviewed" | "completed" | "failed" | "escalated"
+  | "paused"; // paused for safe interruption
+
+export type GoalPhase = "plan" | "build" | "review";
+
+export type DoneConditionKind =
+  // Layer 1: machine-checkable (7 kinds)
+  | "tests_pass" | "typecheck_pass" | "lsp_clean"
+  | "file_exists" | "grep_contains" | "grep_empty"
+  | "command_succeeds"
+  // Layer 1: HITL (1 kind, non-machine check)
+  | "user_confirmed"
+  // Layer 2: AI judgment (optional, Phase 2)
+  | "spec_compliance"; // Phase 2: not implemented in Phase 1
+
+// DoneCondition: discriminated union by kind (type-safe params)
+export type DoneCondition =
+  | { id: string; kind: "tests_pass"; params: { command?: string }; required?: boolean }
+  | { id: string; kind: "typecheck_pass"; params: { command?: string }; required?: boolean }
+  | { id: string; kind: "lsp_clean"; params: { paths?: string[]; severity?: "error" | "warning" }; required?: boolean }
+  | { id: string; kind: "file_exists"; params: { path: string }; required?: boolean }
+  | { id: string; kind: "grep_contains"; params: { pattern: string; path?: string; minMatches?: number }; required?: boolean }
+  | { id: string; kind: "grep_empty"; params: { pattern: string; path?: string }; required?: boolean }
+  | { id: string; kind: "command_succeeds"; params: { command: string; timeoutMs?: number }; required?: boolean }
+  | { id: string; kind: "user_confirmed"; params: { prompt: string }; required?: boolean }
+  | { id: string; kind: "spec_compliance"; params: { specPath: string; focusAreas?: string[] }; required?: boolean };
+// required defaults true; false = soft hint
+
+export interface DoneResult {
+  conditionId: string;
+  passed: boolean;
+  evidence: string;   // machine output or AI judgment rationale
+  checkedAt: string;
+}
+
+export interface RetryPolicy {
+  maxRetries: number;
+  backoffMs: number;
+  escalateOnFailure: boolean; // true = retries exhausted → escalated, not failed
+}
+
+export type ApprovalPoint = "after_plan" | "before_complete";
+
+export interface GoalState {
+  id: string;
+  projectId: string;  // slug
+  title: string;
+  status: GoalStatus;
+  phase: GoalPhase;    // current phase (plan/build/review), persisted
+  doneConditions: DoneCondition[];  // locked and immutable after lock
+  doneResults: Record<string, DoneResult>;  // conditionId → latest result
+  reviewerAgent: string;  // must ≠ executor, default "reviewer"
+  retryPolicy: RetryPolicy;
+  retryCount: number;
+  approvalPoints: ApprovalPoint[];
+  author: string;      // done condition author (orchestrator/plan/user)
+  lockedBy?: string;   // locker (user id)
+  mainSessionId?: string;  // orchestrator session
+  childSessionIds: string[];  // plan/build/review/explore/librarian
+  lockedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+}
+
+// ─── Goal Stream Events ───
+
+export type GoalStreamEvent =
+  | { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState }
+  | { type: "goal.done_check"; goalId: string; results: DoneResult[] }
+  | { type: "goal.escalation"; goalId: string; reason: string };
+
+// ─── HITL Types ───
+// 3 kinds: question (with options) / approval (tool gate) / review (bulk artifact review)
+// No separate "decision" kind: structurally same as question, semantic difference at prompt layer
+
+export type HitlKind = "question" | "approval" | "review";
+
+export interface HitlRequest {
+  id: string;
+  sessionId: string;   // originating session
+  goalId?: string;
+  loopId?: string;     // Phase 2: loop integration
+  kind: HitlKind;
+  prompt: string;
+  payload: HitlPayload;  // kind-specific
+  trigger: "approval_point" | "agent_request";  // hard constraint vs soft request
+  status: "pending" | "resolved" | "cancelled" | "timeout";
+  createdAt: string;
+  resolvedAt?: string;
+  response?: HitlResponse;
+}
+
+export type HitlPayload =
+  // question: may have no options (free text) or options (structured choice). When options exist, may include recommendedOption + rationale.
+  | { kind: "question"; options?: Array<{ label: string; description?: string }>; multiple?: boolean; custom?: boolean; recommendedOption?: string; rationale?: string }
+  // approval: permission module needs human review. HITL presents yes/no and returns decision.
+  // deny → tool not executed; approve_always → persisted — these are permission module's responsibility, not HITL.
+  | { kind: "approval"; action: string; context: Record<string, unknown> }
+  // review: architect batch-review of artifacts. Verdict drives Goal state machine.
+  | { kind: "review"; artifacts: Array<{ path: string; description: string }> };
+
+export type HitlResponse =
+  // question: answer flows back into conversation context. No options → free text; with options → selected label(s).
+  | { kind: "question"; answers: string[]; comment?: string }
+  // approval: user decision. HITL returns approved/approveAlways/comment;
+  // permission module decides based on this value whether to allow/deny/persist scope.
+  | { kind: "approval"; approved: boolean; approveAlways?: boolean; comment?: string }
+  // review: verdict drives Goal state machine.
+  | { kind: "review"; verdict: "approve" | "reject" | "request_changes"; comment?: string };
+
+// ─── HITL Stream Events ───
+
+export type HitlStreamEvent =
+  | { type: "hitl.request"; request: HitlRequest }
+  | { type: "hitl.resolved"; hitlId: string; status: "resolved" | "cancelled" | "timeout"; response?: HitlResponse };
 
 export interface CommandResult {
   success: boolean;

@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
 import { createEmptySessionStats } from "@archcode/protocol";
-import type { SessionStoreState } from "./types";
+import type { SessionRole, SessionStoreState } from "./types";
 
 export function createMockStore(
   overrides?: Partial<SessionStoreState>,
@@ -86,8 +86,14 @@ export function createMockStore(
     setParentSessionId: (parentSessionId) => {
       state.parentSessionId = parentSessionId;
     },
-    setWorkflowId: (workflowId) => {
-      state.workflowId = workflowId;
+    setGoalId: (goalId) => {
+      state.goalId = goalId;
+    },
+    setLoopId: (loopId) => {
+      state.loopId = loopId;
+    },
+    setSessionRole: (sessionRole) => {
+      state.sessionRole = sessionRole;
     },
     toModelMessages: () => [],
   };

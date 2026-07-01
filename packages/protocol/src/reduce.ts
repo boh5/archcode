@@ -2,6 +2,8 @@ import type {
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
+  GoalState,
+  HitlRequest,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -584,6 +586,71 @@ export function reduceStreamEvent(
         },
         assistant.stats,
       );
+    }
+
+    case "goal.state_change": {
+      const goals = { ...(state.goals ?? {}) };
+      goals[event.goalId] = event.state;
+
+      return { goals };
+    }
+
+    case "goal.done_check": {
+      const goals = { ...(state.goals ?? {}) };
+      const existing = goals[event.goalId];
+
+      if (existing) {
+        const updatedDoneResults = { ...existing.doneResults };
+        for (const result of event.results) {
+          updatedDoneResults[result.conditionId] = result;
+        }
+
+        goals[event.goalId] = { ...existing, doneResults: updatedDoneResults };
+      }
+
+      return { goals };
+    }
+
+    case "goal.escalation": {
+      const goals = { ...(state.goals ?? {}) };
+      const existing = goals[event.goalId];
+
+      if (existing) {
+        goals[event.goalId] = { ...existing, status: "escalated", lastError: event.reason };
+      }
+
+      return { goals };
+    }
+
+    case "hitl.request": {
+      const hitlRequests = [...(state.hitlRequests ?? [])];
+      const existingIndex = hitlRequests.findIndex((r) => r.id === event.request.id);
+
+      if (existingIndex !== -1) {
+        hitlRequests[existingIndex] = event.request;
+      } else {
+        hitlRequests.push(event.request);
+      }
+
+      return { hitlRequests };
+    }
+
+    case "hitl.resolved": {
+      const hitlRequests = state.hitlRequests?.slice() ?? [];
+      const existingIndex = hitlRequests.findIndex((r) => r.id === event.hitlId);
+
+      if (existingIndex === -1) return {};
+
+      const update: Partial<HitlRequest> = {
+        status: event.status,
+        ...(event.response ? { response: event.response } : {}),
+      };
+      if (event.status === "resolved") {
+        update.resolvedAt = new Date(timestamp).toISOString();
+      }
+
+      hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
+      return { hitlRequests };
     }
 
     case "compact": {

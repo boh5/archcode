@@ -236,7 +236,7 @@ function findRawToolArrayViolations(): Violation[] {
   const files = [
     join(srcRoot, "agents/constants.ts"),
     join(srcRoot, "agents/workflow/permissions.ts"),
-  ];
+  ].filter((file) => existsSync(file));
   const violations: Violation[] = [];
 
   for (const file of files) {

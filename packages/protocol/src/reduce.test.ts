@@ -3,6 +3,9 @@ import { reduceStreamEvent } from "./reduce";
 import type { ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
 import type {
+  GoalState,
+  GoalStatus,
+  HitlRequest,
   Reminder,
   SessionMessage,
   SessionPart,
@@ -1118,5 +1121,380 @@ describe("reduceStreamEvent", () => {
       status: "retrying",
       completedAt: 123456789,
     });
+  });
+});
+
+describe("Goal stream event reducers", () => {
+  function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
+    return {
+      id: "goal-1",
+      projectId: "p",
+      title: "Implement feature",
+      status: "draft",
+      phase: "plan",
+      doneConditions: [
+        { id: "dc-1", kind: "tests_pass", params: { command: "bun test" }, required: true },
+        { id: "dc-2", kind: "file_exists", params: { path: "src/feature.ts" }, required: true },
+      ],
+      doneResults: {},
+      reviewerAgent: "reviewer",
+      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+      retryCount: 0,
+      approvalPoints: ["after_plan"],
+      author: "orchestrator",
+      childSessionIds: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  test("goal.state_change adds a goal to empty projection", () => {
+    const state = createProjection();
+    const goalState = makeGoalState();
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "draft",
+      state: goalState,
+    }, createDeterministicContext());
+
+    expect(result.goals).toBeDefined();
+    expect(result.goals!["goal-1"]).toEqual(goalState);
+  });
+
+  test("goal.state_change updates an existing goal in the projection", () => {
+    const goalState = makeGoalState({ status: "draft" });
+    const state = createProjection({ goals: { "goal-1": goalState } });
+    const updatedGoal = makeGoalState({ status: "running" });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "running",
+      state: updatedGoal,
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.status).toBe("running");
+    expect(result.goals!["goal-1"]!.title).toBe("Implement feature");
+  });
+
+  test("goal.state_change preserves other goals when updating one", () => {
+    const goal1 = makeGoalState({ id: "goal-1", title: "First" });
+    const goal2 = makeGoalState({ id: "goal-2", title: "Second", status: "running" });
+    const state = createProjection({ goals: { "goal-1": goal1, "goal-2": goal2 } });
+    const updatedGoal1 = makeGoalState({ id: "goal-1", title: "First", status: "locked" });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "locked",
+      state: updatedGoal1,
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.status).toBe("locked");
+    expect(result.goals!["goal-2"]!.status).toBe("running");
+  });
+
+  test("goal.state_change produces identical results with deterministic context", () => {
+    const goalState = makeGoalState();
+    const first = reduceStreamEvent(createProjection(), {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "draft",
+      state: goalState,
+    }, createDeterministicContext());
+    const second = reduceStreamEvent(createProjection(), {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "draft",
+      state: goalState,
+    }, createDeterministicContext());
+
+    expect(first).toEqual(second);
+  });
+
+  test("goal.done_check updates done results for an existing goal", () => {
+    const goalState = makeGoalState({ status: "verifying" });
+    const state = createProjection({ goals: { "goal-1": goalState } });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.done_check",
+      goalId: "goal-1",
+      results: [
+        { conditionId: "dc-1", passed: true, evidence: "Tests passed", checkedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.doneResults["dc-1"]).toEqual({
+      conditionId: "dc-1",
+      passed: true,
+      evidence: "Tests passed",
+      checkedAt: "2026-06-01T00:00:00.000Z",
+    });
+  });
+
+  test("goal.done_check appends new results without removing previous ones", () => {
+    const goalState = makeGoalState({
+      status: "verifying",
+      doneResults: {
+        "dc-1": { conditionId: "dc-1", passed: true, evidence: "Old", checkedAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+    const state = createProjection({ goals: { "goal-1": goalState } });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.done_check",
+      goalId: "goal-1",
+      results: [
+        { conditionId: "dc-2", passed: true, evidence: "File exists", checkedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.doneResults["dc-1"]).toBeDefined();
+    expect(result.goals!["goal-1"]!.doneResults["dc-2"]).toBeDefined();
+    expect(result.goals!["goal-1"]!.doneResults["dc-2"]!.evidence).toBe("File exists");
+  });
+
+  test("goal.done_check overwrites existing result for the same conditionId", () => {
+    const goalState = makeGoalState({
+      status: "verifying",
+      doneResults: {
+        "dc-1": { conditionId: "dc-1", passed: false, evidence: "Failed", checkedAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+    const state = createProjection({ goals: { "goal-1": goalState } });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.done_check",
+      goalId: "goal-1",
+      results: [
+        { conditionId: "dc-1", passed: true, evidence: "Now passing", checkedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.doneResults["dc-1"]!.evidence).toBe("Now passing");
+  });
+
+  test("goal.done_check is noop for unknown goal id", () => {
+    const state = createProjection();
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.done_check",
+      goalId: "nonexistent",
+      results: [
+        { conditionId: "dc-1", passed: true, evidence: "ok", checkedAt: "2026-06-01T00:00:00.000Z" },
+      ],
+    }, createDeterministicContext());
+
+    expect(result).toEqual({ goals: {} });
+  });
+
+  test("goal.escalation sets status to escalated with reason", () => {
+    const goalState = makeGoalState({ status: "running" });
+    const state = createProjection({ goals: { "goal-1": goalState } });
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.escalation",
+      goalId: "goal-1",
+      reason: "Max retries exceeded",
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.status).toBe("escalated");
+    expect(result.goals!["goal-1"]!.lastError).toBe("Max retries exceeded");
+  });
+
+  test("goal.escalation is noop for unknown goal id", () => {
+    const state = createProjection();
+
+    const result = reduceStreamEvent(state, {
+      type: "goal.escalation",
+      goalId: "nonexistent",
+      reason: "fail",
+    }, createDeterministicContext());
+
+    expect(result).toEqual({ goals: {} });
+  });
+
+  test("accumulated goal events produce deterministic projection", () => {
+    const events: StreamEvent[] = [
+      {
+        type: "goal.state_change",
+        goalId: "goal-1",
+        status: "draft",
+        state: makeGoalState(),
+      },
+      {
+        type: "goal.state_change",
+        goalId: "goal-1",
+        status: "locked",
+        state: makeGoalState({ status: "locked" }),
+      },
+      {
+        type: "goal.state_change",
+        goalId: "goal-1",
+        status: "running",
+        state: makeGoalState({ status: "running" }),
+      },
+      {
+        type: "goal.done_check",
+        goalId: "goal-1",
+        results: [
+          { conditionId: "dc-1", passed: true, evidence: "ok", checkedAt: "2026-06-01T00:00:00.000Z" },
+        ],
+      },
+    ];
+
+    const first = applyEvents(createProjection(), events);
+    const second = applyEvents(createProjection(), events);
+
+    expect(first.goals).toEqual(second.goals);
+  });
+});
+
+describe("HITL stream event reducers", () => {
+  function makeHitlRequest(overrides: Partial<HitlRequest> = {}): HitlRequest {
+    return {
+      id: "hitl-1",
+      sessionId: "session-1",
+      kind: "question",
+      prompt: "Proceed with implementation?",
+      payload: { kind: "question" },
+      trigger: "agent_request",
+      status: "pending",
+      createdAt: "2026-06-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  test("hitl.request appends a HITL request to empty projection", () => {
+    const state = createProjection();
+    const request = makeHitlRequest();
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.request",
+      request,
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests).toHaveLength(1);
+    expect(result.hitlRequests![0]!.id).toBe("hitl-1");
+    expect(result.hitlRequests![0]!.status).toBe("pending");
+  });
+
+  test("hitl.request appends to existing hitlRequests", () => {
+    const existing = makeHitlRequest({ id: "hitl-0", prompt: "First" });
+    const state = createProjection({ hitlRequests: [existing] });
+    const request = makeHitlRequest({ id: "hitl-1", prompt: "Second" });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.request",
+      request,
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests).toHaveLength(2);
+    expect(result.hitlRequests![0]!.id).toBe("hitl-0");
+    expect(result.hitlRequests![1]!.id).toBe("hitl-1");
+  });
+
+  test("hitl.request deduplicates by id (updates existing)", () => {
+    const existing = makeHitlRequest({ id: "hitl-1", status: "pending", prompt: "Old prompt" });
+    const state = createProjection({ hitlRequests: [existing] });
+    const updated = makeHitlRequest({ id: "hitl-1", status: "pending", prompt: "Updated prompt" });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.request",
+      request: updated,
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests).toHaveLength(1);
+    expect(result.hitlRequests![0]!.prompt).toBe("Updated prompt");
+  });
+
+  test("hitl.resolved updates status and response", () => {
+    const request = makeHitlRequest();
+    const state = createProjection({ hitlRequests: [request] });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.resolved",
+      hitlId: "hitl-1",
+      status: "resolved",
+      response: { kind: "question", answers: ["Yes"] },
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests![0]!.status).toBe("resolved");
+    expect(result.hitlRequests![0]!.response).toEqual({ kind: "question", answers: ["Yes"] });
+    expect(result.hitlRequests![0]!.resolvedAt).toBeDefined();
+  });
+
+  test("hitl.resolved sets resolvedAt only for resolved status", () => {
+    const request = makeHitlRequest();
+    const cancelled = createProjection({ hitlRequests: [request] });
+
+    const cancelledResult = reduceStreamEvent(cancelled, {
+      type: "hitl.resolved",
+      hitlId: "hitl-1",
+      status: "cancelled",
+    }, createDeterministicContext());
+
+    expect(cancelledResult.hitlRequests![0]!.status).toBe("cancelled");
+    expect(cancelledResult.hitlRequests![0]!.resolvedAt).toBeUndefined();
+  });
+
+  test("hitl.resolved cancels a HITL request", () => {
+    const request = makeHitlRequest();
+    const state = createProjection({ hitlRequests: [request] });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.resolved",
+      hitlId: "hitl-1",
+      status: "cancelled",
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests![0]!.status).toBe("cancelled");
+  });
+
+  test("hitl.resolved with timeout status sets status to timeout", () => {
+    const request = makeHitlRequest();
+    const state = createProjection({ hitlRequests: [request] });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.resolved",
+      hitlId: "hitl-1",
+      status: "timeout",
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests![0]!.status).toBe("timeout");
+  });
+
+  test("hitl.resolved is noop for unknown hitlId", () => {
+    const request = makeHitlRequest();
+    const state = createProjection({ hitlRequests: [request] });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.resolved",
+      hitlId: "nonexistent",
+      status: "resolved",
+    }, createDeterministicContext());
+
+    expect(result).toEqual({});
+  });
+
+  test("accumulated HITL events produce deterministic projection", () => {
+    const request = makeHitlRequest();
+    const events: StreamEvent[] = [
+      { type: "hitl.request", request },
+      {
+        type: "hitl.resolved",
+        hitlId: "hitl-1",
+        status: "resolved" as const,
+        response: { kind: "question" as const, answers: ["Yes"] },
+      },
+    ];
+
+    const first = applyEvents(createProjection(), events);
+    const second = applyEvents(createProjection(), events);
+
+    expect(first.hitlRequests).toEqual(second.hitlRequests);
   });
 });

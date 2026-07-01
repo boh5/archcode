@@ -11,7 +11,7 @@ const baseModel = {
 
 function makeConfig(
   model: ArchCodeConfig["provider"][string]["models"][string],
-  agent: NonNullable<ArchCodeConfig["agents"]>[string],
+  agent: { model: string; variant?: string; options?: Record<string, unknown> },
 ): ArchCodeConfig {
   return {
     provider: {
@@ -22,7 +22,7 @@ function makeConfig(
         models: { main: model },
       },
     },
-    agents: { orchestrator: agent },
+    agents: { orchestrator: agent } as unknown as ArchCodeConfig["agents"],
   };
 }
 

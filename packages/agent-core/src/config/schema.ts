@@ -22,7 +22,14 @@ export const archcodeConfigSchema = z
     $schema: z.string().optional(),
     provider: providersConfigSchema,
     mcp: mcpConfigSchema.optional(),
-    agents: z.record(z.string(), agentConfigSchema).optional(),
+    agents: z.strictObject({
+      orchestrator: agentConfigSchema,
+      plan: agentConfigSchema,
+      build: agentConfigSchema,
+      reviewer: agentConfigSchema,
+      explore: agentConfigSchema,
+      librarian: agentConfigSchema,
+    }),
     memory: memoryExtractionConfigSchema,
   })
   .strict();

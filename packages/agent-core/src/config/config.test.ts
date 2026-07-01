@@ -40,16 +40,35 @@ const VALID_CONFIG = {
   },
 };
 
+const VALID_CONFIG_WITH_AGENTS = {
+  ...VALID_CONFIG,
+  agents: {
+    orchestrator: { model: "xxx:gpt-5.2" },
+    plan: { model: "xxx:gpt-5.2" },
+    build: { model: "xxx:gpt-5.2" },
+    reviewer: { model: "xxx:gpt-5.2" },
+    explore: { model: "xxx:gpt-5.2" },
+    librarian: { model: "xxx:gpt-5.2" },
+  },
+};
+
 describe("parseConfig", () => {
-  test("parses a valid config", () => {
-    const config = parseConfig(VALID_CONFIG);
+  test("parses a valid config with all 6 required agents", () => {
+    const config = parseConfig(VALID_CONFIG_WITH_AGENTS);
     expect(config.provider).toBeDefined();
     expect(config.provider["xxx"].name).toBe("xxx");
     expect(config.provider["xxx"].models["gpt-5.2"].name).toBe("GPT-5.2");
+    expect(config.agents).toBeDefined();
+    expect(config.agents.orchestrator.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.plan.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.build.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.reviewer.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.explore.model).toBe("xxx:gpt-5.2");
+    expect(config.agents.librarian.model).toBe("xxx:gpt-5.2");
   });
 
   test("parses config without $schema", () => {
-    const { $schema: _, ...noSchema } = VALID_CONFIG;
+    const { $schema: _, ...noSchema } = VALID_CONFIG_WITH_AGENTS;
     const config = parseConfig(noSchema);
     expect(config.provider).toBeDefined();
   });
@@ -72,6 +91,7 @@ describe("parseConfig", () => {
 
   test("rejects provider with empty models", () => {
     const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
           npm: "@ai-sdk/openai-compatible",
@@ -86,6 +106,7 @@ describe("parseConfig", () => {
 
   test("rejects invalid baseURL", () => {
     const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
           npm: "@ai-sdk/openai-compatible",
@@ -106,6 +127,7 @@ describe("parseConfig", () => {
 
   test("rejects invalid modality", () => {
     const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
           npm: "@ai-sdk/openai-compatible",
@@ -126,19 +148,19 @@ describe("parseConfig", () => {
 
   test("rejects unknown top-level keys", () => {
     expect(() =>
-      parseConfig({ ...VALID_CONFIG, unknownKey: true }),
+      parseConfig({ ...VALID_CONFIG_WITH_AGENTS, unknownKey: true }),
     ).toThrow(ConfigValidationError);
   });
 
   test("parses config with model options", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
-          ...VALID_CONFIG.provider.xxx,
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
           models: {
             "gpt-5.2": {
-              ...VALID_CONFIG.provider.xxx.models["gpt-5.2"],
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
               options: {
                 maxOutputTokens: 8192,
                 temperature: 0.7,
@@ -160,13 +182,13 @@ describe("parseConfig", () => {
 
   test("parses every supported model call option key exactly", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
-          ...VALID_CONFIG.provider.xxx,
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
           models: {
             "gpt-5.2": {
-              ...VALID_CONFIG.provider.xxx.models["gpt-5.2"],
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
               options: {
                 maxOutputTokens: 8192,
                 temperature: 0.7,
@@ -207,13 +229,13 @@ describe("parseConfig", () => {
 
   test("parses config with model variants", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
-          ...VALID_CONFIG.provider.xxx,
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
           models: {
             "gpt-5.2": {
-              ...VALID_CONFIG.provider.xxx.models["gpt-5.2"],
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
               variants: {
                 creative: { temperature: 0.9, topP: 0.95 },
                 precise: { temperature: 0.1, topP: 0.1 },
@@ -230,39 +252,47 @@ describe("parseConfig", () => {
     expect(model.variants!["precise"].topP).toBe(0.1);
   });
 
-  test("parses config with top-level agents", () => {
+  test("parses config with all 6 agents and per-agent options", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       agents: {
         orchestrator: {
           model: "xxx:gpt-5.2",
           variant: "creative",
           options: { maxRetries: 3 },
         },
+        plan: { model: "xxx:gpt-5.2" },
+        build: { model: "xxx:gpt-5.2" },
+        reviewer: { model: "xxx:gpt-5.2" },
         explore: {
           model: "xxx:gpt-5.2",
           options: { temperature: 0.5 },
         },
+        librarian: { model: "xxx:gpt-5.2" },
       },
     };
     const parsed = parseConfig(config);
     expect(parsed.agents).toBeDefined();
-    expect(parsed.agents!["orchestrator"].model).toBe("xxx:gpt-5.2");
-    expect(parsed.agents!["orchestrator"].variant).toBe("creative");
-    expect(parsed.agents!["orchestrator"].options!.maxRetries).toBe(3);
-    expect(parsed.agents!["explore"].model).toBe("xxx:gpt-5.2");
-    expect(parsed.agents!["explore"].options!.temperature).toBe(0.5);
+    expect(parsed.agents.orchestrator.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.orchestrator.variant).toBe("creative");
+    expect(parsed.agents.orchestrator.options!.maxRetries).toBe(3);
+    expect(parsed.agents.explore.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.explore.options!.temperature).toBe(0.5);
+    expect(parsed.agents.plan.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.build.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.reviewer.model).toBe("xxx:gpt-5.2");
+    expect(parsed.agents.librarian.model).toBe("xxx:gpt-5.2");
   });
 
   test("memory config is optional", () => {
-    const parsed = parseConfig(VALID_CONFIG);
+    const parsed = parseConfig(VALID_CONFIG_WITH_AGENTS);
 
     expect(parsed.memory).toBeUndefined();
   });
 
   test("memory config applies extraction defaults", () => {
     const parsed = parseConfig({
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       memory: {},
     });
 
@@ -276,7 +306,7 @@ describe("parseConfig", () => {
 
   test("memory config accepts custom extraction values", () => {
     const parsed = parseConfig({
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       memory: {
         enabled: false,
         minMessages: 2,
@@ -294,38 +324,71 @@ describe("parseConfig", () => {
   });
 
   test("memory config rejects invalid values", () => {
-    expect(() => parseConfig({ ...VALID_CONFIG, memory: { minMessages: 0 } })).toThrow(ConfigValidationError);
-    expect(() => parseConfig({ ...VALID_CONFIG, memory: { minContentLength: 99 } })).toThrow(ConfigValidationError);
-    expect(() => parseConfig({ ...VALID_CONFIG, memory: { cooldownMs: -1 } })).toThrow(ConfigValidationError);
+    expect(() => parseConfig({ ...VALID_CONFIG_WITH_AGENTS, memory: { minMessages: 0 } })).toThrow(ConfigValidationError);
+    expect(() => parseConfig({ ...VALID_CONFIG_WITH_AGENTS, memory: { minContentLength: 99 } })).toThrow(ConfigValidationError);
+    expect(() => parseConfig({ ...VALID_CONFIG_WITH_AGENTS, memory: { cooldownMs: -1 } })).toThrow(ConfigValidationError);
   });
 
   test("memory config rejects unknown fields", () => {
     expect(() => parseConfig({
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       memory: { enabled: true, unknown: true },
     })).toThrow(ConfigValidationError);
   });
 
-  test("parses config with unknown agent key (record is open)", () => {
+  test("rejects config with unknown agent key (strict object)", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       agents: {
+        ...VALID_CONFIG_WITH_AGENTS.agents,
         futureAgent: { model: "xxx:gpt-5.2" },
       },
     };
-    const parsed = parseConfig(config);
-    expect(parsed.agents!["futureAgent"].model).toBe("xxx:gpt-5.2");
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
+  });
+
+  test("rejects config missing a required agent", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
+      agents: {
+        orchestrator: { model: "xxx:gpt-5.2" },
+        plan: { model: "xxx:gpt-5.2" },
+        build: { model: "xxx:gpt-5.2" },
+        // reviewer is missing
+        explore: { model: "xxx:gpt-5.2" },
+        librarian: { model: "xxx:gpt-5.2" },
+      },
+    };
+    try {
+      parseConfig(config);
+      throw new Error("Expected parseConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigValidationError);
+      const message = (error as ConfigValidationError).message;
+      expect(message).toContain("reviewer");
+    }
+  });
+
+  test("rejects config with extra agent key", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
+      agents: {
+        ...VALID_CONFIG_WITH_AGENTS.agents,
+        product: { model: "xxx:gpt-5.2" },
+      },
+    };
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
   });
 
   test("rejects unknown option field (e.g. top_p snake_case)", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
-          ...VALID_CONFIG.provider.xxx,
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
           models: {
             "gpt-5.2": {
-              ...VALID_CONFIG.provider.xxx.models["gpt-5.2"],
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
               options: { top_p: 0.9 },
             },
           },
@@ -337,13 +400,13 @@ describe("parseConfig", () => {
 
   test("rejects variant key inside model call options", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       provider: {
         xxx: {
-          ...VALID_CONFIG.provider.xxx,
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
           models: {
             "gpt-5.2": {
-              ...VALID_CONFIG.provider.xxx.models["gpt-5.2"],
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
               options: { variant: "fast" },
             },
           },
@@ -362,8 +425,9 @@ describe("parseConfig", () => {
 
   test("rejects unknown keys within an agent config", () => {
     const config = {
-      ...VALID_CONFIG,
+      ...VALID_CONFIG_WITH_AGENTS,
       agents: {
+        ...VALID_CONFIG_WITH_AGENTS.agents,
         orchestrator: {
           model: "xxx:gpt-5.2",
           unexpected: true,
@@ -380,11 +444,9 @@ describe("parseConfig", () => {
     }
   });
 
-  test("still parses config without agents/options/variants", () => {
-    const parsed = parseConfig(VALID_CONFIG);
-    expect(parsed.provider.xxx.models["gpt-5.2"].options).toBeUndefined();
-    expect(parsed.provider.xxx.models["gpt-5.2"].variants).toBeUndefined();
-    expect((parsed as any).agents).toBeUndefined();
+  test("rejects config without agents (required)", () => {
+    const { agents: _, ...noAgents } = VALID_CONFIG_WITH_AGENTS;
+    expect(() => parseConfig(noAgents)).toThrow(ConfigValidationError);
   });
 });
 
@@ -398,7 +460,7 @@ describe("loadConfig", () => {
   test("loads a valid config from file", async () => {
     await mkdir(tmpDir, { recursive: true });
     const filePath = join(tmpDir, "valid.json");
-    await Bun.write(filePath, JSON.stringify(VALID_CONFIG));
+    await Bun.write(filePath, JSON.stringify(VALID_CONFIG_WITH_AGENTS));
 
     const config = await loadConfig(filePath);
     expect(config.provider["xxx"].name).toBe("xxx");
@@ -452,7 +514,7 @@ describe("loadConfig", () => {
 });
 
 describe("getProviderConfig", () => {
-  const providers = parseConfig(VALID_CONFIG).provider;
+  const providers = parseConfig(VALID_CONFIG_WITH_AGENTS).provider;
 
   test("returns provider by id", () => {
     const provider = getProviderConfig(providers, "xxx");
@@ -474,7 +536,7 @@ describe("getProviderConfig", () => {
 });
 
 describe("getModelConfig", () => {
-  const provider = parseConfig(VALID_CONFIG).provider["xxx"];
+  const provider = parseConfig(VALID_CONFIG_WITH_AGENTS).provider["xxx"];
 
   test("returns model by id", () => {
     const model = getModelConfig(provider, "gpt-5.2");
@@ -498,14 +560,14 @@ describe("getModelConfig", () => {
 
 describe("createProviderInstance", () => {
   test("creates an instance for a valid provider", () => {
-    const provider = parseConfig(VALID_CONFIG).provider["xxx"];
+    const provider = parseConfig(VALID_CONFIG_WITH_AGENTS).provider["xxx"];
     const instance = createProviderInstance(provider);
     expect(instance).toBeDefined();
     expect(typeof instance.chatModel).toBe("function");
   });
 
   test("throws UnsupportedProviderPackageError for unknown npm", () => {
-    const provider = parseConfig(VALID_CONFIG).provider["xxx"];
+    const provider = parseConfig(VALID_CONFIG_WITH_AGENTS).provider["xxx"];
     const modified = { ...provider, npm: "@ai-sdk/unknown" };
     expect(() => createProviderInstance(modified)).toThrow(
       UnsupportedProviderPackageError,
@@ -515,7 +577,7 @@ describe("createProviderInstance", () => {
 
 describe("createLanguageModel", () => {
   test("creates a language model from config + ids", () => {
-    const providers = parseConfig(VALID_CONFIG).provider;
+    const providers = parseConfig(VALID_CONFIG_WITH_AGENTS).provider;
     const model = createLanguageModel(providers, "xxx", "gpt-5.2");
     expect(model).toBeDefined();
     expect(typeof model.doGenerate).toBe("function");

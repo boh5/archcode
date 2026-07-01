@@ -33,6 +33,11 @@ import {
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
+  TOOL_GOAL_CREATE,
+  TOOL_GOAL_LOCK,
+  TOOL_GOAL_RUN,
+  TOOL_GOAL_RETRY,
+  TOOL_GOAL_CHECK_DONE,
   TOOL_CATEGORY_MAP,
   getToolCategory,
   isBuiltinToolName,
@@ -72,6 +77,11 @@ const ALL_BUILTIN_NAMES = [
   TOOL_WORKFLOW_TASK_CHECK,
   TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
+  TOOL_GOAL_CREATE,
+  TOOL_GOAL_LOCK,
+  TOOL_GOAL_RUN,
+  TOOL_GOAL_RETRY,
+  TOOL_GOAL_CHECK_DONE,
 ] as const;
 
 describe("tool name constants", () => {
@@ -109,6 +119,11 @@ describe("tool name constants", () => {
     expect(TOOL_WORKFLOW_TASK_CHECK).toBe("workflow_task_check");
     expect(TOOL_ARTIFACT_READ).toBe("artifact_read");
     expect(TOOL_ARTIFACT_WRITE).toBe("artifact_write");
+    expect(TOOL_GOAL_CREATE).toBe("goal_create");
+    expect(TOOL_GOAL_LOCK).toBe("goal_lock");
+    expect(TOOL_GOAL_RUN).toBe("goal_run");
+    expect(TOOL_GOAL_RETRY).toBe("goal_retry");
+    expect(TOOL_GOAL_CHECK_DONE).toBe("goal_check_done");
   });
 });
 
@@ -138,6 +153,11 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
     expect(TOOL_CATEGORY_MAP[TOOL_ARTIFACT_READ]).toBe("fileRead");
     expect(TOOL_CATEGORY_MAP[TOOL_ARTIFACT_WRITE]).toBe("fileWrite");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CREATE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_LOCK]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RUN]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RETRY]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CHECK_DONE]).toBe("goal");
   });
 });
 
@@ -165,6 +185,11 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("bash")).toBe("shell");
     expect(getToolCategory("workflow_create")).toBe("workflow");
     expect(getToolCategory("workflow_update_stage")).toBe("workflow");
+    expect(getToolCategory("goal_create")).toBe("goal");
+    expect(getToolCategory("goal_lock")).toBe("goal");
+    expect(getToolCategory("goal_run")).toBe("goal");
+    expect(getToolCategory("goal_retry")).toBe("goal");
+    expect(getToolCategory("goal_check_done")).toBe("goal");
   });
 });
 
@@ -174,6 +199,11 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("grep")).toBe(true);
     expect(isBuiltinToolName("workflow_update_stage")).toBe(true);
     expect(isBuiltinToolName("ast_grep_replace")).toBe(true);
+    expect(isBuiltinToolName("goal_create")).toBe(true);
+    expect(isBuiltinToolName("goal_lock")).toBe(true);
+    expect(isBuiltinToolName("goal_run")).toBe(true);
+    expect(isBuiltinToolName("goal_retry")).toBe(true);
+    expect(isBuiltinToolName("goal_check_done")).toBe(true);
   });
 
   test("returns false for unknown names", () => {
@@ -185,7 +215,7 @@ describe("isBuiltinToolName()", () => {
   test("acts as a type guard narrowing to BuiltinToolName", () => {
     const name: string = "file_read";
     if (isBuiltinToolName(name)) {
-      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "workflow" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
+      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "workflow" | "goal" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
       expect(cat).toBe("fileRead");
     }
   });

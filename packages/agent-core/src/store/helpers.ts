@@ -5,7 +5,9 @@ import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
 import type { SessionModelInfo } from "@archcode/protocol";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
-import { WorkflowUuidSchema } from "../agents/workflow/state";
+import type { SessionRole } from "./types";
+
+const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 
 const SessionModelInfoSchema = z.strictObject({
   displayName: z.string(),
@@ -312,7 +314,9 @@ export const SessionFileSchema = z.strictObject({
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
   rootSessionId: z.string(),
   parentSessionId: z.string().optional(),
-  workflowId: WorkflowUuidSchema.optional(),
+  goalId: z.string().uuid().optional(),
+  loopId: z.string().uuid().optional(),
+  sessionRole: SessionRoleSchema.optional(),
   eventCursor: z.number().optional(),
 });
 
@@ -322,7 +326,9 @@ export interface SessionSummary {
   sessionId: string;
   rootSessionId: string;
   parentSessionId?: string;
-  workflowId?: string;
+  goalId?: string;
+  loopId?: string;
+  sessionRole?: SessionRole;
   agentName?: string | null;
   modelInfo?: SessionModelInfo | null;
   title?: string | null;
@@ -335,7 +341,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "workflowId" | "events"
+  "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -386,7 +392,9 @@ async function saveSessionTranscript(
     rootSessionId: state.rootSessionId,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
-    ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
+    ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
+    ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
+    ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 
@@ -443,7 +451,9 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     eventCursor: state.nextEventId > 0 ? state.nextEventId - 1 : -1,
     ...((state.events?.length ?? 0) === 0 ? {} : { events: state.events }),
     ...(state.parentSessionId === undefined ? {} : { parentSessionId: state.parentSessionId }),
-    ...(state.workflowId === undefined ? {} : { workflowId: state.workflowId }),
+    ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
+    ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
+    ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
     ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 }
@@ -462,7 +472,9 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
           sessionId: parsed.sessionId,
           rootSessionId: parsed.rootSessionId,
           ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
-          ...(parsed.workflowId === undefined ? {} : { workflowId: parsed.workflowId }),
+          ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
+          ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
+          ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
           agentName: parsed.agentName,
           ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
           title: parsed.title ?? null,
