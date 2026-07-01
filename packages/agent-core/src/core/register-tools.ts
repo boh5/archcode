@@ -19,6 +19,12 @@ import {
   createWorkflowTaskCheckTool,
   createWorkflowUpdateStageTool,
 } from "../tools/builtins/workflow";
+import {
+  createGoalCreateTool,
+  createGoalLockTool,
+  createGoalRetryTool,
+  createGoalRunTool,
+} from "../tools/builtins/goal-tools";
 
 export function registerBuiltinTools(
   registry: ToolRegistry,
@@ -38,6 +44,11 @@ export function registerBuiltinTools(
   registry.register(createArtifactReadTool());
   registry.register(createArtifactWriteTool());
   registry.register(createWorkflowTaskCheckTool());
+
+  registry.register(createGoalCreateTool());
+  registry.register(createGoalLockTool());
+  registry.register(createGoalRunTool());
+  registry.register(createGoalRetryTool());
 
   registry.globalHooks.after.push(createRedactionHook());
   registry.globalHooks.after.push(createOutputTruncator({ logger: logger.child({ module: "tools.truncate" }) }));
