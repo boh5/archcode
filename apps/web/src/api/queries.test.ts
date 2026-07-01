@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { GoalState, HitlRequest, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
-import { focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import type { DashboardGoal } from "./types";
+import { activeGoalsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -278,5 +279,46 @@ describe("web session query contracts", () => {
   test("queryKeys.hitl is keyed correctly", () => {
     expect(queryKeys.hitl).toEqual(["hitl", "pending"]);
     expect(queryKeys.projectHitl("archcode")).toEqual(["projects", "archcode", "hitl"]);
+  });
+
+  test("activeGoalsQueryOptions fetches global active goals with project metadata", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const goals: DashboardGoal[] = [
+      {
+        id: "goal-1",
+        projectId: "archcode",
+        title: "Active Goal",
+        status: "running",
+        phase: "build",
+        doneConditions: [],
+        doneResults: {},
+        reviewerAgent: "reviewer",
+        retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+        retryCount: 0,
+        approvalPoints: [],
+        author: "user",
+        childSessionIds: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        projectSlug: "archcode",
+        projectName: "ArchCode",
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/goals?status=active");
+      return jsonResponse({ goals });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = activeGoalsQueryOptions();
+    const result = await (opts as unknown as QueryOptionWithFn<DashboardGoal[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["goals", "active"]);
+    expect(result).toEqual(goals);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys.activeGoals is keyed correctly", () => {
+    expect(queryKeys.activeGoals).toEqual(["goals", "active"]);
   });
 });

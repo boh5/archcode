@@ -1,11 +1,12 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
+  DashboardGoal,
+  DashboardHitlItem,
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
   GoalState,
-  HitlRequest,
   Project,
   Session,
   SessionSummary,
@@ -15,6 +16,7 @@ import type {
 export const queryKeys = {
   projects: ["projects"] as const,
   goals: ["goals"] as const,
+  activeGoals: ["goals", "active"] as const,
   projectGoals: (slug: string) => ["projects", slug, "goals"] as const,
   goal: (slug: string, goalId: string) => ["projects", slug, "goals", goalId] as const,
   hitl: ["hitl", "pending"] as const,
@@ -109,7 +111,7 @@ export function hitlQueryOptions() {
   return queryOptions({
     queryKey: queryKeys.hitl,
     queryFn: async () => {
-      const response = await apiFetch<{ hitl: HitlRequest[] }>("/api/hitl?status=pending");
+      const response = await apiFetch<{ hitl: DashboardHitlItem[] }>("/api/hitl?status=pending");
       return response.hitl;
     },
   });
@@ -119,12 +121,22 @@ export function projectHitlQueryOptions(slug: string) {
   return queryOptions({
     queryKey: queryKeys.projectHitl(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ hitl: HitlRequest[] }>(
+      const response = await apiFetch<{ hitl: DashboardHitlItem[] }>(
         `/api/projects/${encodeURIComponent(slug)}/hitl`,
       );
       return response.hitl;
     },
     enabled: slug.length > 0,
+  });
+}
+
+export function activeGoalsQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.activeGoals,
+    queryFn: async () => {
+      const response = await apiFetch<{ goals: DashboardGoal[] }>("/api/goals?status=active");
+      return response.goals;
+    },
   });
 }
 
@@ -184,6 +196,10 @@ export function useGoal(slug: string, goalId: string) {
 
 export function useHitl() {
   return useQuery(hitlQueryOptions());
+}
+
+export function useActiveGoals() {
+  return useQuery(activeGoalsQueryOptions());
 }
 
 export function useProjectHitl(slug: string) {

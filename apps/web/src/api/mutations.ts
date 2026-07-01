@@ -289,7 +289,7 @@ export function useRespondHitl() {
     }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectHitl("") });
+      await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
     },
   });
 }
@@ -305,7 +305,7 @@ export function useCancelHitl() {
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectHitl("") });
+      await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
     },
   });
 }

@@ -1,6 +1,6 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
 import { RootLayout } from "./routes/root-layout";
-import { EmptyState } from "./routes/empty-state";
+import { Dashboard } from "./routes/dashboard";
 import { ProjectRoute } from "./routes/project";
 import { SessionRoute } from "./routes/session";
 import { GoalsRoute } from "./routes/goals";
@@ -22,7 +22,7 @@ export const router = createBrowserRouter([
       {
         element: <RootLayout />,
         children: [
-          { path: "/", element: <EmptyState /> },
+          { path: "/", element: <Dashboard /> },
           { path: "/projects/:slug", element: <ProjectRoute /> },
           { path: "/projects/:slug/goals", element: <GoalsRoute /> },
           { path: "/projects/:slug/goals/:goalId", element: <GoalDetailRoute /> },
