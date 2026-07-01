@@ -4,7 +4,6 @@ import { ChatMessages } from "../components/composite/ChatMessages";
 import { AttentionQueue } from "../components/features/AttentionQueue";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
-import { PipelineStepper } from "../components/features/PipelineStepper";
 import { useFocusedSession, useSession } from "../api/queries";
 import { getWebSessionStore, markSessionForeground, useSessionStore } from "../store/session-store";
 
@@ -183,9 +182,9 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={sessionId}
+        goalId={session?.goalId}
         onToggleDetail={() => {}}
       />
-      <PipelineStepper slug={slug} />
       <ChatMessages slug={slug} sessionId={sessionId} />
       <AttentionQueue slug={slug} sessionId={sessionId} />
       <ChatInput slug={slug} sessionId={sessionId} />

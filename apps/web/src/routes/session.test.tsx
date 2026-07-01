@@ -245,7 +245,6 @@ describe("SessionRoute focused view store behavior", () => {
           ? input.pathname
           : new URL(input.url).pathname;
 
-      if (path.endsWith("/workflow")) return Response.json(null);
       if (path.endsWith("/sessions/root-session")) return Response.json(rootSession);
       if (path.endsWith("/sessions/child-session")) return Response.json(childSession);
       return new Response("Not found", { status: 404 });

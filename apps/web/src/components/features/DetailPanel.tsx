@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { DiffTab } from "./DiffTab";
-import { StateTab } from "./StateTab";
 import { TodoTab } from "./TodoTab";
 
-type TabId = "diff" | "state" | "todo";
+type TabId = "diff" | "todo";
 
 interface TabDef {
   id: TabId;
@@ -13,7 +12,6 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: "diff", label: "Diff" },
-  { id: "state", label: "State" },
   { id: "todo", label: "Todo" },
 ];
 
@@ -41,7 +39,6 @@ export function DetailPanel() {
 
       <div className="min-w-0 flex-1 overflow-hidden">
         {activeTab === "diff" && <DiffTab slug={slug} />}
-        {activeTab === "state" && <StateTab slug={slug} sessionId={sessionId} />}
         {activeTab === "todo" && <TodoTab slug={slug} sessionId={sessionId} />}
       </div>
     </div>

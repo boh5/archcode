@@ -629,6 +629,9 @@ export interface SessionSummary {
   agentName?: string | null;
   modelInfo?: SessionModelInfo | null;
   title?: string | null;
+  /** Goal this session belongs to (replaces legacy workflowId). */
+  goalId?: string;
+  /** @deprecated Legacy workflow association — superseded by goalId. */
   workflowId?: string;
   createdAt: number;
   lastUpdatedAt?: number;
@@ -665,6 +668,9 @@ export interface Session {
   sessionId?: string;
   rootSessionId: string;
   title?: string | null;
+  /** Goal this session belongs to (replaces legacy workflowId). */
+  goalId?: string;
+  /** @deprecated Legacy workflow association — superseded by goalId. */
   workflowId?: string;
   createdAt: number;
   updatedAt?: number;

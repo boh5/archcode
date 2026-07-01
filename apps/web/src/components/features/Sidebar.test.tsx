@@ -140,7 +140,6 @@ mock.module("../../api/queries", () => ({
   projectsQueryOptions: () => ({}),
   sessionsQueryOptions: (_slug: string) => ({}),
   sessionQueryOptions: (_slug: string, _sessionId: string) => ({}),
-  workflowQueryOptions: (_slug: string, _workflowId: string) => ({}),
   diffQueryOptions: (_slug: string) => ({}),
   useProjects,
   useSessions,

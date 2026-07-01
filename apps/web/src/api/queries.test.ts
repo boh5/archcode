@@ -25,7 +25,7 @@ describe("web session query contracts", () => {
     const rootSession: SessionSummary = {
       sessionId: "root-session",
       rootSessionId: "root-session",
-      workflowId: "workflow-root",
+      goalId: "goal-root",
       title: "Root",
       createdAt: 1_000,
       lastUpdatedAt: 2_000,
@@ -52,7 +52,7 @@ describe("web session query contracts", () => {
         sessionId: "root-session",
         rootSessionId: "root-session",
         parentSessionId: undefined,
-        workflowId: "workflow-root",
+        goalId: "goal-root",
         title: "Root",
         createdAt: 1_000,
         updatedAt: 2_000,

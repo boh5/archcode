@@ -257,7 +257,7 @@ function normalizeSessionSummary(session: SessionSummary): Session {
     rootSessionId: session.rootSessionId,
     parentSessionId: session.parentSessionId,
     title: session.title,
-    workflowId: session.workflowId,
+    ...(session.goalId === undefined ? {} : { goalId: session.goalId }),
     createdAt: session.createdAt,
     updatedAt: session.lastUpdatedAt,
     lastUpdatedAt: session.lastUpdatedAt,
