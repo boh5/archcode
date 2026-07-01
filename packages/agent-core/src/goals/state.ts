@@ -1,0 +1,566 @@
+import { existsSync } from "node:fs";
+import { mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+
+import { z } from "zod/v4";
+import type {
+  ApprovalPoint as ProtocolApprovalPoint,
+  DoneCondition as ProtocolDoneCondition,
+  DoneResult as ProtocolDoneResult,
+  GoalPhase as ProtocolGoalPhase,
+  GoalState as ProtocolGoalState,
+  GoalStatus as ProtocolGoalStatus,
+  RetryPolicy as ProtocolRetryPolicy,
+} from "@archcode/protocol";
+
+import type { Logger } from "../logger";
+import { silentLogger } from "../logger";
+
+export const GoalStatusSchema = z.enum([
+  "draft",
+  "locked",
+  "running",
+  "verifying",
+  "reviewed",
+  "completed",
+  "failed",
+  "escalated",
+  "paused",
+]);
+
+export const GoalPhaseSchema = z.enum(["plan", "build", "review"]);
+
+export const GoalUuidSchema = z.uuid();
+export const GoalTitleSchema = z.string().trim().min(1).max(200);
+
+export const RetryPolicySchema = z.strictObject({
+  maxRetries: z.number().int().nonnegative(),
+  backoffMs: z.number().int().nonnegative(),
+  escalateOnFailure: z.boolean(),
+}) satisfies z.ZodType<ProtocolRetryPolicy>;
+
+export const ApprovalPointSchema = z.enum(["after_plan", "before_complete"]);
+
+const DoneConditionBaseSchema = z.strictObject({
+  id: z.string().trim().min(1),
+  required: z.boolean().default(true),
+});
+
+export const TestsPassDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("tests_pass"),
+  params: z.strictObject({ command: z.string().trim().min(1).optional() }),
+});
+
+export const TypecheckPassDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("typecheck_pass"),
+  params: z.strictObject({ command: z.string().trim().min(1).optional() }),
+});
+
+export const LspCleanDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("lsp_clean"),
+  params: z.strictObject({
+    paths: z.array(z.string().trim().min(1)).optional(),
+    severity: z.enum(["error", "warning"]).optional(),
+  }),
+});
+
+export const FileExistsDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("file_exists"),
+  params: z.strictObject({ path: z.string().trim().min(1) }),
+});
+
+export const GrepContainsDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("grep_contains"),
+  params: z.strictObject({
+    pattern: z.string().min(1),
+    path: z.string().trim().min(1).optional(),
+    minMatches: z.number().int().positive().optional(),
+  }),
+});
+
+export const GrepEmptyDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("grep_empty"),
+  params: z.strictObject({
+    pattern: z.string().min(1),
+    path: z.string().trim().min(1).optional(),
+  }),
+});
+
+export const CommandSucceedsDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("command_succeeds"),
+  params: z.strictObject({
+    command: z.string().trim().min(1),
+    timeoutMs: z.number().int().positive().optional(),
+  }),
+});
+
+export const UserConfirmedDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("user_confirmed"),
+  params: z.strictObject({ prompt: z.string().trim().min(1) }),
+});
+
+export const SpecComplianceDoneConditionSchema = DoneConditionBaseSchema.extend({
+  kind: z.literal("spec_compliance"),
+  params: z.strictObject({
+    specPath: z.string().trim().min(1),
+    focusAreas: z.array(z.string().trim().min(1)).optional(),
+  }),
+});
+
+export const DoneConditionSchema = z.discriminatedUnion("kind", [
+  TestsPassDoneConditionSchema,
+  TypecheckPassDoneConditionSchema,
+  LspCleanDoneConditionSchema,
+  FileExistsDoneConditionSchema,
+  GrepContainsDoneConditionSchema,
+  GrepEmptyDoneConditionSchema,
+  CommandSucceedsDoneConditionSchema,
+  UserConfirmedDoneConditionSchema,
+  SpecComplianceDoneConditionSchema,
+]) satisfies z.ZodType<ProtocolDoneCondition>;
+
+export const DoneResultSchema = z.strictObject({
+  conditionId: z.string().trim().min(1),
+  passed: z.boolean(),
+  evidence: z.string(),
+  checkedAt: z.string(),
+}) satisfies z.ZodType<ProtocolDoneResult>;
+
+export const GoalStateSchema = z.strictObject({
+  id: GoalUuidSchema,
+  projectId: z.string().trim().min(1),
+  title: GoalTitleSchema,
+  status: GoalStatusSchema,
+  phase: GoalPhaseSchema,
+  doneConditions: z.array(DoneConditionSchema),
+  doneResults: z.record(z.string(), DoneResultSchema),
+  reviewerAgent: z.string().trim().min(1),
+  retryPolicy: RetryPolicySchema,
+  retryCount: z.number().int().nonnegative().default(0),
+  approvalPoints: z.array(ApprovalPointSchema),
+  author: z.string().trim().min(1),
+  lockedBy: z.string().trim().min(1).optional(),
+  mainSessionId: z.string().trim().min(1).optional(),
+  childSessionIds: z.array(z.string().trim().min(1)),
+  lockedAt: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastError: z.string().optional(),
+}) satisfies z.ZodType<ProtocolGoalState>;
+
+export type GoalStatus = ProtocolGoalStatus;
+export type GoalPhase = ProtocolGoalPhase;
+export type DoneCondition = ProtocolDoneCondition;
+export type DoneResult = ProtocolDoneResult;
+export type RetryPolicy = ProtocolRetryPolicy;
+export type ApprovalPoint = ProtocolApprovalPoint;
+export type GoalState = ProtocolGoalState;
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxRetries: 3,
+  backoffMs: 1000,
+  escalateOnFailure: true,
+};
+
+const TERMINAL_STATUSES = new Set<GoalStatus>(["completed", "escalated"]);
+
+export class GoalPathError extends Error {
+  constructor(public readonly goalId: string) {
+    super(`Invalid goal path for id: ${goalId}`);
+    this.name = "GoalPathError";
+  }
+}
+
+export class GoalInvalidIdError extends Error {
+  constructor(public readonly goalId: string) {
+    super(`Invalid goal id format: ${goalId}`);
+    this.name = "GoalInvalidIdError";
+  }
+}
+
+export class GoalStateError extends Error {
+  constructor(
+    public readonly goalId: string,
+    public readonly cause: unknown,
+  ) {
+    super(`Invalid goal state for ${goalId}`);
+    this.name = "GoalStateError";
+  }
+}
+
+export class GoalLockedError extends Error {
+  constructor(
+    public readonly goalId: string,
+    public readonly status: GoalStatus,
+  ) {
+    super(`Goal ${goalId} is ${status}; generic patch is only allowed while draft`);
+    this.name = "GoalLockedError";
+  }
+}
+
+export class GoalEmptyConditionsError extends Error {
+  constructor(public readonly goalId: string) {
+    super(`Goal ${goalId} cannot be locked without done conditions`);
+    this.name = "GoalEmptyConditionsError";
+  }
+}
+
+export class GoalNotFoundError extends Error {
+  constructor(public readonly goalId: string) {
+    super(`Goal not found: ${goalId}`);
+    this.name = "GoalNotFoundError";
+  }
+}
+
+export type GoalPatchInput = Partial<Pick<GoalState,
+  | "title"
+  | "doneConditions"
+  | "retryPolicy"
+  | "approvalPoints"
+  | "reviewerAgent"
+  | "author"
+>>;
+
+export class GoalStateManager {
+  readonly #logger: Logger;
+
+  constructor(
+    private readonly workspaceRoot: string,
+    logger: Logger = silentLogger,
+  ) {
+    this.#logger = logger.child({ module: "goals.state" });
+  }
+
+  async create(
+    projectId: string,
+    title: string,
+    author: string,
+    doneConditions: DoneCondition[] = [],
+    retryPolicy: RetryPolicy = DEFAULT_RETRY_POLICY,
+    approvalPoints: ApprovalPoint[] = [],
+    reviewerAgent = "reviewer",
+  ): Promise<GoalState> {
+    const now = new Date().toISOString();
+    const state = GoalStateSchema.parse({
+      id: crypto.randomUUID(),
+      projectId,
+      title,
+      status: "draft",
+      phase: "plan",
+      doneConditions,
+      doneResults: {},
+      reviewerAgent,
+      retryPolicy,
+      retryCount: 0,
+      approvalPoints,
+      author,
+      childSessionIds: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await this.write(state);
+    return state;
+  }
+
+  async read(goalId: string): Promise<GoalState> {
+    if (!GoalUuidSchema.safeParse(goalId).success) {
+      throw new GoalInvalidIdError(goalId);
+    }
+    const filePath = await this.goalStatePath(goalId);
+    if (!existsSync(filePath)) throw new GoalNotFoundError(goalId);
+
+    const content = await Bun.file(filePath).text();
+    return this.parseGoalState(goalId, content);
+  }
+
+  async listGoals(projectId?: string): Promise<GoalState[]> {
+    const goalsRoot = resolve(this.workspaceRoot, ".archcode", "goals");
+    const entries = await readdir(goalsRoot, { withFileTypes: true }).catch((error: unknown) => {
+      if (this.isMissingDirectoryError(error)) return [];
+      this.#logger.warn("goals.list.readdir.failed", { error: logError(error) });
+      throw error;
+    });
+    const states: GoalState[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const goalId = entry.name;
+      if (!GoalUuidSchema.safeParse(goalId).success) {
+        throw new GoalInvalidIdError(goalId);
+      }
+
+      try {
+        const state = await this.read(goalId);
+        if (projectId && state.projectId !== projectId) continue;
+        states.push(state);
+      } catch (error) {
+        if (error instanceof GoalStateError) {
+          this.#logger.debug("goals.list.parse.skipped", {
+            context: { path: join(goalsRoot, goalId, "goal.json") },
+            error: logError(error),
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return states.sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async patch(goalId: string, updates: GoalPatchInput): Promise<GoalState> {
+    const state = await this.read(goalId);
+    if (state.status !== "draft") {
+      throw new GoalLockedError(goalId, state.status);
+    }
+
+    const updated = GoalStateSchema.parse({
+      ...state,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async lock(goalId: string, lockedBy: string): Promise<GoalState> {
+    const state = await this.read(goalId);
+    if (state.status !== "draft") {
+      throw new GoalStateError(goalId, `Cannot lock goal from status ${state.status}`);
+    }
+    if (state.doneConditions.length === 0) {
+      throw new GoalEmptyConditionsError(goalId);
+    }
+
+    const now = new Date().toISOString();
+    const updated = GoalStateSchema.parse({
+      ...state,
+      status: "locked",
+      lockedBy,
+      lockedAt: now,
+      updatedAt: now,
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async transitionStatus(goalId: string, newStatus: GoalStatus): Promise<GoalState> {
+    const state = await this.read(goalId);
+    this.assertValidTransition(state, newStatus);
+
+    const updated = GoalStateSchema.parse({
+      ...state,
+      status: newStatus,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updatePhase(goalId: string, phase: GoalPhase): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      phase,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async recordDoneResult(goalId: string, conditionId: string, result: DoneResult): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const parsedResult = DoneResultSchema.parse({ ...result, conditionId });
+    const updated = GoalStateSchema.parse({
+      ...state,
+      doneResults: { ...state.doneResults, [conditionId]: parsedResult },
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async incrementRetryCount(goalId: string): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      retryCount: state.retryCount + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateLastError(goalId: string, error: string): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      lastError: error,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateSessionIds(
+    goalId: string,
+    mainSessionId?: string,
+    childSessionIds?: string[],
+  ): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      mainSessionId: mainSessionId ?? state.mainSessionId,
+      childSessionIds: childSessionIds ?? state.childSessionIds,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async resolveContainedPathForTest(relative: string): Promise<string> {
+    try {
+      return await resolveContainedPath(relative, this.goalsRoot());
+    } catch (error) {
+      if (error instanceof SafeGoalPathError) throw new GoalPathError(relative);
+      throw error;
+    }
+  }
+
+  private async write(state: GoalState): Promise<void> {
+    const filePath = await this.goalStatePath(state.id);
+    await atomicWrite(filePath, `${JSON.stringify(state, null, 2)}\n`);
+  }
+
+  private async goalStatePath(goalId: string): Promise<string> {
+    try {
+      return await resolveContainedPath(join(goalId, "goal.json"), this.goalsRoot());
+    } catch (error) {
+      if (error instanceof SafeGoalPathError) throw new GoalPathError(goalId);
+      throw error;
+    }
+  }
+
+  private goalsRoot(): string {
+    return resolve(this.workspaceRoot, ".archcode", "goals");
+  }
+
+  private parseGoalState(goalId: string, content: string): GoalState {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch (error) {
+      throw new GoalStateError(goalId, error);
+    }
+
+    const result = GoalStateSchema.safeParse(parsed);
+    if (!result.success) throw new GoalStateError(goalId, result.error);
+    return result.data;
+  }
+
+  private assertValidTransition(state: GoalState, newStatus: GoalStatus): void {
+    if (state.status === newStatus) return;
+    if (newStatus === "locked") {
+      throw new GoalStateError(state.id, "Use lock() for draft → locked transitions");
+    }
+    if (TERMINAL_STATUSES.has(state.status)) {
+      throw new GoalStateError(state.id, `Cannot transition from terminal status ${state.status}`);
+    }
+    if (newStatus === "paused") return;
+    if (state.status === "paused" && newStatus === "running") return;
+
+    const allowed: Partial<Record<GoalStatus, readonly GoalStatus[]>> = {
+      locked: ["running"],
+      running: ["verifying", "failed"],
+      verifying: ["reviewed", "failed"],
+      reviewed: ["completed"],
+      failed: ["running", "escalated"],
+    };
+
+    if (!allowed[state.status]?.includes(newStatus)) {
+      throw new GoalStateError(state.id, `Invalid transition ${state.status} → ${newStatus}`);
+    }
+
+    if (state.status === "verifying" && newStatus === "reviewed" && !this.allRequiredDoneResultsPassed(state)) {
+      throw new GoalStateError(state.id, "Cannot review goal until all required done conditions passed");
+    }
+  }
+
+  private allRequiredDoneResultsPassed(state: GoalState): boolean {
+    return state.doneConditions
+      .filter((condition) => condition.required !== false)
+      .every((condition) => state.doneResults[condition.id]?.passed === true);
+  }
+
+  private isMissingDirectoryError(error: unknown): boolean {
+    return error instanceof Error && "code" in error && error.code === "ENOENT";
+  }
+}
+
+class SafeGoalPathError extends Error {
+  constructor(
+    public readonly path: string,
+    public readonly reason: string,
+  ) {
+    super(`Safe goal path error: ${reason} (path: "${path}")`);
+    this.name = "SafeGoalPathError";
+  }
+}
+
+async function atomicWrite(filePath: string, content: string): Promise<void> {
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
+
+  const tmpPath = join(dir, `.tmp-${crypto.randomUUID()}`);
+  try {
+    await Bun.write(tmpPath, content);
+  } catch (error) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  try {
+    await rename(tmpPath, filePath);
+  } catch (error) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function resolveContainedPath(relative: string, root: string): Promise<string> {
+  if (resolve(relative) === relative && !relative.startsWith(".")) {
+    throw new SafeGoalPathError(relative, "Absolute paths are not allowed");
+  }
+
+  const normalized = resolve(root, relative);
+  if (!isContained(normalized, root)) {
+    throw new SafeGoalPathError(relative, "Path escapes the goals directory");
+  }
+
+  try {
+    const realPath = await realpath(normalized);
+    const realRoot = await realpath(root);
+    if (!isContained(realPath, realRoot)) {
+      throw new SafeGoalPathError(normalized, "Symlink resolves outside the goals directory");
+    }
+    return realPath;
+  } catch (error) {
+    if (error instanceof SafeGoalPathError) throw error;
+    return normalized;
+  }
+}
+
+function isContained(resolvedPath: string, root: string): boolean {
+  const normalizedResolved = resolve(resolvedPath);
+  const normalizedRoot = resolve(root);
+  return normalizedResolved === normalizedRoot || normalizedResolved.startsWith(`${normalizedRoot}/`);
+}
+
+function logError(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) {
+    return { name: error.name || "Error", message: error.message };
+  }
+  return { name: typeof error, message: String(error) };
+}
