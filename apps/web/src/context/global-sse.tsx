@@ -11,6 +11,7 @@ import type {
   GlobalSSEHeartbeatEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
+  SessionEventPayload,
 } from "@archcode/protocol";
 
 export type GlobalSSEConnectionState = "connecting" | "open" | "reconnecting" | "closed";
@@ -80,10 +81,20 @@ export function handleSSEEvent(
         });
       }
 
-      if (envelope.payload.type === "workflow.state_change") {
+      if (isGoalPayload(envelope.payload)) {
+        deps.invalidateQueries({ queryKey: queryKeys.goals });
+        deps.invalidateQueries({ queryKey: queryKeys.projectGoals(envelope.slug) });
         deps.invalidateQueries({
-          queryKey: queryKeys.workflow(envelope.slug, envelope.payload.workflowId),
+          queryKey: queryKeys.goal(envelope.slug, envelope.payload.goalId),
         });
+        deps.invalidateQueries({
+          queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
+        });
+      }
+
+      if (isHitlPayload(envelope.payload)) {
+        deps.invalidateQueries({ queryKey: queryKeys.hitl });
+        deps.invalidateQueries({ queryKey: queryKeys.projectHitl(envelope.slug) });
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
@@ -120,6 +131,18 @@ export function handleSSEEvent(
       break;
     }
   }
+}
+
+function isGoalPayload(
+  payload: SessionEventPayload,
+): payload is Extract<SessionEventPayload, { type: "goal.state_change" | "goal.done_check" | "goal.escalation" }> {
+  return payload.type === "goal.state_change" || payload.type === "goal.done_check" || payload.type === "goal.escalation";
+}
+
+function isHitlPayload(
+  payload: SessionEventPayload,
+): payload is Extract<SessionEventPayload, { type: "hitl.request" | "hitl.resolved" }> {
+  return payload.type === "hitl.request" || payload.type === "hitl.resolved";
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {

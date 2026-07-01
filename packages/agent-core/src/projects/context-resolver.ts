@@ -13,7 +13,7 @@ export interface ProjectContextResolverOptions {
   /** Factory primarily for testing alternate GoalStateManager construction. */
   goalStateFactory?: (workspaceRoot: string) => GoalStateManager;
   /** Factory primarily for testing alternate HitlService construction. */
-  hitlFactory?: () => HitlService;
+  hitlFactory?: (workspaceRoot: string) => HitlService;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
@@ -25,7 +25,7 @@ export class ProjectContextResolver {
   #contexts = new Map<string, Promise<ProjectContext>>();
   readonly #logger: Logger;
   readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
-  readonly #hitlFactory: () => HitlService;
+  readonly #hitlFactory: (workspaceRoot: string) => HitlService;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
@@ -67,7 +67,7 @@ export class ProjectContextResolver {
     return {
       project: this.#createPlaceholderProjectInfo(workspaceRoot),
       goalState: this.#goalStateFactory(workspaceRoot),
-      hitl: this.#hitlFactory(),
+      hitl: this.#hitlFactory(workspaceRoot),
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
     };

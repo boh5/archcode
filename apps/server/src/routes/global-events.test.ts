@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent } from "@archcode/protocol";
+import type { GlobalSSEEvent, GoalState } from "@archcode/protocol";
 import { Hono } from "hono";
-import { createServerApp } from "../app";
+import { createServerApp, createServerEventRuntime } from "../app";
 import { errorHandler } from "../error-handler";
 import { GlobalEventBus, globalEventBus, type GlobalEventBusListener } from "../events/global-event-bus";
 import { createGlobalEventsRoutes } from "./global-events";
@@ -175,6 +175,38 @@ describe("global events route", () => {
     expect(text).toContain("id: shared:singleton:1");
   });
 
+  test("bridges goal state changes from session events to global SSE consumers", async () => {
+    const runtime = createRuntimeWithManualSubscriptions();
+    const serverRuntime = createServerEventRuntime(runtime);
+    const response = await createApp(globalEventBus).request("/api/events");
+    const goal = createGoalState("goal-1", "proj", "running");
+
+    const execution = serverRuntime.startSessionExecution({
+      slug: "proj",
+      workspaceRoot: "/workspace",
+      sessionId: "session-1",
+      userMessage: "run goal",
+    });
+    runtime.emitSession("session-1", {
+      type: "event",
+      slug: "proj",
+      sessionId: "session-1",
+      eventId: 11,
+      createdAt: 1700000000000,
+      kind: "goal.state_change",
+      payload: { type: "goal.state_change", goalId: goal.id, status: goal.status, state: goal },
+      agentName: "orchestrator",
+    });
+
+    const text = await readUntil(response, (chunk) => chunk.includes("goal.state_change"));
+    expect(text).toContain("id: proj:session-1:11");
+    expect(text).toContain('"goalId":"goal-1"');
+    expect(text).toContain('"projectId":"proj"');
+
+    runtime.resolveExecution();
+    await execution.promise;
+  });
+
   test("server app no longer registers the old per-session SSE endpoint", async () => {
     const { app } = createServerApp({} as AgentRuntime, { dev: true });
 
@@ -183,3 +215,47 @@ describe("global events route", () => {
     expect(response.status).toBe(404);
   });
 });
+
+function createRuntimeWithManualSubscriptions() {
+  const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
+  let resolveExecution!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolveExecution = resolve;
+  });
+
+  const runtime = {
+    subscribeSessionEvents: mock((input: { sessionId: string; onEvent: (event: GlobalSSEEvent) => void }) => {
+      subscriptions.set(input.sessionId, input.onEvent);
+      return () => subscriptions.delete(input.sessionId);
+    }),
+    startSessionExecution: mock(() => ({ promise })),
+    emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
+    resolveExecution: () => resolveExecution(),
+  };
+
+  return runtime as unknown as AgentRuntime & {
+    emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
+    resolveExecution: () => void;
+  };
+}
+
+function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
+  return {
+    id: goalId,
+    projectId,
+    title: "Ship Goal",
+    status,
+    phase: "build",
+    doneConditions: [],
+    doneResults: {},
+    reviewerAgent: "reviewer",
+    retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
+    retryCount: 0,
+    approvalPoints: [],
+    author: "architect",
+    mainSessionId: "session-1",
+    childSessionIds: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+}

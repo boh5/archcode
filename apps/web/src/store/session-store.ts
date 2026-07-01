@@ -171,15 +171,40 @@ function appendEnvelopeToState(
 
 function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEvent {
   switch (event.type) {
-    case "permission.request":
-    case "permission.terminal":
-    case "question.request":
-    case "question.terminal":
-    case "workflow.state_change":
-    case "shutdown":
-      return false;
-    default:
+    case "execution-start":
+    case "execution-end":
+    case "user-message":
+    case "system-notice":
+    case "text-start":
+    case "text-delta":
+    case "text-end":
+    case "reasoning-start":
+    case "reasoning-delta":
+    case "reasoning-end":
+    case "tool-input-start":
+    case "tool-call":
+    case "tool-input-resolved":
+    case "tool-attempt":
+    case "tool-result":
+    case "tool-child-session-link":
+    case "todo-write":
+    case "reminder":
+    case "reminder-consumed":
+    case "step-start":
+    case "step-end":
+    case "loop-error":
+    case "llm-retry":
+    case "llm-recovery":
+    case "llm-recovery-failed":
+    case "compact":
+    case "goal.state_change":
+    case "goal.done_check":
+    case "goal.escalation":
+    case "hitl.request":
+    case "hitl.resolved":
       return true;
+    default:
+      return false;
   }
 }
 

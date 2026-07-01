@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { StoreApi } from "zustand";
 import type {
+  GoalState,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
   GlobalSSEMcpStatusEvent,
@@ -8,7 +9,6 @@ import type {
   GlobalSSELaggedEvent,
   GlobalSSEShutdownEvent,
   McpServerStatus,
-  WorkflowStateChangeEvent,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
@@ -55,13 +55,14 @@ describe("parseSSEEvent", () => {
     expect(result!.type).toBe("event");
   });
 
-  test("parses workflow state change event payload", () => {
-    const payload: WorkflowStateChangeEvent = {
-      type: "workflow.state_change",
-      workflowId: "workflow-1",
-      changed: ["stage"],
-      updatedAt: "2026-06-03T00:00:00.000Z",
-    };
+  test("parses goal state change event payload", () => {
+    const state = createGoalState("goal-1", "proj", "running");
+    const payload = {
+      type: "goal.state_change",
+      goalId: state.id,
+      status: state.status,
+      state,
+    } as const;
     const data = JSON.stringify({
       type: "event",
       slug: "p",
@@ -259,19 +260,20 @@ describe("handleSSEEvent", () => {
     });
   });
 
-  test("invalidates the targeted workflow and session queries on workflow state change", () => {
-    const envelope: GlobalSessionEventEnvelope<WorkflowStateChangeEvent> = {
+  test("invalidates goal and session queries on goal state change", () => {
+    const state = createGoalState("goal-123", "proj", "running");
+    const envelope: GlobalSessionEventEnvelope = {
       type: "event",
       slug: "proj",
       sessionId: "session-1",
       eventId: 2,
       createdAt: Date.now(),
-      kind: "workflow.state_change",
+      kind: "goal.state_change",
       payload: {
-        type: "workflow.state_change",
-        workflowId: "workflow-123",
-        changed: ["stage", "status"],
-        updatedAt: "2026-06-03T00:00:00.000Z",
+        type: "goal.state_change",
+        goalId: state.id,
+        status: state.status,
+        state,
       },
       agentName: "orchestrator",
     };
@@ -279,10 +281,40 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(2);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["goals"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["projects", "proj", "workflows", "workflow-123"],
+      queryKey: ["projects", "proj", "goals"],
     });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "goals", "goal-123"],
+    });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["projects", "proj", "sessions", "session-1"],
+    });
+  });
+
+  test("invalidates HITL queues and session query on HITL resolved", () => {
+    const envelope: GlobalSessionEventEnvelope = {
+      type: "event",
+      slug: "proj",
+      sessionId: "session-1",
+      eventId: 3,
+      createdAt: Date.now(),
+      kind: "hitl.resolved",
+      payload: {
+        type: "hitl.resolved",
+        hitlId: "hitl-123",
+        status: "resolved",
+        response: { kind: "approval", approved: true, comment: "ok" },
+      },
+      agentName: "orchestrator",
+    };
+
+    handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
+
+    expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "sessions", "session-1"],
     });
@@ -414,3 +446,24 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).not.toHaveBeenCalled();
   });
 });
+
+function createGoalState(goalId: string, projectId: string, status: GoalState["status"]): GoalState {
+  return {
+    id: goalId,
+    projectId,
+    title: "Ship Goal",
+    status,
+    phase: "build",
+    doneConditions: [],
+    doneResults: {},
+    reviewerAgent: "reviewer",
+    retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
+    retryCount: 0,
+    approvalPoints: [],
+    author: "architect",
+    mainSessionId: "session-1",
+    childSessionIds: [],
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+  };
+}

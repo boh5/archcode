@@ -284,6 +284,16 @@ export class SessionStoreManager {
     return store.getState();
   }
 
+  appendSessionEvent(sessionId: string, event: SessionEventPayload, workspaceRoot?: string): boolean {
+    const store = workspaceRoot === undefined
+      ? this.findLoadedSession(sessionId)
+      : this.get(sessionId, workspaceRoot);
+    if (store === undefined) return false;
+
+    store.getState().append(event);
+    return true;
+  }
+
   private findLoadedSession(sessionId: string): StoreApi<SessionStoreState> | undefined {
     const direct = this.#registry.get(sessionId);
     if (direct !== undefined) return direct;

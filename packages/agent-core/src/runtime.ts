@@ -24,7 +24,14 @@ import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
-import type { McpServerStatus, SessionTreeResponse } from "@archcode/protocol";
+import type {
+  HitlPayload as ProtocolHitlPayload,
+  HitlRequest as ProtocolHitlRequest,
+  HitlResponse as ProtocolHitlResponse,
+  HitlStreamEvent,
+  McpServerStatus,
+  SessionTreeResponse,
+} from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
 import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
@@ -33,6 +40,7 @@ import { SessionExecutionManager } from "./execution";
 import type { ActiveSessionExecution, SubscribeSessionEventsInput } from "./execution";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
+import type { HitlEvent, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -150,12 +158,17 @@ export async function createRuntime(
 
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
-    const hitl = new HitlService();
+    const sessionStoreManager = new SessionStoreManager({ logger });
+    const hitl = new HitlService({
+      submitHitlEvent: (sessionId, event) => {
+        const protocolEvent = toProtocolHitlEvent(event);
+        if (protocolEvent) sessionStoreManager.appendSessionEvent(sessionId, protocolEvent);
+      },
+    });
     const contextResolver = new ProjectContextResolver({
       hitlFactory: () => hitl,
       logger: runtimeLogger.child({ module: "projects" }),
     });
-    const sessionStoreManager = new SessionStoreManager({ logger });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
       providerRegistry,
@@ -294,6 +307,84 @@ export async function createRuntime(
     await closeMcpManagerBestEffort(mcpManager, recordWarning);
     throw err;
   }
+}
+
+function toProtocolHitlEvent(event: HitlEvent): HitlStreamEvent | undefined {
+  if (event.type === "hitl.request") {
+    return {
+      type: "hitl.request",
+      request: {
+        id: event.hitlId,
+        sessionId: event.sessionId,
+        ...(event.trigger.goalId === undefined ? {} : { goalId: event.trigger.goalId }),
+        ...(event.trigger.loopId === undefined ? {} : { loopId: event.trigger.loopId }),
+        kind: event.kind,
+        prompt: hitlPrompt(event.payload),
+        payload: protocolHitlPayload(event.payload),
+        trigger: event.trigger.source?.startsWith("goal.") || event.kind !== "question" ? "approval_point" : "agent_request",
+        status: "pending",
+        createdAt: new Date(event.createdAt).toISOString(),
+      } satisfies ProtocolHitlRequest,
+    };
+  }
+
+  return {
+    type: "hitl.resolved",
+    hitlId: event.hitlId,
+    status: event.status,
+    ...(event.status === "resolved" ? { response: protocolHitlResponse(event.kind, event.response) } : {}),
+  };
+}
+
+function hitlPrompt(payload: HitlPayload): string {
+  return payload.message ?? payload.title ?? ("action" in payload ? payload.action : "Human input requested");
+}
+
+function protocolHitlPayload(payload: HitlPayload): ProtocolHitlPayload {
+  if (payload.kind === "question") {
+    return {
+      kind: "question",
+      ...(payload.options === undefined ? {} : { options: payload.options.map(({ label, description }) => ({ label, ...(description === undefined ? {} : { description }) })) }),
+      ...(payload.multiple === undefined ? {} : { multiple: payload.multiple }),
+      ...(payload.custom === undefined ? {} : { custom: payload.custom }),
+      ...(payload.recommendedOption === undefined ? {} : { recommendedOption: payload.recommendedOption }),
+      ...(payload.rationale === undefined ? {} : { rationale: payload.rationale }),
+    };
+  }
+  if (payload.kind === "approval") {
+    return { kind: "approval", action: payload.action, context: payload.context };
+  }
+  if (payload.kind === "review") {
+    return { kind: "review", artifacts: payload.artifacts };
+  }
+  return { kind: "question", custom: true };
+}
+
+function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePayload): ProtocolHitlResponse {
+  if (kind === "approval") {
+    const approved = response.decision === "approved" || response.decision === "approve" || response.verdict === "approve" || response.data?.approved === true;
+    return {
+      kind: "approval",
+      approved,
+      ...(response.data?.approveAlways === true ? { approveAlways: true } : {}),
+      ...(response.comment === undefined ? {} : { comment: response.comment }),
+    };
+  }
+  if (kind === "review") {
+    return {
+      kind: "review",
+      verdict: response.verdict ?? (response.decision === "approved" ? "approve" : "request_changes"),
+      ...(response.comment === undefined ? {} : { comment: response.comment }),
+    };
+  }
+  const answers = Array.isArray(response.answers)
+    ? response.answers.map((answer) => String(answer))
+    : response.decision === undefined ? [] : [response.decision];
+  return {
+    kind: "question",
+    answers,
+    ...(response.comment === undefined ? {} : { comment: response.comment }),
+  };
 }
 
 async function recoverRegisteredProjectGoals(input: {

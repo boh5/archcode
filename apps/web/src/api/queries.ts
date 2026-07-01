@@ -13,6 +13,11 @@ import type {
 
 export const queryKeys = {
   projects: ["projects"] as const,
+  goals: ["goals"] as const,
+  projectGoals: (slug: string) => ["projects", slug, "goals"] as const,
+  goal: (slug: string, goalId: string) => ["projects", slug, "goals", goalId] as const,
+  hitl: ["hitl"] as const,
+  projectHitl: (slug: string) => ["projects", slug, "hitl"] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
