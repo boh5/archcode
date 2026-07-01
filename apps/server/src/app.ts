@@ -9,9 +9,11 @@ import { PermissionService } from "./permission-service";
 import { requestLogger } from "./logger";
 import { createCommandsRoutes } from "./routes/commands";
 import { createDirectoriesRoutes } from "./routes/directories";
+import { createDashboardRoutes } from "./routes/dashboard";
 import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createGoalsRoutes } from "./routes/goals";
+import { createHitlRoutes } from "./routes/hitl";
 import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createPermissionRoutes } from "./routes/permissions";
@@ -74,7 +76,10 @@ export function createServerApp(
   app.get("/api/health", (c) => c.json({ ok: true }));
 
   const projects = createProjectsRoutes(serverRuntime);
+  const dashboard = createDashboardRoutes(serverRuntime);
   const goals = createGoalsRoutes(serverRuntime);
+  const hitl = createHitlRoutes(serverRuntime);
+  const projectHitl = createHitlRoutes(serverRuntime, "project");
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
@@ -86,8 +91,11 @@ export function createServerApp(
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);
 
+  app.route("/api", dashboard);
+  app.route("/api", hitl);
   app.route("/api/projects", projects);
   app.route("/api/projects", goals);
+  app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/events", globalEvents);
