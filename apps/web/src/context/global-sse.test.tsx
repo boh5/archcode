@@ -313,7 +313,7 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "sessions", "session-1"],

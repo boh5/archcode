@@ -2,10 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
 import type {
+  ApprovalPoint,
   CommandResult,
+  DoneCondition,
+  GoalState,
   PermissionDecision,
   Project,
   QuestionAnswerBody,
+  RetryPolicy,
   Session,
 } from "./types";
 
@@ -148,5 +152,160 @@ export function useAbortSession() {
         method: "POST",
       },
     ),
+  });
+}
+
+// ─── Goal Mutations ───
+
+export function useCreateGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      slug,
+      title,
+      doneConditions,
+      retryPolicy,
+      approvalPoints,
+      reviewerAgent,
+      author,
+    }: {
+      slug: string;
+      title: string;
+      doneConditions: DoneCondition[];
+      retryPolicy: RetryPolicy;
+      approvalPoints: ApprovalPoint[];
+      reviewerAgent: string;
+      author: string;
+    }) => apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals`, {
+      method: "POST",
+      body: { title, doneConditions, retryPolicy, approvalPoints, reviewerAgent, author },
+    }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+export function useLockGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, goalId, lockedBy }: { slug: string; goalId: string; lockedBy: string }) =>
+      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/lock`, {
+        method: "POST",
+        body: { lockedBy },
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+export function useRunGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
+      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/run`, {
+        method: "POST",
+        body: {},
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+export function useRetryGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
+      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/retry`, {
+        method: "POST",
+        body: {},
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+export function useEscalateGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
+      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/escalate`, {
+        method: "POST",
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+export function useCancelGoal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
+      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/cancel`, {
+        method: "POST",
+      }),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
+    },
+  });
+}
+
+// ─── HITL Mutations ───
+
+export function useRespondHitl() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      hitlId,
+      body,
+    }: {
+      hitlId: string;
+      body: {
+        decision?: string;
+        answers?: unknown;
+        verdict?: "approve" | "reject" | "request_changes";
+        comment?: string;
+        data?: Record<string, unknown>;
+      };
+    }) => apiFetch<{ ok: boolean; hitlId: string }>(`/api/hitl/${encodeURIComponent(hitlId)}/respond`, {
+      method: "POST",
+      body,
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectHitl("") });
+    },
+  });
+}
+
+export function useCancelHitl() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ hitlId, reason }: { hitlId: string; reason?: string }) =>
+      apiFetch<{ ok: boolean; hitlId: string }>(`/api/hitl/${encodeURIComponent(hitlId)}/cancel`, {
+        method: "POST",
+        body: reason ? { reason } : {},
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projectHitl("") });
+    },
   });
 }

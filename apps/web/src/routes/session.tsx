@@ -17,7 +17,6 @@ export function SessionRoute() {
   const navigate = useNavigate();
 
   const { data: session } = useSession(slug, sessionId);
-  const workflowId = session?.workflowId ?? "";
   const focusSessionId = useSessionStore(sessionId, (s) => s.focusSessionId, slug);
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
 
@@ -184,10 +183,9 @@ export function SessionRoute() {
       <ChatHeader
         slug={slug}
         sessionId={sessionId}
-        workflowId={workflowId}
         onToggleDetail={() => {}}
       />
-      <PipelineStepper slug={slug} workflowId={workflowId} />
+      <PipelineStepper slug={slug} />
       <ChatMessages slug={slug} sessionId={sessionId} />
       <AttentionQueue slug={slug} sessionId={sessionId} />
       <ChatInput slug={slug} sessionId={sessionId} />

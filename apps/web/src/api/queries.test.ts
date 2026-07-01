@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { SessionSummary, SessionTreeResponse, WorkflowState } from "@archcode/protocol";
-import { focusedSessionQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions, workflowQueryOptions } from "./queries";
+import type { GoalState, HitlRequest, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import { focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -141,36 +141,142 @@ describe("web session query contracts", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("workflowQueryOptions fetches the canonical workflow endpoint by workflowId", async () => {
+  test("goalsQueryOptions fetches project goals and returns GoalState array", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const workflow: WorkflowState = {
-      id: "workflow-123",
-      title: "Test Workflow",
-      type: "full_feature",
-      stage: "product_drafting",
-      status: "active",
-      sessionIds: { orchestrator: "session-1" },
-    };
+    const goals: GoalState[] = [
+      {
+        id: "goal-1",
+        projectId: "archcode",
+        title: "Test Goal",
+        status: "draft",
+        phase: "plan",
+        doneConditions: [],
+        doneResults: {},
+        reviewerAgent: "reviewer",
+        retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+        retryCount: 0,
+        approvalPoints: [],
+        author: "user",
+        childSessionIds: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/workflows/workflow-123");
-      return jsonResponse({ workflow });
+      expect(String(input)).toBe("/api/projects/archcode/goals");
+      return jsonResponse({ goals });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = workflowQueryOptions("archcode", "workflow-123");
-    const result = await (opts as unknown as QueryOptionWithFn<WorkflowState>).queryFn();
+    const opts = goalsQueryOptions("archcode");
+    const result = await (opts as unknown as QueryOptionWithFn<GoalState[]>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "workflows", "workflow-123"]);
-    expect(result).toEqual(workflow);
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "goals"]);
+    expect(result).toEqual(goals);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("queryKeys.workflow is keyed by workflowId", () => {
-    expect(queryKeys.workflow("archcode", "workflow-abc")).toEqual([
+  test("goalQueryOptions fetches a single goal by goalId", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const goal: GoalState = {
+      id: "goal-1",
+      projectId: "archcode",
+      title: "Single Goal",
+      status: "locked",
+      phase: "plan",
+      doneConditions: [],
+      doneResults: {},
+      reviewerAgent: "reviewer",
+      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+      retryCount: 0,
+      approvalPoints: [],
+      author: "user",
+      childSessionIds: [],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1");
+      return jsonResponse(goal);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = goalQueryOptions("archcode", "goal-1");
+    const result = await (opts as unknown as QueryOptionWithFn<GoalState>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "goals", "goal-1"]);
+    expect(result).toEqual(goal);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys.goal is keyed by goalId", () => {
+    expect(queryKeys.goal("archcode", "goal-abc")).toEqual([
       "projects",
       "archcode",
-      "workflows",
-      "workflow-abc",
+      "goals",
+      "goal-abc",
     ]);
+  });
+
+  test("hitlQueryOptions fetches global pending HITL requests", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const hitl: HitlRequest[] = [
+      {
+        id: "hitl-1",
+        sessionId: "session-1",
+        kind: "approval",
+        prompt: "Approve?",
+        payload: { kind: "approval", action: "run_tool", context: {} },
+        trigger: "agent_request",
+        status: "pending",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/hitl?status=pending");
+      return jsonResponse({ hitl });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = hitlQueryOptions();
+    const result = await (opts as unknown as QueryOptionWithFn<HitlRequest[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["hitl", "pending"]);
+    expect(result).toEqual(hitl);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("projectHitlQueryOptions fetches project-scoped HITL requests", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const hitl: HitlRequest[] = [
+      {
+        id: "hitl-2",
+        sessionId: "session-1",
+        goalId: "goal-1",
+        kind: "review",
+        prompt: "Review artifacts",
+        payload: { kind: "review", artifacts: [] },
+        trigger: "approval_point",
+        status: "pending",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/hitl");
+      return jsonResponse({ hitl });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = projectHitlQueryOptions("archcode");
+    const result = await (opts as unknown as QueryOptionWithFn<HitlRequest[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "hitl"]);
+    expect(result).toEqual(hitl);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys.hitl is keyed correctly", () => {
+    expect(queryKeys.hitl).toEqual(["hitl", "pending"]);
+    expect(queryKeys.projectHitl("archcode")).toEqual(["projects", "archcode", "hitl"]);
   });
 });

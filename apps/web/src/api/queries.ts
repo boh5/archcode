@@ -4,11 +4,12 @@ import type {
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
+  GoalState,
+  HitlRequest,
   Project,
   Session,
   SessionSummary,
   SessionTreeResponse,
-  WorkflowState,
 } from "./types";
 
 export const queryKeys = {
@@ -16,12 +17,11 @@ export const queryKeys = {
   goals: ["goals"] as const,
   projectGoals: (slug: string) => ["projects", slug, "goals"] as const,
   goal: (slug: string, goalId: string) => ["projects", slug, "goals", goalId] as const,
-  hitl: ["hitl"] as const,
+  hitl: ["hitl", "pending"] as const,
   projectHitl: (slug: string) => ["projects", slug, "hitl"] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
-  workflow: (slug: string, workflowId: string) => ["projects", slug, "workflows", workflowId] as const,
   tree: (slug: string, rootSessionId: string) => ["projects", slug, "sessions", rootSessionId, "tree"] as const,
   diff: (slug: string) => ["projects", slug, "diff"] as const,
   directories: {
@@ -79,16 +79,52 @@ export function focusedSessionQueryOptions(slug: string, focusSessionId: string 
   });
 }
 
-export function workflowQueryOptions(slug: string, workflowId: string) {
+export function goalsQueryOptions(slug: string) {
   return queryOptions({
-    queryKey: queryKeys.workflow(slug, workflowId),
+    queryKey: queryKeys.projectGoals(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ workflow: WorkflowState }>(
-        `/api/projects/${encodeURIComponent(slug)}/workflows/${encodeURIComponent(workflowId)}`,
+      const response = await apiFetch<{ goals: GoalState[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/goals`,
       );
-      return response.workflow;
+      return response.goals;
     },
-    enabled: slug.length > 0 && workflowId.length > 0,
+    enabled: slug.length > 0,
+  });
+}
+
+export function goalQueryOptions(slug: string, goalId: string) {
+  return queryOptions({
+    queryKey: queryKeys.goal(slug, goalId),
+    queryFn: async () => {
+      const response = await apiFetch<GoalState>(
+        `/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}`,
+      );
+      return response;
+    },
+    enabled: slug.length > 0 && goalId.length > 0,
+  });
+}
+
+export function hitlQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.hitl,
+    queryFn: async () => {
+      const response = await apiFetch<{ hitl: HitlRequest[] }>("/api/hitl?status=pending");
+      return response.hitl;
+    },
+  });
+}
+
+export function projectHitlQueryOptions(slug: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectHitl(slug),
+    queryFn: async () => {
+      const response = await apiFetch<{ hitl: HitlRequest[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/hitl`,
+      );
+      return response.hitl;
+    },
+    enabled: slug.length > 0,
   });
 }
 
@@ -138,8 +174,20 @@ export function useSessionTree(slug: string, rootSessionId: string) {
   return useQuery(sessionTreeQueryOptions(slug, rootSessionId));
 }
 
-export function useWorkflow(slug: string, workflowId: string) {
-  return useQuery(workflowQueryOptions(slug, workflowId));
+export function useGoals(slug: string) {
+  return useQuery(goalsQueryOptions(slug));
+}
+
+export function useGoal(slug: string, goalId: string) {
+  return useQuery(goalQueryOptions(slug, goalId));
+}
+
+export function useHitl() {
+  return useQuery(hitlQueryOptions());
+}
+
+export function useProjectHitl(slug: string) {
+  return useQuery(projectHitlQueryOptions(slug));
 }
 
 export function useDiff(slug: string) {

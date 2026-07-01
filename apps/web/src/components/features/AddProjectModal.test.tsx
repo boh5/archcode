@@ -144,7 +144,6 @@ mock.module("../../api/queries", () => ({
   useProjects: () => ({ data: [] }),
   useSessions: (_slug: string) => ({ data: [] }),
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
-  useWorkflow: (_slug: string, _workflowId: string) => ({ data: null }),
   useDiff: (_slug: string) => ({ data: [] }),
 }));
 

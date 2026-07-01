@@ -111,7 +111,6 @@ mock.module("../../api/queries", () => ({
   useProjects,
   useSessions: (_slug: string) => ({ data: [] }),
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
-  useWorkflow: (_slug: string, _workflowId: string) => ({ data: null }),
   useDiff: (_slug: string) => ({ data: [] }),
   useDirectoryList: (_path: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
   useDirectorySearch: (_query: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
