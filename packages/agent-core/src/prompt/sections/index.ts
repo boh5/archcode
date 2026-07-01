@@ -5,4 +5,3 @@ export { buildGuidelinesSection } from "./guidelines";
 export { buildSkillsSection } from "./skills";
 export { buildProjectSection } from "./project";
 export { buildMemorySection } from "./memory";
-export { buildWorkflowIntentGateSection } from "./workflow-intent-gate";

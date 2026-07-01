@@ -2,6 +2,8 @@ import { access, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { DoneCondition, DoneResult } from "@archcode/protocol";
+import { createProcessRunner } from "../process/runner";
+import type { ProcessRunnerResult } from "../process/types";
 
 const DEFAULT_TEST_COMMAND = "bun test";
 const DEFAULT_TYPECHECK_COMMAND = "bun run typecheck";
@@ -174,24 +176,25 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function runShellCommand(command: string, cwd: string, timeoutMs: number): Promise<CommandResult> {
-  const proc = Bun.spawn(["bash", "-c", command], {
+  const result = await createProcessRunner().run({
+    argv: ["bash", "-c", command],
     cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
+    stdin: null,
+    timeoutMs,
   });
 
-  const timeout = setTimeout(() => proc.kill(), timeoutMs);
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { stdout, stderr, exitCode };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return {
+    stdout: result.kind === "spawn-failure" ? "" : result.output.stdout,
+    stderr: result.kind === "spawn-failure" ? result.error.message : result.output.stderr,
+    exitCode: processResultExitCode(result),
+  };
+}
+
+function processResultExitCode(result: ProcessRunnerResult): number {
+  if (result.kind === "success" || result.kind === "nonzero") return result.exitCode;
+  if (result.kind === "timeout" || result.kind === "aborted") return result.exitCode ?? 124;
+  if (result.kind === "signal") return result.exitCode ?? 128;
+  return 127;
 }
 
 function doneResult(conditionId: string, passed: boolean, evidence: string): DoneResult {

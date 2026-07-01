@@ -21,7 +21,6 @@ import {
   TOOL_CANCEL_SESSION,
   TOOL_SKILL_LIST,
   TOOL_SKILL_READ,
-  TOOL_ARTIFACT_READ,
 } from "./names";
 
 /**
@@ -41,7 +40,6 @@ export const EXPLORER_READ_ONLY_TOOLS = [
   TOOL_LSP_SYMBOLS,
   TOOL_WEB_FETCH,
   TOOL_ASK_USER,
-  TOOL_ARTIFACT_READ,
 ] as const;
 
 /**

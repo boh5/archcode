@@ -29,8 +29,6 @@ const READ_TOOLS = new Set([
   "background_output",
   "view_tool_output",
   "memory_read",
-  "workflow_read",
-  "artifact_read",
 ]);
 
 export function filterMessagesForExtraction(messages: StoredMessage[]): StoredMessage[] {

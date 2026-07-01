@@ -17,7 +17,6 @@ import { createPermissionRoutes } from "./routes/permissions";
 import { createProjectsRoutes } from "./routes/projects";
 import { createQuestionsRoutes } from "./routes/questions";
 import { createSessionsRoutes } from "./routes/sessions";
-import { createWorkflowRoutes } from "./routes/workflow";
 import { createEmbeddedAssetHandler } from "./serve-web";
 import { globalEventBus } from "./events/global-event-bus";
 
@@ -81,7 +80,6 @@ export function createServerApp(
   const questions = createQuestionsRoutes(new AskUserService(serverRuntime));
   const commands = createCommandsRoutes(serverRuntime);
   const agents = new Hono();
-  const workflow = createWorkflowRoutes(serverRuntime);
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
   const mcp = createMcpRoutes(serverRuntime);
@@ -91,7 +89,6 @@ export function createServerApp(
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
   app.route("/api/events", globalEvents);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
-  app.route("/api/projects", workflow);
   app.route("/api/projects", files);
   app.route("/api/mcp", mcp);
   app.route("/api/sessions", new Hono());
@@ -99,7 +96,6 @@ export function createServerApp(
   app.route("/api/questions", questions);
   app.route("/api/commands", new Hono());
   app.route("/api/agents", agents);
-  app.route("/api/workflow", new Hono());
   app.route("/api/files", new Hono());
   app.route("/api/directories", directories);
 

@@ -17,7 +17,6 @@ import { silentLogger } from "../logger";
 import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
 import type { AgentFactory } from "../agents/factory";
 import type { AgentDefinition } from "../agents/factory-types";
-import { WorkflowStateManager } from "../agents/workflow/state";
 
 const workspaceRoot = join(import.meta.dir, "__test_tmp__", "session-execution-manager-workspace");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -180,20 +179,6 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
     resolveDelegatedSkills: mock(async () => []),
     ...overrides,
   } as AgentFactory;
-}
-
-async function createWorkflowState(input: {
-  title?: string;
-  type?: "research_only" | "quick_fix" | "full_feature";
-  stage?: "idle" | "researching" | "foreman_executing";
-}) {
-  const manager = new WorkflowStateManager(workspaceRoot, silentLogger);
-  const workflow = await manager.create({
-    title: input.title ?? "Active Workflow Test",
-    type: input.type ?? "full_feature",
-  });
-  if (input.stage === undefined || input.stage === "idle") return workflow;
-  return await manager.updateStage(workflow.id, input.stage);
 }
 
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
@@ -557,7 +542,7 @@ describe("SessionExecutionManager", () => {
     });
   });
 
-  test("legacy active workflow child prompt is omitted for workflow-capable child during Goal migration", async () => {
+  test("legacy active workflow child prompt is omitted during Goal migration", async () => {
     const parentId = crypto.randomUUID();
     const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", goalId });
@@ -565,7 +550,7 @@ describe("SessionExecutionManager", () => {
     const factory = makeFactory({
       getDefinition: mock((name: string) => {
         const base = makeFactory().getDefinition(name);
-        if (name === "explore") return { ...base, tools: { tools: ["workflow_read", "artifact_read"] } };
+        if (name === "explore") return { ...base, tools: { tools: ["file_read"] } };
         return base;
       }),
     });
@@ -582,7 +567,7 @@ describe("SessionExecutionManager", () => {
       parentToolCallId: "tool-call",
       toolName: "delegate",
       targetAgentName: "explore",
-      prompt: "inspect workflow artifacts",
+      prompt: "inspect files",
       skills: [],
       background: false,
       currentDepth: 0,
@@ -590,7 +575,7 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(childPrompt).toBe("inspect workflow artifacts");
+    expect(childPrompt).toBe("inspect files");
     expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
   });
@@ -641,7 +626,7 @@ describe("SessionExecutionManager", () => {
     const parentDefinition: AgentDefinition = {
       name: "explore",
       promptProfileId: "explore",
-      tools: { tools: ["delegate", "workflow_read"], delegateTargets: ["explore"] },
+      tools: { tools: ["delegate", "file_read"], delegateTargets: ["explore"] },
       hooks: { autoCompact: false, autoInjectReminder: false, todoContinuation: false, transcriptSave: false, memoryExtraction: false, memoryConsolidation: false, titleGeneration: "disabled" },
       childPolicy: { maxDepth: 2, maxConcurrent: 1, timeoutMs: 0, abortCascade: true, terminalReminders: true },
       includeMemoryInPrompt: false,
@@ -649,7 +634,7 @@ describe("SessionExecutionManager", () => {
     };
     const targetDefinition: AgentDefinition = {
       ...parentDefinition,
-      tools: { tools: ["artifact_read"] },
+      tools: { tools: ["file_read"] },
       childPolicy: undefined,
     };
     const factory = makeFactory({

@@ -12,7 +12,6 @@ import { configureDefaultWebFetchLogger } from "./tools/builtins/web-fetch";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
-  type ResolvedMcpServerConfig,
 } from "./config/mcp";
 import { registerBuiltinTools } from "./core/index";
 import {
@@ -337,26 +336,6 @@ async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<strin
   if (Bun.env.ARCHCODE_WORKSPACE_ROOT) return Bun.env.ARCHCODE_WORKSPACE_ROOT;
 
   return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
-}
-
-function collectMcpSecrets(
-  ...serverGroups: Array<Record<string, ResolvedMcpServerConfig>>
-): string[] {
-  const secrets: string[] = [];
-  for (const servers of serverGroups) {
-    for (const server of Object.values(servers)) {
-      if (server.headers) {
-        secrets.push(...Object.values(server.headers));
-        // Only redact URL when server has auth headers — URL may contain
-        // embedded credentials (e.g. tokens in query params) that should not
-        // leak into error messages alongside the auth headers.
-        secrets.push(server.url);
-      }
-      // Public servers without auth headers have no secrets to redact;
-      // their URLs are safe to show in error messages.
-    }
-  }
-  return secrets;
 }
 
 export async function closeMcpManagerBestEffort(

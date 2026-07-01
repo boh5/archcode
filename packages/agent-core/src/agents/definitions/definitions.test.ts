@@ -14,8 +14,6 @@ import {
   reviewerAgentDefinition,
 } from "./index";
 import {
-  TOOL_ARTIFACT_READ,
-  TOOL_ARTIFACT_WRITE,
   TOOL_AST_GREP_REPLACE,
   TOOL_BASH,
   TOOL_DELEGATE,
@@ -26,12 +24,6 @@ import {
   TOOL_GOAL_LOCK,
   TOOL_GOAL_RETRY,
   TOOL_GOAL_RUN,
-  TOOL_WORKFLOW_CREATE,
-  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
-  TOOL_WORKFLOW_READ,
-  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-  TOOL_WORKFLOW_TASK_CHECK,
-  TOOL_WORKFLOW_UPDATE_STAGE,
 } from "../../tools/names";
 
 const REQUIRED_AGENT_NAMES = [
@@ -44,14 +36,14 @@ const REQUIRED_AGENT_NAMES = [
 ] as const;
 
 const WORKFLOW_TOOLS = [
-  TOOL_WORKFLOW_CREATE,
-  TOOL_WORKFLOW_READ,
-  TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
-  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-  TOOL_WORKFLOW_TASK_CHECK,
-  TOOL_ARTIFACT_READ,
-  TOOL_ARTIFACT_WRITE,
+  "workflow_create",
+  "workflow_read",
+  "workflow_update_stage",
+  "workflow_propose_interactions",
+  "workflow_request_interactions",
+  "workflow_task_check",
+  "artifact_read",
+  "artifact_write",
 ] as const;
 
 const SOURCE_WRITE_TOOLS = [
@@ -67,7 +59,7 @@ function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
 
 describe("agentDefinitions", () => {
   test("exports exactly the six goal-era agent definitions", () => {
-    expect(agentDefinitions.map((definition) => definition.name)).toEqual(REQUIRED_AGENT_NAMES);
+    expect(agentDefinitions.map((definition) => definition.name)).toEqual([...REQUIRED_AGENT_NAMES]);
     expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(agentDefinitions.length);
   });
 
@@ -129,7 +121,7 @@ describe("agentDefinitions", () => {
     const tools = buildAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
-    expect(buildAgentDefinition.mcpTools).toBeUndefined();
+    expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
   });
 
@@ -165,7 +157,7 @@ describe("agentDefinitions", () => {
       expect(definition.tools.tools).not.toContain(TOOL_DELEGATE);
     }
 
-    expect(exploreAgentDefinition.mcpTools).toBeUndefined();
+    expect("mcpTools" in exploreAgentDefinition).toBe(false);
     expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
   });
 

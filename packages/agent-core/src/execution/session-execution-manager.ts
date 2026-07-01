@@ -23,12 +23,10 @@ import type { SubscribeSessionEventsInput } from "../events/session-event-bridge
 import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
 import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
-import type { Reminder, SessionStoreState } from "../store/types";
+import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import type { Logger } from "../logger";
-import { formatActiveWorkflowBlock, hasWorkflowTools } from "../prompt/sections/active-workflow";
-import type { ActiveWorkflowPromptContext } from "../prompt/types";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
 
@@ -254,15 +252,11 @@ export class SessionExecutionManager {
         parentSessionId: request.parentSessionId,
         goalId: parentState.goalId,
         loopId: parentState.loopId,
-        sessionRole: targetDefinition.name === "explore" || targetDefinition.name === "librarian"
-          ? targetDefinition.name
-          : undefined,
+        sessionRole: sessionRoleForAgent(targetDefinition.name),
         agentName: targetDefinition.name,
         ...(childTitle === undefined ? {} : { title: childTitle }),
       });
       this.#eventBridge.attachSession(workspaceRoot, childSessionId, childStore);
-
-      const activeWorkflow = await this.#resolveChildActiveWorkflow(childStore, targetAllowedTools);
 
       this.#config.sessionAgentManager.createChildAgent({
         workspaceRoot,
@@ -281,7 +275,7 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: buildChildUserMessage(request.prompt, activeWorkflow, targetAllowedTools),
+        userMessage: request.prompt,
         agentName: targetDefinition.name,
         origin: "tool_call",
       });
@@ -693,14 +687,6 @@ export class SessionExecutionManager {
     return undefined;
   }
 
-  async #resolveChildActiveWorkflow(
-    childStore: StoreApi<SessionStoreState>,
-    allowedTools: readonly string[],
-  ): Promise<ActiveWorkflowPromptContext | undefined> {
-    void childStore;
-    void allowedTools;
-    return undefined;
-  }
 }
 
 type SubAgentTerminalStatus = Extract<ToolChildSessionLinkStatus, "completed" | "failed" | "timed_out" | "cancelled" | "interrupted">;
@@ -727,6 +713,12 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
     return "cancelled";
   }
   return "failed";
+}
+
+function sessionRoleForAgent(agentName: string): SessionRole | undefined {
+  if (agentName === "plan" || agentName === "build" || agentName === "explore" || agentName === "librarian") return agentName;
+  if (agentName === "reviewer") return "review";
+  return undefined;
 }
 
 function abortExecutionStatus(signal: AbortSignal): "aborted" | "cancelled" | "timed_out" {
@@ -766,20 +758,6 @@ function appendTerminalReminder(
 function formatStatus(status: SubAgentTerminalStatus): string {
   if (status === "timed_out") return "timed out";
   return status;
-}
-
-function buildChildUserMessage(
-  prompt: string,
-  activeWorkflow: ActiveWorkflowPromptContext | undefined,
-  allowedTools: readonly string[],
-): string {
-  const sections = [prompt];
-
-  if (activeWorkflow !== undefined && hasWorkflowTools(allowedTools)) {
-    sections.push("", formatActiveWorkflowBlock(activeWorkflow));
-  }
-
-  return sections.join("\n");
 }
 
 function toAgentResult(store: StoreApi<SessionStoreState>): AgentResult {

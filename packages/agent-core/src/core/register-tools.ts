@@ -10,16 +10,6 @@ import {
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
-  createArtifactReadTool,
-  createArtifactWriteTool,
-  createWorkflowCreateTool,
-  createWorkflowReadTool,
-  createWorkflowProposeInteractionsTool,
-  createWorkflowRequestInteractionsTool,
-  createWorkflowTaskCheckTool,
-  createWorkflowUpdateStageTool,
-} from "../tools/builtins/workflow";
-import {
   createGoalCheckDoneTool,
   createGoalCreateTool,
   createGoalLockTool,
@@ -36,15 +26,6 @@ export function registerBuiltinTools(
 
   registry.register(createMemoryReadTool());
   registry.register(createMemoryWriteTool());
-
-  registry.register(createWorkflowCreateTool());
-  registry.register(createWorkflowReadTool());
-  registry.register(createWorkflowUpdateStageTool());
-  registry.register(createWorkflowProposeInteractionsTool());
-  registry.register(createWorkflowRequestInteractionsTool());
-  registry.register(createArtifactReadTool());
-  registry.register(createArtifactWriteTool());
-  registry.register(createWorkflowTaskCheckTool());
 
   registry.register(createGoalCreateTool());
   registry.register(createGoalLockTool());

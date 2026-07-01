@@ -5,7 +5,7 @@ import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
-import type { CompactionPart, PendingInteraction, Reminder, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
+import type { CompactionPart, PendingInteraction, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -226,7 +226,7 @@ function persistedState(
   goalId: string | undefined = undefined,
   pendingInteractions: PendingInteraction[] = [],
   loopId: string | undefined = undefined,
-  sessionRole: string | undefined = undefined,
+  sessionRole: SessionRole | undefined = undefined,
 ): PersistedSessionState {
   return {
     sessionId,

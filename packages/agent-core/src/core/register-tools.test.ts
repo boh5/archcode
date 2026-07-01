@@ -12,7 +12,6 @@ import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createBuiltinToolDescriptors } from "../tools/builtins";
-import { createArtifactReadTool, createArtifactWriteTool, createWorkflowCreateTool, createWorkflowReadTool, createWorkflowTaskCheckTool, createWorkflowUpdateStageTool } from "../tools/builtins/workflow";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import type { AuditEvent } from "../tools/hooks";
@@ -138,6 +137,21 @@ describe("registerBuiltinTools", () => {
       "auditAfterHook",
       "executionLoggerAfterHook",
     ]);
+  });
+
+  it("does not register legacy workflow or artifact tools", () => {
+    const registry = new ToolRegistry();
+
+    registerBuiltinTools(registry, silentLogger);
+
+    expect(registry.get("workflow_create")).toBeUndefined();
+    expect(registry.get("workflow_read")).toBeUndefined();
+    expect(registry.get("workflow_update_stage")).toBeUndefined();
+    expect(registry.get("workflow_propose_interactions")).toBeUndefined();
+    expect(registry.get("workflow_request_interactions")).toBeUndefined();
+    expect(registry.get("workflow_task_check")).toBeUndefined();
+    expect(registry.get("artifact_read")).toBeUndefined();
+    expect(registry.get("artifact_write")).toBeUndefined();
   });
 
   it("allowedTools permits and denies each Tier 2 tool through runtime registry checks", async () => {
@@ -426,12 +440,6 @@ describe("registerBuiltinTools", () => {
         ...createBuiltinToolDescriptors(),
         createMemoryReadTool(),
         createMemoryWriteTool(),
-        createWorkflowCreateTool(),
-        createWorkflowReadTool(),
-        createWorkflowUpdateStageTool(),
-        createArtifactReadTool(),
-        createArtifactWriteTool(),
-        createWorkflowTaskCheckTool(),
       ];
       const toolMap = new Map(descriptors.map((d) => [d.name, d]));
       const errors: string[] = [];

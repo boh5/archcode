@@ -20,7 +20,6 @@ export { memoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skill-list";
 export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
 export { viewToolOutputTool } from "./view-tool-output";
-export * from "./workflow";
 export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 
 import { fileReadTool } from "./file-read";

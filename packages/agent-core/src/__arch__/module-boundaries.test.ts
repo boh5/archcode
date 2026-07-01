@@ -138,8 +138,6 @@ const forbiddenServerSymbols = [
 ] as const;
 
 const rawBuiltinToolNames = [
-  "artifact_read",
-  "artifact_write",
   "ask_user",
   "ast_grep_replace",
   "ast_grep_search",
@@ -165,10 +163,6 @@ const rawBuiltinToolNames = [
   "view_tool_output",
   "wait_for_reminder",
   "web_fetch",
-  "workflow_create",
-  "workflow_read",
-  "workflow_update_stage",
-  "workflow_task_check",
 ] as const;
 
 function findPublicApiExportViolations(filePath: string, forbiddenNames: readonly string[]): Violation[] {

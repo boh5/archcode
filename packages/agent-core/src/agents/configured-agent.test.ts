@@ -549,24 +549,6 @@ describe("ConfiguredAgent", () => {
     expect(callArgs.system).not.toContain("## Active Workflow");
   });
 
-  test("workflow tools do not require ProjectContext workflow state during Goal migration", async () => {
-    const streamFn = setupMockStreamText("workflow tools ok");
-    const goalId = crypto.randomUUID();
-    const toolRegistry = createRegistry([
-      makeTool("workflow_read"),
-      makeTool("artifact_read"),
-    ]);
-    const store = storeManager.create(`configured-workflow-bound-${crypto.randomUUID()}`, tmpRoot, { goalId });
-    const agent = createAgent({
-      definition: definitionWith({ tools: { tools: ["workflow_read", "artifact_read"] } }),
-      store,
-      toolRegistry,
-    });
-
-    await expect(agent.run("read workflow state")).resolves.toEqual({ text: "workflow tools ok", steps: 0 });
-    expect(streamFn).toHaveBeenCalled();
-  });
-
   test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {
     setupToolCallStreamText("capture_context");
     let capturedAgentName: string | undefined;
