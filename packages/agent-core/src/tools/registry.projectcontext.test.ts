@@ -2,8 +2,8 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../agents/workflow/state";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
@@ -33,7 +33,6 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
   const workspaceRoot = join(TMP_ROOT, `${name}-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
 
-  const workflowState = new WorkflowStateManager(workspaceRoot);
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(workspaceRoot);
 
@@ -44,13 +43,13 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
       workspaceRoot,
       addedAt: new Date().toISOString(),
     },
-    workflowState,
+    goalState: new GoalStateManager(workspaceRoot),
+    hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals,
-    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }
 

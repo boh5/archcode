@@ -379,17 +379,17 @@ describe("createAgentFactory", () => {
     expect(child.store.getState().parentSessionId).toBe(parentSessionId);
   });
 
-  test("preserves workflow id on supplied stores", () => {
+  test("preserves goal id on supplied stores", () => {
     const factory = makeFactory([
       definition(),
       definition({ name: "explore", promptProfileId: "explorer", tools: { tools: nonDelegatingExplorerTools } }),
     ]);
 
-    const workflowId = crypto.randomUUID();
-    const store = storeManager.create(crypto.randomUUID(), "/test", { workflowId });
+    const goalId = crypto.randomUUID();
+    const store = storeManager.create(crypto.randomUUID(), "/test", { goalId });
     const child = factory.createAgent("explore", { store });
 
-    expect(child.store.getState().workflowId).toBe(workflowId);
+    expect(child.store.getState().goalId).toBe(goalId);
   });
 
   test("resolves explicit tool lists and strips delegation tools at depth three", () => {

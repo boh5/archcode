@@ -9,7 +9,6 @@ import {
   GoalNotFoundError,
   GoalPathError,
   GoalStateError,
-  GoalStateManager,
   GoalUuidSchema,
 } from "../../goals";
 
@@ -27,7 +26,7 @@ export function createGoalRetryTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalRetryInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = new GoalStateManager(ctx.workspaceRoot);
+        const manager = ctx.projectContext.goalState;
         await manager.incrementRetryCount(input.goalId);
         await manager.updatePhase(input.goalId, "plan");
         const goal = await manager.transitionStatus(input.goalId, "running");

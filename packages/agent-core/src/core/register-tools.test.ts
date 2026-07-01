@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
-import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../agents/workflow/state";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
@@ -69,16 +69,15 @@ function makeContext(
 }
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {
-  const workflowState = new WorkflowStateManager(workspaceRoot);
   return {
     project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
-    workflowState,
+    goalState: new GoalStateManager(workspaceRoot),
+    hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
-    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }
 

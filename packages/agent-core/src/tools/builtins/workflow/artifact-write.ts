@@ -14,6 +14,7 @@ import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { WorkflowPathError } from "../../../agents/workflow/state";
 import { validateTasksMarkdown, type TasksValidationError } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
+import { legacyWorkflowProjectContext } from "./legacy-project-context";
 
 export function createArtifactWriteTool(): AnyToolDescriptor {
   return defineTool({
@@ -22,7 +23,7 @@ export function createArtifactWriteTool(): AnyToolDescriptor {
     inputSchema: WorkflowArtifactWriteInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowArtifactWriteInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
-      const artifactManager = ctx.projectContext.artifacts;
+      const artifactManager = legacyWorkflowProjectContext(ctx.projectContext).artifacts;
       const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "artifact_write");
       if (guardResult) return guardResult;
 

@@ -21,6 +21,7 @@ import { getStagePrerequisitesForType } from "../../../agents/workflow/workflow-
 import { validateTasksMarkdown } from "../../../agents/workflow/tasks-format";
 import { guardCurrentWorkflow } from "./guard-current-workflow";
 import { formatCompactWorkflowJsonOutput, formatCompactWorkflowOutput } from "./compact-output";
+import { legacyWorkflowProjectContext } from "./legacy-project-context";
 
 const WorkflowUpdateStageInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to update"),
@@ -56,8 +57,9 @@ export function createWorkflowUpdateStageTool(): AnyToolDescriptor {
       ],
     },
     execute: async (input: WorkflowUpdateStageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
-      const stateManager = ctx.projectContext.workflowState;
-      const artifactManager = ctx.projectContext.artifacts;
+      const projectContext = legacyWorkflowProjectContext(ctx.projectContext);
+      const stateManager = projectContext.workflowState;
+      const artifactManager = projectContext.artifacts;
       const guardResult = guardCurrentWorkflow(input.workflowId, ctx, "workflow_update_stage");
       if (guardResult) return guardResult;
 

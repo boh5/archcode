@@ -516,8 +516,8 @@ describe("SessionExecutionManager", () => {
 
   test("startChildExecution validates through factory and runs a child session", async () => {
     const parentId = crypto.randomUUID();
-    const workflowId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", workflowId });
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", goalId });
     const factory = makeFactory();
     const { manager, sessionAgentManager } = createManager({}, { factory });
 
@@ -539,7 +539,7 @@ describe("SessionExecutionManager", () => {
 
     expect(sessionAgentManager.createChildAgent).toHaveBeenCalled();
     expect(handle.store.getState().parentSessionId).toBe(parentId);
-    expect(handle.store.getState().workflowId).toBe(workflowId);
+    expect(handle.store.getState().goalId).toBe(goalId);
     expect(handle.store.getState().agentName).toBe("explore");
     expect(parentStore.getState().events
       .filter((event) => event.kind === "tool-child-session-link")
@@ -557,10 +557,10 @@ describe("SessionExecutionManager", () => {
     });
   });
 
-  test("active workflow child prompt appears after delegated prompt for workflow-capable child", async () => {
+  test("legacy active workflow child prompt is omitted for workflow-capable child during Goal migration", async () => {
     const parentId = crypto.randomUUID();
-    const workflow = await createWorkflowState({ title: "Child Active Workflow", stage: "foreman_executing" });
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", workflowId: workflow.id });
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", goalId });
     let childPrompt = "";
     const factory = makeFactory({
       getDefinition: mock((name: string) => {
@@ -590,23 +590,15 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(childPrompt).toContain("## Active Workflow");
-    expect(childPrompt).toContain(`Workflow ID: ${workflow.id}`);
-    expect(childPrompt).toContain("Title: Child Active Workflow");
-    expect(childPrompt).toContain("Type: full_feature");
-    expect(childPrompt).toContain("Stage: foreman_executing");
-    expect(childPrompt).toContain("Status: active");
-    expect(childPrompt).toContain(`Use the exact workflow UUID \`${workflow.id}\``);
-    expect(childPrompt).toContain("Never use `default`, a slug, or a title as a workflow ID");
-    expect(childPrompt.indexOf("inspect workflow artifacts")).toBeLessThan(childPrompt.indexOf("## Active Workflow"));
-    expect(handle.store.getState().workflowId).toBe(workflow.id);
-    expect(childPrompt).not.toContain("Workflow ID: default");
+    expect(childPrompt).toBe("inspect workflow artifacts");
+    expect(handle.store.getState().goalId).toBe(goalId);
+    expect(childPrompt).not.toContain("## Active Workflow");
   });
 
   test("active workflow child prompt is omitted for agents without workflow tools", async () => {
     const parentId = crypto.randomUUID();
-    const workflow = await createWorkflowState({ title: "Omitted Workflow" });
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", workflowId: workflow.id });
+    const goalId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", goalId });
     let childPrompt = "";
     const { manager } = createManager({}, {
       factory: makeFactory(),
@@ -630,19 +622,20 @@ describe("SessionExecutionManager", () => {
     await handle.result;
 
     expect(childPrompt).toBe("inspect without workflow tools");
+    expect(handle.store.getState().goalId).toBe(goalId);
     expect(childPrompt).not.toContain("## Active Workflow");
     expect(childPrompt).not.toContain("Omitted Workflow");
   });
 
-  test("active workflow block is inherited for deeper delegate paths", async () => {
+  test("goal id is inherited for deeper delegate paths without legacy active workflow prompt", async () => {
     const rootSessionId = crypto.randomUUID();
     const parentId = crypto.randomUUID();
-    const workflow = await createWorkflowState({ title: "Grandchild Active Workflow", type: "research_only", stage: "researching" });
+    const goalId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, {
       rootSessionId,
       parentSessionId: rootSessionId,
       agentName: "explore",
-      workflowId: workflow.id,
+      goalId,
     });
     let childPrompt = "";
     const parentDefinition: AgentDefinition = {
@@ -691,14 +684,9 @@ describe("SessionExecutionManager", () => {
     });
     await handle.result;
 
-    expect(handle.store.getState().workflowId).toBe(workflow.id);
-    expect(childPrompt).toContain("## Active Workflow");
-    expect(childPrompt).toContain(`Workflow ID: ${workflow.id}`);
-    expect(childPrompt).toContain("Title: Grandchild Active Workflow");
-    expect(childPrompt).toContain("Type: research_only");
-    expect(childPrompt).toContain("Stage: researching");
-    expect(childPrompt).toContain(`Use the exact workflow UUID \`${workflow.id}\``);
-    expect(childPrompt).toContain("Never use `default`, a slug, or a title as a workflow ID");
+    expect(handle.store.getState().goalId).toBe(goalId);
+    expect(childPrompt).toBe("grandchild inspect");
+    expect(childPrompt).not.toContain("## Active Workflow");
   });
 
   test("link write failure prevents child creation/start and releases reserved slot", async () => {

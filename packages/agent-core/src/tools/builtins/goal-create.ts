@@ -9,7 +9,6 @@ import {
   DoneConditionSchema,
   GoalPathError,
   GoalStateError,
-  GoalStateManager,
   RetryPolicySchema,
 } from "../../goals";
 
@@ -31,7 +30,7 @@ export function createGoalCreateTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = new GoalStateManager(ctx.workspaceRoot);
+        const manager = ctx.projectContext.goalState;
         const goal = await manager.create(
           ctx.projectContext.project.slug,
           input.title,

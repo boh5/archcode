@@ -83,7 +83,9 @@ function createMockStore(overrides: Partial<SessionStoreState> = {}): StoreApi<S
     expirePendingInteractions: mock(() => {}),
     setTitle: mock(() => {}),
     setParentSessionId: mock(() => {}),
-    setWorkflowId: mock(() => {}),
+    setGoalId: mock(() => {}),
+    setLoopId: mock(() => {}),
+    setSessionRole: mock(() => {}),
     toModelMessages: mock(() => []),
     ...overrides,
   };

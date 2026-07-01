@@ -3,8 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
-import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../../agents/workflow/state";
+import { GoalStateManager } from "../../goals/state";
+import { HitlService } from "../../hitl/service";
 import { storeManager } from "../../store/store";
 import type { ProjectContext } from "../../projects/types";
 import { silentLogger } from "../../logger";
@@ -77,13 +77,12 @@ function createIndexEntries(n: number): string {
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   const workspaceRoot = overrides.projectContext?.project.workspaceRoot ?? testDir;
-  const workflowState = new WorkflowStateManager(workspaceRoot);
   const projectContext: ProjectContext = overrides.projectContext ?? {
     project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
-    workflowState,
+    goalState: new GoalStateManager(workspaceRoot),
+    hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),
-    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_read",
   toolCallId: "call-1",

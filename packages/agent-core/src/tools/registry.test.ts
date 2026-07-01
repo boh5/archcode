@@ -8,8 +8,8 @@ import { storeManager } from "../store/store";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
-import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../agents/workflow/state";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import type {
@@ -65,7 +65,6 @@ function makeProjectContext(
   workspaceRoot: string,
   approvals = new ProjectApprovalManager(silentLogger),
 ): ProjectContext {
-  const workflowState = new WorkflowStateManager(workspaceRoot);
   return {
     project: {
       slug: "test-project",
@@ -73,13 +72,13 @@ function makeProjectContext(
       workspaceRoot,
       addedAt: new Date().toISOString(),
     },
-    workflowState,
+    goalState: new GoalStateManager(workspaceRoot),
+    hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
       user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals,
-    artifacts: new WorkflowArtifactManager(workspaceRoot, workflowState),
   };
 }
 

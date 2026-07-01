@@ -10,6 +10,7 @@ import {
   type SingleFileWorkflowArtifactKind,
 } from "../../../agents/workflow/artifacts";
 import { WorkflowArtifactKindSchema, WorkflowUuidSchema } from "../../../agents/workflow/state";
+import { legacyWorkflowProjectContext } from "./legacy-project-context";
 
 const ArtifactReadInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) owning the artifact"),
@@ -35,7 +36,8 @@ export function createArtifactReadTool(): AnyToolDescriptor {
     inputSchema: ArtifactReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (input: ArtifactReadInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
-      const artifactManager = ctx.projectContext.artifacts;
+      const projectContext = legacyWorkflowProjectContext(ctx.projectContext);
+      const artifactManager = projectContext.artifacts;
       try {
         const kind = input.kind;
         if (input.path) {
@@ -49,7 +51,7 @@ export function createArtifactReadTool(): AnyToolDescriptor {
         }
 
         if (kind && isMultiFileWorkflowArtifactKind(kind)) {
-          const state = await ctx.projectContext.workflowState.read(input.workflowId);
+          const state = await projectContext.workflowState.read(input.workflowId);
           return JSON.stringify({
             workflowId: input.workflowId,
             kind,
@@ -87,7 +89,7 @@ export function createArtifactReadTool(): AnyToolDescriptor {
 }
 
 function formatArtifactReadOutput(
-  artifact: Awaited<ReturnType<ToolExecutionContext["projectContext"]["artifacts"]["read"]>>,
+  artifact: Awaited<ReturnType<ReturnType<typeof legacyWorkflowProjectContext>["artifacts"]["read"]>>,
   input: ArtifactReadInput,
 ) {
   if (input.includeFullContent) {

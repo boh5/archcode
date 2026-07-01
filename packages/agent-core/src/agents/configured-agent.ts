@@ -15,7 +15,6 @@ import type { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { buildSystemPrompt, loadAgentsMd } from "../prompt/index";
 import type { PromptContext, PromptEnv } from "../prompt/index";
-import { hasWorkflowTools } from "../prompt/sections/active-workflow";
 import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
@@ -189,7 +188,6 @@ export class ConfiguredAgent implements Agent {
       const allowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
-      const activeWorkflow = await this.resolveActiveWorkflow(projectContext, allowedTools);
       const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
       const promptContext: PromptContext = {
         allowedTools,
@@ -199,7 +197,6 @@ export class ConfiguredAgent implements Agent {
         agentsMd: this.agentsMd,
         env: buildEnv(this.workspaceRoot),
         availableSkills,
-        ...(activeWorkflow === undefined ? {} : { activeWorkflow }),
         ...(this.activeSkills.length > 0 ? { activeSkills: this.activeSkills } : {}),
         ...(this.definition.includeMemoryInPrompt ? { memoryRoots: this.memoryRoots } : {}),
       };
@@ -343,26 +340,6 @@ export class ConfiguredAgent implements Agent {
         error,
         meta: { directory: TOOL_OUTPUT_DIR },
       });
-    }
-  }
-
-  private async resolveActiveWorkflow(projectContext: ProjectContext, allowedTools: readonly string[]): Promise<PromptContext["activeWorkflow"]> {
-    const workflowId = this.store.getState().workflowId;
-    if (workflowId === undefined || !hasWorkflowTools(allowedTools)) return undefined;
-
-    try {
-      const workflow = await projectContext.workflowState.read(workflowId);
-      return {
-        id: workflow.id,
-        title: workflow.title,
-        type: workflow.type,
-        stage: workflow.stage,
-        status: workflow.status,
-        resolvedInteractions: workflow.resolvedInteractions,
-      };
-    } catch (error) {
-      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-      throw new Error(`Active workflow context required but workflow state could not be read for workflowId "${workflowId}": ${detail}`);
     }
   }
 

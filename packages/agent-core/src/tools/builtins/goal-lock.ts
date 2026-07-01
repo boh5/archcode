@@ -9,7 +9,6 @@ import {
   GoalNotFoundError,
   GoalPathError,
   GoalStateError,
-  GoalStateManager,
   GoalUuidSchema,
 } from "../../goals";
 
@@ -27,7 +26,7 @@ export function createGoalLockTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalLockInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = new GoalStateManager(ctx.workspaceRoot);
+        const manager = ctx.projectContext.goalState;
         const lockedBy = ctx.store.getState().sessionId;
         const goal = await manager.lock(input.goalId, lockedBy);
         return JSON.stringify(goal, null, 2);

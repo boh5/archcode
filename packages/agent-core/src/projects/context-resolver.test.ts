@@ -2,8 +2,8 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { WorkflowArtifactManager } from "../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../agents/workflow/state";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
 import { silentLogger } from "../logger";
@@ -64,7 +64,8 @@ describe("ProjectContextResolver", () => {
     const second = await resolver.resolve(workspace);
 
     expect(second).not.toBe(first);
-    expect(second.workflowState).not.toBe(first.workflowState);
+    expect(second.goalState).not.toBe(first.goalState);
+    expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.approvals).not.toBe(first.approvals);
   });
@@ -126,8 +127,8 @@ describe("ProjectContextResolver", () => {
 
     const context = await resolver.resolve(workspace);
 
-    expect(context.workflowState).toBeInstanceOf(WorkflowStateManager);
-    expect(context.artifacts).toBeInstanceOf(WorkflowArtifactManager);
+    expect(context.goalState).toBeInstanceOf(GoalStateManager);
+    expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
     expect(context.project.slug).toBe(basename(workspace));
@@ -135,5 +136,54 @@ describe("ProjectContextResolver", () => {
     expect(context.project.workspaceRoot).toBe(workspace);
     expect(context.project.lastOpenedAt).toBeUndefined();
     expect(new Date(context.project.addedAt).toString()).not.toBe("Invalid Date");
+  });
+
+  test("project contexts expose Goal/HITL services and no active Workflow managers", async () => {
+    const workspace = await makeWorkspace("goal-hitl-shape");
+    const resolver = new ProjectContextResolver();
+
+    const context = await resolver.resolve(workspace);
+    const contextRecord = context as unknown as Record<string, unknown>;
+
+    expect(context.goalState).toBeInstanceOf(GoalStateManager);
+    expect(context.hitl).toBeInstanceOf(HitlService);
+    expect(contextRecord.workflowState).toBeUndefined();
+    expect(contextRecord.artifacts).toBeUndefined();
+  });
+
+  test("goals are isolated under each workspace .archcode/goals directory", async () => {
+    const workspaceA = await makeWorkspace("goals-a");
+    const workspaceB = await makeWorkspace("goals-b");
+    const resolver = new ProjectContextResolver();
+
+    const contextA = await resolver.resolve(workspaceA);
+    const contextB = await resolver.resolve(workspaceB);
+
+    const goalA = await contextA.goalState.create(contextA.project.slug, "Goal A", "architect");
+    const goalB = await contextB.goalState.create(contextB.project.slug, "Goal B", "architect");
+
+    expect((await contextA.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalA.id]);
+    expect((await contextB.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalB.id]);
+    expect(await Bun.file(join(workspaceA, ".archcode", "goals", goalA.id, "goal.json")).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceB, ".archcode", "goals", goalB.id, "goal.json")).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceB, ".archcode", "goals", goalA.id, "goal.json")).exists()).toBe(false);
+  });
+
+  test("custom Goal/HITL factories are used per resolved context", async () => {
+    const workspace = await makeWorkspace("custom-factories");
+    const goalState = new GoalStateManager(workspace);
+    const hitl = new HitlService({ submitHitlEvent: () => {} });
+    const resolver = new ProjectContextResolver({
+      goalStateFactory: mock((workspaceRoot: string) => {
+        expect(workspaceRoot).toBe(workspace);
+        return goalState;
+      }),
+      hitlFactory: mock(() => hitl),
+    });
+
+    const context = await resolver.resolve(workspace);
+
+    expect(context.goalState).toBe(goalState);
+    expect(context.hitl).toBe(hitl);
   });
 });

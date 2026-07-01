@@ -32,6 +32,8 @@ import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "./tools/types";
 import { SessionExecutionManager } from "./execution";
 import type { ActiveSessionExecution, SubscribeSessionEventsInput } from "./execution";
+import { GoalRunner } from "./goals/runner";
+import { HitlService } from "./hitl/service";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -42,6 +44,7 @@ export interface AgentRuntimeOptions {
   configPath?: string;
   workspaceRoot?: string;
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
+  projectRegistryHomeDir?: string;
   logger?: Logger;
 }
 
@@ -53,6 +56,7 @@ export interface AgentRuntime {
   readonly warnings: McpWarning[];
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
+  readonly hitl: HitlService;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string): Promise<SessionFile>;
@@ -146,8 +150,12 @@ export async function createRuntime(
     );
 
     await resolveWorkspaceRoot(options);
-    const projectRegistry = new ProjectRegistry({ logger: logger.child({ module: "projects.registry" }) });
-    const contextResolver = new ProjectContextResolver({ logger: runtimeLogger.child({ module: "projects" }) });
+    const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
+    const hitl = new HitlService();
+    const contextResolver = new ProjectContextResolver({
+      hitlFactory: () => hitl,
+      logger: runtimeLogger.child({ module: "projects" }),
+    });
     const sessionStoreManager = new SessionStoreManager({ logger });
     const sessionAgentManager = new SessionAgentManager({
       definitions: defaultAgentDefinitions,
@@ -234,6 +242,14 @@ export async function createRuntime(
       untrackSession,
       logger,
     });
+    await recoverRegisteredProjectGoals({
+      projectRegistry,
+      contextResolver,
+      hitl,
+      isSessionActive: (workspaceRoot, sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
+      createSession: async (workspaceRoot) => (await sessionStoreManager.createSessionFile(workspaceRoot)).sessionId,
+      logger: runtimeLogger,
+    });
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
@@ -246,6 +262,7 @@ export async function createRuntime(
       warnings,
       projectRegistry,
       contextResolver,
+      hitl,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot) => sessionStoreManager.createSessionFile(workspaceRoot),
@@ -277,6 +294,41 @@ export async function createRuntime(
     });
     await closeMcpManagerBestEffort(mcpManager, recordWarning);
     throw err;
+  }
+}
+
+async function recoverRegisteredProjectGoals(input: {
+  projectRegistry: ProjectRegistry;
+  contextResolver: ProjectContextResolver;
+  hitl: HitlService;
+  createSession: (workspaceRoot: string) => Promise<string>;
+  isSessionActive: (workspaceRoot: string, sessionId: string) => boolean;
+  logger: Logger;
+}): Promise<void> {
+  const projects = await input.projectRegistry.list();
+  for (const project of projects) {
+    try {
+      const projectContext = await input.contextResolver.resolve(project.workspaceRoot);
+      const runner = new GoalRunner({
+        goalStateManager: projectContext.goalState,
+        hitlService: projectContext.hitl,
+        workspaceRoot: project.workspaceRoot,
+        createSession: () => input.createSession(project.workspaceRoot),
+        isSessionActive: async (sessionId) => input.isSessionActive(project.workspaceRoot, sessionId),
+      });
+      const recovered = await runner.recoverInterruptedGoals(project.workspaceRoot);
+      if (recovered.length > 0) {
+        input.logger.info("goals.recovery.completed", {
+          context: { workspaceRoot: project.workspaceRoot },
+          meta: { recovered: recovered.map((goal) => ({ id: goal.id, status: goal.status })) },
+        });
+      }
+    } catch (error) {
+      input.logger.warn("goals.recovery.failed", {
+        error,
+        context: { workspaceRoot: project.workspaceRoot },
+      });
+    }
   }
 }
 

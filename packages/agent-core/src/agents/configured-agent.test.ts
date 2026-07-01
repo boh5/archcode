@@ -534,10 +534,10 @@ describe("ConfiguredAgent", () => {
     expect(withoutMemory.system).not.toContain("<archcode-memory-context>");
   });
 
-  test("active workflow context is omitted for agents without workflow tools", async () => {
+  test("legacy active workflow context is omitted for agents", async () => {
     const streamFn = setupMockStreamText("no workflow tools ok");
-    const workflowId = crypto.randomUUID();
-    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { workflowId });
+    const goalId = crypto.randomUUID();
+    const store = storeManager.create(`configured-no-workflow-tools-${crypto.randomUUID()}`, tmpRoot, { goalId });
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["unknown_tool"] } }),
       store,
@@ -549,22 +549,22 @@ describe("ConfiguredAgent", () => {
     expect(callArgs.system).not.toContain("## Active Workflow");
   });
 
-  test("active workflow-bound agent fails fast when workflow state cannot be read", async () => {
-    const streamFn = setupMockStreamText("should not run");
-    const workflowId = crypto.randomUUID();
+  test("workflow tools do not require ProjectContext workflow state during Goal migration", async () => {
+    const streamFn = setupMockStreamText("workflow tools ok");
+    const goalId = crypto.randomUUID();
     const toolRegistry = createRegistry([
       makeTool("workflow_read"),
       makeTool("artifact_read"),
     ]);
-    const store = storeManager.create(`configured-workflow-bound-${crypto.randomUUID()}`, tmpRoot, { workflowId });
+    const store = storeManager.create(`configured-workflow-bound-${crypto.randomUUID()}`, tmpRoot, { goalId });
     const agent = createAgent({
       definition: definitionWith({ tools: { tools: ["workflow_read", "artifact_read"] } }),
       store,
       toolRegistry,
     });
 
-    await expect(agent.run("read workflow state")).rejects.toThrow(`Active workflow context required but workflow state could not be read for workflowId "${workflowId}"`);
-    expect(streamFn).not.toHaveBeenCalled();
+    await expect(agent.run("read workflow state")).resolves.toEqual({ text: "workflow tools ok", steps: 0 });
+    expect(streamFn).toHaveBeenCalled();
   });
 
   test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {

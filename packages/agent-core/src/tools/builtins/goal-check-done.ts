@@ -10,7 +10,6 @@ import {
   GoalNotFoundError,
   GoalPathError,
   GoalStateError,
-  GoalStateManager,
   GoalUuidSchema,
 } from "../../goals";
 
@@ -29,7 +28,7 @@ export function createGoalCheckDoneTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalCheckDoneInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = new GoalStateManager(ctx.workspaceRoot);
+        const manager = ctx.projectContext.goalState;
         const goal = await manager.read(input.goalId);
         const condition = goal.doneConditions.find((candidate) => candidate.id === input.conditionId);
         if (!condition) {

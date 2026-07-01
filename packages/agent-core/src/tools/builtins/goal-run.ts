@@ -9,7 +9,6 @@ import {
   GoalNotFoundError,
   GoalPathError,
   GoalStateError,
-  GoalStateManager,
   GoalUuidSchema,
 } from "../../goals";
 
@@ -27,7 +26,7 @@ export function createGoalRunTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalRunInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = new GoalStateManager(ctx.workspaceRoot);
+        const manager = ctx.projectContext.goalState;
         await manager.transitionStatus(input.goalId, "running");
         const goal = await manager.updateSessionIds(input.goalId, ctx.store.getState().sessionId);
         return JSON.stringify(goal, null, 2);

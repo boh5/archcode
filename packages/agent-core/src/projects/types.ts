@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
-import type { WorkflowArtifactManager } from "../agents/workflow/artifacts.ts";
-import type { WorkflowStateManager } from "../agents/workflow/state.ts";
+import type { GoalStateManager } from "../goals/state.ts";
+import type { HitlService } from "../hitl/service.ts";
 import type { MemoryFileManager } from "../memory/file-manager.ts";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals.ts";
 
@@ -20,10 +20,10 @@ export interface ProjectInfo {
 /** Runtime context injected into tool execution — contains live Manager instances */
 export interface ProjectContext {
   project: ProjectInfo;
-  workflowState: WorkflowStateManager;
+  goalState: GoalStateManager;
+  hitl: HitlService;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;
-  artifacts: WorkflowArtifactManager;
 }
 
 // ---------------------------------------------------------------------------

@@ -25,7 +25,7 @@ export class HitlService {
   readonly #pending = new Map<string, PendingHitl>();
   readonly #events: HitlEventSubmitter;
 
-  constructor(events: HitlEventSubmitter) {
+  constructor(events: HitlEventSubmitter = { submitHitlEvent: () => {} }) {
     this.#events = events;
   }
 

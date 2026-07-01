@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { WorkflowArtifactManager } from "../../agents/workflow/artifacts";
-import { WorkflowStateManager } from "../../agents/workflow/state";
+import { GoalStateManager } from "../../goals/state";
+import { HitlService } from "../../hitl/service";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
@@ -24,13 +24,12 @@ function makeFileManager(): MemoryFileManager {
 }
 
 function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExecutionContext {
-  const workflowState = new WorkflowStateManager(TMP_DIR);
   const projectContext: ProjectContext = {
     project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
-    workflowState,
+    goalState: new GoalStateManager(TMP_DIR),
+    hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),
-    artifacts: new WorkflowArtifactManager(TMP_DIR, workflowState),
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_write" as const,
   toolCallId,

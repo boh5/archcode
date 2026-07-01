@@ -6,6 +6,7 @@ import { emitWorkflowStateChange } from "../../../agents/workflow/events";
 import { createWorkflowWithOrchestrator } from "../../../agents/workflow/linking";
 import { WorkflowInvalidIdError, WorkflowPathError, WorkflowStateError, WorkflowTitleSchema, WorkflowTypeSchema } from "../../../agents/workflow/state";
 import { formatCompactWorkflowOutput } from "./compact-output";
+import { legacyWorkflowProjectContext } from "./legacy-project-context";
 
 const WorkflowCreateInputSchema = z.strictObject({
   type: WorkflowTypeSchema.describe("Workflow type — determines the sequence of stages and completion policy"),
@@ -21,11 +22,11 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
     inputSchema: WorkflowCreateInputSchema,
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: WorkflowCreateInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
-      const stateManager = ctx.projectContext.workflowState;
+      const stateManager = legacyWorkflowProjectContext(ctx.projectContext).workflowState;
       const orchestratorSessionId = ctx.store.getState().sessionId;
 
       // Block creation if the current workflow is still active or paused
-      const currentWorkflowId = ctx.store.getState().workflowId;
+      const currentWorkflowId = (ctx.store.getState() as { workflowId?: string }).workflowId;
       if (currentWorkflowId) {
         try {
           const currentWorkflow = await stateManager.read(currentWorkflowId);
@@ -65,7 +66,7 @@ export function createWorkflowCreateTool(): AnyToolDescriptor {
           stateManager,
           ctx.storeManager,
         );
-        ctx.store.getState().setWorkflowId(state.id);
+        (ctx.store.getState() as { setWorkflowId?: (workflowId: string) => void }).setWorkflowId?.(state.id);
         emitWorkflowStateChange(ctx.store, state.id, ["stage", "status", "sessionIds"]);
         return JSON.stringify(formatCompactWorkflowOutput(state, {
           message: `Created ${state.type} workflow ${state.id} at ${state.stage}.`,

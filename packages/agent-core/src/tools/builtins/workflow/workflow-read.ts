@@ -4,6 +4,7 @@ import { createToolErrorResult } from "../../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { WorkflowPathError, WorkflowUuidSchema } from "../../../agents/workflow/state";
 import { formatCompactWorkflowOutput } from "./compact-output";
+import { legacyWorkflowProjectContext } from "./legacy-project-context";
 
 const WorkflowReadInputSchema = z.strictObject({
   workflowId: WorkflowUuidSchema.describe("The workflow id (uuid) to read"),
@@ -18,7 +19,7 @@ export function createWorkflowReadTool(): AnyToolDescriptor {
     inputSchema: WorkflowReadInputSchema,
     traits: { readOnly: true, destructive: false, concurrencySafe: true },
     execute: async (input: WorkflowReadInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
-      const stateManager = ctx.projectContext.workflowState;
+      const stateManager = legacyWorkflowProjectContext(ctx.projectContext).workflowState;
       try {
         const state = await stateManager.read(input.workflowId);
         return JSON.stringify(formatCompactWorkflowOutput(state), null, 2);

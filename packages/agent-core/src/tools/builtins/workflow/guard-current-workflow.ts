@@ -6,7 +6,7 @@ export function guardCurrentWorkflow(
   ctx: ToolExecutionContext,
   toolName: string,
 ): ToolExecutionResult | undefined {
-  const currentWorkflowId = ctx.store.getState().workflowId;
+  const currentWorkflowId = (ctx.store.getState() as { workflowId?: string }).workflowId;
   if (currentWorkflowId === inputWorkflowId) {
     return undefined;
   }

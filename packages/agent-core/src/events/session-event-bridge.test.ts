@@ -79,7 +79,9 @@ function createTestStore(sessionId: string): StoreApi<SessionStoreState> {
       if (get().parentSessionId !== undefined) return;
       set({ parentSessionId });
     },
-    setWorkflowId: (workflowId) => set({ workflowId }),
+    setGoalId: (goalId) => set({ goalId }),
+    setLoopId: (loopId) => set({ loopId }),
+    setSessionRole: (sessionRole) => set({ sessionRole }),
     toModelMessages: () => [],
   }));
   return store;

@@ -2,7 +2,6 @@ import type { AfterLoopEndContext, AfterStepEndContext } from "../loop-hooks";
 import {
   shouldInjectReminder,
   shouldContinueAfterLoop,
-  type ContinuationWorkflowContext,
 } from "../todo-continuation";
 
 export function createTodoContinuationHook(
@@ -41,7 +40,6 @@ function createTodoLoopContinuationHook(
       state,
       ctx.loopEndStatus,
       Date.now(),
-      await resolveContinuationWorkflowContext(ctx, state.workflowId),
     );
 
     if (!checkResult.should) return;
@@ -60,23 +58,4 @@ function createTodoLoopContinuationHook(
       lastTodoContinuationPendingCount: pendingCount,
     });
   };
-}
-
-async function resolveContinuationWorkflowContext(
-  ctx: AfterLoopEndContext,
-  workflowId: string | undefined,
-): Promise<ContinuationWorkflowContext> {
-  if (workflowId === undefined) return {};
-  if (!ctx.projectContext) return { workflowReadFailed: true };
-
-  try {
-    return { workflow: await ctx.projectContext.workflowState.read(workflowId) };
-  } catch (error) {
-    ctx.logger.warn("todo_continuation.workflow_read.failed", {
-      error,
-      context: { workflowId },
-      meta: { workspaceRoot: ctx.projectContext.project.workspaceRoot },
-    });
-    return { workflowReadFailed: true };
-  }
 }
