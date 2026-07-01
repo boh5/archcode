@@ -1,34 +1,25 @@
 export { orchestratorAgentDefinition } from "./orchestrator";
-export { exploreAgentDefinition } from "./explore";
-export { productAgentDefinition } from "./product";
-export { specAgentDefinition } from "./spec";
-export { criticAgentDefinition } from "./critic";
-export { foremanAgentDefinition } from "./foreman";
-export { builderAgentDefinition } from "./builder";
+export { planAgentDefinition } from "./plan";
+export { buildAgentDefinition } from "./build";
 export { reviewerAgentDefinition } from "./reviewer";
+export { exploreAgentDefinition } from "./explore";
 export { librarianAgentDefinition } from "./librarian";
 
 import { orchestratorAgentDefinition } from "./orchestrator";
-import { exploreAgentDefinition } from "./explore";
-import { productAgentDefinition } from "./product";
-import { specAgentDefinition } from "./spec";
-import { criticAgentDefinition } from "./critic";
-import { foremanAgentDefinition } from "./foreman";
-import { builderAgentDefinition } from "./builder";
+import { planAgentDefinition } from "./plan";
+import { buildAgentDefinition } from "./build";
 import { reviewerAgentDefinition } from "./reviewer";
+import { exploreAgentDefinition } from "./explore";
 import { librarianAgentDefinition } from "./librarian";
+import type { AgentDefinition } from "../factory-types";
 
 export const agentDefinitions = [
   orchestratorAgentDefinition,
-  exploreAgentDefinition,
-  productAgentDefinition,
-  specAgentDefinition,
-  criticAgentDefinition,
-  foremanAgentDefinition,
-  builderAgentDefinition,
+  planAgentDefinition,
+  buildAgentDefinition,
   reviewerAgentDefinition,
+  exploreAgentDefinition,
   librarianAgentDefinition,
 ] as const satisfies readonly AgentDefinition[];
-export const defaultAgentDefinitions = agentDefinitions;
 
-import type { AgentDefinition } from "../factory-types";
+export const defaultAgentDefinitions = agentDefinitions;

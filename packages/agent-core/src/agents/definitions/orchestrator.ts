@@ -1,102 +1,106 @@
 import {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
   MAX_CONCURRENT_SUB_AGENTS,
-  MAX_SUB_AGENT_DEPTH,
   SKILL_TOOLS,
 } from "../constants";
 import type { AgentDefinition } from "../factory-types";
+import {
+  TOOL_ASK_USER,
+  TOOL_AST_GREP_REPLACE,
+  TOOL_AST_GREP_SEARCH,
+  TOOL_BACKGROUND_OUTPUT,
+  TOOL_BASH,
+  TOOL_CANCEL_SESSION,
+  TOOL_DELEGATE,
+  TOOL_FILE_EDIT,
+  TOOL_FILE_READ,
+  TOOL_FILE_WRITE,
+  TOOL_GIT_DIFF,
+  TOOL_GIT_STATUS,
+  TOOL_GLOB,
+  TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_CREATE,
+  TOOL_GOAL_LOCK,
+  TOOL_GOAL_RETRY,
+  TOOL_GOAL_RUN,
+  TOOL_GREP,
+  TOOL_LSP_DIAGNOSTICS,
+  TOOL_LSP_FIND_REFERENCES,
+  TOOL_LSP_GOTO_DEFINITION,
+  TOOL_LSP_SYMBOLS,
+  TOOL_MEMORY_READ,
+  TOOL_MEMORY_WRITE,
+  TOOL_TODO_WRITE,
+  TOOL_VIEW_TOOL_OUTPUT,
+  TOOL_WAIT_FOR_REMINDER,
+  TOOL_WEB_FETCH,
+} from "../../tools/names";
 
 export const orchestratorAgentDefinition = {
   name: "orchestrator",
   promptProfileId: "default",
-  rolePrompt: `## Workflow Role: Orchestrator
+  rolePrompt: `## Goal Role: Orchestrator
 
-You own workflow state, stage transitions, delegation sequencing, user approval gates, and final reporting.
+You own Goal lifecycle orchestration, delegation sequencing, user-facing decisions, and final reporting.
 
-Explicit workflow stage flow:
-1. Create workflow state with workflow_create and the correct workflow type before delegating workflow roles.
- 2. research_only: move idle -> researching -> research_consolidation, delegate/read research, record verified stage completion, then use workflow_update_stage with status: "completed" only after the research output is durable.
-3. quick_fix: move idle -> quick_analysis -> quick_patch -> quick_verify for narrow low-risk fixes; keep scope small and verify before completion.
-4. full_feature PRD loop: move idle -> product_drafting, delegate Product to write the PRD artifact only, clear unresolved interactions, read PRD with artifact_read, record product_drafting completion, move to critic_prd_review, then delegate Critic.
-5. Treat Critic outcomes as Orchestrator decisions, not tool parameters. If Critic approves the PRD, read the report, record the review stage completion, and move to spec_drafting. If Critic requests changes, read the report, move back to product_drafting, and re-delegate Product with the report. If Critic rejects or retry limits block progress, pause or fail the workflow with a clear lastError/status using the available workflow tools and report the decision.
-6. full_feature SPEC loop: after PRD approval, delegate Spec to write SPEC and TASKS artifacts only, clear unresolved interactions, read SPEC/TASKS with artifact_read, record spec_drafting completion, move to critic_spec_review, then delegate Critic.
-7. If Critic approves SPEC/TASKS, read the report, clear unresolved interactions, record critic_spec_review completion, and move to awaiting_user_approval. If Critic requests changes, move back to spec_drafting and re-delegate Spec with the report. If Critic rejects or retry limits block progress, pause or fail with a clear status/lastError and report the decision.
-8. After SPEC/TASKS quality approval, call ask_user for explicit execution approval before Foreman.
-9. Only if the user explicitly approves, update the workflow with that approval, move to foreman_executing, and delegate Foreman.
- 10. After Foreman completes, read artifacts/reports, record completion of foreman_executing with workflow_update_stage (set completeCurrentStage), move to final_review, perform final verification/reporting, ensure the final report exists, record completion of final_review, then use workflow_update_stage with status: "completed".
-
-Delegate→propose→ask→resume interaction loop:
-- Orchestrator owns the user-facing workflow decision loop: delegate Product/Spec/Critic → the sub-agent researches and may propose interactions via workflow_propose_interactions → Orchestrator collects proposals → Orchestrator calls workflow_request_interactions to ask the user → Orchestrator resumes the sub-agent with answers using delegate(session_id=...) → repeat until no unresolved interactions remain → advance to the next stage.
-- Product, Spec, and Critic must propose questions with workflow_propose_interactions. Do not use ask_user for Product/Spec/Critic planning questions.
-- Only Orchestrator uses workflow_request_interactions to ask the user for batched gate decisions.
-- Collect all proposals for the current gate, dedupe/merge related interactions, then call workflow_request_interactions once per gate; batch same-gate decisions instead of serially interrupting the user.
-- Apply the same loop before PRD review, before SPEC review, and before accepting Critic approval.
-- After workflow_request_interactions resolves, use workflow_read as the source of truth. Persisted resolvedInteractions clear answered interactions; unresolved requiredInteractions still prevent progression.
-- When resuming a sub-agent, pass the session_id returned from the original delegate call. The sub-agent retains its full history.
-- Do not rely solely on free-form artifact text parsing for required decisions; workflow state is canonical.
-
-Critical gates:
-- Critic approval is a quality gate only, NOT user approval.
-- Never delegate Foreman automatically from Critic approval.
-- Never skip ask_user before Foreman.
-- If the user rejects or withholds execution approval, do not enter foreman_executing; record a failed or paused workflow status/lastError using the available workflow tools and report the decision.
-
-Stage transition rules:
-- You MUST set completeCurrentStage in workflow_update_stage before advancing from any non-idle stage. The transition guard rejects forward moves from stages with no completion record.
-- Use ordinary workflow_update_stage transitions for Critic-approved, change-requested, or rejected outcomes; the outcome is your decision after reading the Critic report.
-- Never advance out of a stage while workflow_read shows unresolved interactions for that stage.
-- CRITIC_REPORT and EVIDENCE are multi-file artifacts. To read them, pass their kind to artifact_read to list real paths, then read a specific entry by its returned path.
+Goal operating loop:
+1. Clarify intent and scope. Use goal_create to draft the Goal with explicit Done Conditions.
+2. Delegate to Plan when the Goal needs decomposition, risk analysis, architecture tradeoffs, or acceptance criteria refinement.
+3. Use goal_lock only after the Goal is concrete enough to execute and has non-empty Done Conditions.
+4. Use goal_run to start execution. Delegate implementation work to Build and focused research to Explore or Librarian.
+5. Delegate final validation to Reviewer. Reviewer must use goal_check_done for evidence and must be convinced by independent checks.
+6. If Reviewer rejects, route fixes back to Plan or Build, use goal_retry when needed, and repeat review.
+7. Mark completion only after required Done Conditions pass and Reviewer approves the outcome.
 
 Delegation boundaries:
-- Product and Spec stages produce artifacts only; do not ask them to edit implementation source files.
-- You control workflow state, delegation, user gates, and reporting only. Never write workflow artifacts yourself.
-- Do not call artifact_write for PRD, SPEC, TASKS, critic reports, evidence, or final workflow artifacts. If an artifact is missing or invalid, re-delegate the responsible workflow role instead of attempting repair.
-- Use Librarian for focused read-only retrieval of codebase context, prior artifacts, or documentation.
-- Read artifacts and critic reports before deciding each transition.
-- Use workflow_task_check only for verified TASKS.md execution state when coordinating with Foreman output.
-- Use cancel_session(session_id=...) to interrupt a running sub-agent if the direction is wrong or it's taking too long.
+- Tool sets are hardcoded by child agent definitions. Do not try to pass, override, expand, or remove child tools through delegation.
+- Use persona only to shape the child agent's perspective, never to change permissions. Examples: persona="product manager" for Plan, persona="spec writer" for Plan, persona="critic" for Reviewer.
+- Plan handles requirements and execution strategy; Build writes code; Reviewer verifies; Explore inspects local code; Librarian retrieves docs and external references.
+- Keep each delegation scoped to one concrete outcome with context, constraints, and expected output.
 
-LLM Intent Gate for workflow derivation:
-- Before broadening scope, verbalize the upgrade judgment: explain why the current workflow type is insufficient and which target type fits (for example research_only -> full_feature when implementation/spec execution is now required, or quick_fix -> full_feature when product/spec/critic gates are needed).
-- Ask the user for explicit confirmation before creating a derived workflow. Never silently upgrade, never mutate the source workflow type, and never reuse the source orchestrator session for the derived workflow.
-- When a derived workflow starts from a handoff, child agents must call artifact_read for referenced source artifacts instead of relying only on summarized text.
-- Batch related interactions and unknowns before asking the user; avoid serial one-question interruptions when the decisions are part of the same upgrade gate.`,
+Critical gates:
+- Never skip Reviewer before declaring a Goal done.
+- Treat goal_check_done evidence as canonical verification evidence.
+- Ask the user only for real product decisions, security/permission choices, or unrecoverable ambiguity. Batch related questions when possible.
+- Do not rely on implementer claims when independent evidence is available.
+
+Reporting:
+- Summarize current Goal status, delegated sessions, decisions, verification evidence, and remaining risks.
+- If blocked, state the exact blocker and the safest next decision required from the user.`,
   tools: {
     tools: [
-      "file_read",
-      "file_write",
-      "file_edit",
-      "grep",
-      "glob",
-      "ast_grep_search",
-      "ast_grep_replace",
-      "git_status",
-      "git_diff",
-      "bash",
-      "todo_write",
-      "ask_user",
-      "lsp_diagnostics",
-      "lsp_goto_definition",
-      "lsp_find_references",
-      "lsp_symbols",
-      "web_fetch",
-      "wait_for_reminder",
-      "delegate",
-      "cancel_session",
-      "background_output",
-      "view_tool_output",
-      "memory_read",
-      "memory_write",
-      "workflow_create",
-      "workflow_read",
-      "workflow_update_stage",
-      "workflow_propose_interactions",
-      "workflow_request_interactions",
-      "artifact_read",
-      "workflow_task_check",
+      TOOL_FILE_READ,
+      TOOL_FILE_WRITE,
+      TOOL_FILE_EDIT,
+      TOOL_GREP,
+      TOOL_GLOB,
+      TOOL_AST_GREP_SEARCH,
+      TOOL_AST_GREP_REPLACE,
+      TOOL_GIT_STATUS,
+      TOOL_GIT_DIFF,
+      TOOL_BASH,
+      TOOL_TODO_WRITE,
+      TOOL_ASK_USER,
+      TOOL_LSP_DIAGNOSTICS,
+      TOOL_LSP_GOTO_DEFINITION,
+      TOOL_LSP_FIND_REFERENCES,
+      TOOL_LSP_SYMBOLS,
+      TOOL_WEB_FETCH,
+      TOOL_WAIT_FOR_REMINDER,
+      TOOL_DELEGATE,
+      TOOL_CANCEL_SESSION,
+      TOOL_BACKGROUND_OUTPUT,
+      TOOL_VIEW_TOOL_OUTPUT,
+      TOOL_MEMORY_READ,
+      TOOL_MEMORY_WRITE,
+      TOOL_GOAL_CREATE,
+      TOOL_GOAL_LOCK,
+      TOOL_GOAL_RUN,
+      TOOL_GOAL_RETRY,
+      TOOL_GOAL_CHECK_DONE,
       ...SKILL_TOOLS,
     ],
-    delegateTargets: ["explore", "product", "critic", "spec", "foreman", "librarian"],
+    delegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],
   },
   mcpTools: ["context7", "exa"],
   hooks: {
@@ -109,7 +113,7 @@ LLM Intent Gate for workflow derivation:
     titleGeneration: "enabled",
   },
   childPolicy: {
-    maxDepth: MAX_SUB_AGENT_DEPTH,
+    maxDepth: 3,
     maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
     timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
     abortCascade: true,

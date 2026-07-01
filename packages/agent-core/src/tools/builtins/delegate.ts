@@ -6,28 +6,19 @@ import type { StoredMessage } from "../../store/types";
 import { SKILL_NAME_REGEX } from "../../skills/schema";
 import type { ChildExecutionHandle } from "../../delegation/types";
 import type { SessionExecutionRecord } from "@archcode/protocol";
-import { WorkflowArtifactKindSchema, WorkflowUuidSchema } from "../../agents/workflow/state";
 
 const SKILL_NAME_MESSAGE = "Skill name must match pattern ^[a-z0-9][a-z0-9-]*$";
 
-export const DelegateAvailableArtifactSchema = z
-  .object({
-    workflowId: WorkflowUuidSchema.describe("Workflow id (uuid) owning the artifact"),
-    kind: WorkflowArtifactKindSchema.optional().describe("Artifact kind the child can access via artifact_read"),
-    path: z.string().min(1).optional().describe("Specific artifact path the child can access"),
-    description: z.string().optional().describe("Short description of what the artifact contains"),
-  })
-  .strict();
-
 export const DelegateInputSchema = z
   .object({
-    agent_type: z.string().min(1).describe("Target agent type to delegate to (e.g. \"explore\", \"builder\")"),
-    prompt: z.string().describe("Full task instructions for the child agent — include goal, context, constraints, and expected output"),
+    agent_type: z.string().min(1).describe("Target agent type to delegate to (e.g. \"plan\", \"build\", \"reviewer\", \"explore\", \"librarian\")"),
+    persona: z.string().trim().min(1).optional().describe("Optional persona to shape the child agent perspective; does not change the child tool set"),
+    task: z.string().min(1).describe("Specific delegated task for the child agent"),
+    context: z.string().optional().describe("Relevant context, constraints, and expected output for the delegated task"),
     skills: z.array(z.string().regex(SKILL_NAME_REGEX, SKILL_NAME_MESSAGE)).describe("Skill names to activate on the child agent. Pass [] for none."),
     description: z.string().optional().describe("Short 3-5 word label for the delegated task"),
     title: z.string().optional().describe("Optional session title for the child session"),
     background: z.boolean().default(false).describe("true = run async; use background_output to read results later. false = block until child completes. Default false."),
-    available_artifacts: z.array(DelegateAvailableArtifactSchema).optional().describe("Workflow artifact references the child can access via artifact_read"),
     session_id: z
       .string()
       .optional()
@@ -78,9 +69,9 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
       parentToolCallId: ctx.toolCallId,
       toolName: "delegate",
       targetAgentName: input.agent_type,
-      prompt: input.prompt,
+      prompt: buildChildPrompt(input),
+      persona: input.persona,
       skills: input.skills,
-      available_artifacts: input.available_artifacts,
       title: input.title ?? input.description,
       description: input.description,
       background: input.background ?? false,
@@ -154,7 +145,7 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
       toolName: "delegate",
       sessionId,
       targetAgentName: input.agent_type,
-      prompt: input.prompt,
+      prompt: buildChildPrompt(input),
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
     });
@@ -278,10 +269,20 @@ export function getLastAssistantText(messages: readonly StoredMessage[]): string
   return "";
 }
 
+function buildChildPrompt(input: DelegateInput): string {
+  const sections: string[] = [];
+  if (input.persona !== undefined) sections.push(`Persona: ${input.persona}`);
+  sections.push(`Task:\n${input.task}`);
+  if (input.context !== undefined && input.context.trim().length > 0) {
+    sections.push(`Context:\n${input.context}`);
+  }
+  return sections.join("\n\n");
+}
+
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "explore"). Returns a plain text summary with the child session id and status. When session_id is provided, resumes an existing sub-agent session with the given prompt; the sub-agent retains its full history. Resume is foreground-only.`,
+    `Delegate a task to another agent (e.g. "plan", "build", "reviewer", "explore", "librarian"). Persona can shape the child perspective but never changes the child tool set. Returns a plain text summary with the child session id and status. When session_id is provided, resumes an existing sub-agent session with the given task; the sub-agent retains its full history. Resume is foreground-only.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),

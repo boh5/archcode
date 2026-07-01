@@ -1,32 +1,58 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SUB_AGENT_TIMEOUT_MS,
-  EXPLORER_READ_ONLY_TOOLS,
   MAX_CONCURRENT_SUB_AGENTS,
-  MAX_SUB_AGENT_DEPTH,
   SKILL_TOOLS,
 } from "../constants";
 import {
   agentDefinitions,
-  builderAgentDefinition,
-  criticAgentDefinition,
+  buildAgentDefinition,
   exploreAgentDefinition,
-  foremanAgentDefinition,
   librarianAgentDefinition,
   orchestratorAgentDefinition,
-  productAgentDefinition,
+  planAgentDefinition,
   reviewerAgentDefinition,
-  specAgentDefinition,
 } from "./index";
 import {
-  TOOL_ASK_USER,
+  TOOL_ARTIFACT_READ,
   TOOL_ARTIFACT_WRITE,
   TOOL_AST_GREP_REPLACE,
   TOOL_BASH,
+  TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
+  TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_CREATE,
+  TOOL_GOAL_LOCK,
+  TOOL_GOAL_RETRY,
+  TOOL_GOAL_RUN,
+  TOOL_WORKFLOW_CREATE,
   TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
+  TOOL_WORKFLOW_READ,
+  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
+  TOOL_WORKFLOW_TASK_CHECK,
+  TOOL_WORKFLOW_UPDATE_STAGE,
 } from "../../tools/names";
+
+const REQUIRED_AGENT_NAMES = [
+  "orchestrator",
+  "plan",
+  "build",
+  "reviewer",
+  "explore",
+  "librarian",
+] as const;
+
+const WORKFLOW_TOOLS = [
+  TOOL_WORKFLOW_CREATE,
+  TOOL_WORKFLOW_READ,
+  TOOL_WORKFLOW_UPDATE_STAGE,
+  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
+  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
+  TOOL_WORKFLOW_TASK_CHECK,
+  TOOL_ARTIFACT_READ,
+  TOOL_ARTIFACT_WRITE,
+] as const;
 
 const SOURCE_WRITE_TOOLS = [
   TOOL_FILE_WRITE,
@@ -35,186 +61,138 @@ const SOURCE_WRITE_TOOLS = [
   TOOL_AST_GREP_REPLACE,
 ] as const;
 
-function expectNoSourceWriteTools(tools: readonly string[]) {
-  for (const tool of SOURCE_WRITE_TOOLS) {
-    expect(tools).not.toContain(tool);
-  }
+function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
+  for (const tool of forbidden) expect(tools).not.toContain(tool);
 }
 
 describe("agentDefinitions", () => {
-  test("names are unique", () => {
+  test("exports exactly the six goal-era agent definitions", () => {
+    expect(agentDefinitions.map((definition) => definition.name)).toEqual(REQUIRED_AGENT_NAMES);
+    expect(new Set(agentDefinitions.map((definition) => definition.name)).size).toBe(agentDefinitions.length);
+  });
+
+  test("legacy workflow role definitions are not in the active registry", () => {
     const names = agentDefinitions.map((definition) => definition.name);
 
-    expect(new Set(names).size).toBe(names.length);
+    expect(names).not.toContain("product");
+    expect(names).not.toContain("spec");
+    expect(names).not.toContain("critic");
+    expect(names).not.toContain("foreman");
+    expect(names).not.toContain("builder");
   });
 
-  test("orchestrator delegates to explore", () => {
-    expect(orchestratorAgentDefinition.tools.delegateTargets).toContain("explore");
+  test("all active definitions are free of Workflow and artifact tools", () => {
+    for (const definition of agentDefinitions) {
+      expectNoTools(definition.tools.tools, WORKFLOW_TOOLS);
+    }
   });
 
-  test("orchestrator includes workflow orchestration tools", () => {
+  test("orchestrator owns Goal orchestration and delegates to all five child roles", () => {
     const tools = orchestratorAgentDefinition.tools.tools;
 
-    expect(tools).toContain("workflow_create");
-    expect(tools).toContain("workflow_read");
-    expect(tools).toContain("workflow_update_stage");
-    expect(tools).toContain("workflow_propose_interactions");
-    expect(tools).toContain("workflow_request_interactions");
-    expect(tools).toContain("artifact_read");
-    expect(tools).not.toContain("artifact_write");
-    expect(tools).toContain("workflow_task_check");
-    expect(tools).toContain("ast_grep_search");
-    expect(tools).toContain("ast_grep_replace");
+    expect(tools).toContain(TOOL_GOAL_CREATE);
+    expect(tools).toContain(TOOL_GOAL_LOCK);
+    expect(tools).toContain(TOOL_GOAL_RUN);
+    expect(tools).toContain(TOOL_GOAL_RETRY);
+    expect(tools).toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain(TOOL_DELEGATE);
+    expect(orchestratorAgentDefinition.tools.delegateTargets).toEqual([
+      "plan",
+      "build",
+      "reviewer",
+      "explore",
+      "librarian",
+    ]);
+    expect(orchestratorAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("## Goal Role: Orchestrator");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_create");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_lock");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_run");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_check_done");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("workflow_create");
   });
 
-  test("workflow artifact author roles keep artifact_write", () => {
-    expect(productAgentDefinition.tools.tools).toContain("artifact_write");
-    expect(specAgentDefinition.tools.tools).toContain("artifact_write");
-    expect(criticAgentDefinition.tools.tools).toContain("artifact_write");
-  });
+  test("Plan has read-only planning tools, Context7 MCP, and research-only delegation", () => {
+    const tools = planAgentDefinition.tools.tools;
 
-  test("workflow artifact author roles cannot mutate source code", () => {
-    for (const definition of [productAgentDefinition, specAgentDefinition, criticAgentDefinition]) {
-      expect(definition.tools.tools).toContain(TOOL_ARTIFACT_WRITE);
-      expectNoSourceWriteTools(definition.tools.tools);
-    }
-  });
-
-  test("Product, Spec, and Critic prompt structured required-interaction proposals instead of ask_user", () => {
-    for (const definition of [productAgentDefinition, specAgentDefinition, criticAgentDefinition]) {
-      expect(definition.tools.tools).toContain(TOOL_WORKFLOW_PROPOSE_INTERACTIONS);
-      expect(definition.tools.tools).not.toContain(TOOL_ASK_USER);
-
-      const prompt = definition.rolePrompt;
-      expect(prompt).toContain("Required Interaction proposal contract");
-      expect(prompt).toContain("workflow_propose_interactions");
-      expect(prompt).toContain("decisionKey");
-      expect(prompt).toContain("options");
-      expect(prompt).toContain("at least 2 for decisions");
-      expect(prompt).toContain("recommendedOption");
-      expect(prompt).toContain("rationale");
-      expect(prompt).not.toContain("blocking=true");
-      expect(prompt).not.toContain("blocking=false");
-      expect(prompt).toContain("After proposing interactions, you will be resumed with user answers");
-      expect(prompt).toContain("Do NOT call ask_user directly");
-    }
-  });
-
-  test("critic prompt limits user-decision proposals to high-value gates", () => {
-    const prompt = criticAgentDefinition.rolePrompt;
-
-    expect(prompt).toContain("product scope");
-    expect(prompt).toContain("risk acceptance");
-    expect(prompt).toContain("major tradeoffs");
-    expect(prompt).toContain("unresolved ambiguity");
-  });
-
-  test("Foreman and Builder prompts default to autonomous coding after approval", () => {
-    for (const definition of [foremanAgentDefinition, builderAgentDefinition]) {
-      const prompt = definition.rolePrompt;
-
-      expect(prompt).toContain("Autonomous-by-default coding after approval");
-      expect(prompt).toContain("Ask the user ONLY for permissions/security confirmations");
-      expect(prompt).toContain("true unrecoverable blockers");
-      expect(prompt).toContain("plan-marked ask-before-changing decisions");
-      expect(prompt).toContain("Do NOT ask about normal implementation choices");
-    }
-  });
-
-  test("Explorer and Librarian prompts require concise evidence-driven research output", () => {
-    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
-      const prompt = definition.rolePrompt;
-
-      expect(prompt).toContain("Research mandate");
-      expect(prompt).toContain("When to research");
-      expect(prompt).toContain("What to look for");
-      expect(prompt).toContain("Concise evidence output");
-      expect(prompt).toContain("Facts found");
-      expect(prompt).toContain("Citations");
-      expect(prompt).toContain("Unknowns");
-    }
-  });
-
-  test("research role definitions cannot mutate source code", () => {
-    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
-      expectNoSourceWriteTools(definition.tools.tools);
-    }
-  });
-
-  test("foreman includes Markdown-wave execution tools", () => {
-    const tools = foremanAgentDefinition.tools.tools;
-
-    expect(tools).toContain("artifact_read");
-    expect(tools).toContain("workflow_task_check");
-    expect(tools).toContain("todo_write");
-    expect(tools).toContain("delegate");
-    expect(tools).toContain("background_output");
-    expect(tools).toContain("wait_for_reminder");
-    expect(tools).toContain("view_tool_output");
+    expect(tools).toContain("file_read");
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
-    expect(tools).toContain("lsp_symbols");
-    expect(tools).not.toContain("file_write");
-    expect(tools).not.toContain("file_edit");
+    expect(tools).toContain("web_fetch");
+    expect(tools).toContain("lsp_diagnostics");
+    expectNoTools(tools, SOURCE_WRITE_TOOLS);
+    expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
+    expect(planAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+  });
+
+  test("Build is the only source-writing implementation role", () => {
+    const tools = buildAgentDefinition.tools.tools;
+
+    for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
+    expect(buildAgentDefinition.mcpTools).toBeUndefined();
+    expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
+  });
+
+  test("Reviewer can verify goals but cannot mutate source", () => {
+    const tools = reviewerAgentDefinition.tools.tools;
+
+    expect(tools).toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain("git_diff");
+    expect(tools).toContain("grep");
+    expect(tools).toContain("glob");
+    expect(tools).toContain("lsp_diagnostics");
+    expectNoTools(tools, SOURCE_WRITE_TOOLS);
+    expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+  });
+
+  test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
+    const prompt = reviewerAgentDefinition.rolePrompt;
+
+    expect(prompt).toContain("Default stance: REJECT");
+    for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
+      expect(prompt).toContain(item);
+    }
+    expect(prompt).toContain("APPROVE");
+    expect(prompt).toContain("REJECT");
+    expect(prompt).toContain("ESCALATE_HUMAN");
+  });
+
+  test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
+    for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
+      expectNoTools(definition.tools.tools, SOURCE_WRITE_TOOLS);
+      expect("delegateTargets" in definition.tools).toBe(false);
+      expect("childPolicy" in definition).toBe(false);
+      expect(definition.tools.tools).not.toContain(TOOL_DELEGATE);
+    }
+
+    expect(exploreAgentDefinition.mcpTools).toBeUndefined();
+    expect(librarianAgentDefinition.mcpTools).toEqual(["context7", "grep.app", "exa"]);
+  });
+
+  test("core delegation depth policies match orchestrator → core → ancillary", () => {
+    expect(orchestratorAgentDefinition.childPolicy).toEqual({
+      maxDepth: 3,
+      maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+      timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+      abortCascade: true,
+      terminalReminders: true,
+    });
+
+    for (const definition of [planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition]) {
+      expect(definition.childPolicy).toEqual({
+        maxDepth: 2,
+        maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
+        timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
+        abortCascade: true,
+        terminalReminders: true,
+      });
+    }
   });
 
   test("definitions do not expose target-side canBeDelegated", () => {
     for (const definition of agentDefinitions) {
       expect("canBeDelegated" in definition).toBe(false);
       expect("canBeDelegated" in definition.tools).toBe(false);
-    }
-  });
-
-  test("orchestrator child policy matches current defaults", () => {
-    expect(orchestratorAgentDefinition.childPolicy).toEqual({
-      maxDepth: MAX_SUB_AGENT_DEPTH,
-      maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
-      timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
-      abortCascade: true,
-      terminalReminders: true,
-    });
-  });
-
-  test("explore agent gets read-only tools plus todo_write (intentional exception)", () => {
-    const exploreTools = exploreAgentDefinition.tools.tools;
-    // Each EXPLORER_READ_ONLY_TOOL is available to the explorer
-    for (const tool of EXPLORER_READ_ONLY_TOOLS) {
-      expect(exploreTools).toContain(tool);
-    }
-    // todo_write is explicitly added — it's not readOnly but explorers need it
-    // for the todo-continuation hook. This is the only intentional exception.
-    const extraTools = exploreTools.filter(
-      (t) => !(EXPLORER_READ_ONLY_TOOLS as readonly string[]).includes(t),
-    );
-    expect(extraTools).toEqual(["todo_write", "skill_list", "skill_read"]);
-  });
-
-  test("builder definition is the source-writing positive control", () => {
-    for (const tool of SOURCE_WRITE_TOOLS) {
-      expect(builderAgentDefinition.tools.tools).toContain(tool);
-    }
-  });
-
-  test("explore agent cannot delegate", () => {
-    expect("delegateTargets" in exploreAgentDefinition.tools).toBe(false);
-    expect("childPolicy" in exploreAgentDefinition).toBe(false);
-  });
-
-  test("product, spec, critic, and reviewer can delegate to explore and librarian", () => {
-    for (const definition of [
-      productAgentDefinition,
-      specAgentDefinition,
-      criticAgentDefinition,
-      reviewerAgentDefinition,
-    ]) {
-      expect(definition.tools.delegateTargets).toEqual(["explore", "librarian"]);
-      expect(definition.childPolicy).toEqual({
-        maxDepth: MAX_SUB_AGENT_DEPTH,
-        maxConcurrent: MAX_CONCURRENT_SUB_AGENTS,
-        timeoutMs: DEFAULT_SUB_AGENT_TIMEOUT_MS,
-        abortCascade: true,
-        terminalReminders: true,
-      });
     }
   });
 
@@ -227,32 +205,17 @@ describe("agentDefinitions", () => {
   ] as const;
 
   describe("skills", () => {
-    test("all definitions have an explicit skills array", () => {
+    test("all definitions have valid explicit skills and include skill tools when needed", () => {
       for (const definition of agentDefinitions) {
-        expect(definition).toHaveProperty("skills");
         expect(Array.isArray(definition.skills)).toBe(true);
-      }
-    });
-
-    test("all skill names are valid", () => {
-      for (const definition of agentDefinitions) {
-        for (const skill of definition.skills) {
-          expect(KNOWN_SKILLS).toContain(skill);
-        }
-      }
-    });
-
-    test("all agents with non-empty skills include skill_list and skill_read in tools", () => {
-      for (const definition of agentDefinitions) {
+        for (const skill of definition.skills) expect(KNOWN_SKILLS).toContain(skill);
         if (definition.skills.length > 0) {
-          for (const skillTool of SKILL_TOOLS) {
-            expect(definition.tools.tools).toContain(skillTool);
-          }
+          for (const skillTool of SKILL_TOOLS) expect(definition.tools.tools).toContain(skillTool);
         }
       }
     });
 
-    test("allocation matrix matches exactly", () => {
+    test("allocation matrix matches the six-agent architecture", () => {
       expect(orchestratorAgentDefinition.skills).toEqual([
         "git-master",
         "safe-refactor",
@@ -260,25 +223,8 @@ describe("agentDefinitions", () => {
         "review-work",
         "research-docs",
       ]);
-      expect(exploreAgentDefinition.skills).toEqual([
-        "codemap",
-        "research-docs",
-      ]);
-      expect(productAgentDefinition.skills).toEqual(["research-docs"]);
-      expect(specAgentDefinition.skills).toEqual([
-        "codemap",
-        "research-docs",
-      ]);
-      expect(criticAgentDefinition.skills).toEqual([
-        "codemap",
-        "review-work",
-        "research-docs",
-      ]);
-      expect(foremanAgentDefinition.skills).toEqual([
-        "codemap",
-        "review-work",
-      ]);
-      expect(builderAgentDefinition.skills).toEqual([
+      expect(planAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
+      expect(buildAgentDefinition.skills).toEqual([
         "git-master",
         "safe-refactor",
         "codemap",
@@ -291,10 +237,8 @@ describe("agentDefinitions", () => {
         "review-work",
         "research-docs",
       ]);
-      expect(librarianAgentDefinition.skills).toEqual([
-        "codemap",
-        "research-docs",
-      ]);
+      expect(exploreAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
+      expect(librarianAgentDefinition.skills).toEqual(["codemap", "research-docs"]);
     });
   });
 });

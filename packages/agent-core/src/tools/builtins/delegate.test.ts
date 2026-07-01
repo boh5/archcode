@@ -70,80 +70,70 @@ function makeContext(overrides: Partial<ToolExecutionContext> = {}): ToolExecuti
   agentName: "orchestrator", ...overrides,  };
 }
 
-const VALID_WORKFLOW_ID = "550e8400-e29b-41d4-a716-446655440000";
-
 describe("delegate tool", () => {
-  it("accepts any non-empty agent_type string in the input schema", () => {
-    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [] }).success).toBe(true);
-    expect(DelegateInputSchema.safeParse({ agent_type: "", prompt: "inspect", skills: [] }).success).toBe(false);
-    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: "codemap" }).success).toBe(false);
+  it("accepts any non-empty agent_type plus task/context fields in the input schema", () => {
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", task: "inspect", context: "repo", skills: [] }).success).toBe(true);
+    expect(DelegateInputSchema.safeParse({ agent_type: "", task: "inspect", skills: [] }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", task: "inspect", skills: "codemap" }).success).toBe(false);
   });
 
   it("rejects input that omits the required skills field", () => {
-    expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect" }).success).toBe(false);
+    expect(DelegateInputSchema.safeParse({ agent_type: "custom", task: "inspect" }).success).toBe(false);
   });
 
   it("rejects invalid skill names in the input schema", () => {
     for (const invalidName of ["../x", "Git-Master", ""]) {
-      expect(DelegateInputSchema.safeParse({ agent_type: "custom", prompt: "inspect", skills: [invalidName] }).success).toBe(false);
+      expect(DelegateInputSchema.safeParse({ agent_type: "custom", task: "inspect", skills: [invalidName] }).success).toBe(false);
     }
   });
 
-  it("rejects non-UUID workflowId in available_artifacts at schema level", () => {
-    expect(DelegateInputSchema.safeParse({
-      agent_type: "explore",
-      prompt: "inspect",
-      skills: [],
-      available_artifacts: [{ workflowId: "default", kind: "RESEARCH" }],
-    }).success).toBe(false);
-  });
-
-  it("validates available_artifacts references without requiring content", () => {
+  it("accepts optional persona but rejects the removed artifact reference field", () => {
+    const removedArtifactField = "available" + "_artifacts";
     const parsed = DelegateInputSchema.safeParse({
-      agent_type: "explore",
-      prompt: "inspect",
+      agent_type: "plan",
+      persona: "product manager",
+      task: "shape scope",
+      context: "Goal draft",
       skills: [],
-      available_artifacts: [
-        { workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH", description: "Research artifact" },
-        { workflowId: VALID_WORKFLOW_ID, path: "notes/context.md" },
-      ],
     });
 
     expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data).toMatchObject({
+        agent_type: "plan",
+        persona: "product manager",
+        task: "shape scope",
+        context: "Goal draft",
+      });
+    }
     expect(DelegateInputSchema.safeParse({
       agent_type: "explore",
-      prompt: "inspect",
+      task: "inspect",
       skills: [],
-      available_artifacts: [{ workflowId: VALID_WORKFLOW_ID, kind: "UNKNOWN" }],
-    }).success).toBe(false);
-    expect(DelegateInputSchema.safeParse({
-      agent_type: "explore",
-      prompt: "inspect",
-      skills: [],
-      available_artifacts: [{ workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH", content: "must not be accepted" }],
+      [removedArtifactField]: [],
     }).success).toBe(false);
   });
 
-  it("forwards available_artifacts to child execution", async () => {
+  it("forwards persona and formatted task prompt to child execution without changing tool policy", async () => {
     const executor = new ToolStubExecutor();
-    const available_artifacts = [
-      { workflowId: VALID_WORKFLOW_ID, kind: "RESEARCH" as const, description: "Research artifact" },
-      { workflowId: VALID_WORKFLOW_ID, path: "notes/context.md" },
-    ];
 
     await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], background: false, available_artifacts },
+      { agent_type: "plan", persona: "spec writer", task: "inspect", context: "Goal draft", skills: [], background: false },
       makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
 
-    expect(executor.lastRequest?.available_artifacts).toEqual(available_artifacts);
+    expect(executor.lastRequest?.persona).toBe("spec writer");
+    expect(executor.lastRequest?.prompt).toContain("Persona: spec writer");
+    expect(executor.lastRequest?.prompt).toContain("Task:\ninspect");
+    expect(executor.lastRequest?.prompt).toContain("Context:\nGoal draft");
+    expect("tools" in executor.lastRequest!).toBe(false);
   });
 
   it("sync delegation waits and returns a plain formatted result", async () => {
     const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
+      { agent_type: "explore", task: "inspect", skills: [], description: "Scan", background: false },
       makeContext({ startChildExecution: (request) => executor.start(request), currentDepth: 1, store: parentStore }),
     );
 
@@ -157,7 +147,7 @@ describe("delegate tool", () => {
     expect(executor.lastRequest?.parentToolCallId).toBe("delegate-call");
     expect(executor.lastRequest?.toolName).toBe("delegate");
     expect(executor.lastRequest?.targetAgentName).toBe("explore");
-    expect(executor.lastRequest?.prompt).toBe("inspect");
+    expect(executor.lastRequest?.prompt).toBe("Task:\ninspect");
     expect(executor.lastRequest?.skills).toEqual([]);
     expect(executor.lastRequest?.currentDepth).toBe(1);
     expect(executor.lastRequest?.background).toBe(false);
@@ -167,7 +157,7 @@ describe("delegate tool", () => {
     const executor = new ToolStubExecutor();
     const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: ["codemap"], description: "Scan", background: true },
+      { agent_type: "explore", task: "inspect", skills: ["codemap"], description: "Scan", background: true },
       makeContext({ startChildExecution: (request) => executor.start(request), store: parentStore }),
     );
 
@@ -184,7 +174,7 @@ describe("delegate tool", () => {
   it("sync delegation formats child terminal failures instead of returning a tool error", async () => {
     const executor = new FailingChildExecutor();
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], description: "Scan", background: false },
+      { agent_type: "explore", task: "inspect", skills: [], description: "Scan", background: false },
       makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
 
@@ -198,7 +188,7 @@ describe("delegate tool", () => {
 
   it("returns structured error when child execution context is missing", async () => {
     const result = await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], background: false },
+      { agent_type: "explore", task: "inspect", skills: [], background: false },
       makeContext(),
     );
 
@@ -219,7 +209,7 @@ describe("delegate tool", () => {
     };
 
     const result = await executeDelegate(
-      { agent_type: "writer", prompt: "inspect", skills: [], background: false },
+      { agent_type: "writer", task: "inspect", skills: [], background: false },
       makeContext({ startChildExecution }),
     );
 
@@ -249,7 +239,7 @@ describe("delegate tool", () => {
     await executeDelegate(
       {
         agent_type: "explore",
-        prompt: "inspect",
+        task: "inspect",
         skills: ["research-docs"],
         title: "Custom Title",
         description: "Scan repository",
@@ -264,7 +254,8 @@ describe("delegate tool", () => {
       parentToolCallId: "delegate-call",
       toolName: "delegate",
       targetAgentName: "explore",
-      prompt: "inspect",
+      prompt: "Task:\ninspect",
+      persona: undefined,
       skills: ["research-docs"],
       title: "Custom Title",
       description: "Scan repository",
@@ -278,7 +269,7 @@ describe("delegate tool", () => {
     const executor = new ToolStubExecutor();
 
     await executeDelegate(
-      { agent_type: "explore", prompt: "inspect", skills: [], description: "Fallback Title", background: false },
+      { agent_type: "explore", task: "inspect", skills: [], description: "Fallback Title", background: false },
       makeContext({ startChildExecution: (request) => executor.start(request) }),
     );
 
@@ -308,7 +299,7 @@ describe("delegate tool", () => {
       expect(
         DelegateInputSchema.safeParse({
           agent_type: "explore",
-          prompt: "continue",
+          task: "continue",
           skills: [],
           session_id: RESUME_SESSION_ID,
         }).success,
@@ -316,7 +307,7 @@ describe("delegate tool", () => {
       expect(
         DelegateInputSchema.safeParse({
           agent_type: "explore",
-          prompt: "continue",
+          task: "continue",
           skills: [],
         }).success,
       ).toBe(true);
@@ -331,7 +322,7 @@ describe("delegate tool", () => {
       const parentAbort = new AbortController();
 
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue work", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue work", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession, store: parentStore, abort: parentAbort.signal, currentDepth: 2 }),
       );
 
@@ -343,9 +334,9 @@ describe("delegate tool", () => {
         parentSessionId: parentStore.getState().sessionId,
         parentToolCallId: "delegate-call",
         toolName: "delegate",
-        sessionId: RESUME_SESSION_ID,
-        targetAgentName: "explore",
-        prompt: "continue work",
+      sessionId: RESUME_SESSION_ID,
+      targetAgentName: "explore",
+        prompt: "Task:\ncontinue work",
         currentDepth: 2,
         parentAbort: parentAbort.signal,
       });
@@ -359,7 +350,7 @@ describe("delegate tool", () => {
 
     it("returns structured error when resumeChildSession is unavailable", async () => {
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext(),
       );
 
@@ -380,7 +371,7 @@ describe("delegate tool", () => {
       });
 
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession }),
       );
 
@@ -403,7 +394,7 @@ describe("delegate tool", () => {
       });
 
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession }),
       );
 
@@ -426,7 +417,7 @@ describe("delegate tool", () => {
       });
 
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession }),
       );
 
@@ -447,7 +438,7 @@ describe("delegate tool", () => {
       const resumeChildSession = mock(() => Promise.resolve(makeResumeHandle()));
 
       const result = await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: true, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: true, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession }),
       );
 
@@ -470,7 +461,7 @@ describe("delegate tool", () => {
       const startChildExecution = mock(() => Promise.resolve(handle));
 
       await executeDelegate(
-        { agent_type: "explore", prompt: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
+        { agent_type: "explore", task: "continue", skills: [], background: false, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession, startChildExecution }),
       );
 

@@ -16,7 +16,7 @@ import {
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
 import type { CommandResult } from "../commands/types";
-import type { AvailableArtifactReference, ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
+import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
@@ -279,7 +279,7 @@ export class SessionExecutionManager {
         slug: "",
         workspaceRoot,
         sessionId: childSessionId,
-        userMessage: buildChildUserMessage(request.prompt, request.available_artifacts, activeWorkflow, targetAllowedTools),
+        userMessage: buildChildUserMessage(request.prompt, activeWorkflow, targetAllowedTools),
         agentName: targetDefinition.name,
         origin: "tool_call",
       });
@@ -783,7 +783,6 @@ function formatStatus(status: SubAgentTerminalStatus): string {
 
 function buildChildUserMessage(
   prompt: string,
-  availableArtifacts: readonly AvailableArtifactReference[] | undefined,
   activeWorkflow: ActiveWorkflowPromptContext | undefined,
   allowedTools: readonly string[],
 ): string {
@@ -793,25 +792,7 @@ function buildChildUserMessage(
     sections.push("", formatActiveWorkflowBlock(activeWorkflow));
   }
 
-  if (availableArtifacts === undefined || availableArtifacts.length === 0) return sections.join("\n");
-
-  const references = availableArtifacts.map(formatArtifactReference).join("\n");
-  sections.push(
-    "",
-    "Available artifacts:",
-    references,
-    "Use artifact_read before relying on artifact content. The references above identify available artifacts only; their contents are not included in this prompt.",
-  );
   return sections.join("\n");
-}
-
-function formatArtifactReference(reference: AvailableArtifactReference): string {
-  const locator = reference.path === undefined
-    ? `${reference.workflowId}/${reference.kind ?? "artifact"}`
-    : reference.kind === undefined
-      ? `${reference.workflowId}/${reference.path}`
-      : `${reference.workflowId}/${reference.kind} (${reference.path})`;
-  return reference.description === undefined ? `- ${locator}` : `- ${locator}: ${reference.description}`;
 }
 
 function toAgentResult(store: StoreApi<SessionStoreState>): AgentResult {

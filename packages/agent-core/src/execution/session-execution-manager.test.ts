@@ -557,49 +557,9 @@ describe("SessionExecutionManager", () => {
     });
   });
 
-  test("startChildExecution adds artifact references to child prompt without artifact content", async () => {
-    const parentId = crypto.randomUUID();
-    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
-    const artifactWorkflowId = crypto.randomUUID();
-    const artifactBody = "SECRET ARTIFACT BODY MUST NOT APPEAR";
-    let childPrompt = "";
-    const { manager } = createManager({}, {
-      factory: makeFactory(),
-      childRunMessage: (message) => {
-        childPrompt = message;
-      },
-    });
-
-    const handle = await manager.startChildExecution(workspaceRoot, {
-      parentStore,
-      parentSessionId: parentId,
-      parentToolCallId: "tool-call",
-      toolName: "delegate",
-      targetAgentName: "explore",
-      prompt: `inspect without reading content: ${artifactBody}`.replace(artifactBody, "task only"),
-      skills: [],
-      available_artifacts: [
-        { workflowId: artifactWorkflowId, kind: "RESEARCH", description: `Research summary, not content: ${artifactBody}`.replace(artifactBody, "available") },
-        { workflowId: artifactWorkflowId, path: "notes/context.md" },
-      ],
-      background: false,
-      currentDepth: 0,
-      parentAbort: undefined,
-    });
-    await handle.result;
-
-    expect(childPrompt).toContain("inspect without reading content: task only");
-    expect(childPrompt).toContain("Available artifacts:");
-    expect(childPrompt).toContain(`${artifactWorkflowId}/RESEARCH`);
-    expect(childPrompt).toContain(`${artifactWorkflowId}/notes/context.md`);
-    expect(childPrompt).toContain("Use artifact_read before relying on artifact content");
-    expect(childPrompt).not.toContain(artifactBody);
-  });
-
-  test("active workflow child prompt appears before available artifacts for workflow-capable child", async () => {
+  test("active workflow child prompt appears after delegated prompt for workflow-capable child", async () => {
     const parentId = crypto.randomUUID();
     const workflow = await createWorkflowState({ title: "Child Active Workflow", stage: "foreman_executing" });
-    const artifactWorkflowId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator", workflowId: workflow.id });
     let childPrompt = "";
     const factory = makeFactory({
@@ -624,7 +584,6 @@ describe("SessionExecutionManager", () => {
       targetAgentName: "explore",
       prompt: "inspect workflow artifacts",
       skills: [],
-      available_artifacts: [{ workflowId: artifactWorkflowId, kind: "TASKS" }],
       background: false,
       currentDepth: 0,
       parentAbort: undefined,
@@ -639,7 +598,7 @@ describe("SessionExecutionManager", () => {
     expect(childPrompt).toContain("Status: active");
     expect(childPrompt).toContain(`Use the exact workflow UUID \`${workflow.id}\``);
     expect(childPrompt).toContain("Never use `default`, a slug, or a title as a workflow ID");
-    expect(childPrompt.indexOf("## Active Workflow")).toBeLessThan(childPrompt.indexOf("Available artifacts:"));
+    expect(childPrompt.indexOf("inspect workflow artifacts")).toBeLessThan(childPrompt.indexOf("## Active Workflow"));
     expect(handle.store.getState().workflowId).toBe(workflow.id);
     expect(childPrompt).not.toContain("Workflow ID: default");
   });

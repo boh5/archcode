@@ -22,16 +22,13 @@ export type {
   AgentToolPolicy,
 } from "./factory-types";
 export {
-  builderAgentDefinition,
-  criticAgentDefinition,
+  buildAgentDefinition,
   defaultAgentDefinitions,
   exploreAgentDefinition,
-  foremanAgentDefinition,
   librarianAgentDefinition,
   orchestratorAgentDefinition,
-  productAgentDefinition,
+  planAgentDefinition,
   reviewerAgentDefinition,
-  specAgentDefinition,
 } from "./definitions";
 export { resolveAgentModel } from "./model-resolver";
 export {

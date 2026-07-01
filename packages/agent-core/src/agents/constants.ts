@@ -14,4 +14,4 @@ export const DEFAULT_SUB_AGENT_TIMEOUT_MS = 20 * 60 * 1000;
 export const MAX_SUB_AGENT_DEPTH = 3;
 export const MAX_CONCURRENT_SUB_AGENTS = 10;
 
-export type AgentType = "explore";
+export type AgentType = "orchestrator" | "plan" | "build" | "reviewer" | "explore" | "librarian";

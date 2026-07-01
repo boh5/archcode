@@ -565,7 +565,6 @@ describe("end-to-end workflow lifecycle integration", () => {
       targetAgentName: "explore",
       prompt: "Read source references before planning W2 work.",
       skills: [],
-      available_artifacts: [{ workflowId: source.workflow.id, path: "RESEARCH.md" }],
       background: false,
       currentDepth: 0,
     });
@@ -577,7 +576,6 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(capturedMessages[0]).toContain("Title: Derived from source");
     expect(capturedMessages[0]).toContain("Type: full_feature");
     expect(capturedMessages[0]).toContain(`Use the exact workflow UUID \`${result.workflow.id}\``);
-    expect(capturedMessages[0]).toContain(`${source.workflow.id}/RESEARCH.md`);
 
     const ctx = createContext(root, storeManager, derivedStore);
     const sourceWorkflowRead = await createWorkflowReadTool().execute({ workflowId: source.workflow.id }, ctx);
@@ -666,7 +664,7 @@ describe("end-to-end workflow lifecycle integration", () => {
     expect(store.getState().pendingInteractions?.find((entry) => entry.id === "q-2")).toMatchObject({ status: "answered", answer: { content: "ship" } });
   });
 
-  test("child execution receives delegate artifact references without artifact content", async () => {
+  test("child execution receives delegated prompt without hidden artifact content", async () => {
     const root = workspaceRoot("delegate-artifacts");
     const storeManager = new SessionStoreManager({ logger: silentLogger });
     const parentStore = storeManager.create("parent-session", root, { agentName: "orchestrator", workflowId: "550e8400-e29b-41d4-a716-446655440010" });
@@ -695,19 +693,12 @@ describe("end-to-end workflow lifecycle integration", () => {
       targetAgentName: "explore",
       prompt: "Inspect the available research reference only.",
       skills: [],
-      available_artifacts: [
-        { workflowId: "550e8400-e29b-41d4-a716-446655440010", kind: "RESEARCH", description: "Research summary reference" },
-        { workflowId: "550e8400-e29b-41d4-a716-446655440010", path: "notes/context.md" },
-      ],
       background: false,
       currentDepth: 0,
     });
     await handle.result;
 
-    expect(capturedMessages[0]).toContain("Available artifacts:");
-    expect(capturedMessages[0]).toContain("550e8400-e29b-41d4-a716-446655440010/RESEARCH: Research summary reference");
-    expect(capturedMessages[0]).toContain("550e8400-e29b-41d4-a716-446655440010/notes/context.md");
-    expect(capturedMessages[0]).toContain("Use artifact_read before relying on artifact content");
+    expect(capturedMessages[0]).toContain("Inspect the available research reference only.");
     expect(capturedMessages[0]).not.toContain(secretArtifactContent);
     expect(handle.store.getState().workflowId).toBe("550e8400-e29b-41d4-a716-446655440010");
   });

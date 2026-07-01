@@ -1,6 +1,6 @@
 export type { ChildExecutionHandle, ChildExecutionRequest } from "../delegation/types";
 
-export type AgentName = "orchestrator" | "explore" | (string & {});
+export type AgentName = "orchestrator" | "plan" | "build" | "reviewer" | "explore" | "librarian" | (string & {});
 
 export interface AgentDefinition {
   readonly name: AgentName;
