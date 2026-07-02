@@ -191,7 +191,7 @@ function checkApplyProtectedPath(
     code: "PROTECTED_PATH_WRITE_DENIED",
     message:
       `Cannot apply ast-grep replacement to system-managed .archcode path "${protectedMatch.file}". ` +
-      "Use the appropriate workflow or memory tool instead.",
+      "Use the appropriate goal or memory tool instead.",
   });
 }
 

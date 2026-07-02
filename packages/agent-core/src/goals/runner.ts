@@ -1,5 +1,6 @@
 import type { DoneResult, GoalPhase, GoalState } from "@archcode/protocol";
 
+import { GoalApprovalGate } from "../hitl/goal-gates";
 import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "../hitl/types";
 import type { GoalStateManager } from "./state";
 
@@ -31,6 +32,7 @@ const PHASE_ORDER: GoalPhase[] = ["plan", "build", "review"];
 export class GoalRunner {
   readonly #goalStateManager: GoalStateManager;
   readonly #hitlService: HitlGateway;
+  readonly #approvalGate: GoalApprovalGate;
   readonly #workspaceRoot: string;
   readonly #createSession: () => Promise<string>;
   readonly #isSessionActive: (sessionId: string) => Promise<boolean>;
@@ -38,6 +40,10 @@ export class GoalRunner {
   constructor(options: GoalRunnerOptions) {
     this.#goalStateManager = options.goalStateManager;
     this.#hitlService = options.hitlService;
+    this.#approvalGate = new GoalApprovalGate({
+      hitlService: options.hitlService,
+      goalStateManager: options.goalStateManager,
+    });
     this.#workspaceRoot = options.workspaceRoot;
     this.#createSession = options.createSession;
     this.#isSessionActive = options.isSessionActive ?? (async () => false);
@@ -61,8 +67,11 @@ export class GoalRunner {
     this.#assertNextPhase(current, nextPhase);
 
     if (current.phase === "plan" && nextPhase === "build" && current.approvalPoints.includes("after_plan")) {
-      const approved = await this.#requestApproval(current, "after_plan");
-      if (!approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
+      if (!current.mainSessionId) {
+        throw new GoalRunnerError(goalId, "Cannot request after_plan approval without a main session");
+      }
+      const outcome = await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "after_plan", current.title, current.projectId);
+      if (!outcome.approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
     }
 
     return this.#goalStateManager.updatePhase(goalId, nextPhase);
@@ -99,8 +108,11 @@ export class GoalRunner {
     this.#assertReviewerEvidence(current);
 
     if (current.approvalPoints.includes("before_complete")) {
-      const approved = await this.#requestApproval(current, "before_complete");
-      if (!approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
+      if (!current.mainSessionId) {
+        throw new GoalRunnerError(goalId, "Cannot request before_complete approval without a main session");
+      }
+      const outcome = await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "before_complete", current.title, current.projectId);
+      if (!outcome.approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
     }
 
     return this.#goalStateManager.transitionStatus(goalId, "completed");
@@ -149,33 +161,6 @@ export class GoalRunner {
     }
 
     return recovered;
-  }
-
-  async #requestApproval(goal: GoalState, approvalPoint: "after_plan" | "before_complete"): Promise<boolean> {
-    if (!goal.mainSessionId) {
-      throw new GoalRunnerError(goal.id, `Cannot request ${approvalPoint} approval without a main session`);
-    }
-
-    const response = await this.#hitlService.request(
-      goal.mainSessionId,
-      "approval",
-      {
-        title: approvalPoint === "after_plan" ? "Approve goal plan" : "Approve goal completion",
-        message: approvalPoint === "after_plan"
-          ? `Approve moving goal \"${goal.title}\" from plan to build?`
-          : `Approve completing goal \"${goal.title}\"?`,
-        details: { goalId: goal.id, projectSlug: goal.projectId, approvalPoint, phase: goal.phase, status: goal.status },
-        options: [
-          { id: "approved", label: "Approve" },
-          { id: "denied", label: "Deny" },
-        ],
-        recommendedOptionId: "approved",
-      },
-      { goalId: goal.id, projectSlug: goal.projectId, source: "goal_runner" },
-    );
-
-    return response.status === "resolved"
-      && (response.response.decision === "approved" || response.response.verdict === "approve");
   }
 
   #assertRunning(goal: GoalState): void {

@@ -132,6 +132,7 @@ describe("GoalRunner", () => {
 
     expect(paused.status).toBe("paused");
     expect(paused.phase).toBe("plan");
+    expect(paused.lastError).toBe("Approval after_plan denied");
   });
 
   it("pauses when before_complete approval is denied", async () => {
@@ -147,6 +148,7 @@ describe("GoalRunner", () => {
 
     expect(paused.status).toBe("paused");
     expect(paused.phase).toBe("review");
+    expect(paused.lastError).toBe("Approval before_complete denied");
   });
 
   it("does not complete without reviewer done evidence", async () => {
