@@ -53,6 +53,14 @@ const VALID_CONFIG = {
       },
     },
   },
+  agents: {
+    orchestrator: { model: "xxx:gpt-5.2" },
+    plan: { model: "xxx:gpt-5.2" },
+    build: { model: "xxx:gpt-5.2" },
+    reviewer: { model: "xxx:gpt-5.2" },
+    explore: { model: "xxx:gpt-5.2" },
+    librarian: { model: "xxx:gpt-5.2" },
+  },
 };
 
 describe("createRegistry", () => {

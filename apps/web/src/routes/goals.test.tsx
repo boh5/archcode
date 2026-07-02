@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -9,7 +9,47 @@ import { GoalsRoute } from "./goals";
 
 // ─── Test helpers ───
 
+const DOM_GLOBAL_NAMES = [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "MouseEvent",
+  "IS_REACT_ACT_ENVIRONMENT",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "fetch",
+] as const;
+
+type DomGlobalName = (typeof DOM_GLOBAL_NAMES)[number];
+
+let originalGlobalDescriptors: Map<DomGlobalName, PropertyDescriptor | undefined> | undefined;
+
+function saveGlobalDescriptors(): void {
+  if (originalGlobalDescriptors) return;
+
+  originalGlobalDescriptors = new Map(
+    DOM_GLOBAL_NAMES.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+  );
+}
+
+function restoreGlobals(): void {
+  if (!originalGlobalDescriptors) return;
+
+  for (const [name, descriptor] of originalGlobalDescriptors) {
+    if (descriptor) {
+      Object.defineProperty(globalThis, name, descriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, name);
+    }
+  }
+
+  originalGlobalDescriptors = undefined;
+}
+
 function installDom(path = "/projects/demo/goals"): JSDOM {
+  saveGlobalDescriptors();
+
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: `http://localhost${path}`,
   });
@@ -99,6 +139,11 @@ async function renderGoalsRoute(
 
 describe("GoalsRoute", () => {
   beforeEach(() => {
+    mock.restore();
+  });
+
+  afterEach(() => {
+    restoreGlobals();
     mock.restore();
   });
 

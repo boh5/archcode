@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -43,7 +43,47 @@ function createSession(input: {
   };
 }
 
+const DOM_GLOBAL_NAMES = [
+  "window",
+  "document",
+  "navigator",
+  "HTMLElement",
+  "MouseEvent",
+  "IS_REACT_ACT_ENVIRONMENT",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "fetch",
+] as const;
+
+type DomGlobalName = (typeof DOM_GLOBAL_NAMES)[number];
+
+let originalGlobalDescriptors: Map<DomGlobalName, PropertyDescriptor | undefined> | undefined;
+
+function saveGlobalDescriptors(): void {
+  if (originalGlobalDescriptors) return;
+
+  originalGlobalDescriptors = new Map(
+    DOM_GLOBAL_NAMES.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+  );
+}
+
+function restoreGlobals(): void {
+  if (!originalGlobalDescriptors) return;
+
+  for (const [name, descriptor] of originalGlobalDescriptors) {
+    if (descriptor) {
+      Object.defineProperty(globalThis, name, descriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, name);
+    }
+  }
+
+  originalGlobalDescriptors = undefined;
+}
+
 function installDom(): JSDOM {
+  saveGlobalDescriptors();
+
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/projects/demo/sessions/root-session",
   });
@@ -172,6 +212,11 @@ describe("SessionRoute store-level behavior", () => {
 describe("SessionRoute focused view store behavior", () => {
   beforeEach(() => {
     __resetWebSessionStoresForTest();
+  });
+
+  afterEach(() => {
+    restoreGlobals();
+    mock.restore();
   });
 
   test("clicking DelegationCard focuses child session and back breadcrumb clears focus", async () => {
