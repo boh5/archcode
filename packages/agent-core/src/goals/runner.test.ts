@@ -217,10 +217,10 @@ describe("GoalRunner", () => {
 
     const recovered = await runner.recoverInterruptedGoals(workspaceRoot);
 
-    expect(recovered.map((goal) => [goal.id, goal.status])).toEqual([
-      [noSession.id, "failed"],
-      [pending.id, "paused"],
-    ]);
+    const recoveredMap = new Map(recovered.map((g) => [g.id, g.status]));
+    expect(recoveredMap.get(noSession.id)).toBe("failed");
+    expect(recoveredMap.get(pending.id)).toBe("paused");
+    expect(recovered).toHaveLength(2);
     expect((await manager.read(noSession.id)).lastError).toContain("Interrupted");
   });
 

@@ -58,7 +58,11 @@ function makeConfig(mcp?: Record<string, unknown>): Record<string, unknown> {
     provider: makeProviderConfig(),
     agents: {
       orchestrator: { model: "local:test-model" },
+      plan: { model: "local:test-model" },
+      build: { model: "local:test-model" },
+      reviewer: { model: "local:test-model" },
       explore: { model: "local:test-model" },
+      librarian: { model: "local:test-model" },
     },
   };
 

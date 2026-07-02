@@ -528,6 +528,14 @@ describe("archcodeConfigSchema with mcp", () => {
         },
       },
     },
+    agents: {
+      orchestrator: { model: "p:m" },
+      plan: { model: "p:m" },
+      build: { model: "p:m" },
+      reviewer: { model: "p:m" },
+      explore: { model: "p:m" },
+      librarian: { model: "p:m" },
+    },
   };
 
   test("accepts config without mcp key", () => {
