@@ -28,12 +28,19 @@ type DashboardGoal = GoalState & {
   projectName: string;
 };
 
+type DashboardProjectError = {
+  projectSlug: string;
+  projectName: string;
+  message: string;
+};
+
 export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
   app.get("/goals", async (c) => {
     const status = parseGoalStatusFilter(c.req.query("status"));
     const goals: DashboardGoal[] = [];
+    const errors: DashboardProjectError[] = [];
 
     for (const project of await listProjects(runtime)) {
       try {
@@ -44,13 +51,14 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
             .filter((goal) => matchesGoalStatus(goal, status))
             .map((goal) => withProject(goal, project)),
         );
-      } catch {
+      } catch (error) {
         // Dashboard aggregation is best-effort: one corrupt project must not
         // prevent other project goals from rendering.
+        errors.push(withProjectError(project, error));
       }
     }
 
-    return c.json({ goals });
+    return c.json({ goals, errors });
   });
 
   return app;
@@ -76,6 +84,14 @@ function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
     ...goal,
     projectSlug: project.slug,
     projectName: project.name,
+  };
+}
+
+function withProjectError(project: ProjectInfo, error: unknown): DashboardProjectError {
+  return {
+    projectSlug: project.slug,
+    projectName: project.name,
+    message: error instanceof Error ? error.message : String(error),
   };
 }
 

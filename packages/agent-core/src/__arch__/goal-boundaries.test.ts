@@ -17,6 +17,11 @@ interface Violation {
   importPath: string;
 }
 
+interface SourceFile {
+  file: string;
+  source: string;
+}
+
 const legacyWorkflowImportPatterns = [
   /^packages\/agent-core\/src\/agents\/workflow(\/|$)/,
   /^packages\/agent-core\/src\/tools\/builtins\/workflow(\/|$)/,
@@ -28,6 +33,28 @@ const legacyWorkflowToolPatterns = [
   /\bworkflow_(?:create|read|update_stage|propose_interactions|request_interactions|task_check)\b/,
   /\bTOOL_WORKFLOW_(?:CREATE|READ|UPDATE_STAGE|PROPOSE_INTERACTIONS|REQUEST_INTERACTIONS|TASK_CHECK)\b/,
 ] as const;
+
+const workflowStoragePathPatterns = [
+  /["']\.archcode\/workflows\/?["']/,
+  /["']\.archcode["']\s*,\s*["']workflows["']/,
+] as const;
+
+const serverWorkflowRoutePatterns = [
+  /\bcreateWorkflowRoutes\b/,
+  /\.route\s*\(\s*["']\/api\/(?:projects[^"']*\/)?workflows?\b/,
+  /\.(?:post|put|patch|delete)\s*\(\s*["'][^"']*\/workflows?\b/,
+] as const;
+
+const webLegacyWorkflowUiImportPatterns = [
+  /import\s+(?:type\s+)?[\s\S]*?\buseWorkflow\b[\s\S]*?from\s+["'][^"']+["']/,
+  /import\s+(?:type\s+)?[\s\S]*?\bPipelineStepper\b[\s\S]*?from\s+["'][^"']+["']/,
+  /import\s+(?:type\s+)?[\s\S]*?\bStateTab\b[\s\S]*?from\s+["'][^"']+["']/,
+  /from\s+["'][^"']*(?:use-workflow|PipelineStepper|StateTab)[^"']*["']/,
+] as const;
+
+const legacyWorkflowToolDisplayFormatterFiles = new Set([
+  "apps/web/src/lib/tool-format.ts",
+]);
 
 function findTsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -49,6 +76,19 @@ function findTsFiles(dir: string): string[] {
   }
 
   return files.sort();
+}
+
+function readProductionSources(scopeDir: string): SourceFile[] {
+  return findTsFiles(join(projectRoot, scopeDir)).map((file) => ({
+    file,
+    source: stripComments(readFileSync(file, "utf8")),
+  }));
+}
+
+function readSpecificProductionSources(files: string[]): SourceFile[] {
+  return files
+    .filter((file) => existsSync(file) && !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
+    .map((file) => ({ file, source: stripComments(readFileSync(file, "utf8")) }));
 }
 
 function resolveImportPath(filePath: string, importPath: string): string | undefined {
@@ -109,10 +149,13 @@ function findImportViolations(scopeDir: string, forbiddenPatterns: readonly RegE
 }
 
 function findSourceTextViolations(scopeDir: string, forbiddenPatterns: readonly RegExp[]): Violation[] {
+  return findTextViolations(readProductionSources(scopeDir), forbiddenPatterns);
+}
+
+function findTextViolations(sources: SourceFile[], forbiddenPatterns: readonly RegExp[]): Violation[] {
   const violations: Violation[] = [];
 
-  for (const file of findTsFiles(join(projectRoot, scopeDir))) {
-    const source = stripComments(readFileSync(file, "utf8"));
+  for (const { file, source } of sources) {
     for (const pattern of forbiddenPatterns) {
       pattern.lastIndex = 0;
       if (pattern.test(source)) {
@@ -122,6 +165,14 @@ function findSourceTextViolations(scopeDir: string, forbiddenPatterns: readonly 
   }
 
   return violations;
+}
+
+function withoutAllowedFiles(violations: Violation[], allowedFiles: ReadonlySet<string>): Violation[] {
+  return violations.filter((violation) => !allowedFiles.has(violation.file));
+}
+
+function findWorkspaceTextViolations(scopeDirs: string[], forbiddenPatterns: readonly RegExp[]): Violation[] {
+  return scopeDirs.flatMap((scopeDir) => findSourceTextViolations(scopeDir, forbiddenPatterns));
 }
 
 function expectNoViolations(violations: Violation[]): void {
@@ -155,5 +206,41 @@ describe("Goal migration boundaries", () => {
       ...findImportViolations("packages/agent-core/src", legacyWorkflowImportPatterns),
       ...findSourceTextViolations("packages/agent-core/src", legacyWorkflowToolPatterns),
     ]);
+  });
+
+  test("production code does not reference legacy workflow tool names outside display formatters", () => {
+    expectNoViolations(
+      withoutAllowedFiles(
+        findWorkspaceTextViolations([
+          "apps/server/src",
+          "apps/web/src",
+          "packages/agent-core/src",
+        ], legacyWorkflowToolPatterns),
+        legacyWorkflowToolDisplayFormatterFiles,
+      ),
+    );
+  });
+
+  test("server app does not mount active workflow routes", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([join(projectRoot, "apps/server/src/app.ts")]),
+        serverWorkflowRoutePatterns,
+      ),
+    );
+  });
+
+  test("web production code does not import legacy workflow UI surfaces", () => {
+    expectNoViolations(findSourceTextViolations("apps/web/src", webLegacyWorkflowUiImportPatterns));
+  });
+
+  test("runtime production code does not write legacy workflow storage paths", () => {
+    expectNoViolations(
+      findWorkspaceTextViolations([
+        "apps/server/src",
+        "apps/web/src",
+        "packages/agent-core/src",
+      ], workflowStoragePathPatterns),
+    );
   });
 });

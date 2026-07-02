@@ -152,6 +152,35 @@ describe("goals routes", () => {
     });
   });
 
+  test("global goals include project metadata for each registered project", async () => {
+    const { app, project, runtime } = await createTestApp("global-project-metadata");
+    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "global-project-metadata-other");
+    await mkdir(otherWorkspaceRoot, { recursive: true });
+    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "global-project-metadata-other" });
+
+    const firstGoal = await createGoal(app, project.slug, "First active goal");
+    const otherGoal = await createGoal(app, otherProject.slug, "Other active goal");
+    await app.request(`/api/projects/${project.slug}/goals/${firstGoal.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner" }),
+      headers: { "content-type": "application/json" },
+    });
+    await app.request(`/api/projects/${project.slug}/goals/${firstGoal.id}/run`, { method: "POST" });
+    await app.request(`/api/projects/${otherProject.slug}/goals/${otherGoal.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner" }),
+      headers: { "content-type": "application/json" },
+    });
+    await app.request(`/api/projects/${otherProject.slug}/goals/${otherGoal.id}/run`, { method: "POST" });
+
+    const res = await app.request("/api/goals?status=active");
+    const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
+
+    expect(res.status).toBe(200);
+    expect(body.goals).toContainEqual(expect.objectContaining({ id: firstGoal.id, projectSlug: project.slug, projectName: project.name }));
+    expect(body.goals).toContainEqual(expect.objectContaining({ id: otherGoal.id, projectSlug: otherProject.slug, projectName: otherProject.name }));
+  });
+
   test("goals are isolated by project workspace", async () => {
     const { app, project, runtime } = await createTestApp("cross-project");
     const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "cross-project-other");
@@ -168,6 +197,21 @@ describe("goals routes", () => {
 
     expect(firstBody.goals.map((goal) => goal.id)).toEqual([firstGoal.id]);
     expect(otherBody.goals.map((goal) => goal.id)).toEqual([otherGoal.id]);
+  });
+
+  test("project-scoped route returns 404 for a goal from another workspace", async () => {
+    const { app, project, runtime } = await createTestApp("foreign-goal-read");
+    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "foreign-goal-read-other");
+    await mkdir(otherWorkspaceRoot, { recursive: true });
+    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "foreign-goal-read-other" });
+    const firstGoal = await createGoal(app, project.slug, "First workspace only");
+
+    const res = await app.request(`/api/projects/${otherProject.slug}/goals/${firstGoal.id}`);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${firstGoal.id}` },
+    });
   });
 
   test("GET list supports status filter", async () => {

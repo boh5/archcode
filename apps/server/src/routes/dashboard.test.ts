@@ -130,18 +130,27 @@ describe("dashboard routes", () => {
     expect(body.goals[0]).toMatchObject({ id: draftGoal.id, title: "Draft goal", projectSlug: project.slug, projectName: project.name });
   });
 
-  test("GET /api/goals skips corrupt project goal data as partial failure", async () => {
+  test("GET /api/goals reports corrupt project goal data as partial failure metadata", async () => {
     const { app, runtime } = await createTestApp("partial-failure");
     const healthyProject = await addProject(runtime, "partial-failure", "Healthy Project");
     const corruptProject = await addProject(runtime, "partial-failure", "Corrupt Project");
     const healthyGoal = await createGoal(runtime, healthyProject, "Healthy goal");
-    await mkdir(join(corruptProject.workspaceRoot, ".archcode", "goals", "not-a-uuid"), { recursive: true });
+    const corruptGoalDir = join(corruptProject.workspaceRoot, ".archcode", "goals", "not-a-uuid");
+    await mkdir(corruptGoalDir, { recursive: true });
+    await Bun.write(join(corruptGoalDir, "goal.json"), "{ invalid json");
 
     const res = await app.request("/api/goals?status=draft");
-    const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
+    const body = await res.json() as {
+      goals: Array<GoalState & { projectSlug: string; projectName: string }>;
+      errors?: Array<{ projectSlug: string; projectName: string; message: string }>;
+    };
 
     expect(res.status).toBe(200);
     expect(body.goals).toHaveLength(1);
     expect(body.goals[0]).toMatchObject({ id: healthyGoal.id, projectSlug: healthyProject.slug, projectName: healthyProject.name });
+    expect(body.errors).toContainEqual(expect.objectContaining({
+      projectSlug: corruptProject.slug,
+      projectName: corruptProject.name,
+    }));
   });
 });
