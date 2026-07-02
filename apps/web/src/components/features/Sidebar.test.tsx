@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Project, Session, SessionTreeResponse } from "../../api/types";
+import type { GoalState, Project, Session, SessionTreeResponse } from "../../api/types";
 
 interface ElementLike {
   type?: unknown;
@@ -72,17 +72,19 @@ const useState = mock(<T,>(initial: T): [T, (value: T | ((previous: T) => T)) =>
   setState as (value: T | ((previous: T) => T)) => void,
 ]);
 const useNavigate = mock(() => navigate);
-const useParams = mock(() => ({ slug: "missing-project", sessionId: "" }));
+const useParams = mock(() => ({ slug: "missing-project", sessionId: "", goalId: "" }));
 const useCreateSession = mock(() => ({
   mutate: createSessionMutate,
   isPending: false,
 }));
 let projects: Project[] = [];
 let sessions: Session[] = [];
+let goals: GoalState[] = [];
 let sessionTree: SessionTreeResponse | null = null;
 let createSessionPending = false;
 const useProjects = mock(() => ({ data: projects }));
 const useSessions = mock((_slug: string) => ({ data: sessions }));
+const useGoals = mock((_slug: string) => ({ data: goals }));
 const useSessionTree = mock((_slug: string, _rootSessionId: string) => ({ data: sessionTree }));
 
 let Sidebar: SidebarComponent;
@@ -113,6 +115,7 @@ mock.module("../../api/mutations", () => ({
     mutate: createSessionMutate,
     isPending: createSessionPending,
   }),
+  useCreateGoal: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useAddProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useDeleteProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
@@ -143,11 +146,17 @@ mock.module("../../api/queries", () => ({
   diffQueryOptions: (_slug: string) => ({}),
   useProjects,
   useSessions,
+  useGoals,
   useSession: (_slug: string, _sessionId: string) => ({ data: null }),
   useSessionTree,
   useDiff: (_slug: string) => ({ data: [] }),
   useDirectoryList: (_path: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
   useDirectorySearch: (_query: string, _limit?: number) => ({ data: { entries: [], truncated: false }, isLoading: false, error: null }),
+}));
+
+mock.module("lucide-react", () => ({
+  ChevronRight: "ChevronRight",
+  Plus: "Plus",
 }));
 
 mock.module("../ui/DropdownMenu", () => ({
@@ -173,6 +182,10 @@ mock.module("../ui/Dialog", () => ({
   DialogDescription: "DialogDescription",
 }));
 
+mock.module("./CreateGoalDialog", () => ({
+  CreateGoalDialog: "CreateGoalDialog",
+}));
+
 ({ Sidebar } = await import("./Sidebar"));
 
 function render(): unknown {
@@ -183,10 +196,11 @@ describe("Sidebar", () => {
   beforeEach(() => {
     projects = [];
     sessions = [];
+    goals = [];
     sessionTree = null;
     createSessionPending = false;
     focusSessionId = null;
-    useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "" }));
+    useParams.mockImplementation(() => ({ slug: "missing-project", sessionId: "", goalId: "" }));
     for (const fn of [
       navigate,
       createSessionMutate,
@@ -198,6 +212,7 @@ describe("Sidebar", () => {
       useCreateSession,
       useProjects,
       useSessions,
+      useGoals,
       useSessionTree,
       setFocusSessionId,
       getWebSessionStore,
@@ -217,7 +232,7 @@ describe("Sidebar", () => {
 
   test("active project renders action menu and workspace path", () => {
     projects = [project];
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
     const tree = render();
 
     expect(textContent(tree)).toContain("ArchCode");
@@ -228,12 +243,11 @@ describe("Sidebar", () => {
   test("New Session button exposes disabled state while mutation is pending", () => {
     createSessionPending = true;
     const tree = render();
-    const button = findAll(
-      tree,
-      (element) => element.type === "button" && textContent(element).includes("+ New Session"),
-    )[0];
+    const headers = findAll(tree, (element) => typeName(element) === "SectionHeader");
+    const sessionsHeader = headers.find((h) => h.props?.title === "Sessions");
 
-    expect(button?.props?.disabled).toBe(true);
+    expect(sessionsHeader).toBeDefined();
+    expect(sessionsHeader?.props?.actionDisabled).toBe(true);
   });
 
   test("filters sidebar list to roots and fetches active child's root tree", () => {
@@ -276,14 +290,15 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "child-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "child-session", goalId: "" }));
 
     const tree = render();
     const sessionItems = findAll(tree, (element) => typeName(element) === "SessionItem");
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
 
     expect(useSessionTree).toHaveBeenCalledWith("archcode", "root-session");
-    expect(textContent(tree)).toContain("Agent Tree");
+    const headers = findAll(tree, (element) => typeName(element) === "SectionHeader");
+    expect(headers.some((h) => h.props?.title === "Agent Tree")).toBe(true);
     expect(sessionItems).toHaveLength(1);
     expect((sessionItems[0].props?.session as Session).sessionId).toBe("root-session");
     expect(agentNodes).toHaveLength(2);
@@ -330,7 +345,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "" }));
 
     const tree = render();
     const agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
@@ -390,7 +405,7 @@ describe("Sidebar", () => {
       },
       diagnostics: [],
     };
-    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session" }));
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "root-session", goalId: "" }));
 
     // focusSessionId is null → root is active
     focusSessionId = null;
@@ -405,5 +420,125 @@ describe("Sidebar", () => {
     agentNodes = findAll(tree, (element) => typeName(element) === "AgentNode");
     expect(agentNodes[0]?.props?.isActive).toBe(false);
     expect(agentNodes[1]?.props?.isActive).toBe(true);
+  });
+
+  test("goals section renders goal items and highlights active goal", () => {
+    projects = [project];
+    goals = [
+      {
+        id: "goal-1",
+        projectId: "archcode",
+        title: "First Goal",
+        status: "draft",
+        phase: "plan",
+        doneConditions: [],
+        doneResults: {},
+        reviewerAgent: "reviewer",
+        retryPolicy: { maxRetries: 2, backoffMs: 1000, escalateOnFailure: true },
+        retryCount: 0,
+        approvalPoints: [],
+        author: "architect",
+        childSessionIds: [],
+        createdAt: "1",
+        updatedAt: "1",
+      },
+      {
+        id: "goal-2",
+        projectId: "archcode",
+        title: "Second Goal",
+        status: "running",
+        phase: "build",
+        doneConditions: [],
+        doneResults: {},
+        reviewerAgent: "reviewer",
+        retryPolicy: { maxRetries: 2, backoffMs: 1000, escalateOnFailure: true },
+        retryCount: 1,
+        approvalPoints: [],
+        author: "architect",
+        childSessionIds: [],
+        createdAt: "2",
+        updatedAt: "2",
+      },
+    ];
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "goal-2" }));
+
+    const tree = render();
+    const goalItems = findAll(tree, (element) => typeName(element) === "GoalItem");
+
+    expect(goalItems).toHaveLength(2);
+    expect(goalItems[0]?.props?.isActive).toBe(false);
+    expect(goalItems[1]?.props?.isActive).toBe(true);
+    expect((goalItems[1]?.props?.goal as GoalState).title).toBe("Second Goal");
+  });
+
+  test("goals section shows empty state when no goals", () => {
+    projects = [project];
+    goals = [];
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
+
+    const tree = render();
+    expect(textContent(tree)).toContain("No goals yet");
+    expect(findAll(tree, (element) => typeName(element) === "GoalItem")).toHaveLength(0);
+  });
+
+  test("clicking goals title navigates to goals route", () => {
+    projects = [project];
+    goals = [];
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
+
+    const tree = render();
+    const headers = findAll(tree, (element) => typeName(element) === "SectionHeader");
+    const goalsHeader = headers.find((h) => h.props?.title === "Goals");
+    (goalsHeader?.props?.onTitleClick as () => void)?.();
+
+    expect(navigate).toHaveBeenCalledWith("/projects/archcode/goals");
+  });
+
+  test("clicking a goal item navigates to goal detail route", () => {
+    projects = [project];
+    goals = [
+      {
+        id: "goal-abc",
+        projectId: "archcode",
+        title: "Target Goal",
+        status: "draft",
+        phase: "plan",
+        doneConditions: [],
+        doneResults: {},
+        reviewerAgent: "reviewer",
+        retryPolicy: { maxRetries: 2, backoffMs: 1000, escalateOnFailure: true },
+        retryCount: 0,
+        approvalPoints: [],
+        author: "architect",
+        childSessionIds: [],
+        createdAt: "1",
+        updatedAt: "1",
+      },
+    ];
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
+
+    const tree = render();
+    const goalItems = findAll(tree, (element) => typeName(element) === "GoalItem");
+    (goalItems[0]?.props?.onClick as () => void)?.();
+
+    expect(navigate).toHaveBeenCalledWith("/projects/archcode/goals/goal-abc");
+  });
+
+  test("new goal action button opens CreateGoalDialog", () => {
+    projects = [project];
+    goals = [];
+    useParams.mockImplementation(() => ({ slug: "archcode", sessionId: "", goalId: "" }));
+
+    const tree = render();
+    const headers = findAll(tree, (element) => typeName(element) === "SectionHeader");
+    const goalsHeader = headers.find((h) => h.props?.title === "Goals");
+
+    expect(typeof goalsHeader?.props?.onAction).toBe("function");
+    expect(goalsHeader?.props?.actionTitle).toBe("New goal");
+    expect(goalsHeader?.props?.count).toBe(0);
+
+    const dialogs = findAll(tree, (element) => typeName(element) === "CreateGoalDialog");
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]?.props?.slug).toBe("archcode");
   });
 });
