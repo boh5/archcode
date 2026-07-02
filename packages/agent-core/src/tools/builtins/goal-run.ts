@@ -5,6 +5,8 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
+  GoalRunner,
+  GoalRunnerError,
   GoalLockedError,
   GoalNotFoundError,
   GoalPathError,
@@ -26,9 +28,14 @@ export function createGoalRunTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalRunInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = ctx.projectContext.goalState;
-        await manager.transitionStatus(input.goalId, "running");
-        const goal = await manager.updateSessionIds(input.goalId, ctx.store.getState().sessionId);
+        const currentSessionId = ctx.store.getState().sessionId;
+        const runner = new GoalRunner({
+          goalStateManager: ctx.projectContext.goalState,
+          hitlService: ctx.projectContext.hitl,
+          workspaceRoot: ctx.workspaceRoot,
+          createSession: async () => currentSessionId,
+        });
+        const goal = await runner.claimStart(input.goalId, currentSessionId);
         return JSON.stringify(goal, null, 2);
       } catch (error) {
         return goalToolErrorResult(error);
@@ -41,7 +48,7 @@ function goalToolErrorResult(error: unknown): ToolExecutionResult {
   if (error instanceof GoalNotFoundError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_NOT_FOUND", message: error.message });
   }
-  if (error instanceof GoalStateError || error instanceof GoalLockedError) {
+  if (error instanceof GoalRunnerError || error instanceof GoalStateError || error instanceof GoalLockedError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_INVALID_TRANSITION", message: error.message });
   }
   if (error instanceof GoalPathError) {

@@ -52,6 +52,12 @@ const webLegacyWorkflowUiImportPatterns = [
   /from\s+["'][^"']*(?:use-workflow|PipelineStepper|StateTab)[^"']*["']/,
 ] as const;
 
+const directGoalRunningTransitionPattern = /\.transitionStatus\s*\(\s*[^,]+,\s*["']running["']\s*\)/;
+
+const directGoalRunningTransitionAllowedFiles = new Set([
+  "packages/agent-core/src/goals/runner.ts",
+]);
+
 const legacyWorkflowToolDisplayFormatterFiles = new Set([
   "apps/web/src/lib/tool-format.ts",
 ]);
@@ -241,6 +247,19 @@ describe("Goal migration boundaries", () => {
         "apps/web/src",
         "packages/agent-core/src",
       ], workflowStoragePathPatterns),
+    );
+  });
+
+  test("only GoalRunner production code claims Goal running status", () => {
+    expectNoViolations(
+      withoutAllowedFiles(
+        findWorkspaceTextViolations([
+          "apps/server/src",
+          "packages/agent-core/src/tools/builtins",
+          "packages/agent-core/src/goals",
+        ], [directGoalRunningTransitionPattern]),
+        directGoalRunningTransitionAllowedFiles,
+      ),
     );
   });
 });

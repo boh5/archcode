@@ -21,6 +21,7 @@ export { createProtectedPathPermission, isProtectedProjectPath as isProtectedPro
 export { createReadBeforeEditPermission } from "./read-before-edit";
 export { createFileExistsPermission } from "./file-exists";
 export { createBashPermission } from "./bash";
+export { createGoalBootstrapPermission } from "./goal-bootstrap";
 export { createMcpDestructivePermission } from "./mcp";
 export {
   PermissionApprovalFileSchema,

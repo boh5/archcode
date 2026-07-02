@@ -4,6 +4,9 @@ import { join, resolve } from "node:path";
 import type { DoneCondition, DoneResult } from "@archcode/protocol";
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunnerResult } from "../process/types";
+import { classifyCommand } from "../tools/security";
+import type { ToolConfirmationCallback } from "../tools/types";
+import { MAX_DONE_COMMAND_TIMEOUT_MS } from "./state";
 
 const DEFAULT_TEST_COMMAND = "bun test";
 const DEFAULT_TYPECHECK_COMMAND = "bun run typecheck";
@@ -11,6 +14,15 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const MAX_EVIDENCE_LENGTH = 8_000;
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".turbo", ".next", "__test_tmp__"]);
 const GREP_MAX_FILES = 500;
+const ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL"] as const;
+
+export interface EvaluateConditionOptions {
+  readonly confirmPermission?: ToolConfirmationCallback;
+  readonly abort?: AbortSignal;
+  readonly toolName?: string;
+  readonly toolCallId?: string;
+  readonly checkCommandPermission?: boolean;
+}
 
 interface CommandResult {
   exitCode: number;
@@ -24,14 +36,18 @@ interface GrepMatch {
   text: string;
 }
 
-export async function evaluateCondition(condition: DoneCondition, workspaceRoot: string): Promise<DoneResult> {
+export async function evaluateCondition(
+  condition: DoneCondition,
+  workspaceRoot: string,
+  options: EvaluateConditionOptions = {},
+): Promise<DoneResult> {
   switch (condition.kind) {
     case "tests_pass": {
-      const result = await runShellCommand(condition.params.command ?? DEFAULT_TEST_COMMAND, workspaceRoot, DEFAULT_COMMAND_TIMEOUT_MS);
+      const result = await runShellCommand(condition.params.command ?? DEFAULT_TEST_COMMAND, workspaceRoot, DEFAULT_COMMAND_TIMEOUT_MS, options);
       return doneResult(condition.id, result.exitCode === 0, formatCommandEvidence(result));
     }
     case "typecheck_pass": {
-      const result = await runShellCommand(condition.params.command ?? DEFAULT_TYPECHECK_COMMAND, workspaceRoot, DEFAULT_COMMAND_TIMEOUT_MS);
+      const result = await runShellCommand(condition.params.command ?? DEFAULT_TYPECHECK_COMMAND, workspaceRoot, DEFAULT_COMMAND_TIMEOUT_MS, options);
       return doneResult(condition.id, result.exitCode === 0, formatCommandEvidence(result));
     }
     case "lsp_clean":
@@ -43,7 +59,7 @@ export async function evaluateCondition(condition: DoneCondition, workspaceRoot:
     case "grep_empty":
       return evaluateGrepEmpty(condition, workspaceRoot);
     case "command_succeeds": {
-      const result = await runShellCommand(condition.params.command, workspaceRoot, condition.params.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
+      const result = await runShellCommand(condition.params.command, workspaceRoot, condition.params.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS, options);
       return doneResult(condition.id, result.exitCode === 0, formatCommandEvidence(result));
     }
     case "user_confirmed":
@@ -101,7 +117,9 @@ async function evaluateLspClean(
 
     const files = (await collectFiles(resolvedPath)).filter(isLspSupportedFile).slice(0, GREP_MAX_FILES);
     for (const filePath of files) {
-      const result = await runShellCommand(`bun x tsc --noEmit --pretty false ${shellQuote(filePath)}`, workspaceRoot, 30_000);
+      const result = await runShellCommand(`bun x tsc --noEmit --pretty false ${shellQuote(filePath)}`, workspaceRoot, 30_000, {
+        checkCommandPermission: false,
+      });
       if (result.exitCode !== 0) {
         const output = `${result.stdout}\n${result.stderr}`.trim();
         diagnostics.push(`${filePath}: ${firstNonEmptyLine(output) ?? `exit ${result.exitCode}`}`);
@@ -175,12 +193,23 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function runShellCommand(command: string, cwd: string, timeoutMs: number): Promise<CommandResult> {
+async function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  options: EvaluateConditionOptions = {},
+): Promise<CommandResult> {
+  if (options.checkCommandPermission !== false) {
+    const permissionDenied = await commandPermissionDenial(command, cwd, Math.min(timeoutMs, MAX_DONE_COMMAND_TIMEOUT_MS), options);
+    if (permissionDenied) return permissionDenied;
+  }
+
   const result = await createProcessRunner().run({
     argv: ["bash", "-c", command],
     cwd,
+    env: buildDoneCommandEnv(),
     stdin: null,
-    timeoutMs,
+    timeoutMs: Math.min(timeoutMs, MAX_DONE_COMMAND_TIMEOUT_MS),
   });
 
   return {
@@ -188,6 +217,53 @@ async function runShellCommand(command: string, cwd: string, timeoutMs: number):
     stderr: result.kind === "spawn-failure" ? result.error.message : result.output.stderr,
     exitCode: processResultExitCode(result),
   };
+}
+
+async function commandPermissionDenial(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  options: EvaluateConditionOptions,
+): Promise<CommandResult | undefined> {
+  const decision = classifyCommand(command, { workspaceRoot: cwd });
+  if (decision.outcome === "allow") return undefined;
+  if (decision.outcome === "deny") {
+    return commandDeniedResult(decision.reason ?? "Done condition command was denied by bash policy");
+  }
+
+  if (!options.confirmPermission) {
+    return commandDeniedResult(decision.reason ?? "Done condition command requires permission confirmation");
+  }
+
+  const confirmation = await options.confirmPermission({
+    toolName: options.toolName ?? "goal_check_done",
+    toolCallId: options.toolCallId ?? "goal-check-done-command",
+    input: { command, timeoutMs },
+    description: "Evaluate a command-bearing Goal Done Condition through bash policy.",
+    reason: decision.prompt ?? decision.reason,
+    ...(decision.approval ? { approval: decision.approval } : {}),
+    ...(decision.display ? { decisionDisplay: decision.display } : {}),
+    ...(decision.ruleId ? { ruleId: decision.ruleId } : {}),
+  }, options.abort);
+
+  if (confirmation === "approve" || confirmation === "approve_once" || confirmation === "approve_always") {
+    return undefined;
+  }
+
+  return commandDeniedResult(decision.reason ?? `Done condition command confirmation ${confirmation}`);
+}
+
+function commandDeniedResult(reason: string): CommandResult {
+  return { exitCode: 126, stdout: "", stderr: `Permission denied: ${reason}` };
+}
+
+function buildDoneCommandEnv(source: Record<string, string | undefined> = Bun.env): Record<string, string> {
+  const env: Record<string, string> = { ARCHCODE_CLI: "1" };
+  for (const key of ENV_ALLOWLIST) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
 }
 
 function processResultExitCode(result: ProcessRunnerResult): number {

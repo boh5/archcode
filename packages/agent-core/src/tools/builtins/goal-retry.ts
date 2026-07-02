@@ -5,6 +5,8 @@ import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
 import {
+  GoalRunner,
+  GoalRunnerError,
   GoalLockedError,
   GoalNotFoundError,
   GoalPathError,
@@ -26,10 +28,13 @@ export function createGoalRetryTool(): AnyToolDescriptor {
     traits: { readOnly: false, destructive: false, concurrencySafe: false },
     execute: async (input: GoalRetryInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
       try {
-        const manager = ctx.projectContext.goalState;
-        await manager.incrementRetryCount(input.goalId);
-        await manager.updatePhase(input.goalId, "plan");
-        const goal = await manager.transitionStatus(input.goalId, "running");
+        const runner = new GoalRunner({
+          goalStateManager: ctx.projectContext.goalState,
+          hitlService: ctx.projectContext.hitl,
+          workspaceRoot: ctx.workspaceRoot,
+          createSession: async () => ctx.store.getState().sessionId,
+        });
+        const goal = await runner.handleFailedVerification(input.goalId, "Retry requested by goal_retry");
         return JSON.stringify(goal, null, 2);
       } catch (error) {
         return goalToolErrorResult(error);
@@ -42,7 +47,7 @@ function goalToolErrorResult(error: unknown): ToolExecutionResult {
   if (error instanceof GoalNotFoundError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_NOT_FOUND", message: error.message });
   }
-  if (error instanceof GoalStateError || error instanceof GoalLockedError) {
+  if (error instanceof GoalRunnerError || error instanceof GoalStateError || error instanceof GoalLockedError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_INVALID_TRANSITION", message: error.message });
   }
   if (error instanceof GoalPathError) {

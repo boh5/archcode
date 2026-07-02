@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { AgentRuntime } from "@archcode/agent-core";
-import type { ApprovalPoint, DoneCondition, GoalState, GoalStatus, RetryPolicy } from "@archcode/protocol";
+import { AgentRunningError, ConcurrentSessionLimitError, DoneConditionSchema, type AgentRuntime } from "@archcode/agent-core";
+import type { ApprovalPoint, GoalState, GoalStatus, RetryPolicy } from "@archcode/protocol";
 import { z } from "zod/v4";
-import { BadRequestError, ServerError } from "../errors";
+import { BadRequestError, ConcurrentSessionLimitHttpError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
 const GoalUuidSchema = z.uuid();
@@ -25,18 +25,6 @@ const RetryPolicySchema = z.strictObject({
 }) satisfies z.ZodType<RetryPolicy>;
 
 const ApprovalPointSchema = z.enum(["after_plan", "before_complete"]) satisfies z.ZodType<ApprovalPoint>;
-
-const DoneConditionSchema = z.custom<DoneCondition>((value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const candidate = value as { id?: unknown; kind?: unknown; required?: unknown; params?: unknown };
-  return typeof candidate.id === "string"
-    && candidate.id.trim().length > 0
-    && typeof candidate.kind === "string"
-    && (candidate.required === undefined || typeof candidate.required === "boolean")
-    && candidate.params !== undefined
-    && typeof candidate.params === "object"
-    && !Array.isArray(candidate.params);
-}, "done condition must be an object with id, kind, and params");
 
 const CreateGoalBodySchema = z.strictObject({
   title: z.string().trim().min(1).max(200),
@@ -66,6 +54,8 @@ const SessionIdsBodySchema = z.strictObject({
 });
 
 type SessionIdsBody = z.infer<typeof SessionIdsBodySchema>;
+
+const goalRunReservationLocks = new Map<string, Promise<void>>();
 
 export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
@@ -145,31 +135,99 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
   });
 
   app.post("/:slug/goals/:goalId/run", async (c) => {
-    const { workspaceRoot } = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const goalId = requiredGoalId(c.req.param("goalId"));
-    const body = await readOptionalSessionIdsBody(c.req.json());
-    const manager = await goalStateFor(runtime, workspaceRoot);
+    const body = await readOptionalSessionIdsBody(c.req.text());
+    const manager = await goalStateFor(runtime, project.workspaceRoot);
 
     try {
-      await manager.transitionStatus(goalId, "running");
-      return c.json(await maybeUpdateSessionIds(await manager.read(goalId), body, manager.updateSessionIds.bind(manager)));
+      const reserved = await withGoalRunReservationLock(project.workspaceRoot, goalId, async () => {
+        const goal = await manager.read(goalId);
+        assertGoalCanRun(goal);
+        if (goal.status === "running") return goal;
+        if (goal.mainSessionId !== undefined && body.mainSessionId !== undefined && goal.mainSessionId !== body.mainSessionId) {
+          throw new ServerError("BAD_REQUEST", `Goal ${goal.id} is already reserved for session ${goal.mainSessionId}`, 409);
+        }
+
+        const mainSessionId = goal.mainSessionId ?? body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
+          goalId,
+          sessionRole: "main",
+          title: goal.title,
+        })).sessionId;
+
+        const updated = await manager.updateSessionIds(goalId, mainSessionId, body.childSessionIds);
+        if (runtime.isSessionExecutionRunning(project.workspaceRoot, mainSessionId)) return updated;
+
+        try {
+          runtime.startSessionExecution({
+            slug: project.slug,
+            workspaceRoot: project.workspaceRoot,
+            sessionId: mainSessionId,
+            userMessage: buildGoalRunUserMessage(updated),
+          });
+        } catch (error) {
+          if (error instanceof AgentRunningError) return updated;
+          await markGoalRunBootstrapFailure(manager, goalId, error);
+          throw error;
+        }
+        return updated;
+      });
+      return c.json(reserved);
     } catch (error) {
+      if (error instanceof ConcurrentSessionLimitError) {
+        throw new ConcurrentSessionLimitHttpError(error.current, error.max);
+      }
       throw mapGoalError(error);
     }
   });
 
   app.post("/:slug/goals/:goalId/retry", async (c) => {
-    const { workspaceRoot } = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const goalId = requiredGoalId(c.req.param("goalId"));
-    const body = await readOptionalSessionIdsBody(c.req.json());
-    const manager = await goalStateFor(runtime, workspaceRoot);
+    const body = await readOptionalSessionIdsBody(c.req.text());
+    const manager = await goalStateFor(runtime, project.workspaceRoot);
 
     try {
-      await manager.incrementRetryCount(goalId);
-      await manager.updatePhase(goalId, "plan");
-      const retried = await manager.transitionStatus(goalId, "running");
-      return c.json(await maybeUpdateSessionIds(retried, body, manager.updateSessionIds.bind(manager)));
+      const reserved = await withGoalRunReservationLock(project.workspaceRoot, goalId, async () => {
+        const goal = await manager.read(goalId);
+        if (goal.status !== "failed") {
+          throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
+        }
+
+        const activeReservedSessionId = goal.mainSessionId && runtime.isSessionExecutionRunning(project.workspaceRoot, goal.mainSessionId)
+          ? goal.mainSessionId
+          : undefined;
+        if (activeReservedSessionId !== undefined && body.mainSessionId !== undefined && body.mainSessionId !== activeReservedSessionId) {
+          throw new ServerError("BAD_REQUEST", `Goal ${goal.id} is already reserved for session ${activeReservedSessionId}`, 409);
+        }
+
+        const mainSessionId = activeReservedSessionId ?? body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
+          goalId,
+          sessionRole: "main",
+          title: goal.title,
+        })).sessionId;
+        const updated = await manager.updateSessionIds(goalId, mainSessionId, body.childSessionIds);
+        if (runtime.isSessionExecutionRunning(project.workspaceRoot, mainSessionId)) return updated;
+
+        try {
+          runtime.startSessionExecution({
+            slug: project.slug,
+            workspaceRoot: project.workspaceRoot,
+            sessionId: mainSessionId,
+            userMessage: buildGoalRetryUserMessage(updated),
+          });
+        } catch (error) {
+          if (error instanceof AgentRunningError) return updated;
+          await markGoalRunBootstrapFailure(manager, goalId, error);
+          throw error;
+        }
+        return updated;
+      });
+      return c.json(reserved);
     } catch (error) {
+      if (error instanceof ConcurrentSessionLimitError) {
+        throw new ConcurrentSessionLimitHttpError(error.current, error.max);
+      }
       throw mapGoalError(error);
     }
   });
@@ -181,12 +239,8 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
 
     try {
       const goal = await manager.read(goalId);
-      if (goal.status === "paused" || goal.status === "locked") {
-        await manager.transitionStatus(goalId, "running");
-      }
-      const current = await manager.read(goalId);
-      if (current.status !== "failed") {
-        await manager.transitionStatus(goalId, "failed");
+      if (goal.status !== "failed") {
+        throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
       }
       return c.json(await manager.transitionStatus(goalId, "escalated"));
     } catch (error) {
@@ -224,9 +278,67 @@ function requiredGoalId(value: string | undefined): string {
   return goalId;
 }
 
+function buildGoalRunUserMessage(goal: GoalState): string {
+  return [
+    "Bootstrap an ArchCode Goal run.",
+    `Goal ID: ${goal.id}`,
+    `Goal title JSON: ${JSON.stringify(goal.title)}`,
+    "Your first action must be calling goal_run with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_run succeeds.",
+    "After goal_run succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+  ].join("\n");
+}
+
+function buildGoalRetryUserMessage(goal: GoalState): string {
+  return [
+    "Bootstrap an ArchCode Goal retry.",
+    `Goal ID: ${goal.id}`,
+    `Goal title JSON: ${JSON.stringify(goal.title)}`,
+    "Your first action must be calling goal_retry with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_retry succeeds.",
+    "After goal_retry succeeds, load the Goal state, follow the Goal operating loop from the plan phase, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+  ].join("\n");
+}
+
+function assertGoalCanRun(goal: GoalState): void {
+  if (goal.status === "locked" || goal.status === "paused" || goal.status === "running") return;
+  throw new ServerError("BAD_REQUEST", `Invalid goal state for ${goal.id}`, 409);
+}
+
 async function goalStateFor(runtime: AgentRuntime, workspaceRoot: string) {
   const context = await runtime.contextResolver.resolve(workspaceRoot);
   return context.goalState;
+}
+
+async function markGoalRunBootstrapFailure(
+  manager: Awaited<ReturnType<typeof goalStateFor>>,
+  goalId: string,
+  error: unknown,
+): Promise<void> {
+  const message = `Goal run bootstrap could not start: ${errorMessage(error)}`;
+  try {
+    await manager.updateLastError(goalId, message);
+  } catch {
+    // Best-effort annotation: preserve the original execution-start error.
+  }
+}
+
+async function withGoalRunReservationLock<T>(workspaceRoot: string, goalId: string, action: () => Promise<T>): Promise<T> {
+  const key = `${workspaceRoot}:${goalId}`;
+  const previous = goalRunReservationLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  goalRunReservationLocks.set(key, previous.then(() => current, () => current));
+
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (goalRunReservationLocks.get(key) === current) {
+      goalRunReservationLocks.delete(key);
+    }
+  }
 }
 
 async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unknown>, schema: Schema): Promise<z.infer<Schema>> {
@@ -244,22 +356,20 @@ async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unkno
   return result.data;
 }
 
-async function readOptionalSessionIdsBody(bodyPromise: Promise<unknown>): Promise<SessionIdsBody> {
-  try {
-    return await readJsonBody(bodyPromise, SessionIdsBodySchema);
-  } catch (error) {
-    if (error instanceof BadRequestError && error.message === "Request body must be valid JSON") return {};
-    throw error;
-  }
-}
+async function readOptionalSessionIdsBody(bodyPromise: Promise<string>): Promise<SessionIdsBody> {
+  const text = await bodyPromise;
+  if (text.trim().length === 0) return {};
 
-async function maybeUpdateSessionIds(
-  goal: GoalState,
-  body: SessionIdsBody,
-  updateSessionIds: (goalId: string, mainSessionId?: string, childSessionIds?: string[]) => Promise<GoalState>,
-): Promise<GoalState> {
-  if (body.mainSessionId === undefined && body.childSessionIds === undefined) return goal;
-  return await updateSessionIds(goal.id, body.mainSessionId, body.childSessionIds);
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new BadRequestError("Request body must be valid JSON");
+  }
+
+  const result = SessionIdsBodySchema.safeParse(body);
+  if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
+  return result.data;
 }
 
 function mapGoalError(error: unknown): Error {
@@ -281,4 +391,10 @@ function mapGoalError(error: unknown): Error {
 
 function hasErrorName(error: unknown, name: string): error is Error {
   return error instanceof Error && error.name === name;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
 }

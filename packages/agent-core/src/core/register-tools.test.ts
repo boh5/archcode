@@ -29,6 +29,7 @@ import {
   TOOL_GOAL_RETRY,
   TOOL_GOAL_CHECK_DONE,
   TOOL_ASK_USER,
+  TOOL_BASH,
 } from "@archcode/protocol";
 
 const tmpRoots: string[] = [];
@@ -152,6 +153,60 @@ describe("registerBuiltinTools", () => {
     expect(registry.get("workflow_task_check")).toBeUndefined();
     expect(registry.get("artifact_read")).toBeUndefined();
     expect(registry.get("artifact_write")).toBeUndefined();
+  });
+
+  it("blocks effectful tools in Goal main sessions until the Goal is claimed", async () => {
+    const workspaceRoot = await createTmpRoot("goal-bootstrap-guard");
+    const projectContext = makeProjectContext(workspaceRoot);
+    const goal = await projectContext.goalState.create(
+      projectContext.project.slug,
+      "Bootstrap guard",
+      "architect",
+      [{ id: "artifact", kind: "file_exists", params: { path: "artifact.txt" } }],
+      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
+      [],
+    );
+    await projectContext.goalState.lock(goal.id, "architect");
+    const store = storeManager.create("goal-bootstrap-main-session", workspaceRoot);
+    store.getState().setGoalId(goal.id);
+    store.getState().setSessionRole("main");
+    const registry = new ToolRegistry();
+    registerBuiltinTools(registry, silentLogger);
+    const bashInput = { description: "Print cwd", command: "pwd" };
+
+    const denied = await registry.execute(
+      { toolName: TOOL_BASH, toolCallId: "bash-before-claim", input: bashInput },
+      makeContext(TOOL_BASH, [TOOL_BASH], workspaceRoot, {
+        store,
+        projectContext,
+        input: bashInput,
+        toolCallId: "bash-before-claim",
+      }),
+    );
+    const claimed = await registry.execute(
+      { toolName: TOOL_GOAL_RUN, toolCallId: "goal-run-claim", input: { goalId: goal.id } },
+      makeContext(TOOL_GOAL_RUN, [TOOL_GOAL_RUN], workspaceRoot, {
+        store,
+        projectContext,
+        input: { goalId: goal.id },
+        toolCallId: "goal-run-claim",
+      }),
+    );
+    const allowed = await registry.execute(
+      { toolName: TOOL_BASH, toolCallId: "bash-after-claim", input: bashInput },
+      makeContext(TOOL_BASH, [TOOL_BASH], workspaceRoot, {
+        store,
+        projectContext,
+        input: bashInput,
+        toolCallId: "bash-after-claim",
+      }),
+    );
+
+    expect(denied.isError).toBe(true);
+    expect(denied.meta?.permissionErrorCode).toBe("GOAL_BOOTSTRAP_TOOL_DENIED");
+    expect(claimed.isError).toBe(false);
+    expect(allowed.isError).toBe(false);
+    expect(allowed.output).toContain("EXIT_CODE: 0");
   });
 
   it("allowedTools permits and denies each Tier 2 tool through runtime registry checks", async () => {

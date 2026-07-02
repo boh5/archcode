@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { useGoals } from "../api/queries";
+import { CreateGoalDialog } from "../components/features/CreateGoalDialog";
 import type { GoalState, GoalStatus } from "../api/types";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
@@ -18,6 +21,12 @@ export function GoalsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const { data: goals, isLoading, error } = useGoals(slug);
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const handleCreated = (goalId: string) => {
+    setCreateOpen(false);
+    navigate(`/projects/${slug}/goals/${goalId}`);
+  };
 
   if (isLoading) {
     return (
@@ -38,14 +47,29 @@ export function GoalsRoute() {
 
   if (!goals || goals.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex flex-col items-center gap-2">
-          <h2 className="text-lg font-medium text-text-primary">No goals yet</h2>
-          <p className="text-sm text-text-tertiary">
-            Goals created by the orchestrator will appear here
-          </p>
+      <>
+        <div className="flex h-full flex-col">
+          <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
+            <span className="font-semibold text-sm text-text-primary">Goals</span>
+            <NewGoalButton onClick={() => setCreateOpen(true)} />
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <h2 className="text-lg font-medium text-text-primary">No goals yet</h2>
+              <p className="text-sm text-text-tertiary text-center max-w-xs">
+                Create a draft goal to define what the agent should accomplish and how to verify it.
+              </p>
+              <NewGoalButton onClick={() => setCreateOpen(true)} variant="primary" />
+            </div>
+          </div>
         </div>
-      </div>
+        <CreateGoalDialog
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          slug={slug}
+          onCreated={handleCreated}
+        />
+      </>
     );
   }
 
@@ -54,19 +78,61 @@ export function GoalsRoute() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
-        <span className="font-semibold text-sm text-text-primary">Goals</span>
-        <span className="text-xs text-text-tertiary">{goals.length} total</span>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto w-full">
-          {goals.map((goal) => (
-            <GoalListItem key={goal.id} goal={goal} onClick={() => handleGoalClick(goal.id)} />
-          ))}
+    <>
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
+          <span className="font-semibold text-sm text-text-primary">Goals</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-text-tertiary">{goals.length} total</span>
+            <NewGoalButton onClick={() => setCreateOpen(true)} />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-4xl mx-auto w-full">
+            {goals.map((goal) => (
+              <GoalListItem key={goal.id} goal={goal} onClick={() => handleGoalClick(goal.id)} />
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+      <CreateGoalDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        slug={slug}
+        onCreated={handleCreated}
+      />
+    </>
+  );
+}
+
+function NewGoalButton({
+  onClick,
+  variant = "ghost",
+}: {
+  onClick: () => void;
+  variant?: "ghost" | "primary";
+}) {
+  if (variant === "primary") {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover"
+      >
+        <Plus size={13} />
+        New Goal
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-2.5 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
+    >
+      <Plus size={13} />
+      New Goal
+    </button>
   );
 }
 

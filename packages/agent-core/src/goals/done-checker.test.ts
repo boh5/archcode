@@ -38,7 +38,7 @@ function expectResult(result: DoneResult, conditionId: string, passed: boolean):
 
 describe("evaluateCondition", () => {
   it("passes tests_pass when the configured command exits zero", async () => {
-    const condition: DoneCondition = { id: "tests-ok", kind: "tests_pass", params: { command: "bun --version" } };
+    const condition: DoneCondition = { id: "tests-ok", kind: "tests_pass", params: { command: "pwd" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
@@ -47,16 +47,16 @@ describe("evaluateCondition", () => {
   });
 
   it("fails tests_pass when the configured command exits nonzero", async () => {
-    const condition: DoneCondition = { id: "tests-fail", kind: "tests_pass", params: { command: "bun -e \"process.exit(7)\"" } };
+    const condition: DoneCondition = { id: "tests-fail", kind: "tests_pass", params: { command: "bun run definitely-missing-script" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
     expectResult(result, "tests-fail", false);
-    expect(result.evidence).toContain("EXIT_CODE: 7");
+    expect(result.evidence).toContain("EXIT_CODE: 1");
   });
 
   it("passes typecheck_pass when the configured command exits zero", async () => {
-    const condition: DoneCondition = { id: "typecheck-ok", kind: "typecheck_pass", params: { command: "bun --version" } };
+    const condition: DoneCondition = { id: "typecheck-ok", kind: "typecheck_pass", params: { command: "pwd" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
@@ -65,12 +65,12 @@ describe("evaluateCondition", () => {
   });
 
   it("fails typecheck_pass when the configured command exits nonzero", async () => {
-    const condition: DoneCondition = { id: "typecheck-fail", kind: "typecheck_pass", params: { command: "bun -e \"process.exit(8)\"" } };
+    const condition: DoneCondition = { id: "typecheck-fail", kind: "typecheck_pass", params: { command: "bun run definitely-missing-script" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
     expectResult(result, "typecheck-fail", false);
-    expect(result.evidence).toContain("EXIT_CODE: 8");
+    expect(result.evidence).toContain("EXIT_CODE: 1");
   });
 
   it("passes lsp_clean when the target has no supported source files", async () => {
@@ -160,7 +160,7 @@ describe("evaluateCondition", () => {
   });
 
   it("passes command_succeeds when the command exits zero", async () => {
-    const condition: DoneCondition = { id: "command-ok", kind: "command_succeeds", params: { command: "bun --version" } };
+    const condition: DoneCondition = { id: "command-ok", kind: "command_succeeds", params: { command: "pwd" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
@@ -169,12 +169,34 @@ describe("evaluateCondition", () => {
   });
 
   it("fails command_succeeds when the command exits nonzero", async () => {
-    const condition: DoneCondition = { id: "command-fail", kind: "command_succeeds", params: { command: "bun -e \"process.exit(9)\"" } };
+    const condition: DoneCondition = { id: "command-fail", kind: "command_succeeds", params: { command: "bun run definitely-missing-script" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
     expectResult(result, "command-fail", false);
-    expect(result.evidence).toContain("EXIT_CODE: 9");
+    expect(result.evidence).toContain("EXIT_CODE: 1");
+  });
+
+  it("denies command_succeeds when bash policy denies the command", async () => {
+    const condition: DoneCondition = { id: "command-denied", kind: "command_succeeds", params: { command: "rm -rf .archcode" } };
+
+    const result = await evaluateCondition(condition, workspaceRoot);
+
+    expectResult(result, "command-denied", false);
+    expect(result.evidence).toContain("Permission denied");
+    expect(result.evidence).toContain("EXIT_CODE: 126");
+  });
+
+  it("requires confirmation for unknown command-bearing done conditions", async () => {
+    const condition: DoneCondition = { id: "command-confirm", kind: "command_succeeds", params: { command: "bun --version" } };
+
+    const denied = await evaluateCondition(condition, workspaceRoot);
+    const approved = await evaluateCondition(condition, workspaceRoot, { confirmPermission: async () => "approve_once" });
+
+    expectResult(denied, "command-confirm", false);
+    expect(denied.evidence).toContain("EXIT_CODE: 126");
+    expectResult(approved, "command-confirm", true);
+    expect(approved.evidence).toContain("EXIT_CODE: 0");
   });
 
   it("returns the Phase 1 placeholder for user_confirmed", async () => {

@@ -32,6 +32,11 @@ export const GoalPhaseSchema = z.enum(["plan", "build", "review"]);
 
 export const GoalUuidSchema = z.uuid();
 export const GoalTitleSchema = z.string().trim().min(1).max(200);
+const ConditionIdSchema = z.string().trim().min(1).max(80);
+const ConditionTextSchema = z.string().trim().min(1).max(500);
+const ConditionCommandSchema = z.string().trim().min(1).max(500);
+const ConditionPathSchema = z.string().trim().min(1).max(500);
+export const MAX_DONE_COMMAND_TIMEOUT_MS = 600_000;
 
 export const RetryPolicySchema = z.strictObject({
   maxRetries: z.number().int().nonnegative(),
@@ -42,38 +47,38 @@ export const RetryPolicySchema = z.strictObject({
 export const ApprovalPointSchema = z.enum(["after_plan", "before_complete"]);
 
 const DoneConditionBaseSchema = z.strictObject({
-  id: z.string().trim().min(1),
+  id: ConditionIdSchema,
   required: z.boolean().default(true),
 });
 
 export const TestsPassDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("tests_pass"),
-  params: z.strictObject({ command: z.string().trim().min(1).optional() }),
+  params: z.strictObject({ command: ConditionCommandSchema.optional() }),
 });
 
 export const TypecheckPassDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("typecheck_pass"),
-  params: z.strictObject({ command: z.string().trim().min(1).optional() }),
+  params: z.strictObject({ command: ConditionCommandSchema.optional() }),
 });
 
 export const LspCleanDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("lsp_clean"),
   params: z.strictObject({
-    paths: z.array(z.string().trim().min(1)).optional(),
+    paths: z.array(ConditionPathSchema).max(20).optional(),
     severity: z.enum(["error", "warning"]).optional(),
   }),
 });
 
 export const FileExistsDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("file_exists"),
-  params: z.strictObject({ path: z.string().trim().min(1) }),
+  params: z.strictObject({ path: ConditionPathSchema }),
 });
 
 export const GrepContainsDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("grep_contains"),
   params: z.strictObject({
-    pattern: z.string().min(1),
-    path: z.string().trim().min(1).optional(),
+    pattern: ConditionTextSchema,
+    path: ConditionPathSchema.optional(),
     minMatches: z.number().int().positive().optional(),
   }),
 });
@@ -81,29 +86,29 @@ export const GrepContainsDoneConditionSchema = DoneConditionBaseSchema.extend({
 export const GrepEmptyDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("grep_empty"),
   params: z.strictObject({
-    pattern: z.string().min(1),
-    path: z.string().trim().min(1).optional(),
+    pattern: ConditionTextSchema,
+    path: ConditionPathSchema.optional(),
   }),
 });
 
 export const CommandSucceedsDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("command_succeeds"),
   params: z.strictObject({
-    command: z.string().trim().min(1),
-    timeoutMs: z.number().int().positive().optional(),
+    command: ConditionCommandSchema,
+    timeoutMs: z.number().int().positive().max(MAX_DONE_COMMAND_TIMEOUT_MS).optional(),
   }),
 });
 
 export const UserConfirmedDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("user_confirmed"),
-  params: z.strictObject({ prompt: z.string().trim().min(1) }),
+  params: z.strictObject({ prompt: ConditionTextSchema }),
 });
 
 export const SpecComplianceDoneConditionSchema = DoneConditionBaseSchema.extend({
   kind: z.literal("spec_compliance"),
   params: z.strictObject({
-    specPath: z.string().trim().min(1),
-    focusAreas: z.array(z.string().trim().min(1)).optional(),
+    specPath: ConditionPathSchema,
+    focusAreas: z.array(ConditionTextSchema).max(20).optional(),
   }),
 });
 
@@ -132,7 +137,7 @@ export const GoalStateSchema = z.strictObject({
   title: GoalTitleSchema,
   status: GoalStatusSchema,
   phase: GoalPhaseSchema,
-  doneConditions: z.array(DoneConditionSchema),
+  doneConditions: z.array(DoneConditionSchema).max(50),
   doneResults: z.record(z.string(), DoneResultSchema),
   reviewerAgent: z.string().trim().min(1),
   retryPolicy: RetryPolicySchema,
@@ -468,7 +473,7 @@ export class GoalStateManager {
     if (TERMINAL_STATUSES.has(state.status)) {
       throw new GoalStateError(state.id, `Cannot transition from terminal status ${state.status}`);
     }
-    if (newStatus === "paused") return;
+    if (newStatus === "paused" && canPauseFrom(state.status)) return;
     if (state.status === "paused" && newStatus === "running") return;
 
     const allowed: Partial<Record<GoalStatus, readonly GoalStatus[]>> = {
@@ -497,6 +502,10 @@ export class GoalStateManager {
   private isMissingDirectoryError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
+}
+
+function canPauseFrom(status: GoalStatus): boolean {
+  return status === "locked" || status === "running" || status === "verifying" || status === "reviewed";
 }
 
 class SafeGoalPathError extends Error {

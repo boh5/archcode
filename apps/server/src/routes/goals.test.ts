@@ -30,9 +30,16 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     listSessions: mock(async () => []),
-    startSessionExecution: mock(() => {
-      throw new Error("not implemented");
-    }),
+    startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
+      sessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      agentName: "orchestrator",
+      origin: "user_message",
+      abortController: new AbortController(),
+      promise: Promise.resolve(),
+      executionToken: Symbol("test-execution"),
+      startedAt: Date.now(),
+    })),
     abortSessionExecution: mock(() => false),
     abortSessionExecutionAndWait: mock(async () => undefined),
     abortAllSessionExecutions: mock(async () => undefined),
@@ -122,13 +129,265 @@ describe("goals routes", () => {
     });
     const running = await runRes.json() as GoalState;
     expect(runRes.status).toBe(200);
-    expect(running.status).toBe("running");
+    expect(running.status).toBe("locked");
     expect(running.mainSessionId).toBe("main-session");
     expect(running.childSessionIds).toEqual(["child-a"]);
+    expect(runtime.createSession).not.toHaveBeenCalled();
+    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(1);
+    expect(runtime.startSessionExecution).toHaveBeenCalledWith({
+      slug: project.slug,
+      workspaceRoot: project.workspaceRoot,
+      sessionId: "main-session",
+      userMessage: expect.stringContaining(`Goal ID: ${created.id}`),
+    });
 
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
     const persisted = await context.goalState.read(created.id);
-    expect(persisted).toMatchObject({ status: "running" });
+    expect(persisted).toMatchObject({ status: "locked", mainSessionId: "main-session" });
+  });
+
+  test("POST run without body creates a main session and starts orchestrator execution", async () => {
+    const { app, project, runtime } = await createTestApp("run-creates-session");
+    const created = await createGoal(app, project.slug, "Execute the plan");
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner-session" }),
+      headers: { "content-type": "application/json" },
+    });
+    (runtime.createSession as ReturnType<typeof mock>).mockImplementation(async () => ({
+      sessionId: "created-main-session",
+      title: null,
+      createdAt: Date.now(),
+      messages: [],
+      steps: [],
+      todos: [],
+      reminders: [],
+    }));
+
+    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
+    const reserved = await runRes.json() as GoalState;
+
+    expect(runRes.status).toBe(200);
+    expect(reserved.status).toBe("locked");
+    expect(reserved.mainSessionId).toBe("created-main-session");
+    expect(runtime.createSession).toHaveBeenCalledTimes(1);
+    expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
+      goalId: created.id,
+      sessionRole: "main",
+      title: created.title,
+    });
+    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(1);
+    expect(runtime.startSessionExecution).toHaveBeenCalledWith({
+      slug: project.slug,
+      workspaceRoot: project.workspaceRoot,
+      sessionId: "created-main-session",
+      userMessage: expect.stringContaining("Your first action must be calling goal_run"),
+    });
+
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    const persisted = await context.goalState.read(created.id);
+    expect(persisted.mainSessionId).toBe("created-main-session");
+  });
+
+  test("POST run reuses an active reserved session without mutating goal", async () => {
+    const { app, project, runtime } = await createTestApp("run-active-conflict");
+    const created = await createGoal(app, project.slug);
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner-session" }),
+      headers: { "content-type": "application/json" },
+    });
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalState.updateSessionIds(created.id, "busy-session");
+    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => true);
+
+    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: "busy-session" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(runRes.status).toBe(200);
+    expect(await runRes.json()).toMatchObject({ status: "locked", mainSessionId: "busy-session" });
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
+
+    const persisted = await context.goalState.read(created.id);
+    expect(persisted).toMatchObject({ status: "locked", mainSessionId: "busy-session" });
+  });
+
+  test("POST run start failure leaves goal locked and records lastError", async () => {
+    const { app, project, runtime } = await createTestApp("run-start-failure-pauses");
+    const created = await createGoal(app, project.slug);
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner-session" }),
+      headers: { "content-type": "application/json" },
+    });
+    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => false);
+    (runtime.startSessionExecution as ReturnType<typeof mock>).mockImplementation(() => {
+      throw new Error("boom");
+    });
+
+    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: "start-fails-session" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(runRes.status).toBe(500);
+    expect(runtime.startSessionExecution).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "start-fails-session" }));
+
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    const persisted = await context.goalState.read(created.id);
+    expect(persisted.status).toBe("locked");
+    expect(persisted.mainSessionId).toBe("start-fails-session");
+    expect(persisted.lastError).toBe("Goal run bootstrap could not start: boom");
+  });
+
+  test("POST run reuses reserved main session on duplicate requests", async () => {
+    const { app, project, runtime } = await createTestApp("run-duplicate-reuses-session");
+    const created = await createGoal(app, project.slug);
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner-session" }),
+      headers: { "content-type": "application/json" },
+    });
+    (runtime.createSession as ReturnType<typeof mock>).mockImplementation(async () => ({
+      sessionId: "created-main-session",
+      title: null,
+      createdAt: Date.now(),
+      messages: [],
+      steps: [],
+      todos: [],
+      reminders: [],
+    }));
+
+    const firstRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
+    const secondRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
+
+    expect(firstRes.status).toBe(200);
+    expect(secondRes.status).toBe(200);
+    expect(await firstRes.json()).toMatchObject({ status: "locked", mainSessionId: "created-main-session" });
+    expect(await secondRes.json()).toMatchObject({ status: "locked", mainSessionId: "created-main-session" });
+    expect(runtime.createSession).toHaveBeenCalledTimes(1);
+    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(2);
+  });
+
+  test("POST run rejects malformed JSON instead of treating it as empty body", async () => {
+    const { app, project } = await createTestApp("run-malformed-json");
+    const created = await createGoal(app, project.slug);
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "planner-session" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: "{bad json",
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(runRes.status).toBe(400);
+    expect(await runRes.json()).toEqual({ error: { code: "BAD_REQUEST", message: "Request body must be valid JSON" } });
+  });
+
+  test("POST create rejects malformed done condition params", async () => {
+    const { app, project } = await createTestApp("strict-done-condition");
+
+    const res = await app.request(`/api/projects/${project.slug}/goals`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Bad condition",
+        doneConditions: [{ id: "artifact", kind: "file_exists", params: {} }],
+        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+        author: "tester",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+  });
+
+  test("POST create accepts grep_empty done condition", async () => {
+    const { app, project } = await createTestApp("grep-empty-condition");
+
+    const res = await app.request(`/api/projects/${project.slug}/goals`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "No TODOs",
+        doneConditions: [{ id: "no-todos", kind: "grep_empty", params: { pattern: "TODO", path: "src" } }],
+        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+        author: "tester",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ doneConditions: [{ id: "no-todos", kind: "grep_empty" }] });
+  });
+
+  test("POST create rejects too many done conditions", async () => {
+    const { app, project } = await createTestApp("too-many-conditions");
+
+    const res = await app.request(`/api/projects/${project.slug}/goals`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Too many conditions",
+        doneConditions: Array.from({ length: 51 }, (_value, index) => ({
+          id: `condition-${index}`,
+          kind: "tests_pass",
+          params: { command: "bun test" },
+        })),
+        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+        author: "tester",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+  });
+
+  test("POST create rejects oversized command timeout", async () => {
+    const { app, project } = await createTestApp("oversized-command-timeout");
+
+    const res = await app.request(`/api/projects/${project.slug}/goals`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Unsafe timeout",
+        doneConditions: [{ id: "long-command", kind: "command_succeeds", params: { command: "pwd", timeoutMs: 600_001 } }],
+        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+        author: "tester",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+  });
+
+  test("POST run keeps invalid transitions rejected and does not start execution", async () => {
+    const { app, project, runtime } = await createTestApp("run-invalid-transition");
+    const created = await createGoal(app, project.slug);
+
+    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
+
+    expect(runRes.status).toBe(409);
+    expect(await runRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Invalid goal state for ${created.id}` },
+    });
+    expect(runtime.createSession).not.toHaveBeenCalled();
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
   test("PATCH after lock returns 409", async () => {
@@ -255,7 +514,7 @@ describe("goals routes", () => {
   });
 
   test("retry escalate and cancel endpoints mutate via goal state", async () => {
-    const { app, project } = await createTestApp("actions");
+    const { app, project, runtime } = await createTestApp("actions");
     const created = await createGoal(app, project.slug);
     await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
       method: "POST",
@@ -269,6 +528,16 @@ describe("goals routes", () => {
     expect(cancelRes.status).toBe(200);
     expect(cancelled.status).toBe("paused");
 
+    const resumeRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
+    const resumed = await resumeRes.json() as GoalState;
+    expect(resumeRes.status).toBe(200);
+    expect(resumed.status).toBe("paused");
+    expect(resumed.mainSessionId).toBeString();
+
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalState.transitionStatus(created.id, "running");
+    await context.goalState.transitionStatus(created.id, "failed");
+
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
       body: JSON.stringify({ mainSessionId: "retry-session" }),
@@ -276,15 +545,74 @@ describe("goals routes", () => {
     });
     const retried = await retryRes.json() as GoalState;
     expect(retryRes.status).toBe(200);
-    expect(retried.status).toBe("running");
-    expect(retried.retryCount).toBe(1);
-    expect(retried.phase).toBe("plan");
+    expect(retried.status).toBe("failed");
+    expect(retried.retryCount).toBe(0);
     expect(retried.mainSessionId).toBe("retry-session");
+    expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: "retry-session",
+      userMessage: expect.stringContaining("goal_retry"),
+    }));
 
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
     const escalateRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/escalate`, { method: "POST" });
     const escalated = await escalateRes.json() as GoalState;
     expect(escalateRes.status).toBe(200);
     expect(escalated.status).toBe("escalated");
+  });
+
+  test("POST retry rejects a different requested session when an active retry session is reserved", async () => {
+    const { app, project, runtime } = await createTestApp("retry-active-reservation-mismatch");
+    const created = await createGoal(app, project.slug);
+    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "locker" }),
+      headers: { "content-type": "application/json" },
+    });
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalState.transitionStatus(created.id, "running");
+    await context.goalState.transitionStatus(created.id, "failed");
+    await context.goalState.updateSessionIds(created.id, "active-retry-session");
+    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation((_workspaceRoot: string, sessionId: string) => sessionId === "active-retry-session");
+
+    const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: "other-retry-session" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(retryRes.status).toBe(409);
+    expect(await retryRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Goal ${created.id} is already reserved for session active-retry-session` },
+    });
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
+    expect(await context.goalState.read(created.id)).toMatchObject({ status: "failed", mainSessionId: "active-retry-session" });
+  });
+
+  test("cancel rejects draft and failed goals so run cannot bypass lock or retry", async () => {
+    const { app, project, runtime } = await createTestApp("cancel-invalid-sources");
+    const draft = await createGoal(app, project.slug, "Draft cannot pause");
+
+    const draftCancelRes = await app.request(`/api/projects/${project.slug}/goals/${draft.id}/cancel`, { method: "POST" });
+    const draftRunRes = await app.request(`/api/projects/${project.slug}/goals/${draft.id}/run`, { method: "POST" });
+
+    expect(draftCancelRes.status).toBe(409);
+    expect(draftRunRes.status).toBe(409);
+
+    const failed = await createGoal(app, project.slug, "Failed cannot pause");
+    await app.request(`/api/projects/${project.slug}/goals/${failed.id}/lock`, {
+      method: "POST",
+      body: JSON.stringify({ lockedBy: "locker" }),
+      headers: { "content-type": "application/json" },
+    });
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalState.transitionStatus(failed.id, "running");
+    await context.goalState.transitionStatus(failed.id, "failed");
+
+    const failedCancelRes = await app.request(`/api/projects/${project.slug}/goals/${failed.id}/cancel`, { method: "POST" });
+    const failedRunRes = await app.request(`/api/projects/${project.slug}/goals/${failed.id}/run`, { method: "POST" });
+
+    expect(failedCancelRes.status).toBe(409);
+    expect(failedRunRes.status).toBe(409);
+    expect(runtime.createSession).not.toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({ goalId: draft.id }));
+    expect(runtime.createSession).not.toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({ goalId: failed.id }));
   });
 });

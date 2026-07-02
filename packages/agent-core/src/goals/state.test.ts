@@ -214,6 +214,22 @@ describe("GoalStateManager", () => {
     expect((await manager.transitionStatus(created.id, "completed")).status).toBe("completed");
   });
 
+  test("transitionStatus only pauses resumable non-terminal states", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const draft = await manager.create("project-a", "Draft pause", "architect", [condition]);
+
+    expect(await captureAsyncError(() => manager.transitionStatus(draft.id, "paused"))).toBeInstanceOf(GoalStateError);
+    await manager.lock(draft.id, "user-1");
+    expect((await manager.transitionStatus(draft.id, "paused")).status).toBe("paused");
+
+    const failed = await manager.create("project-a", "Failed pause", "architect", [condition]);
+    await manager.lock(failed.id, "user-1");
+    await manager.transitionStatus(failed.id, "running");
+    await manager.transitionStatus(failed.id, "failed");
+
+    expect(await captureAsyncError(() => manager.transitionStatus(failed.id, "paused"))).toBeInstanceOf(GoalStateError);
+  });
+
   test("updatePhase changes phase", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await manager.create("project-a", "Phase", "architect");

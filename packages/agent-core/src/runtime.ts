@@ -44,6 +44,7 @@ import type { HitlEvent, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
+import type { SessionRole } from "./store/types";
 
 const DEFAULT_CONFIG_PATH = ".archcode.json";
 
@@ -53,6 +54,12 @@ export interface AgentRuntimeOptions {
   mcpManagerFactory?: (config: ResolvedMcpConfig) => McpManager;
   projectRegistryHomeDir?: string;
   logger?: Logger;
+}
+
+export interface CreateRuntimeSessionOptions {
+  readonly goalId?: string;
+  readonly sessionRole?: SessionRole;
+  readonly title?: string;
 }
 
 export interface AgentRuntime {
@@ -66,7 +73,7 @@ export interface AgentRuntime {
   readonly hitl: HitlService;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
-  createSession(workspaceRoot: string): Promise<SessionFile>;
+  createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
   startSessionExecution(input: { slug: string; workspaceRoot: string; sessionId: string; userMessage: string }): ActiveSessionExecution;
@@ -277,7 +284,7 @@ export async function createRuntime(
       hitl,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
-      createSession: (workspaceRoot) => sessionStoreManager.createSessionFile(workspaceRoot),
+      createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
       startSessionExecution: (input) => executionManager.startExecution(input),

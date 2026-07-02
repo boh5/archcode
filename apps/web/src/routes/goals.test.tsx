@@ -241,7 +241,7 @@ describe("GoalsRoute", () => {
     }
   });
 
-  test("shows empty state when no goals exist", async () => {
+  test("shows empty state with New Goal button when no goals exist", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -266,6 +266,52 @@ describe("GoalsRoute", () => {
       await waitFor(() => {
         expect(container.textContent).toContain("No goals yet");
       });
+
+      const newGoalButtons = Array.from(container.querySelectorAll("button")).filter((b) =>
+        b.textContent?.includes("New Goal"),
+      );
+      expect(newGoalButtons.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("non-empty list header shows New Goal button", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goals: GoalState[] = [makeGoal({ id: "goal-1", title: "Solo goal" })];
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.includes("/api/projects/demo/goals") && !url.includes("/goals/")) {
+        return Response.json({ goals });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalsRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Solo goal");
+      });
+
+      const newGoalButtons = Array.from(container.querySelectorAll("button")).filter((b) =>
+        b.textContent?.includes("New Goal"),
+      );
+      expect(newGoalButtons.length).toBeGreaterThanOrEqual(1);
     } finally {
       await act(async () => {
         reactRoot.unmount();

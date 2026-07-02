@@ -28,6 +28,7 @@ export class GoalRunnerError extends Error {
 }
 
 const PHASE_ORDER: GoalPhase[] = ["plan", "build", "review"];
+const goalClaimLocks = new Map<string, Promise<void>>();
 
 export class GoalRunner {
   readonly #goalStateManager: GoalStateManager;
@@ -51,14 +52,33 @@ export class GoalRunner {
 
   async start(goalId: string): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
+    const sessionId = current.mainSessionId ?? await this.#createSession();
+    return this.claimStart(goalId, sessionId);
+  }
+
+  async claimStart(goalId: string, mainSessionId: string): Promise<GoalState> {
+    return withGoalClaimLock(goalId, async () => this.#claimStartUnlocked(goalId, mainSessionId));
+  }
+
+  async #claimStartUnlocked(goalId: string, mainSessionId: string): Promise<GoalState> {
+    const current = await this.#goalStateManager.read(goalId);
+    if (current.status === "running") {
+      if (current.mainSessionId === mainSessionId) return current;
+      throw new GoalRunnerError(goalId, `Goal is already running in session ${current.mainSessionId ?? "unknown"}`);
+    }
     if (current.status !== "locked" && current.status !== "paused") {
       throw new GoalRunnerError(goalId, `Cannot start goal from status ${current.status}`);
     }
+    if (current.doneConditions.length === 0) {
+      throw new GoalRunnerError(goalId, "Cannot start goal without done conditions");
+    }
+    if (current.mainSessionId !== undefined && current.mainSessionId !== mainSessionId) {
+      throw new GoalRunnerError(goalId, `Goal is reserved for session ${current.mainSessionId}`);
+    }
 
-    const sessionId = await this.#createSession();
     const running = await this.#goalStateManager.transitionStatus(goalId, "running");
     const phaseReset = running.phase === "plan" ? running : await this.#goalStateManager.updatePhase(goalId, "plan");
-    return this.#goalStateManager.updateSessionIds(phaseReset.id, sessionId, phaseReset.childSessionIds);
+    return this.#goalStateManager.updateSessionIds(phaseReset.id, mainSessionId, phaseReset.childSessionIds);
   }
 
   async advancePhase(goalId: string, nextPhase: GoalPhase): Promise<GoalState> {
@@ -184,6 +204,25 @@ export class GoalRunner {
 
     if (missingOrFailing.length > 0) {
       throw new GoalRunnerError(goal.id, `Reviewer evidence is missing or failing: ${missingOrFailing.map((condition) => condition.id).join(", ")}`);
+    }
+  }
+}
+
+async function withGoalClaimLock<T>(goalId: string, action: () => Promise<T>): Promise<T> {
+  const previous = goalClaimLocks.get(goalId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  goalClaimLocks.set(goalId, previous.then(() => current, () => current));
+
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (goalClaimLocks.get(goalId) === current) {
+      goalClaimLocks.delete(goalId);
     }
   }
 }

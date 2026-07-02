@@ -183,6 +183,20 @@ describe("goal builtin tools", () => {
     expect(goal).toMatchObject({ id: locked.id, status: "running", mainSessionId: "main-session" });
   });
 
+  it("goal_run rejects a session that does not match the reserved main session", async () => {
+    const registry = createGoalRegistry();
+    const locked = await createLockedGoal(registry);
+    const manager = new GoalStateManager(TMP_DIR);
+    await manager.updateSessionIds(locked.id, "reserved-main");
+
+    const result = await execute(registry, TOOL_GOAL_RUN, { goalId: locked.id }, createMockStore({ sessionId: "other-session" }));
+
+    expect(result.isError).toBe(true);
+    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
+    expect(result.output).toContain("GOAL_INVALID_TRANSITION");
+    expect(await manager.read(locked.id)).toMatchObject({ status: "locked", mainSessionId: "reserved-main" });
+  });
+
   it("goal_run returns GOAL_INVALID_TRANSITION when called from draft", async () => {
     const registry = createGoalRegistry();
     const draft = await createDraftGoal(registry);
@@ -206,7 +220,8 @@ describe("goal builtin tools", () => {
 
     expect(result.isError).toBe(false);
     const goal = JSON.parse(result.output);
-    expect(goal).toMatchObject({ id: locked.id, status: "running", phase: "plan", retryCount: 1 });
+    expect(goal).toMatchObject({ id: locked.id, status: "running", phase: "plan", retryCount: 1, mainSessionId: "goal-session" });
+    expect(goal.lastError).toBe("Retry requested by goal_retry");
   });
 
   it("goal_retry returns GOAL_INVALID_TRANSITION when retrying a draft goal", async () => {

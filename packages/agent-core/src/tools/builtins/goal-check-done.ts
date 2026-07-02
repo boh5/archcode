@@ -39,7 +39,12 @@ export function createGoalCheckDoneTool(): AnyToolDescriptor {
           });
         }
 
-        const result = await evaluateCondition(condition, ctx.workspaceRoot);
+        const result = await evaluateCondition(condition, ctx.workspaceRoot, {
+          ...(ctx.confirmPermission ? { confirmPermission: ctx.confirmPermission } : {}),
+          abort: ctx.abort,
+          toolName: ctx.toolName,
+          toolCallId: ctx.toolCallId,
+        });
         await manager.recordDoneResult(input.goalId, input.conditionId, result);
         return JSON.stringify(result, null, 2);
       } catch (error) {

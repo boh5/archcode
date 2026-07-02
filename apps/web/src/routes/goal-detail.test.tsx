@@ -493,6 +493,216 @@ describe("GoalDetailRoute", () => {
     }
   });
 
+  test("draft goal renders Lock Goal button and calls lock endpoint", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const draftGoal = makeGoal({ id: "goal-1", title: "Draft Goal", status: "draft", phase: "plan" });
+    const lockedGoal = makeGoal({ id: "goal-1", title: "Draft Goal", status: "locked", phase: "plan", lockedBy: "architect" });
+    let currentGoal: GoalState = draftGoal;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.includes("/api/projects/demo/goals/goal-1/lock") && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        expect(body.lockedBy).toStartWith("web-");
+        currentGoal = lockedGoal;
+        return Response.json(lockedGoal);
+      }
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+        return Response.json(currentGoal);
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Draft Goal");
+        expect(container.textContent).toContain("Lock Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Lock Goal").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("locked");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("locked goal renders Run Goal button and calls run endpoint", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const lockedGoal = makeGoal({ id: "goal-1", title: "Locked Goal", status: "locked", phase: "plan", lockedBy: "architect" });
+    const runningGoal = makeGoal({ id: "goal-1", title: "Locked Goal", status: "running", phase: "plan", mainSessionId: "session-1" });
+    let currentGoal: GoalState = lockedGoal;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.includes("/api/projects/demo/goals/goal-1/run") && init?.method === "POST") {
+        currentGoal = runningGoal;
+        return Response.json(runningGoal);
+      }
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+        return Response.json(currentGoal);
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Locked Goal");
+        expect(container.textContent).toContain("Run Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Run Goal").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("running");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("paused goal renders Resume Goal button and calls run endpoint", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const pausedGoal = makeGoal({ id: "goal-1", title: "Paused Goal", status: "paused", phase: "plan", mainSessionId: "session-1" });
+    const reservedGoal = makeGoal({ id: "goal-1", title: "Paused Goal", status: "paused", phase: "plan", mainSessionId: "session-1" });
+    let currentGoal: GoalState = pausedGoal;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.includes("/api/projects/demo/goals/goal-1/run") && init?.method === "POST") {
+        currentGoal = reservedGoal;
+        return Response.json(reservedGoal);
+      }
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+        return Response.json(currentGoal);
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Paused Goal");
+        expect(container.textContent).toContain("Resume Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Resume Goal").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/run"), expect.objectContaining({ method: "POST" }));
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("displays run mutation errors", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const lockedGoal = makeGoal({ id: "goal-1", title: "Locked Goal", status: "locked", phase: "plan", lockedBy: "architect" });
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.includes("/api/projects/demo/goals/goal-1/run") && init?.method === "POST") {
+        return Response.json({ error: { code: "BAD_REQUEST", message: "Goal is already reserved" } }, { status: 409 });
+      }
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+        return Response.json(lockedGoal);
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Run Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Run Goal").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Goal is already reserved");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
   test("shows error state when goal fetch fails", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
@@ -512,7 +722,7 @@ describe("GoalDetailRoute", () => {
       await renderGoalDetailRoute(reactRoot, queryClient);
 
       await waitFor(() => {
-        expect(container.textContent).toContain("Goal not found");
+        expect(container.textContent).toContain("Request failed with status 404");
       });
     } finally {
       await act(async () => {

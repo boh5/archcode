@@ -261,8 +261,8 @@ export class SessionStoreManager {
     }
   }
 
-  async createSessionFile(workspaceRoot: string): Promise<SessionFile> {
-    const store = this.create(crypto.randomUUID(), workspaceRoot);
+  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions = {}): Promise<SessionFile> {
+    const store = this.create(crypto.randomUUID(), workspaceRoot, options);
     return sessionFileInternals.toSessionFile(store.getState());
   }
 

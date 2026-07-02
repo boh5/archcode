@@ -1,5 +1,5 @@
 export { closeMcpManagerBestEffort, createRuntime } from "./runtime";
-export type { AgentRuntime, AgentRuntimeOptions } from "./runtime";
+export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions } from "./runtime";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
@@ -26,6 +26,8 @@ export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logge
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
+
+export { DoneConditionSchema } from "./goals";
 
 export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";

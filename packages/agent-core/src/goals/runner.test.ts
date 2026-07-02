@@ -123,6 +123,35 @@ describe("GoalRunner", () => {
     expect(completed.status).toBe("completed");
   });
 
+  it("claimStart is idempotent for the same main session", async () => {
+    const goal = await lockedGoal();
+    const runner = createRunner();
+
+    const first = await runner.claimStart(goal.id, "reserved-session");
+    const second = await runner.claimStart(goal.id, "reserved-session");
+
+    expect(first.status).toBe("running");
+    expect(second).toMatchObject({ status: "running", mainSessionId: "reserved-session" });
+  });
+
+  it("claimStart rejects a different reserved session", async () => {
+    const goal = await lockedGoal();
+    const runner = createRunner();
+    await manager.updateSessionIds(goal.id, "reserved-session");
+
+    await expectGoalRunnerError(() => runner.claimStart(goal.id, "other-session"));
+    expect(await manager.read(goal.id)).toMatchObject({ status: "locked", mainSessionId: "reserved-session" });
+  });
+
+  it("claimStart rejects a different session after running", async () => {
+    const goal = await lockedGoal();
+    const runner = createRunner();
+    await runner.claimStart(goal.id, "main-session");
+
+    await expectGoalRunnerError(() => runner.claimStart(goal.id, "other-session"));
+    expect(await manager.read(goal.id)).toMatchObject({ status: "running", mainSessionId: "main-session" });
+  });
+
   it("pauses when after_plan approval is denied", async () => {
     const goal = await lockedGoal(["after_plan"]);
     const runner = createRunner({ approval: deniedResponse() });
