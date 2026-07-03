@@ -509,6 +509,17 @@ describe("ConfiguredAgent", () => {
     expect(btm.dispatched).toContain("title-generation");
   });
 
+  test("run forwards maxSteps to the query loop", async () => {
+    const streamFn = setupToolCallStreamText("file_read");
+    const agent = createAgent({ definition: exploreAgentDefinition });
+
+    const result = await agent.run("limited run", { maxSteps: 1 });
+
+    expect(result).toEqual({ text: "", steps: 1 });
+    expect(streamFn).toHaveBeenCalledTimes(1);
+    expect(agent.store.getState().executions.at(-1)?.status).toBe("max_steps");
+  });
+
   test("enforceToolOutputQuota controls quota enforcement", async () => {
     setupMockStreamText("quota ok");
     const quotaEnforcer = mock(async (_directory: string) => {});

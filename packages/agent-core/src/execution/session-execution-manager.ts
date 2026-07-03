@@ -67,6 +67,7 @@ export interface StartSessionExecutionInput {
   readonly userMessage: string;
   readonly agentName?: string;
   readonly origin?: SessionExecutionOrigin;
+  readonly maxSteps?: number;
 }
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
@@ -447,6 +448,7 @@ export class SessionExecutionManager {
         confirmPermission: (request, abortSignal) =>
           this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal),
         askUser: (request) => this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request),
+        ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
       });
     } catch (error) {
       if (!execution.abortController.signal.aborted) {

@@ -275,9 +275,22 @@ describe("SessionExecutionManager", () => {
     expect(() => manager.startExecution({ slug: "project", workspaceRoot, sessionId: "session-start", userMessage: "again" })).toThrow(AgentRunningError);
     await Promise.resolve();
     expect(agent.runMock).toHaveBeenCalledWith("hello", expect.objectContaining({ abort: execution.abortController.signal }));
+    const options = agent.runMock.mock.calls[0]?.[1];
+    if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
+    expect("maxSteps" in options).toBe(false);
     run.resolve({ text: "done", steps: 1 });
     await execution.promise;
     expect(manager.isRunning(workspaceRoot, "session-start")).toBe(false);
+  });
+
+  test("startExecution forwards maxSteps to agent.run", async () => {
+    const agent = new MockAgent("limited-session", Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ "limited-session": agent });
+
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "limited-session", userMessage: "work", maxSteps: 1 });
+    await execution.promise;
+
+    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ maxSteps: 1 }));
   });
 
   test("enforces concurrent session limit with ConcurrentSessionLimitError", () => {

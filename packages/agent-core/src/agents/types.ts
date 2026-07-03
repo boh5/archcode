@@ -7,6 +7,7 @@ export interface AgentRunOptions {
   abort?: AbortSignal;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
+  maxSteps?: number;
 }
 
 export interface Agent {
