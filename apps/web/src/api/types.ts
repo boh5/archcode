@@ -33,14 +33,15 @@ export type {
   CommandResult,
   PermissionDecision,
   QuestionAnswerBody,
+  GoalArtifactName,
+  GoalArtifactFile,
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───
-// These match the server's dashboard route responses (T16).
-// The server augments GoalState / HitlRequest with project metadata
-// and uses the agent-core HitlRequest shape (hitlId, not protocol id).
+// Server augments GoalState/HitlRequest with project metadata and exposes
+// redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalState, HitlKind } from "@archcode/protocol";
+import type { GoalArtifactFile, GoalState, HitlKind } from "@archcode/protocol";
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {
@@ -48,60 +49,48 @@ export type DashboardGoal = GoalState & {
   projectName: string;
 };
 
-/** Display fields shared by all HITL payload variants (agent-core HitlPayload). */
-export interface HitlDisplayFields {
-  title?: string;
-  message?: string;
-  details?: Record<string, unknown>;
-  options?: Array<{ label: string; description?: string; id?: string }>;
-  recommendedOptionId?: string;
-  rationale?: string;
+/** Redacted display payload from server HITL list routes. Raw payload is never exposed. */
+export interface DashboardHitlDisplayPayload {
+  title: string;
+  summary?: string;
+  fields?: Array<{ label: string; value: string }>;
+  redacted: true;
 }
 
-/** HITL payload variants matching the agent-core HitlPayload union. */
-export type DashboardHitlPayload = HitlDisplayFields & (
-  | {
-      kind: "question";
-      options?: Array<{ label: string; description?: string }>;
-      multiple?: boolean;
-      custom?: boolean;
-      recommendedOption?: string;
-      rationale?: string;
-    }
-  | {
-      kind: "approval";
-      action: string;
-      context: Record<string, unknown>;
-    }
-  | {
-      kind: "review";
-      artifacts: Array<{ path: string; description: string }>;
-    }
-  | {
-      kind?: undefined;
-      title: string;
-      message: string;
-    }
-);
-
-/** HITL trigger metadata from the agent-core HitlRequest. */
 export interface DashboardHitlTrigger {
   projectSlug?: string;
   goalId?: string;
   loopId?: string;
   source?: string;
+  approvalPoint?: string;
+  toolCallId?: string;
   timeoutMs?: number;
 }
 
-/** HITL item with project metadata, returned by GET /api/hitl?status=pending. */
+/** HITL item with project metadata. Uses redacted displayPayload only; raw payload is never included. */
 export interface DashboardHitlItem {
   hitlId: string;
   sessionId: string;
   kind: HitlKind;
-  payload: DashboardHitlPayload;
+  displayPayload: DashboardHitlDisplayPayload;
   trigger: DashboardHitlTrigger;
   createdAt: number;
+  approvalKey?: string;
   projectSlug: string;
   projectName: string;
   status: "pending";
+}
+
+// ─── Goal artifact API response types ───
+// Match the read-only project-scoped artifact routes from Task 11.
+
+/** Response of GET /api/projects/:slug/goals/:goalId/artifacts. */
+export interface GoalArtifactsListResponse {
+  artifacts: GoalArtifactFile[];
+}
+
+/** Response of GET /api/projects/:slug/goals/:goalId/artifacts/:artifactName. */
+export interface GoalArtifactReadResponse {
+  artifact?: GoalArtifactFile;
+  content: string;
 }

@@ -90,24 +90,37 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsxs: jsxDEV,
 }));
 
-const respondHitl = mock((_args: { hitlId: string; body: unknown }) => {});
-const cancelHitl = mock((_args: { hitlId: string; reason?: string }) => {});
+const respondHitl = mock((_args: { projectSlug: string; hitlId: string; body: unknown }) => {});
+const cancelHitl = mock((_args: { projectSlug: string; hitlId: string; reason?: string }) => {});
+
+let respondIsPending = false;
+let cancelIsPending = false;
 
 mock.module("../../api/mutations", () => ({
-  useRespondHitl: () => ({ mutate: respondHitl, mutateAsync: respondHitl }),
-  useCancelHitl: () => ({ mutate: cancelHitl, mutateAsync: cancelHitl }),
+  useRespondHitl: () => ({ mutate: respondHitl, mutateAsync: respondHitl, isPending: respondIsPending }),
+  useCancelHitl: () => ({ mutate: cancelHitl, mutateAsync: cancelHitl, isPending: cancelIsPending }),
 }));
 
 const { HitlCard } = await import("./HitlCard");
 
 // ─── Factory helpers ───
 
+function makeDisplayPayload(overrides: Partial<DashboardHitlItem["displayPayload"]> = {}): DashboardHitlItem["displayPayload"] {
+  return {
+    title: "Action required",
+    summary: undefined,
+    fields: undefined,
+    redacted: true,
+    ...overrides,
+  };
+}
+
 function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitlItem {
   return {
     hitlId: "hitl-1",
     sessionId: "session-1",
     kind: "approval",
-    payload: { kind: "approval", action: "run_tool", context: {} },
+    displayPayload: makeDisplayPayload({ title: "Approve?", summary: "Please approve" }),
     trigger: { projectSlug: "demo", goalId: "goal-1", source: "test" },
     createdAt: 1_000,
     projectSlug: "demo",
@@ -117,12 +130,29 @@ function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitl
   };
 }
 
+function makeRedactedHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitlItem {
+  return makeHitlItem({
+    displayPayload: makeDisplayPayload({
+      title: "Approve budget [REDACTED]",
+      summary: "Budget approval requires human confirmation [REDACTED]",
+      fields: [
+        { label: "action", value: "approve_budget" },
+        { label: "context", value: "[REDACTED]" },
+      ],
+    }),
+    trigger: { projectSlug: "demo", goalId: "goal-budget", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    ...overrides,
+  });
+}
+
 // ─── Tests ───
 
 describe("HitlCard", () => {
   beforeEach(() => {
     respondHitl.mockClear();
     cancelHitl.mockClear();
+    respondIsPending = false;
+    cancelIsPending = false;
   });
 
   test("renders data-testid='hitl-card'", () => {
@@ -142,7 +172,7 @@ describe("HitlCard", () => {
   test("renders kind label for question", () => {
     const item = makeHitlItem({
       kind: "question",
-      payload: { kind: "question", options: [{ label: "Yes" }, { label: "No" }] },
+      displayPayload: makeDisplayPayload({ title: "Which option?" }),
     });
     const result = HitlCard({ item });
     const text = textContent(result);
@@ -152,21 +182,67 @@ describe("HitlCard", () => {
   test("renders kind label for review", () => {
     const item = makeHitlItem({
       kind: "review",
-      payload: { kind: "review", artifacts: [{ path: "/src/index.ts", description: "Main file" }] },
+      displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
     const result = HitlCard({ item });
     const text = textContent(result);
     expect(text.toLowerCase()).toContain("review");
   });
 
-  test("renders prompt text from payload title/message", () => {
+  test("renders display title from displayPayload", () => {
     const item = makeHitlItem({
-      payload: { kind: "approval", action: "deploy", context: {}, title: "Deploy to prod?", message: "Confirm deployment" },
+      displayPayload: makeDisplayPayload({ title: "Deploy to prod?" }),
     });
     const result = HitlCard({ item });
-    const text = textContent(result);
-    expect(text).toContain("Deploy to prod?");
-    expect(text).toContain("Confirm deployment");
+    const titleEl = findByTestId(result, "hitl-display-title");
+    expect(titleEl).toBeDefined();
+    expect(textContent(titleEl)).toContain("Deploy to prod?");
+  });
+
+  test("renders display summary from displayPayload when present", () => {
+    const item = makeHitlItem({
+      displayPayload: makeDisplayPayload({ title: "Deploy?", summary: "Confirm deployment" }),
+    });
+    const result = HitlCard({ item });
+    const summaryEl = findByTestId(result, "hitl-display-summary");
+    expect(summaryEl).toBeDefined();
+    expect(textContent(summaryEl)).toContain("Confirm deployment");
+  });
+
+  test("does not render summary element when summary is absent", () => {
+    const item = makeHitlItem({
+      displayPayload: makeDisplayPayload({ title: "Deploy?", summary: undefined }),
+    });
+    const result = HitlCard({ item });
+    expect(findByTestId(result, "hitl-display-summary")).toBeUndefined();
+  });
+
+  test("renders display fields when present", () => {
+    const item = makeHitlItem({
+      displayPayload: makeDisplayPayload({
+        title: "Approve?",
+        fields: [
+          { label: "action", value: "deploy" },
+          { label: "context", value: "[REDACTED]" },
+        ],
+      }),
+    });
+    const result = HitlCard({ item });
+    const fieldsEl = findByTestId(result, "hitl-display-fields");
+    expect(fieldsEl).toBeDefined();
+    const text = textContent(fieldsEl);
+    expect(text).toContain("action");
+    expect(text).toContain("deploy");
+    expect(text).toContain("context");
+    expect(text).toContain("[REDACTED]");
+  });
+
+  test("does not render fields element when fields are absent", () => {
+    const item = makeHitlItem({
+      displayPayload: makeDisplayPayload({ title: "Approve?", fields: undefined }),
+    });
+    const result = HitlCard({ item });
+    expect(findByTestId(result, "hitl-display-fields")).toBeUndefined();
   });
 
   test("renders project name", () => {
@@ -174,6 +250,32 @@ describe("HitlCard", () => {
     const result = HitlCard({ item });
     const text = textContent(result);
     expect(text).toContain("My Awesome Project");
+  });
+
+  test("renders goal context from trigger when present", () => {
+    const item = makeHitlItem({ trigger: { projectSlug: "demo", goalId: "goal-xyz", source: "test" } });
+    const result = HitlCard({ item });
+    const goalEl = findByTestId(result, "hitl-context-goal");
+    expect(goalEl).toBeDefined();
+    expect(textContent(goalEl)).toContain("goal-xyz");
+  });
+
+  test("renders session context", () => {
+    const item = makeHitlItem({ sessionId: "sess-abc" });
+    const result = HitlCard({ item });
+    const sessionEl = findByTestId(result, "hitl-context-session");
+    expect(sessionEl).toBeDefined();
+    expect(textContent(sessionEl)).toContain("sess-abc");
+  });
+
+  test("renders trigger context from approval point source", () => {
+    const item = makeHitlItem({
+      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    });
+    const result = HitlCard({ item });
+    const triggerEl = findByTestId(result, "hitl-context-trigger");
+    expect(triggerEl).toBeDefined();
+    expect(textContent(triggerEl)).toContain("approval_budget_1");
   });
 
   test("renders approve and deny buttons for approval kind", () => {
@@ -189,7 +291,7 @@ describe("HitlCard", () => {
     expect(findByTestId(result, "hitl-cancel-button")).toBeDefined();
   });
 
-  test("approve button calls respondHitl with decision=approve", () => {
+  test("approve button calls respondHitl with decision=approved", () => {
     const item = makeHitlItem({ kind: "approval", hitlId: "hitl-approve-test" });
     const result = HitlCard({ item });
     const approveBtn = findByTestId(result, "hitl-approve-button");
@@ -197,12 +299,13 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { hitlId: string; body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { decision?: string } };
+    expect(callArg.projectSlug).toBe("demo");
     expect(callArg.hitlId).toBe("hitl-approve-test");
-    expect(callArg.body.decision).toBe("approve");
+    expect(callArg.body.decision).toBe("approved");
   });
 
-  test("deny button calls respondHitl with decision=deny", () => {
+  test("deny button calls respondHitl with decision=denied", () => {
     const item = makeHitlItem({ kind: "approval", hitlId: "hitl-deny-test" });
     const result = HitlCard({ item });
     const denyBtn = findByTestId(result, "hitl-deny-button");
@@ -210,9 +313,10 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { hitlId: string; body: { decision?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { decision?: string } };
+    expect(callArg.projectSlug).toBe("demo");
     expect(callArg.hitlId).toBe("hitl-deny-test");
-    expect(callArg.body.decision).toBe("deny");
+    expect(callArg.body.decision).toBe("denied");
   });
 
   test("cancel button calls cancelHitl", () => {
@@ -223,71 +327,76 @@ describe("HitlCard", () => {
     expect(typeof onClick).toBe("function");
     onClick!();
     expect(cancelHitl).toHaveBeenCalledTimes(1);
-    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as { hitlId: string };
+    const callArg = cancelHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string };
+    expect(callArg.projectSlug).toBe("demo");
     expect(callArg.hitlId).toBe("hitl-cancel-test");
   });
 
-  test("review kind renders approve/reject/request-changes buttons", () => {
+  test("review kind renders DONE/NOT DONE action buttons", () => {
     const item = makeHitlItem({
       kind: "review",
-      payload: { kind: "review", artifacts: [{ path: "/src/x.ts", description: "x" }] },
+      displayPayload: makeDisplayPayload({ title: "Review artifacts" }),
     });
     const result = HitlCard({ item });
     const text = textContent(result);
-    expect(text.toLowerCase()).toContain("approve");
-    expect(text.toLowerCase()).toContain("reject");
-    expect(text.toLowerCase()).toContain("request changes");
+    expect(text).toContain("DONE");
+    expect(text).toContain("NOT DONE");
+    expect(findByTestId(result, "hitl-approve-button")).toBeDefined();
+    expect(findByTestId(result, "hitl-deny-button")).toBeDefined();
+    expect(findByTestId(result, "hitl-request-changes-button")).toBeUndefined();
   });
 
-  test("review approve calls respondHitl with verdict=approve", () => {
+  test("review DONE calls respondHitl with outcome=DONE", () => {
     const item = makeHitlItem({
       kind: "review",
       hitlId: "review-1",
-      payload: { kind: "review", artifacts: [] },
+      displayPayload: makeDisplayPayload({ title: "Review" }),
     });
     const result = HitlCard({ item });
     const approveBtn = findByTestId(result, "hitl-approve-button");
     const onClick = approveBtn?.props?.onClick as (() => void) | undefined;
     onClick!();
     expect(respondHitl).toHaveBeenCalledTimes(1);
-    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { hitlId: string; body: { verdict?: string } };
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { outcome?: string } };
+    expect(callArg.projectSlug).toBe("demo");
     expect(callArg.hitlId).toBe("review-1");
-    expect(callArg.body.verdict).toBe("approve");
+    expect(callArg.body.outcome).toBe("DONE");
+  });
+
+  test("review NOT DONE calls respondHitl with outcome=NOT_DONE", () => {
+    const item = makeHitlItem({
+      kind: "review",
+      hitlId: "review-2",
+      displayPayload: makeDisplayPayload({ title: "Review" }),
+    });
+    const result = HitlCard({ item });
+    const notDoneBtn = findByTestId(result, "hitl-deny-button");
+    const onClick = notDoneBtn?.props?.onClick as (() => void) | undefined;
+    onClick!();
+    expect(respondHitl).toHaveBeenCalledTimes(1);
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { projectSlug: string; hitlId: string; body: { outcome?: string } };
+    expect(callArg.projectSlug).toBe("demo");
+    expect(callArg.hitlId).toBe("review-2");
+    expect(callArg.body.outcome).toBe("NOT_DONE");
   });
 
   test("question kind renders submit and cancel buttons", () => {
     const item = makeHitlItem({
       kind: "question",
-      payload: { kind: "question", options: [{ label: "Option A" }, { label: "Option B" }] },
+      displayPayload: makeDisplayPayload({ title: "Which option?" }),
     });
     const result = HitlCard({ item });
     expect(findByTestId(result, "hitl-cancel-button")).toBeDefined();
   });
 
-  test("renders payload action for approval kind", () => {
+  test("renders display title for approval kind", () => {
     const item = makeHitlItem({
-      payload: { kind: "approval", action: "deploy_to_production", context: { env: "prod" } },
+      kind: "approval",
+      displayPayload: makeDisplayPayload({ title: "deploy_to_production" }),
     });
     const result = HitlCard({ item });
-    const text = textContent(result);
-    expect(text).toContain("deploy_to_production");
-  });
-
-  test("renders review artifacts list", () => {
-    const item = makeHitlItem({
-      kind: "review",
-      payload: {
-        kind: "review",
-        artifacts: [
-          { path: "/src/index.ts", description: "Entry point" },
-          { path: "/src/utils.ts", description: "Utilities" },
-        ],
-      },
-    });
-    const result = HitlCard({ item });
-    const text = textContent(result);
-    expect(text).toContain("/src/index.ts");
-    expect(text).toContain("/src/utils.ts");
+    const titleEl = findByTestId(result, "hitl-display-title");
+    expect(textContent(titleEl)).toContain("deploy_to_production");
   });
 
   test("renders goalId from trigger when present", () => {
@@ -307,7 +416,7 @@ describe("HitlCard", () => {
   test("review card uses accent border", () => {
     const item = makeHitlItem({
       kind: "review",
-      payload: { kind: "review", artifacts: [] },
+      displayPayload: makeDisplayPayload({ title: "Review" }),
     });
     const result = HitlCard({ item });
     const cards = findAllWithClass(result, "border-accent");
@@ -317,10 +426,118 @@ describe("HitlCard", () => {
   test("question card uses info border", () => {
     const item = makeHitlItem({
       kind: "question",
-      payload: { kind: "question", options: [] },
+      displayPayload: makeDisplayPayload({ title: "Question" }),
     });
     const result = HitlCard({ item });
     const cards = findAllWithClass(result, "border-info");
     expect(cards.length).toBeGreaterThan(0);
+  });
+
+  // ─── Redaction tests ───
+
+  test("redacted display payload shows [REDACTED] and never exposes raw secrets", () => {
+    const item = makeRedactedHitlItem({ hitlId: "hitl-redacted" });
+    const result = HitlCard({ item });
+    const text = textContent(result);
+    expect(text).toContain("[REDACTED]");
+    expect(text).not.toContain("sk-test-secret");
+    expect(text).not.toContain("apiKey=sk-test-secret");
+  });
+
+  test("redacted display payload fields render [REDACTED] values", () => {
+    const item = makeRedactedHitlItem();
+    const result = HitlCard({ item });
+    const fieldsEl = findByTestId(result, "hitl-display-fields");
+    expect(fieldsEl).toBeDefined();
+    const fieldsText = textContent(fieldsEl);
+    expect(fieldsText).toContain("[REDACTED]");
+    expect(fieldsText).not.toContain("sk-test-secret");
+  });
+
+  test("displayPayload has redacted: true marker", () => {
+    const item = makeRedactedHitlItem();
+    expect(item.displayPayload.redacted).toBe(true);
+  });
+
+  test("serialized card text never contains raw secret patterns", () => {
+    const item = makeRedactedHitlItem({
+      displayPayload: makeDisplayPayload({
+        title: "Approve budget [REDACTED]",
+        summary: "Budget approval [REDACTED]",
+        fields: [
+          { label: "action", value: "approve_budget" },
+          { label: "context", value: "[REDACTED]" },
+          { label: "apiKey", value: "[REDACTED]" },
+        ],
+      }),
+    });
+    const result = HitlCard({ item });
+    const text = textContent(result);
+    expect(text).not.toContain("sk-test-secret");
+    expect(text).not.toContain("apiKey=sk");
+    expect(text).toContain("[REDACTED]");
+  });
+
+  // ─── Duplicate-click suppression tests ───
+
+  test("approve button is disabled when respond mutation is pending", () => {
+    respondIsPending = true;
+    const item = makeHitlItem({ kind: "approval" });
+    const result = HitlCard({ item });
+    const approveBtn = findByTestId(result, "hitl-approve-button");
+    expect(approveBtn?.props?.disabled).toBe(true);
+  });
+
+  test("deny button is disabled when respond mutation is pending", () => {
+    respondIsPending = true;
+    const item = makeHitlItem({ kind: "approval" });
+    const result = HitlCard({ item });
+    const denyBtn = findByTestId(result, "hitl-deny-button");
+    expect(denyBtn?.props?.disabled).toBe(true);
+  });
+
+  test("cancel button is disabled when cancel mutation is pending", () => {
+    cancelIsPending = true;
+    const item = makeHitlItem();
+    const result = HitlCard({ item });
+    const cancelBtn = findByTestId(result, "hitl-cancel-button");
+    expect(cancelBtn?.props?.disabled).toBe(true);
+  });
+
+  test("all buttons are disabled when any mutation is pending", () => {
+    respondIsPending = true;
+    const item = makeHitlItem({ kind: "approval" });
+    const result = HitlCard({ item });
+    expect(findByTestId(result, "hitl-approve-button")?.props?.disabled).toBe(true);
+    expect(findByTestId(result, "hitl-deny-button")?.props?.disabled).toBe(true);
+    expect(findByTestId(result, "hitl-cancel-button")?.props?.disabled).toBe(true);
+  });
+
+  test("approve handler does not call respondHitl when already pending", () => {
+    respondIsPending = true;
+    const item = makeHitlItem({ kind: "approval", hitlId: "hitl-pending" });
+    const result = HitlCard({ item });
+    const approveBtn = findByTestId(result, "hitl-approve-button");
+    const onClick = approveBtn?.props?.onClick as (() => void) | undefined;
+    onClick!();
+    expect(respondHitl).not.toHaveBeenCalled();
+  });
+
+  test("cancel handler does not call cancelHitl when already pending", () => {
+    cancelIsPending = true;
+    const item = makeHitlItem({ hitlId: "hitl-pending-cancel" });
+    const result = HitlCard({ item });
+    const cancelBtn = findByTestId(result, "hitl-cancel-button");
+    const onClick = cancelBtn?.props?.onClick as (() => void) | undefined;
+    onClick!();
+    expect(cancelHitl).not.toHaveBeenCalled();
+  });
+
+  test("buttons are not disabled when no mutation is pending", () => {
+    const item = makeHitlItem({ kind: "approval" });
+    const result = HitlCard({ item });
+    expect(findByTestId(result, "hitl-approve-button")?.props?.disabled).toBe(false);
+    expect(findByTestId(result, "hitl-deny-button")?.props?.disabled).toBe(false);
+    expect(findByTestId(result, "hitl-cancel-button")?.props?.disabled).toBe(false);
   });
 });
