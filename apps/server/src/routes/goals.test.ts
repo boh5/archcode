@@ -473,6 +473,64 @@ describe("goals routes", () => {
     });
   });
 
+  test("artifacts list/read returns canonical metadata and markdown content", async () => {
+    const { app, project, runtime } = await createTestApp("artifacts-list-read");
+    const goal = await createGoal(app, project.slug, "Artifact API");
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalArtifacts.writeArtifact(goal, "plan.md", "# Plan\n\n- Step one", { agentName: "plan" });
+
+    const listRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts`);
+    const listBody = await listRes.json() as { artifacts: Array<{ name: string; path: string; mediaType: string; sha256?: string }> };
+    const readRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan.md`);
+    const readBody = await readRes.json() as { artifact: { name: string; path: string; mediaType: string }; content: string };
+
+    expect(listRes.status).toBe(200);
+    expect(listBody.artifacts).toHaveLength(1);
+    expect(listBody.artifacts[0]).toMatchObject({
+      name: "plan.md",
+      path: `.archcode/goals/${goal.id}/artifacts/plan.md`,
+      mediaType: "text/markdown",
+    });
+    expect(listBody.artifacts[0].sha256).toBeString();
+
+    expect(readRes.status).toBe(200);
+    expect(readBody).toMatchObject({
+      artifact: { name: "plan.md", path: `.archcode/goals/${goal.id}/artifacts/plan.md`, mediaType: "text/markdown" },
+      content: "# Plan\n\n- Step one\n",
+    });
+  });
+
+  test("artifacts route validates project scope, canonical names, and exposes no edit endpoint", async () => {
+    const { app, project, runtime } = await createTestApp("artifacts-boundaries");
+    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "artifacts-boundaries-other");
+    await mkdir(otherWorkspaceRoot, { recursive: true });
+    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "artifacts-boundaries-other" });
+    const goal = await createGoal(app, project.slug, "Artifact boundaries");
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    await context.goalArtifacts.writeArtifact(goal, "plan.md", "# Plan", { agentName: "plan" });
+
+    const foreignList = await app.request(`/api/projects/${otherProject.slug}/goals/${goal.id}/artifacts`);
+    const traversalRead = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/..%2Fplan.md`);
+    const noncanonicalRead = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan-v2.md`);
+    const editAttempt = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan.md`, {
+      method: "PATCH",
+      body: JSON.stringify({ content: "# Hacked" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(foreignList.status).toBe(404);
+    expect(await foreignList.json()).toEqual({
+      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${goal.id}` },
+    });
+    expect(traversalRead.status).toBe(400);
+    expect(await traversalRead.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "artifactName must be a canonical Goal artifact name" },
+    });
+    expect(noncanonicalRead.status).toBe(400);
+    expect(editAttempt.status).toBe(404);
+    expect(await context.goalArtifacts.readArtifact(goal.id, "plan.md")).toBe("# Plan\n");
+  });
+
   test("GET list supports status filter", async () => {
     const { app, project } = await createTestApp("status-filter");
     const draft = await createGoal(app, project.slug, "Draft goal");

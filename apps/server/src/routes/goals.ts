@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { AgentRunningError, ConcurrentSessionLimitError, DoneConditionSchema, type AgentRuntime } from "@archcode/agent-core";
-import type { ApprovalPoint, GoalState, GoalStatus, RetryPolicy } from "@archcode/protocol";
+import { AgentRunningError, ConcurrentSessionLimitError, DoneConditionSchema, GoalArtifactNameSchema, type AgentRuntime } from "@archcode/agent-core";
+import type { ApprovalPoint, GoalArtifactName, GoalState, GoalStatus, RetryPolicy } from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ConcurrentSessionLimitHttpError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
@@ -100,6 +100,39 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
 
     try {
       return c.json(await manager.read(goalId));
+    } catch (error) {
+      throw mapGoalError(error);
+    }
+  });
+
+  app.get("/:slug/goals/:goalId/artifacts", async (c) => {
+    const { workspaceRoot } = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const goalId = requiredGoalId(c.req.param("goalId"));
+    const context = await goalContextFor(runtime, workspaceRoot);
+
+    try {
+      await context.goalState.read(goalId);
+      return c.json({ artifacts: await context.goalArtifacts.listArtifacts(goalId) });
+    } catch (error) {
+      throw mapGoalError(error);
+    }
+  });
+
+  app.get("/:slug/goals/:goalId/artifacts/:artifactName", async (c) => {
+    const { workspaceRoot } = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const goalId = requiredGoalId(c.req.param("goalId"));
+    const artifactName = requiredArtifactName(c.req.param("artifactName"));
+    const context = await goalContextFor(runtime, workspaceRoot);
+
+    try {
+      await context.goalState.read(goalId);
+      const content = await context.goalArtifacts.readArtifact(goalId, artifactName);
+      if (content === null) {
+        throw new ServerError("SESSION_NOT_FOUND", `Goal artifact not found: ${artifactName}`, 404);
+      }
+      const artifact = (await context.goalArtifacts.listArtifacts(goalId))
+        .find((candidate) => candidate.name === artifactName);
+      return c.json({ artifact, content });
     } catch (error) {
       throw mapGoalError(error);
     }
@@ -278,6 +311,15 @@ function requiredGoalId(value: string | undefined): string {
   return goalId;
 }
 
+function requiredArtifactName(value: string | undefined): GoalArtifactName {
+  const artifactName = requiredParam(value, "artifactName");
+  const parsed = GoalArtifactNameSchema.safeParse(artifactName);
+  if (!parsed.success) {
+    throw new BadRequestError("artifactName must be a canonical Goal artifact name");
+  }
+  return parsed.data;
+}
+
 function buildGoalRunUserMessage(goal: GoalState): string {
   return [
     "Bootstrap an ArchCode Goal run.",
@@ -304,8 +346,11 @@ function assertGoalCanRun(goal: GoalState): void {
 }
 
 async function goalStateFor(runtime: AgentRuntime, workspaceRoot: string) {
-  const context = await runtime.contextResolver.resolve(workspaceRoot);
-  return context.goalState;
+  return (await goalContextFor(runtime, workspaceRoot)).goalState;
+}
+
+async function goalContextFor(runtime: AgentRuntime, workspaceRoot: string) {
+  return await runtime.contextResolver.resolve(workspaceRoot);
 }
 
 async function markGoalRunBootstrapFailure(
@@ -380,6 +425,9 @@ function mapGoalError(error: unknown): Error {
     return new ServerError("BAD_REQUEST", error.message, 409);
   }
   if (hasErrorName(error, "GoalPathError") || hasErrorName(error, "GoalInvalidIdError") || hasErrorName(error, "GoalEmptyConditionsError")) {
+    return new BadRequestError(error.message);
+  }
+  if (hasErrorName(error, "GoalArtifactNameError") || hasErrorName(error, "GoalArtifactPathError")) {
     return new BadRequestError(error.message);
   }
   if (error instanceof z.ZodError) {
