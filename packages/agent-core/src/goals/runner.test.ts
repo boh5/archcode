@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { DoneCondition, DoneResult } from "@archcode/protocol";
 
 import type { HitlResponse } from "../hitl/types";
+import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner, GoalRunnerError } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -15,6 +16,12 @@ const condition: DoneCondition = {
   kind: "file_exists",
   params: { path: "artifact.txt" },
 };
+
+const reviewerDoneConditions: DoneCondition[] = [
+  { id: "AC-001", kind: "file_exists", params: { path: "packages/agent-core/src/goals/runner.ts" } },
+  { id: "AC-002", kind: "typecheck_pass", params: { command: "bun run typecheck" } },
+  { id: "AC-003", kind: "tests_pass", params: { command: "bun test packages/agent-core/src/goals/runner.test.ts" } },
+];
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
@@ -46,6 +53,10 @@ function failingResult(conditionId = condition.id): DoneResult {
   return { conditionId, passed: false, evidence: "goal_check_done failed", checkedAt: new Date().toISOString() };
 }
 
+function customFailingResult(conditionId: string, evidence: string): DoneResult {
+  return { conditionId, passed: false, evidence, checkedAt: new Date().toISOString() };
+}
+
 async function expectGoalRunnerError(action: () => Promise<unknown>): Promise<void> {
   try {
     await action();
@@ -66,9 +77,10 @@ function createRunner(options: {
   const pendingHitlGoalIds = new Set(options.pendingHitlGoalIds ?? []);
   const activeSessionIds = new Set(options.activeSessionIds ?? []);
 
-  return new GoalRunner({
-    goalStateManager: manager,
-    workspaceRoot,
+    return new GoalRunner({
+      goalStateManager: manager,
+      goalArtifacts: new GoalArtifactManager(workspaceRoot),
+      workspaceRoot,
     hitlService: {
       request: mock(async () => options.approval ?? approvedResponse()),
       listPending: mock((_projectSlug?: string, goalId?: string) => pendingHitlGoalIds.has(goalId ?? "") ? [{
@@ -86,15 +98,28 @@ function createRunner(options: {
 }
 
 async function lockedGoal(approvalPoints: Array<"after_plan" | "before_complete"> = []) {
+  return lockedGoalWithConditions([condition], approvalPoints);
+}
+
+async function lockedGoalWithConditions(
+  doneConditions: DoneCondition[],
+  approvalPoints: Array<"after_plan" | "before_complete"> = [],
+) {
   const goal = await manager.create(
     "project-a",
     "Ship goal runner",
     "architect",
-    [condition],
+    doneConditions,
     { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
     approvalPoints,
   );
   return manager.lock(goal.id, "architect");
+}
+
+async function runToReview(goalId: string, runner: GoalRunner): Promise<void> {
+  await runner.start(goalId);
+  await runner.advancePhase(goalId, "build");
+  await runner.advancePhase(goalId, "review");
 }
 
 describe("GoalRunner", () => {
@@ -189,6 +214,88 @@ describe("GoalRunner", () => {
 
     await expectGoalRunnerError(() => runner.complete(goal.id));
     expect((await manager.read(goal.id)).status).toBe("running");
+  });
+
+  describe("reviewer done not done", () => {
+    it("records three condition results before final DONE and follows the completed path", async () => {
+      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
+      const runner = createRunner();
+      await runToReview(goal.id, runner);
+
+      for (const doneCondition of reviewerDoneConditions) {
+        const state = await runner.recordReviewerDoneResult(goal.id, doneCondition.id, passingResult(doneCondition.id));
+        expect(state.doneResults[doneCondition.id]?.passed).toBe(true);
+      }
+
+      const beforeOutcome = await manager.read(goal.id);
+      expect(beforeOutcome.status).toBe("verifying");
+      expect(Object.keys(beforeOutcome.doneResults).sort()).toEqual(["AC-001", "AC-002", "AC-003"]);
+
+      const completed = await runner.finalizeReviewerReview(goal.id, "DONE", { summary: "Reviewer verified all Done Conditions." });
+
+      expect(completed.status).toBe("completed");
+      const persisted = await manager.read(goal.id);
+      expect(persisted.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified all Done Conditions." });
+      expect(persisted.reviewReport?.criteria).toHaveLength(3);
+      expect(persisted.repairContext).toBeUndefined();
+    });
+
+    it("preserves before_complete approval behavior for final DONE", async () => {
+      const goal = await lockedGoalWithConditions(reviewerDoneConditions, ["before_complete"]);
+      const runner = createRunner({ approval: deniedResponse() });
+      await runToReview(goal.id, runner);
+      for (const doneCondition of reviewerDoneConditions) {
+        await runner.recordReviewerDoneResult(goal.id, doneCondition.id, passingResult(doneCondition.id));
+      }
+
+      const paused = await runner.finalizeReviewerReview(goal.id, "DONE");
+
+      expect(paused.status).toBe("paused");
+      expect(paused.phase).toBe("review");
+      expect(paused.reviewReport?.outcome).toBe("DONE");
+      expect(paused.lastError).toBe("Approval before_complete denied");
+    });
+
+    it("returns NOT_DONE with structured repair context for missing required evidence", async () => {
+      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
+      const runner = createRunner();
+      await runToReview(goal.id, runner);
+      await runner.recordReviewerDoneResult(goal.id, "AC-001", passingResult("AC-001"));
+
+      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+
+      expect(failed.status).toBe("failed");
+      expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE" });
+      expect(failed.repairContext?.issues.map((issue) => issue.conditionId).sort()).toEqual(["AC-002", "AC-003"]);
+      expect(failed.repairContext?.issues[0]?.evidenceSummary).toBe("Required evidence missing");
+      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("goal_check_done");
+      expect(failed.lastError).toContain("Reviewer NOT_DONE");
+    });
+
+    it("returns NOT_DONE with failed condition id, evidence summary, guidance, and repair target", async () => {
+      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
+      const runner = createRunner();
+      await runToReview(goal.id, runner);
+      await runner.recordReviewerDoneResult(goal.id, "AC-001", passingResult("AC-001"));
+      await runner.recordReviewerDoneResult(goal.id, "AC-002", customFailingResult("AC-002", "typecheck failed"));
+      await runner.recordReviewerDoneResult(goal.id, "AC-003", passingResult("AC-003"));
+
+      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+
+      expect(failed.status).toBe("failed");
+      expect(failed.reviewReport?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({
+        compliant: false,
+        evidence: ["typecheck failed"],
+      });
+      expect(failed.repairContext?.issues).toHaveLength(1);
+      expect(failed.repairContext?.issues[0]).toMatchObject({
+        conditionId: "AC-002",
+        evidenceSummary: "typecheck failed",
+        repairTarget: "bun run typecheck",
+      });
+      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("AC-002");
+      expect(failed.lastError).toContain("AC-002");
+    });
   });
 
   it("retries failed verification with a fresh session, plan phase reset, and incremented retryCount", async () => {
