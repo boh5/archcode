@@ -2,6 +2,8 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { GoalArtifactManager } from "../goals/artifacts";
+import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -44,6 +46,8 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
       addedAt: new Date().toISOString(),
     },
     goalState: new GoalStateManager(workspaceRoot),
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalMemory: new GoalMemoryManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),

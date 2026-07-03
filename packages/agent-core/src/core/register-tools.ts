@@ -11,6 +11,8 @@ import { createGoalBootstrapPermission } from "../tools/permission";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
+  createGoalArtifactReadTool,
+  createGoalArtifactWriteTool,
   createGoalCheckDoneTool,
   createGoalCreateTool,
   createGoalLockTool,
@@ -33,6 +35,8 @@ export function registerBuiltinTools(
   registry.register(createGoalRunTool());
   registry.register(createGoalRetryTool());
   registry.register(createGoalCheckDoneTool());
+  registry.register(createGoalArtifactReadTool());
+  registry.register(createGoalArtifactWriteTool());
 
   registry.globalPermissions.push(createGoalBootstrapPermission());
 

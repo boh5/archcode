@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
+import { GoalArtifactManager } from "../goals/artifacts";
+import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -28,6 +30,8 @@ import {
   TOOL_GOAL_RUN,
   TOOL_GOAL_RETRY,
   TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_ASK_USER,
   TOOL_BASH,
 } from "@archcode/protocol";
@@ -72,6 +76,8 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
   return {
     project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
     goalState: new GoalStateManager(workspaceRoot),
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalMemory: new GoalMemoryManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),
@@ -151,9 +157,20 @@ describe("registerBuiltinTools", () => {
     expect(registry.get("workflow_propose_interactions")).toBeUndefined();
     expect(registry.get("workflow_request_interactions")).toBeUndefined();
     expect(registry.get("workflow_task_check")).toBeUndefined();
-    expect(registry.get("artifact_read")).toBeUndefined();
-    expect(registry.get("artifact_write")).toBeUndefined();
-  });
+      expect(registry.get("artifact_read")).toBeUndefined();
+      expect(registry.get("artifact_write")).toBeUndefined();
+    });
+
+    it("registers Goal artifact tools without reviving legacy workflow artifacts", () => {
+      const registry = new ToolRegistry();
+
+      registerBuiltinTools(registry, silentLogger);
+
+      expect(registry.get(TOOL_GOAL_ARTIFACT_READ)).toBeDefined();
+      expect(registry.get(TOOL_GOAL_ARTIFACT_WRITE)).toBeDefined();
+      expect(registry.get("artifact_read")).toBeUndefined();
+      expect(registry.get("artifact_write")).toBeUndefined();
+    });
 
   it("blocks effectful tools in Goal main sessions until the Goal is claimed", async () => {
     const workspaceRoot = await createTmpRoot("goal-bootstrap-guard");
@@ -470,14 +487,14 @@ describe("registerBuiltinTools", () => {
           toolCallId: "bash-archcode-deny",
           input: {
             description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/workflows/wf/TASKS.md','w').write('---')\"",
+            command: "python3 -c \"open('.archcode/goals/goal_test/artifacts/plan.md','w').write('---')\"",
           },
         },
         makeContext("bash", ["bash"], workspaceRoot, {
           toolCallId: "bash-archcode-deny",
           input: {
             description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/workflows/wf/TASKS.md','w').write('---')\"",
+            command: "python3 -c \"open('.archcode/goals/goal_test/artifacts/plan.md','w').write('---')\"",
           },
           confirmPermission: async () => "approve" as const,
         }),
@@ -529,6 +546,8 @@ describe("registerBuiltinTools", () => {
       expect(TOOL_GOAL_RUN).toBe("goal_run");
       expect(TOOL_GOAL_RETRY).toBe("goal_retry");
       expect(TOOL_GOAL_CHECK_DONE).toBe("goal_check_done");
+      expect(TOOL_GOAL_ARTIFACT_READ).toBe("goal_artifact_read");
+      expect(TOOL_GOAL_ARTIFACT_WRITE).toBe("goal_artifact_write");
     });
 
     it("all goal tool names follow goal_* prefix convention", () => {
@@ -538,6 +557,8 @@ describe("registerBuiltinTools", () => {
         TOOL_GOAL_RUN,
         TOOL_GOAL_RETRY,
         TOOL_GOAL_CHECK_DONE,
+        TOOL_GOAL_ARTIFACT_READ,
+        TOOL_GOAL_ARTIFACT_WRITE,
       ];
       for (const name of goalNames) {
         expect(name).toMatch(/^goal_/);
