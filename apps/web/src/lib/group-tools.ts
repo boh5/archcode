@@ -14,7 +14,6 @@ export const READ_ONLY_TOOL_NAMES: Set<string> = new Set([
   "git_status",
   "git_diff",
   "memory_read",
-  "artifact_read",
 ]);
 
 export interface GroupedToolsEntry {

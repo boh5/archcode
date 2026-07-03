@@ -161,17 +161,16 @@ describe("groupReadOnlyToolParts", () => {
     expect(result[1].type).toBe("tool");
   });
 
-  test("READ_ONLY_TOOL_NAMES includes lsp, git, web, memory_read, artifact_read", () => {
+  test("READ_ONLY_TOOL_NAMES includes lsp, git, web, memory_read", () => {
     expect(READ_ONLY_TOOL_NAMES.has("lsp_diagnostics")).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has("lsp_goto_definition")).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has("git_status")).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has("git_diff")).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has("web_fetch")).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has("memory_read")).toBe(true);
-    expect(READ_ONLY_TOOL_NAMES.has("artifact_read")).toBe(true);
   });
 
-  test("READ_ONLY_TOOL_NAMES excludes file_write, file_edit, bash, delegate, todo_write, ast_grep_replace, ask_user", () => {
+  test("READ_ONLY_TOOL_NAMES excludes file_write, file_edit, bash, delegate, todo_write, ast_grep_replace, ask_user, artifact_read", () => {
     expect(READ_ONLY_TOOL_NAMES.has("file_write")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("file_edit")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("bash")).toBe(false);
@@ -179,5 +178,6 @@ describe("groupReadOnlyToolParts", () => {
     expect(READ_ONLY_TOOL_NAMES.has("todo_write")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("ast_grep_replace")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("ask_user")).toBe(false);
+    expect(READ_ONLY_TOOL_NAMES.has("artifact_read")).toBe(false);
   });
 });

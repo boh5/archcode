@@ -5,7 +5,6 @@ import { ToolCard } from "./ToolCard";
 
 const VERB_BY_TOOL: Record<string, string> = {
   file_read: "Read",
-  artifact_read: "Read",
   memory_read: "Read",
   grep: "Searched",
   glob: "Searched",
@@ -21,7 +20,6 @@ const VERB_BY_TOOL: Record<string, string> = {
 
 const ICON_BY_TOOL: Record<string, typeof FileText> = {
   file_read: FileText,
-  artifact_read: FileText,
   memory_read: Brain,
   grep: Search,
   glob: Search,
