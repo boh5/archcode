@@ -841,6 +841,91 @@ describe("GoalDetailRoute", () => {
     }
   });
 
+  test("artifacts tab exposes all canonical daily-use artifacts and renders final report", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ status: "completed", phase: "review" });
+    const artifacts = [
+      makeArtifactFile("plan.md"),
+      makeArtifactFile("build.md"),
+      makeArtifactFile("review.md"),
+      makeArtifactFile("spec-compliance.md"),
+      makeArtifactFile("approvals.md"),
+      makeArtifactFile("budget.md"),
+      makeArtifactFile("retry-log.md"),
+      makeArtifactFile("final-report.md"),
+    ];
+    const contents: Record<string, string> = {
+      "plan.md": "# Plan\n\nPlan artifact locked after Plan Agent.",
+      "build.md": "# Build\n\nBuild artifact for Task 18.",
+      "review.md": "# Review\n\nReviewer verdict: DONE.",
+      "spec-compliance.md": "# Spec Compliance\n\nAC-001 satisfied. AC-002 satisfied.",
+      "approvals.md": "# Approval History\n\nafter_plan approved.",
+      "budget.md": "# Budget Ledger\n\napproval_budget_1 approved.",
+      "retry-log.md": "# Retry Log\n\nAttempt 1 scheduled; Attempt 1 running.",
+      "final-report.md": "# Final Report\n\nFinal status | completed\nReview outcome | DONE",
+    };
+
+    installArtifactFetchMock({ goal, artifacts, contents });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Test Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Artifacts").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        for (const testId of [
+          "artifact-tab-plan",
+          "artifact-tab-build",
+          "artifact-tab-review",
+          "artifact-tab-spec-compliance",
+          "artifact-tab-approvals",
+          "artifact-tab-budget",
+          "artifact-tab-retry-log",
+          "artifact-tab-final-report",
+        ]) {
+          expect(container.querySelector(`[data-testid="${testId}"]`)).not.toBeNull();
+        }
+        expect(container.textContent).toContain("8 artifacts present");
+      });
+
+      await act(async () => {
+        container.querySelector('[data-testid="artifact-tab-final-report"]')!.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
+        expect(viewer).not.toBeNull();
+        expect(viewer!.textContent).toContain("Final Report");
+        expect(viewer!.textContent).toContain("completed");
+        expect(viewer!.textContent).toContain("DONE");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
   test("artifacts tab shows review and budget content when selected", async () => {
     const dom = installDom();
     const container = document.getElementById("root");

@@ -277,6 +277,41 @@ describe("hitl routes", () => {
     });
   });
 
+  test("project budget approval queue is display-safe and resolves by approval point", async () => {
+    const { app, runtime } = await createTestApp("budget-approval-daily-use");
+    const project = await addProject(runtime, "budget-approval-daily-use", "Test Project");
+    expect(project.slug).toBe("test-project");
+    const pending = await requestBudgetApproval(runtime, project, "session-budget-daily-use", "goal-budget-daily-use");
+
+    const listRes = await app.request(`/api/projects/${project.slug}/hitl`);
+    const listBody = await listRes.json() as { hitl: Array<{ hitlId: string; displayPayload?: { title?: string; fields?: Array<{ label: string; value: string }>; redacted?: boolean }; payload?: unknown; approvalKey?: string }> };
+    const item = listBody.hitl[0];
+
+    expect(listRes.status).toBe(200);
+    expect(item?.hitlId).toBe(pending.request.hitlId);
+    expect(item?.displayPayload?.redacted).toBe(true);
+    expect(item?.displayPayload?.title).toContain("[REDACTED]");
+    expect(item?.displayPayload?.fields?.some((field) => field.value.includes("[REDACTED]"))).toBe(true);
+    expect(item).not.toHaveProperty("payload");
+    expectHitlListIsDisplaySafe(listBody);
+
+    const respondRes = await app.request(`/api/projects/${project.slug}/hitl/approval_budget_1/respond`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "approved", comment: "Budget approved from dashboard" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(respondRes.status).toBe(200);
+    expect(await respondRes.json()).toEqual({ ok: true, hitlId: pending.request.hitlId });
+    expect(await pending.responsePromise).toMatchObject({
+      hitlId: pending.request.hitlId,
+      status: "resolved",
+      response: { decision: "approved", comment: "Budget approved from dashboard" },
+    });
+    const afterRes = await app.request(`/api/projects/${project.slug}/hitl`);
+    expect((await afterRes.json() as { hitl: unknown[] }).hitl).toEqual([]);
+  });
+
   test("project-scoped HITL routes use registry slug even when project name differs from workspace basename", async () => {
     const { app, runtime } = await createTestApp("registry-slug");
     const project = await addProject(runtime, "registry-slug", "Project With Spaces");

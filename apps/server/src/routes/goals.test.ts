@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { DoneCondition, GoalState } from "@archcode/protocol";
+import type { DoneCondition, GoalArtifactName, GoalState } from "@archcode/protocol";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "goals-routes");
@@ -14,6 +14,17 @@ const doneCondition: DoneCondition = {
   required: true,
   params: { command: "bun run typecheck" },
 };
+
+const canonicalArtifactNames: GoalArtifactName[] = [
+  "plan.md",
+  "build.md",
+  "review.md",
+  "spec-compliance.md",
+  "approvals.md",
+  "budget.md",
+  "retry-log.md",
+  "final-report.md",
+];
 
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
@@ -473,30 +484,33 @@ describe("goals routes", () => {
     });
   });
 
-  test("artifacts list/read returns canonical metadata and markdown content", async () => {
+  test("artifacts list/read returns canonical current artifacts and markdown content", async () => {
     const { app, project, runtime } = await createTestApp("artifacts-list-read");
     const goal = await createGoal(app, project.slug, "Artifact API");
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalArtifacts.writeArtifact(goal, "plan.md", "# Plan\n\n- Step one", { agentName: "plan" });
+    for (const name of canonicalArtifactNames) {
+      await context.goalArtifacts.writeArtifact(goal, name, `# ${name}\n\nCurrent artifact for ${name}.`, { agentName: name === "plan.md" ? "plan" : "goal-lifecycle" });
+    }
 
     const listRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts`);
     const listBody = await listRes.json() as { artifacts: Array<{ name: string; path: string; mediaType: string; sha256?: string }> };
-    const readRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan.md`);
+    const readRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/final-report.md`);
     const readBody = await readRes.json() as { artifact: { name: string; path: string; mediaType: string }; content: string };
 
     expect(listRes.status).toBe(200);
-    expect(listBody.artifacts).toHaveLength(1);
+    expect(listBody.artifacts.map((artifact) => artifact.name)).toEqual(canonicalArtifactNames);
+    expect(listBody.artifacts.every((artifact) => artifact.mediaType === "text/markdown")).toBe(true);
+    expect(listBody.artifacts.every((artifact) => typeof artifact.sha256 === "string" && artifact.sha256.length > 0)).toBe(true);
     expect(listBody.artifacts[0]).toMatchObject({
       name: "plan.md",
       path: `.archcode/goals/${goal.id}/artifacts/plan.md`,
       mediaType: "text/markdown",
     });
-    expect(listBody.artifacts[0].sha256).toBeString();
 
     expect(readRes.status).toBe(200);
     expect(readBody).toMatchObject({
-      artifact: { name: "plan.md", path: `.archcode/goals/${goal.id}/artifacts/plan.md`, mediaType: "text/markdown" },
-      content: "# Plan\n\n- Step one\n",
+      artifact: { name: "final-report.md", path: `.archcode/goals/${goal.id}/artifacts/final-report.md`, mediaType: "text/markdown" },
+      content: "# final-report.md\n\nCurrent artifact for final-report.md.\n",
     });
   });
 

@@ -425,4 +425,46 @@ describe("Dashboard", () => {
       await cleanupDashboard(ctx);
     }
   });
+
+  test("approval queue ignores accidental raw HITL payload and renders displayPayload only", async () => {
+    const unsafeApiItem = {
+      ...makeHitlItem({
+        hitlId: "h-unsafe-payload",
+        kind: "approval",
+        displayPayload: {
+          title: "Approve budget [REDACTED]",
+          summary: "Budget warning [REDACTED]",
+          fields: [
+            { label: "action", value: "goal.approval.approval_budget_1" },
+            { label: "context", value: "[REDACTED]" },
+          ],
+          redacted: true,
+        },
+        trigger: { projectSlug: "demo", goalId: "goal-budget", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+      }),
+      payload: {
+        title: "RAW payload should never render sk-test-secret",
+        context: { apiKey: "sk-test-secret-dashboard", connection: "apiKey=sk-test-secret-dashboard" },
+      },
+    } as DashboardHitlItem & { payload: unknown };
+    const ctx = await setupDashboard(createDashboardHandler({ hitl: [unsafeApiItem] }));
+
+    try {
+      await renderDashboard(ctx.reactRoot, ctx.queryClient);
+
+      await waitFor(() => {
+        const queueSection = ctx.container.querySelector('[data-testid="dashboard-approval-queue"]');
+        expect(queueSection).not.toBeNull();
+        const text = queueSection?.textContent ?? "";
+        expect(text).toContain("Approve budget [REDACTED]");
+        expect(text).toContain("approval_budget_1");
+        expect(text).toContain("[REDACTED]");
+        expect(text).not.toContain("RAW payload should never render");
+        expect(text).not.toContain("sk-test-secret-dashboard");
+        expect(text).not.toContain("apiKey=sk");
+      });
+    } finally {
+      await cleanupDashboard(ctx);
+    }
+  });
 });

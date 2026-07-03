@@ -6,10 +6,13 @@ import {
   TOOL_GOAL_CHECK_DONE,
   type DoneCondition,
   type DoneResult,
+  type GoalArtifactName,
   type GoalState,
   type GoalStatus,
+  type GoalTokenBudgetState,
 } from "@archcode/protocol";
 
+import { HitlService } from "../hitl/service";
 import type { HitlResponse } from "../hitl/types";
 import { setLlmAdapterForTest } from "../llm";
 import { runLlmText } from "../llm/run-text";
@@ -21,13 +24,17 @@ import { createRegistry } from "../tools/registry";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { createToolExecutionContext } from "../tools/types";
 import { createGoalCheckDoneTool } from "../tools/builtins/goal-tools";
+import { BUDGET_APPROVAL_POINT, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration");
+const EVIDENCE_ROOT = join(import.meta.dir, "..", "..", "..", "..", ".sisyphus", "evidence");
+const RAW_PRIVATE_MARKER = "RAW_MODEL_PRIVATE_TEXT";
 const dummyModel = {} as LlmTextInput["model"];
 const testSkillService = new SkillService({ builtinSkills: {} });
+const canonicalArtifacts: GoalArtifactName[] = ["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "retry-log.md", "final-report.md"];
 
 const artifactExistsCondition: DoneCondition = {
   id: "artifact-exists",
@@ -41,6 +48,12 @@ const artifactMentionsPlanCondition: DoneCondition = {
   params: { path: "artifact.txt", pattern: "approved plan", minMatches: 1 },
 };
 
+const specComplianceCondition: DoneCondition = {
+  id: "goal_test_done",
+  kind: "spec_compliance",
+  params: { specPath: "SPEC.md", focusAreas: ["AC-001", "AC-002"] },
+};
+
 const mockGenerateText = mock(async (input: Record<string, unknown>) => {
   void input;
   return { text: "ok", toolCalls: [] };
@@ -48,6 +61,7 @@ const mockGenerateText = mock(async (input: Record<string, unknown>) => {
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
+let artifacts: GoalArtifactManager;
 
 beforeEach(async () => {
   storeManager.clearAll();
@@ -62,6 +76,7 @@ beforeEach(async () => {
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
+  artifacts = new GoalArtifactManager(workspaceRoot);
 });
 
 afterAll(async () => {
@@ -78,7 +93,7 @@ function createRunner(sessionIds: string[] = ["main-session-1"]): GoalRunner {
   const remainingSessionIds = [...sessionIds];
   return new GoalRunner({
     goalStateManager: manager,
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalArtifacts: artifacts,
     workspaceRoot,
     hitlService: {
       request: mock(async () => approvedResponse()),
@@ -87,6 +102,29 @@ function createRunner(sessionIds: string[] = ["main-session-1"]): GoalRunner {
     createSession: mock(async () => remainingSessionIds.shift() ?? `session-${crypto.randomUUID()}`),
     isSessionActive: mock(async () => false),
   });
+}
+
+async function createHitlRunner(options: {
+  sessionIds?: string[];
+  now?: () => Date;
+  retryDelay?: (ms: number, abort: AbortSignal) => Promise<void>;
+} = {}): Promise<{ runner: GoalRunner; hitl: HitlService }> {
+  const remainingSessionIds = [...(options.sessionIds ?? ["main-session-1", "retry-session-2", "retry-session-3"])] as string[];
+  const hitl = new HitlService();
+  await hitl.load(workspaceRoot);
+  return {
+    hitl,
+    runner: new GoalRunner({
+      goalStateManager: manager,
+      goalArtifacts: artifacts,
+      workspaceRoot,
+      hitlService: hitl,
+      createSession: mock(async () => remainingSessionIds.shift() ?? `session-${crypto.randomUUID()}`),
+      isSessionActive: mock(async () => false),
+      now: options.now,
+      retryDelay: options.retryDelay,
+    }),
+  };
 }
 
 function appendGoalStateChange(store: ReturnType<typeof createSessionStore>, state: GoalState): void {
@@ -120,6 +158,16 @@ async function executeGoalCheckDone(
   goalId: string,
   conditionId: string,
 ): Promise<DoneResult> {
+  const result = await executeGoalCheckDoneRaw(store, goalId, conditionId);
+  expect(result.isError).toBe(false);
+  return JSON.parse(result.output) as DoneResult;
+}
+
+async function executeGoalCheckDoneRaw(
+  store: ReturnType<typeof createSessionStore>,
+  goalId: string,
+  conditionId: string,
+) {
   const registry = createRegistry([createGoalCheckDoneTool()]);
   const ctx = createToolExecutionContext({
     store,
@@ -141,12 +189,140 @@ async function executeGoalCheckDone(
     { toolName: TOOL_GOAL_CHECK_DONE, toolCallId: `${TOOL_GOAL_CHECK_DONE}-${conditionId}`, input: { goalId, conditionId } },
     ctx,
   );
-  expect(result.isError).toBe(false);
-  return JSON.parse(result.output) as DoneResult;
+  return result;
 }
 
 function generateTextPrompts(): string[] {
   return (mockGenerateText.mock.calls as unknown as Array<[Record<string, unknown>]>).map((call) => String(call[0].prompt));
+}
+
+function tokenBudget(totalTokens: number): GoalTokenBudgetState {
+  return {
+    status: "ok",
+    inputTokens: totalTokens,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+    totalTokens,
+    warningThresholdTokens: 900,
+    maxTokens: 1000,
+    updatedAt: "2026-07-03T00:00:00.000Z",
+  };
+}
+
+function task18Spec(ac002Status: "satisfied" | "failed"): string {
+  const ac002Evidence = ac002Status === "satisfied"
+    ? "retry repaired artifact tabs and redacted approval queue coverage"
+    : "Goal detail retry tab coverage missing";
+  const ac002Repair = ac002Status === "satisfied"
+    ? "none"
+    : "Repair AC-002 by adding Goal detail artifact tabs and redacted approval queue verification";
+  return [
+    "# goal_test_done Spec",
+    "",
+    "- AC-001: Canonical artifacts exist status: satisfied; evidence: plan, build, review, and final artifacts are present; file: .archcode/goals; command: goal_check_done; result: artifact set verified",
+    `- AC-002: Goal daily-use UI and retry evidence status: ${ac002Status}; evidence: ${ac002Evidence}; file: apps/web/src/routes/goal-detail.test.tsx, apps/web/src/routes/dashboard.test.tsx; command: bun test apps/web/src/routes/goal-detail.test.tsx apps/web/src/routes/dashboard.test.tsx; result: ${ac002Status === "satisfied" ? "web route checks pass" : "web route checks incomplete"}; repair: ${ac002Repair}`,
+    "",
+  ].join("\n");
+}
+
+async function waitForPendingApproval(hitl: HitlService, goalId: string, approvalPoint: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const pending = hitl.listPending("project-a", goalId).find((request) => request.trigger.approvalPoint === approvalPoint);
+    if (pending) return pending;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for ${approvalPoint} approval`);
+}
+
+async function approvePending(hitl: HitlService, goalId: string, approvalPoint: string, comment: string): Promise<void> {
+  const pending = await waitForPendingApproval(hitl, goalId, approvalPoint);
+  const serialized = JSON.stringify(pending);
+  expect(pending.displayPayload?.redacted).toBe(true);
+  expect(serialized).toContain("displayPayload");
+  expect(serialized).not.toContain("sk-test-secret");
+  expect(hitl.respond(pending.hitlId, { decision: "approved", comment }, "project-a")).toBe(true);
+}
+
+async function requestBudgetApprovalThroughHook(hitl: HitlService, goal: GoalState): Promise<GoalState> {
+  const projectContext = createTestProjectContext(workspaceRoot);
+  projectContext.project = { ...projectContext.project, slug: "project-a", name: "Project A" };
+  projectContext.goalState = manager;
+  projectContext.goalArtifacts = artifacts;
+  projectContext.hitl = hitl;
+
+  const store = createSessionStore(goal.mainSessionId ?? "budget-session", workspaceRoot);
+  store.setState({ agentName: "orchestrator", sessionRole: "main", goalId: goal.id });
+  const approvalPromise = enforceGoalBudgetBeforeModelCall({
+    store,
+    projectContext,
+    modelOptions: { maxOutputTokens: 50 },
+  });
+  const pending = await waitForPendingApproval(hitl, goal.id, BUDGET_APPROVAL_POINT);
+  const serialized = JSON.stringify(pending);
+  expect(pending.approvalKey).toBe(`project-a:${goal.id}:${store.getState().sessionId}:approval_point:${BUDGET_APPROVAL_POINT}`);
+  expect(serialized).toContain("[REDACTED]");
+  expect(serialized).not.toContain("sk-test-secret");
+  expect(hitl.respond(pending.hitlId, { decision: "approved", comment: "Budget approved" }, "project-a")).toBe(true);
+  await approvalPromise;
+
+  const approved = await manager.read(goal.id);
+  expect(approved.status).toBe("paused");
+  expect(approved.tokenBudget).toMatchObject({
+    warningApprovalPoint: BUDGET_APPROVAL_POINT,
+    warningApprovedTotalTokens: 890,
+  });
+  expect(await readArtifact("budget.md", goal.id)).toContain("Event | warning_approved");
+  return manager.transitionStatus(goal.id, "running");
+}
+
+async function advancePlanToBuildWithApproval(runner: GoalRunner, hitl: HitlService, goalId: string): Promise<GoalState> {
+  const buildPromise = runner.advancePhase(goalId, "build");
+  await approvePending(hitl, goalId, "after_plan", "Plan approved");
+  return buildPromise;
+}
+
+function reviewerStore(sessionId: string, goalId: string): ReturnType<typeof createSessionStore> {
+  const store = createSessionStore(sessionId, workspaceRoot);
+  store.setState({ agentName: "reviewer", sessionRole: "review", goalId });
+  return store;
+}
+
+async function readArtifact(name: GoalArtifactName, goalId: string): Promise<string> {
+  const content = await artifacts.readArtifact(goalId, name);
+  expect(content).not.toBeNull();
+  return content ?? "";
+}
+
+async function expectArtifacts(goalId: string, names: GoalArtifactName[]): Promise<void> {
+  const actual = (await artifacts.listArtifacts(goalId)).map((artifact) => artifact.name).sort();
+  expect(actual).toEqual([...names].sort());
+  expect(canonicalArtifacts).toEqual(["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "retry-log.md", "final-report.md"]);
+}
+
+async function expectPlanLocked(goal: GoalState): Promise<void> {
+  try {
+    await artifacts.writeArtifact(goal, "plan.md", "# Mutated plan", { agentName: "plan" });
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("GoalArtifactPlanLockedError");
+    return;
+  }
+  throw new Error("Expected plan.md to be locked after plan phase");
+}
+
+async function expectNoRawPrivateMarker(goalId: string): Promise<void> {
+  const persisted = await readGoalStateFile(goalId);
+  expect(JSON.stringify(persisted)).not.toContain(RAW_PRIVATE_MARKER);
+  for (const artifact of await artifacts.listArtifacts(goalId)) {
+    const content = await readArtifact(artifact.name, goalId);
+    expect(content).not.toContain(RAW_PRIVATE_MARKER);
+  }
+}
+
+async function writeEvidenceFile(name: string, lines: string[]): Promise<void> {
+  await mkdir(EVIDENCE_ROOT, { recursive: true });
+  await Bun.write(join(EVIDENCE_ROOT, name), `${lines.join("\n")}\n`);
 }
 
 describe("Goal integration happy path", () => {
@@ -252,5 +428,192 @@ describe("Goal integration happy path", () => {
       "completed:review",
     ]);
     expect(sessionStore.getState().events.some((event) => event.kind === "goal.done_check")).toBe(true);
+  });
+
+  test("Task 18 DONE daily-use flow locks plan, approves after plan, records spec evidence, and completes without raw model output", async () => {
+    mockGenerateText
+      .mockImplementationOnce(async () => ({ text: `plan raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
+      .mockImplementationOnce(async () => ({ text: `build raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
+      .mockImplementationOnce(async () => ({ text: `review raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }));
+    const { runner, hitl } = await createHitlRunner({ sessionIds: ["daily-main-session"] });
+    const sessionStore = createSessionStore("daily-main-session", workspaceRoot);
+    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
+
+    const draft = await manager.create(
+      "project-a",
+      "goal_test_done",
+      "architect",
+      [specComplianceCondition],
+      { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
+      ["after_plan", "before_complete"],
+    );
+    appendGoalStateChange(sessionStore, draft);
+    const locked = await manager.lock(draft.id, "architect");
+    appendGoalStateChange(sessionStore, locked);
+    const running = await runner.start(locked.id);
+    appendGoalStateChange(sessionStore, running);
+
+    const planOutput = await runLlmText({ model: dummyModel, prompt: `Plan Task 18 goal ${running.id}` });
+    expect(planOutput.text).toContain(RAW_PRIVATE_MARKER);
+    await artifacts.writeArtifact(running, "plan.md", "# Plan\n\nStructured Task 18 plan artifact, no raw model output.", { agentName: "plan" });
+
+    const build = await advancePlanToBuildWithApproval(runner, hitl, running.id);
+    appendGoalStateChange(sessionStore, build);
+    expect(build.phase).toBe("build");
+    await expectPlanLocked(build);
+
+    const budgeted = await manager.updateTokenBudget(build.id, tokenBudget(890));
+    expect(budgeted.tokenBudget).toMatchObject({ status: "ok", totalTokens: 890, maxTokens: 1000 });
+    await requestBudgetApprovalThroughHook(hitl, budgeted);
+
+    const buildOutput = await runLlmText({ model: dummyModel, prompt: `Build Task 18 goal ${build.id}` });
+    expect(buildOutput.text).toContain(RAW_PRIVATE_MARKER);
+    const reviewPhase = await runner.advancePhase(build.id, "review");
+    appendGoalStateChange(sessionStore, reviewPhase);
+    expect(reviewPhase.phase).toBe("review");
+
+    const reviewOutput = await runLlmText({ model: dummyModel, prompt: `Review Task 18 goal ${reviewPhase.id}` });
+    expect(reviewOutput.text).toContain(RAW_PRIVATE_MARKER);
+
+    const wrongStore = createSessionStore("wrong-session", workspaceRoot);
+    wrongStore.setState({ agentName: "orchestrator", sessionRole: "main", goalId: reviewPhase.id });
+    const denied = await executeGoalCheckDoneRaw(wrongStore, reviewPhase.id, specComplianceCondition.id);
+    expect(denied.isError).toBe(true);
+    expect(denied.output).toContain("GOAL_REVIEWER_REQUIRED");
+
+    const reviewStore = reviewerStore("daily-review-session", reviewPhase.id);
+    const specResult = await executeGoalCheckDone(reviewStore, reviewPhase.id, specComplianceCondition.id);
+    reviewStore.getState().append({ type: "goal.done_check", goalId: reviewPhase.id, results: [specResult] });
+    expect(specResult).toMatchObject({ conditionId: specComplianceCondition.id, passed: true });
+    expect(specResult.specCompliance?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002"]);
+    expect(specResult.specCompliance?.criteria.every((criterion) => criterion.compliant)).toBe(true);
+
+    const reviewedPromise = runner.finalizeReviewerReview(reviewPhase.id, "DONE", { summary: "Reviewer verified Task 18 DONE criteria." });
+    const beforeCompletePending = await waitForPendingApproval(hitl, reviewPhase.id, "before_complete");
+    expect(beforeCompletePending.approvalKey).toBe(`project-a:${reviewPhase.id}:daily-main-session:approval_point:before_complete`);
+    expect(hitl.respond(beforeCompletePending.hitlId, { decision: "approved", comment: "Completion approved" }, "project-a")).toBe(true);
+    const completed = await reviewedPromise;
+    appendGoalStateChange(sessionStore, completed);
+
+    expect(completed.status).toBe("completed");
+    expect(completed.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified Task 18 DONE criteria." });
+    expect(completed.repairContext).toBeUndefined();
+    expect((await readGoalStateFile(reviewPhase.id)).status).toBe("completed");
+    await expectArtifacts(reviewPhase.id, ["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "final-report.md"]);
+    expect(await readArtifact("review.md", reviewPhase.id)).toContain("DONE");
+    expect(await readArtifact("spec-compliance.md", reviewPhase.id)).toContain("AC-002");
+    expect(await readArtifact("approvals.md", reviewPhase.id)).toContain("after_plan | approved | approved | Plan approved");
+    expect(await readArtifact("final-report.md", reviewPhase.id)).toContain("Final status | completed");
+    expect(await readArtifact("final-report.md", reviewPhase.id)).toContain("Total token count | 890");
+    expect(await readArtifact("final-report.md", reviewPhase.id)).toContain(`Budget warning approval point | ${BUDGET_APPROVAL_POINT}`);
+    await expectNoRawPrivateMarker(reviewPhase.id);
+
+    expect(mockGenerateText).toHaveBeenCalledTimes(3);
+    expect(generateTextPrompts()).toEqual([
+      `Plan Task 18 goal ${running.id}`,
+      `Build Task 18 goal ${build.id}`,
+      `Review Task 18 goal ${reviewPhase.id}`,
+    ]);
+    await writeEvidenceFile("task-18-full-done.txt", [
+      "Task 18 DONE path evidence",
+      `goalId=${reviewPhase.id}`,
+      `status=${completed.status}`,
+      `reviewOutcome=${completed.reviewReport?.outcome}`,
+      `artifacts=${(await artifacts.listArtifacts(reviewPhase.id)).map((artifact) => artifact.name).join(",")}`,
+      `budgetApproval=${BUDGET_APPROVAL_POINT}`,
+      "criteria=AC-001:satisfied,AC-002:satisfied",
+      "rawPrivateMarkerPersisted=false",
+    ]);
+  });
+
+  test("Task 18 NOT_DONE repair flow schedules retry, exposes structured context, then completes DONE on attempt 2", async () => {
+    let nowMs = Date.parse("2026-07-03T12:00:00.000Z");
+    const delayCalls: number[] = [];
+    const { runner, hitl } = await createHitlRunner({
+      sessionIds: ["retry-main-session-1", "retry-main-session-2"],
+      now: () => new Date(nowMs),
+      retryDelay: mock(async (ms: number, abort: AbortSignal) => {
+        delayCalls.push(ms);
+        expect(abort.aborted).toBe(false);
+        nowMs += ms;
+      }),
+    });
+    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("failed"));
+
+    const goal = await manager.create(
+      "project-a",
+      "goal_test_done retry repair",
+      "architect",
+      [specComplianceCondition],
+      { maxRetries: 2, backoffMs: 5_000, escalateOnFailure: true },
+      ["after_plan"],
+    );
+    const locked = await manager.lock(goal.id, "architect");
+    const attempt1 = await runner.start(locked.id);
+    await artifacts.writeArtifact(attempt1, "plan.md", "# Plan\n\nAttempt 1 plan artifact.", { agentName: "plan" });
+    const attempt1Build = await advancePlanToBuildWithApproval(runner, hitl, attempt1.id);
+    const budgetedAttempt1 = await manager.updateTokenBudget(attempt1Build.id, tokenBudget(890));
+    await requestBudgetApprovalThroughHook(hitl, budgetedAttempt1);
+    const attempt1Review = await runner.advancePhase(attempt1Build.id, "review");
+    const attempt1Store = reviewerStore("retry-review-session-1", attempt1Review.id);
+    const failedSpec = await executeGoalCheckDone(attempt1Store, attempt1Review.id, specComplianceCondition.id);
+    expect(failedSpec.passed).toBe(false);
+    expect(failedSpec.specCompliance?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({
+      compliant: false,
+      status: "failed",
+    });
+
+    const retry = await runner.finalizeReviewerReview(attempt1Review.id, "NOT_DONE", { summary: "AC-002 needs repair before completion." });
+
+    expect(delayCalls).toEqual([5_000]);
+    expect(retry).toMatchObject({ status: "running", phase: "plan", retryCount: 1, mainSessionId: "retry-main-session-2" });
+    expect(retry.repairContext?.issues).toEqual([
+      expect.objectContaining({
+        conditionId: "AC-002",
+        evidenceSummary: expect.stringContaining("Goal detail retry tab coverage missing"),
+        repairGuidance: expect.stringContaining("Repair AC-002"),
+        repairTarget: expect.stringContaining("apps/web/src/routes/goal-detail.test.tsx"),
+        failingCommands: ["bun test apps/web/src/routes/goal-detail.test.tsx apps/web/src/routes/dashboard.test.tsx"],
+      }),
+    ]);
+    expect(retry.retryState?.lastAttempt).toMatchObject({ attempt: 1, status: "running", startedAt: "2026-07-03T12:00:05.000Z" });
+    const retryLogAfterNotDone = await readArtifact("retry-log.md", retry.id);
+    expect(retryLogAfterNotDone).toContain("| 1 | scheduled | Reviewer NOT_DONE: required Done Conditions need repair (AC-002). | none | 2026-07-03T12:00:05.000Z | not exhausted |");
+    expect(retryLogAfterNotDone).toContain("| 1 | running | Reviewer NOT_DONE: required Done Conditions need repair (AC-002). | retry-main-session-2 | not scheduled | not exhausted |");
+    expect(await readArtifact("review.md", retry.id)).toContain("NOT_DONE");
+
+    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
+    const attempt2Build = await advancePlanToBuildWithApproval(runner, hitl, retry.id);
+    const attempt2Review = await runner.advancePhase(attempt2Build.id, "review");
+    const attempt2Store = reviewerStore("retry-review-session-2", attempt2Review.id);
+    const repairedSpec = await executeGoalCheckDone(attempt2Store, attempt2Review.id, specComplianceCondition.id);
+    expect(repairedSpec.passed).toBe(true);
+    const completed = await runner.finalizeReviewerReview(attempt2Review.id, "DONE", { summary: "Retry repaired AC-002 and all criteria are satisfied." });
+
+    expect(completed.status).toBe("completed");
+    expect(completed.retryCount).toBe(1);
+    expect(completed.reviewReport).toMatchObject({ outcome: "DONE" });
+    expect(completed.repairContext).toBeUndefined();
+    expect(completed.doneResults[specComplianceCondition.id]?.specCompliance?.criteria.map((criterion) => `${criterion.criterionId}:${criterion.status}`)).toEqual([
+      "AC-001:satisfied",
+      "AC-002:satisfied",
+    ]);
+    expect(await readArtifact("review.md", completed.id)).toContain("DONE");
+    expect(await readArtifact("final-report.md", completed.id)).toContain("Retry count | 1");
+    expect(await readArtifact("final-report.md", completed.id)).toContain("Review outcome | DONE");
+    await expectArtifacts(completed.id, ["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "retry-log.md", "final-report.md"]);
+    await expectNoRawPrivateMarker(completed.id);
+
+    await writeEvidenceFile("task-18-not-done-retry.txt", [
+      "Task 18 NOT_DONE retry evidence",
+      `goalId=${completed.id}`,
+      "attempt1=NOT_DONE AC-002 failed",
+      `retryCount=${completed.retryCount}`,
+      `retryDelayCalls=${delayCalls.join(",")}`,
+      "retryLog=scheduled,running",
+      "attempt2=DONE AC-001:satisfied AC-002:satisfied",
+      `finalStatus=${completed.status}`,
+      "rawPrivateMarkerPersisted=false",
+    ]);
   });
 });
