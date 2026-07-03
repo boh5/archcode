@@ -18,6 +18,7 @@ import { setLlmAdapterForTest } from "../llm/adapter";
 import { MissingProjectContextError } from "./errors";
 import type { MemoryExtractionConfig } from "../config";
 import { silentLogger } from "../logger";
+import { GoalStateManager } from "../goals/state";
 
 const tmpRoot = join(import.meta.dir, "__test_tmp__", "configured-agent");
 
@@ -547,6 +548,51 @@ describe("ConfiguredAgent", () => {
     expect(streamFn).toHaveBeenCalled();
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).not.toContain("## Active Workflow");
+  });
+
+  test("loads structured Goal repair context into fresh main retry session prompt", async () => {
+    const streamFn = setupMockStreamText("repair context ok");
+    const goalState = new GoalStateManager(tmpRoot);
+    const goal = await goalState.create(
+      "project-a",
+      "Repair retry prompt",
+      "architect",
+      [{ id: "AC-002", kind: "file_exists", params: { path: "packages/agent-core/src/goals/runner.ts" } }],
+    );
+    await goalState.recordReviewOutcome(
+      goal.id,
+      {
+        reviewerAgent: "reviewer",
+        outcome: "NOT_DONE",
+        reviewedAt: new Date().toISOString(),
+        summary: "AC-002 needs repair.",
+        criteria: [],
+      },
+      {
+        generatedAt: new Date().toISOString(),
+        summary: "Reviewer NOT_DONE: required Done Conditions need repair (AC-002).",
+        issues: [{
+          conditionId: "AC-002",
+          evidenceSummary: "Retry prompt omitted structured repair context.",
+          repairGuidance: "Expose the context to the Operator retry session.",
+          repairTarget: "packages/agent-core/src/goals/runner.ts",
+          implicatedFiles: ["packages/agent-core/src/goals/runner.ts"],
+          failingCommands: ["bun test packages/agent-core/src/goals/operator-repair-context.test.ts"],
+        }],
+      },
+    );
+    const store = storeManager.create(`configured-repair-context-${crypto.randomUUID()}`, tmpRoot, {
+      goalId: goal.id,
+      sessionRole: "main",
+    });
+
+    await createAgent({ definition: orchestratorAgentDefinition, store }).run("retry goal");
+
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).toContain("## Operator Repair Context");
+    expect(callArgs.system).toContain("Condition/Criterion: AC-002");
+    expect(callArgs.system).toContain("Repair target: packages/agent-core/src/goals/runner.ts");
+    expect(callArgs.system).toContain("Failing commands: bun test packages/agent-core/src/goals/operator-repair-context.test.ts");
   });
 
   test("orchestrator tool execution context uses Orchestrator attribution at depth zero", async () => {

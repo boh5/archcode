@@ -9,6 +9,8 @@ import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
+import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
+import { shouldExposeOperatorRepairContext } from "../goals/operator-repair-context";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SkillService } from "../skills";
@@ -189,6 +191,8 @@ export class ConfiguredAgent implements Agent {
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
+      const storeState = this.store.getState();
+      const goalRepairContext = await this.loadGoalRepairContext(projectContext, storeState);
       const promptContext: PromptContext = {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
@@ -198,7 +202,15 @@ export class ConfiguredAgent implements Agent {
         env: buildEnv(this.workspaceRoot),
         availableSkills,
         ...(this.activeSkills.length > 0 ? { activeSkills: this.activeSkills } : {}),
-        ...(this.definition.includeMemoryInPrompt ? { memoryRoots: this.memoryRoots } : {}),
+        ...(this.definition.includeMemoryInPrompt
+          ? {
+            memoryRoots: this.memoryRoots,
+            goalMemory: projectContext.goalMemory,
+            ...(storeState.goalId === undefined ? {} : { goalId: storeState.goalId }),
+            ...(storeState.sessionRole === undefined ? {} : { sessionRole: storeState.sessionRole }),
+          }
+          : {}),
+        ...(goalRepairContext === undefined ? {} : { goalRepairContext }),
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
       const hooks = this.buildHooks(btm);
@@ -362,6 +374,8 @@ export class ConfiguredAgent implements Agent {
     ) {
       beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot, isCancelled));
     }
+    const budgetEnforcement = createGoalBudgetEnforcementHooks();
+    beforeModelCall.push(budgetEnforcement.beforeModelCall);
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
     }
@@ -369,8 +383,10 @@ export class ConfiguredAgent implements Agent {
     const afterLoopEnd = [];
     if (policy.todoContinuation) {
       const todoContinuation = createTodoContinuationHook();
-      hooks.afterStepEnd = [todoContinuation.afterStepEnd];
+      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, todoContinuation.afterStepEnd];
       afterLoopEnd.push(todoContinuation.afterLoopEnd);
+    } else {
+      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd];
     }
     // Memory hooks only run on the root orchestrator (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.
@@ -398,5 +414,17 @@ export class ConfiguredAgent implements Agent {
           reminder.delivery === "auto_inject" &&
           reminder.consumedAt === null,
       );
+  }
+
+  private async loadGoalRepairContext(
+    projectContext: ProjectContext,
+    storeState: SessionStoreState,
+  ): Promise<PromptContext["goalRepairContext"]> {
+    if (storeState.goalId === undefined) return undefined;
+    if (!shouldExposeOperatorRepairContext({ sessionRole: storeState.sessionRole })) return undefined;
+
+    const goal = await projectContext.goalState.read(storeState.goalId);
+    if (goal.reviewReport?.outcome !== "NOT_DONE") return undefined;
+    return goal.repairContext;
   }
 }
