@@ -26,10 +26,16 @@ export interface LoopRunnerGoalStateManager {
 }
 
 export interface LoopRunnerGoalRuntime {
-  start(goalId: string): Promise<GoalState>;
+  start(goalId: string, options?: LoopRunnerGoalStartOptions): Promise<GoalState>;
+}
+
+export interface LoopRunnerGoalStartOptions {
+  readonly loopId?: string;
+  readonly sessionTitle?: string;
 }
 
 export interface LoopRunnerCreateSessionOptions {
+  readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: "main";
   readonly title?: string;
@@ -154,7 +160,7 @@ export class LoopRunner {
     this.#activeLoops.set(current.loopId, { runId });
     let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
     try {
-      const result = await this.#runGoal(startedState);
+      const result = await this.#runGoal({ loop: startedState, trigger, runId, startedAt });
       return await this.#finishRun(startedState, runningReport, result);
     } catch (error) {
       return await this.#finishRun(startedState, runningReport, {
@@ -190,21 +196,21 @@ export class LoopRunner {
 
     this.#activeLoops.set(input.loop.loopId, { runId: input.runId });
     try {
-      return await this.#runGoal(input.loop);
+      return await this.#runGoal(input);
     } finally {
       this.#activeLoops.delete(input.loop.loopId);
     }
   }
 
-  async #runGoal(loop: LoopState): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
-    const goalStateManager = this.#requireGoalStateManager(loop.loopId);
-    const goalRunner = this.#requireGoalRunner(loop.loopId);
-    const template = snapshotGoalTemplate(loop);
+  async #runGoal(input: LoopSchedulerRunInput): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
+    const goalStateManager = this.#requireGoalStateManager(input.loop.loopId);
+    const goalRunner = this.#requireGoalRunner(input.loop.loopId);
+    const template = snapshotGoalTemplate(input.loop);
     let goalId: string | undefined;
 
     try {
       const draft = await goalStateManager.create(
-        loop.projectId,
+        input.loop.projectId,
         template.title,
         template.author,
         template.doneConditions,
@@ -214,17 +220,56 @@ export class LoopRunner {
       );
       goalId = draft.id;
       const locked = await goalStateManager.lock(draft.id, template.author);
-      const started = await goalRunner.start(locked.id);
-      return {
-        status: "succeeded",
-        goalId: started.id,
-        sessionId: started.mainSessionId,
-        summary: `Goal ${started.id} started for loop "${loop.config.title}".`,
-      };
+      const started = await goalRunner.start(locked.id, {
+        loopId: input.loop.loopId,
+        sessionTitle: `Loop Goal: ${input.loop.config.title}`,
+      });
+      return await this.#executeGoalSession(input, started);
     } catch (error) {
       return {
         status: "failed",
         goalId,
+        error: errorToMessage(error),
+      };
+    }
+  }
+
+  async #executeGoalSession(
+    input: LoopSchedulerRunInput,
+    goal: GoalState,
+  ): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
+    const sessionId = goal.mainSessionId;
+    if (sessionId === undefined) {
+      return {
+        status: "failed",
+        goalId: goal.id,
+        error: `Goal ${goal.id} started without a main session.`,
+      };
+    }
+
+    try {
+      const execution = this.#runtime.startSessionExecution({
+        slug: this.#projectSlug,
+        workspaceRoot: this.#workspaceRoot,
+        sessionId,
+        userMessage: buildGoalLoopPrompt(input.loop, goal),
+        maxSteps: input.loop.config.limits.maxIterationsPerRun,
+        origin: loopOrigin(input.loop, input.trigger),
+      });
+      await execution.promise;
+      const result = await this.#sessionResultFromFinalState(input.loop, sessionId);
+      return {
+        ...result,
+        goalId: goal.id,
+        summary: result.status === "succeeded"
+          ? `Goal ${goal.id} session ${sessionId} completed for loop "${input.loop.config.title}".`
+          : result.summary,
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        goalId: goal.id,
+        sessionId,
         error: errorToMessage(error),
       };
     }
@@ -362,6 +407,18 @@ function buildSessionLoopPrompt(loop: LoopState): string {
   ].filter((section): section is string => section !== undefined);
 
   return sections.join("\n\n");
+}
+
+function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
+  return [
+    "Bootstrap an ArchCode Goal run.",
+    `Goal ID: ${goal.id}`,
+    `Goal title JSON: ${JSON.stringify(goal.title)}`,
+    `Loop ID: ${loop.loopId}`,
+    `Loop title JSON: ${JSON.stringify(loop.config.title)}`,
+    "Your first action must be calling goal_run with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_run succeeds.",
+    "After goal_run succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+  ].join("\n");
 }
 
 function loopOrigin(loop: LoopState, trigger: LoopRunTrigger): ToolExecutionOrigin {

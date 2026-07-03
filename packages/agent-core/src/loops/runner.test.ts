@@ -245,8 +245,64 @@ describe("goal loop runner", () => {
       expectedTemplate.reviewerAgent,
     );
     expect(fixture.goalStateManager.lockMock).toHaveBeenCalledWith("goal-1", expectedTemplate.author);
-    expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1");
+    expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", {
+      loopId: loop.loopId,
+      sessionTitle: "Loop Goal: Goal loop",
+    });
     expect(fixture.goalRunner.doneEvaluationCount).toBe(0);
+  });
+
+  test("goal loop starts the created Goal main session through runtime execution", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const report = await fixture.runner.runGoalLoop(loop, "manual");
+
+    expect(report).toMatchObject({
+      status: "succeeded",
+      goalId: "goal-1",
+      sessionId: "goal-session-1",
+      summary: `Goal goal-1 session goal-session-1 completed for loop "${goalLoopConfig.title}".`,
+    });
+    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      slug: "project-a",
+      workspaceRoot: fixture.workspaceRoot,
+      sessionId: "goal-session-1",
+      maxSteps: 4,
+      origin: {
+        kind: "loop",
+        loopId: loop.loopId,
+        trigger: "manual",
+        mode: "act",
+        approvalPolicy: "explicit_per_run",
+      },
+    } satisfies Partial<StartSessionExecutionInput>));
+    const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
+    expect(executionInput?.userMessage).toContain("Bootstrap an ArchCode Goal run.");
+    expect(executionInput?.userMessage).toContain("Goal ID: goal-1");
+    expect(executionInput?.userMessage).toContain(`Loop ID: ${loop.loopId}`);
+    expect(executionInput?.userMessage).toContain("Your first action must be calling goal_run with this Goal ID.");
+
+    const state = await fixture.stateManager.read(loop.loopId);
+    expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
+  });
+
+  test("goal loop records failed report when Goal main session execution finishes failed", async () => {
+    const fixture = await createFixture({
+      sessionExecutions: [{ id: "run-1", startedAt: 100, status: "failed", endedAt: 150, durationMs: 50, error: "goal agent failed" }],
+    });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const report = await fixture.runner.runGoalLoop(loop, "manual");
+
+    expect(report).toMatchObject({ status: "failed", goalId: "goal-1", sessionId: "goal-session-1", error: "goal agent failed" });
+    expect((await fixture.stateManager.read(loop.loopId)).lastRun).toMatchObject({
+      status: "failed",
+      goalId: "goal-1",
+      sessionId: "goal-session-1",
+      error: "goal agent failed",
+    });
   });
 
   test("goal loop records failed report with goal id and error when GoalRunner fails", async () => {
@@ -305,9 +361,30 @@ async function createFixture(options: { executionPromise?: Promise<void>; sessio
 class FakeLoopRuntime {
   #nextSession = 1;
   readonly #sessions = new Map<string, SessionFile>();
-  readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
+  readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
     const sessionId = `session-${this.#nextSession++}`;
-    const session: SessionFile = {
+    const session = this.#makeSession(sessionId, options);
+    this.#sessions.set(sessionId, session);
+    return session;
+  });
+  readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => {
+    if (!this.#sessions.has(input.sessionId)) {
+      this.#sessions.set(input.sessionId, this.#makeSession(input.sessionId));
+    }
+    return {
+      sessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      agentName: input.agentName ?? "orchestrator",
+      origin: "user_message",
+      abortController: new AbortController(),
+      promise: this.executionPromise,
+      executionToken: Symbol(`test:${input.sessionId}`),
+      startedAt: Date.now(),
+    };
+  });
+
+  #makeSession(sessionId: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
+    return {
       sessionId,
       createdAt: Date.now(),
       agentName: "orchestrator",
@@ -321,29 +398,18 @@ class FakeLoopRuntime {
       reminders: [],
       childSessionLinks: [],
       rootSessionId: sessionId,
+      ...(options?.goalId === undefined ? {} : { goalId: options.goalId }),
       ...(options?.loopId === undefined ? {} : { loopId: options.loopId }),
       ...(options?.sessionRole === undefined ? {} : { sessionRole: options.sessionRole }),
     };
-    this.#sessions.set(sessionId, session);
-    return session;
-  });
-  readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => ({
-    sessionId: input.sessionId,
-    workspaceRoot: input.workspaceRoot,
-    agentName: input.agentName ?? "orchestrator",
-    origin: "user_message",
-    abortController: new AbortController(),
-    promise: this.executionPromise,
-    executionToken: Symbol(`test:${input.sessionId}`),
-    startedAt: Date.now(),
-  }));
+  }
 
   constructor(
     private readonly executionPromise: Promise<void>,
     private readonly sessionExecutions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }],
   ) {}
 
-  async createSession(workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
+  async createSession(workspaceRoot: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
     return await this.createSessionMock(workspaceRoot, options);
   }
 
@@ -418,7 +484,7 @@ class FakeGoalStateManager {
 }
 
 class FakeGoalRunner {
-  readonly startMock = mock(async (goalId: string): Promise<GoalState> => {
+  readonly startMock = mock(async (goalId: string, _options?: { loopId?: string; sessionTitle?: string }): Promise<GoalState> => {
     if (this.startError) throw this.startError;
     const goal = this.goalStateManager.goals.get(goalId);
     if (goal === undefined) throw new Error(`Missing fake goal ${goalId}`);
@@ -433,8 +499,8 @@ class FakeGoalRunner {
     private readonly startError?: Error,
   ) {}
 
-  async start(goalId: string): Promise<GoalState> {
-    return await this.startMock(goalId);
+  async start(goalId: string, options?: { loopId?: string; sessionTitle?: string }): Promise<GoalState> {
+    return await this.startMock(goalId, options);
   }
 }
 

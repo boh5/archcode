@@ -336,6 +336,15 @@ export class LoopStateManager {
     await atomicWrite(filePath, renderGeneratedStateMarkdown(state));
   }
 
+  async readGeneratedStateMarkdown(loopId: string): Promise<string> {
+    this.assertLoopId(loopId);
+    const filePath = await this.generatedStatePath(loopId);
+    if (!(await Bun.file(filePath).exists())) {
+      await this.writeGeneratedStateMarkdown(await this.read(loopId));
+    }
+    return await Bun.file(filePath).text();
+  }
+
   async resolveContainedPathForTest(relative: string): Promise<string> {
     try {
       return await resolveContainedPath(relative, this.loopsRoot());

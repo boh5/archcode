@@ -6,6 +6,7 @@ import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
+import { LoopStateManager, type LoopConfig } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
 import { silentLogger } from "../logger";
@@ -18,6 +19,16 @@ const TEST_SCOPE: PermissionApprovalScope = {
   kind: "tool-operation",
   toolName: "file_write",
   operation: "write",
+};
+
+const LOOP_CONFIG: LoopConfig = {
+  title: "Project loop",
+  schedule: { kind: "interval", everyMs: 60_000 },
+  runKind: "session",
+  mode: "report",
+  approvalPolicy: "interactive",
+  limits: { maxIterationsPerRun: 5 },
+  taskPrompt: "Summarize local project state.",
 };
 
 async function makeWorkspace(name: string): Promise<string> {
@@ -69,6 +80,7 @@ describe("ProjectContextResolver", () => {
     expect(second.goalState).not.toBe(first.goalState);
     expect(second.goalArtifacts).not.toBe(first.goalArtifacts);
     expect(second.goalMemory).not.toBe(first.goalMemory);
+    expect(second.loopState).not.toBe(first.loopState);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.approvals).not.toBe(first.approvals);
@@ -136,6 +148,7 @@ describe("ProjectContextResolver", () => {
     expect(context.goalArtifacts.workspaceRoot).toBe(workspace);
     expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
     expect(context.goalMemory.workspaceRoot).toBe(workspace);
+    expect(context.loopState).toBeInstanceOf(LoopStateManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
@@ -179,6 +192,30 @@ describe("ProjectContextResolver", () => {
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(contextRecord.workflowState).toBeUndefined();
     expect(contextRecord.artifacts).toBeUndefined();
+  });
+
+  test("loops are isolated under each workspace .archcode/loops directory", async () => {
+    const workspaceA = await makeWorkspace("loops-a");
+    const workspaceB = await makeWorkspace("loops-b");
+    const resolver = new ProjectContextResolver();
+
+    const contextA = await resolver.resolve(workspaceA);
+    const contextB = await resolver.resolve(workspaceB);
+
+    const loopA = await contextA.loopState.create(contextA.project.slug, { ...LOOP_CONFIG, title: "Loop A" });
+    const loopB = await contextB.loopState.create(contextB.project.slug, { ...LOOP_CONFIG, title: "Loop B" });
+
+    expect((await contextA.loopState.list(contextA.project.slug)).map((loop) => loop.loopId)).toEqual([loopA.loopId]);
+    expect((await contextB.loopState.list(contextB.project.slug)).map((loop) => loop.loopId)).toEqual([loopB.loopId]);
+    expect(await Bun.file(join(workspaceA, ".archcode", "loops", loopA.loopId, "state.json")).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceB, ".archcode", "loops", loopB.loopId, "state.json")).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceB, ".archcode", "loops", loopA.loopId, "state.json")).exists()).toBe(false);
+
+    resolver.dispose(workspaceA);
+    const recreatedA = await resolver.resolve(workspaceA);
+
+    expect(recreatedA.loopState).not.toBe(contextA.loopState);
+    expect((await recreatedA.loopState.list(contextA.project.slug)).map((loop) => loop.loopId)).toEqual([loopA.loopId]);
   });
 
   test("goals are isolated under each workspace .archcode/goals directory", async () => {
@@ -251,5 +288,20 @@ describe("ProjectContextResolver", () => {
     expect(context.goalArtifacts).toBe(goalArtifacts);
     expect(context.goalMemory).toBe(goalMemory);
     expect(context.hitl).toBe(hitl);
+  });
+
+  test("custom Loop factory is used per resolved context", async () => {
+    const workspace = await makeWorkspace("custom-loop-factory");
+    const loopState = new LoopStateManager(workspace);
+    const resolver = new ProjectContextResolver({
+      loopStateFactory: mock((workspaceRoot: string) => {
+        expect(workspaceRoot).toBe(workspace);
+        return loopState;
+      }),
+    });
+
+    const context = await resolver.resolve(workspace);
+
+    expect(context.loopState).toBe(loopState);
   });
 });

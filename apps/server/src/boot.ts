@@ -15,6 +15,7 @@ export async function bootServer(runtime: AgentRuntime): Promise<void> {
     port: parseInt(Bun.env.ARCHCODE_PORT ?? "4096", 10) || undefined,
   });
 
+  await runtime.startLoopSchedulers();
   setupGracefulShutdown(server, runtime);
 
   console.info(`ArchCode server running at ${url}`);

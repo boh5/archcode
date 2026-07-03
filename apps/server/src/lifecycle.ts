@@ -75,6 +75,7 @@ async function runShutdown(
 ): Promise<number> {
   log("Shutting down gracefully...");
   pushShutdownEvents(runtime);
+  runtime.stopLoopSchedulers();
 
   const timeout = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs);

@@ -7,6 +7,7 @@ import { GoalArtifactManager } from "../../goals/artifacts";
 import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalStateManager } from "../../goals/state";
 import { HitlService } from "../../hitl/service";
+import { LoopStateManager } from "../../loops/state";
 import { storeManager } from "../../store/store";
 import type { ProjectContext } from "../../projects/types";
 import { silentLogger } from "../../logger";
@@ -84,6 +85,7 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     goalState: new GoalStateManager(workspaceRoot),
     goalArtifacts: new GoalArtifactManager(workspaceRoot),
     goalMemory: new GoalMemoryManager(workspaceRoot),
+    loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),

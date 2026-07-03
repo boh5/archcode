@@ -4,6 +4,7 @@ import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
+import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { ProjectContext } from "../projects/types";
@@ -20,6 +21,7 @@ export function createTestProjectContext(workspaceRoot: string): ProjectContext 
     goalState: new GoalStateManager(workspaceRoot),
     goalArtifacts: new GoalArtifactManager(workspaceRoot),
     goalMemory: new GoalMemoryManager(workspaceRoot),
+    loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(workspaceRoot, ".archcode", "memory"),

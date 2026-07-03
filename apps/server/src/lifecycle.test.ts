@@ -33,6 +33,7 @@ function createProcess() {
 function makeRuntime(abortAllSessionExecutions = mock(async () => undefined)): AgentRuntime {
   return {
     abortAllSessionExecutions,
+    stopLoopSchedulers: mock(() => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 }
@@ -61,6 +62,7 @@ describe("server lifecycle", () => {
       order.push("abort");
       order.push("wait");
     }));
+    runtime.stopLoopSchedulers = mock(() => order.push("stop-schedulers"));
     const globalEvents: unknown[] = [];
     const unsubscribeGlobalEvents = globalEventBus.subscribe((event) => globalEvents.push(event));
     const server = { stop: mock(() => order.push("stop")) };
@@ -78,7 +80,8 @@ describe("server lifecycle", () => {
     expect(runtime.notifyRuntimeShutdown).toHaveBeenCalledWith("server_shutdown");
     expect(runtime.abortAllSessionExecutions).toHaveBeenCalled();
     expect(globalEvents).toContainEqual({ type: "shutdown", reason: "server_shutdown" });
-    expect(order).toEqual(["abort", "wait", "stop", "exit:0"]);
+    expect(runtime.stopLoopSchedulers).toHaveBeenCalled();
+    expect(order).toEqual(["stop-schedulers", "abort", "wait", "stop", "exit:0"]);
   });
 
   test("shutdown exits with code 1 when running jobs exceed timeout", async () => {

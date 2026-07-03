@@ -3,6 +3,7 @@ import type { GoalArtifactManager } from "../goals/artifacts";
 import type { GoalMemoryManager } from "../goals/goal-memory";
 import type { GoalStateManager } from "../goals/state";
 import type { HitlService } from "../hitl/service";
+import type { LoopStateManager } from "../loops/state";
 import type { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
 
@@ -25,6 +26,7 @@ export interface ProjectContext {
   goalState: GoalStateManager;
   goalArtifacts: GoalArtifactManager;
   goalMemory: GoalMemoryManager;
+  loopState: LoopStateManager;
   hitl: HitlService;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;

@@ -5,6 +5,7 @@ import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
+import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
@@ -20,6 +21,8 @@ export interface ProjectContextResolverOptions {
   goalArtifactsFactory?: (workspaceRoot: string) => GoalArtifactManager;
   /** Factory primarily for testing alternate GoalMemoryManager construction. */
   goalMemoryFactory?: (workspaceRoot: string) => GoalMemoryManager;
+  /** Factory primarily for testing alternate LoopStateManager construction. */
+  loopStateFactory?: (workspaceRoot: string) => LoopStateManager;
   /** Factory primarily for testing alternate HitlService construction. */
   hitlFactory?: (workspaceRoot: string) => HitlService;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
@@ -36,6 +39,7 @@ export class ProjectContextResolver {
   readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
   readonly #goalArtifactsFactory: (workspaceRoot: string) => GoalArtifactManager;
   readonly #goalMemoryFactory: (workspaceRoot: string) => GoalMemoryManager;
+  readonly #loopStateFactory: (workspaceRoot: string) => LoopStateManager;
   readonly #hitlFactory: (workspaceRoot: string) => HitlService;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
@@ -51,6 +55,9 @@ export class ProjectContextResolver {
     });
     this.#goalMemoryFactory = options.goalMemoryFactory ?? ((workspaceRoot) => {
       return new GoalMemoryManager(workspaceRoot);
+    });
+    this.#loopStateFactory = options.loopStateFactory ?? ((workspaceRoot) => {
+      return new LoopStateManager(workspaceRoot, this.#logger.child({ module: "loops.state" }));
     });
     this.#hitlFactory = options.hitlFactory ?? (() => new HitlService());
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
@@ -90,6 +97,7 @@ export class ProjectContextResolver {
       goalState: this.#goalStateFactory(workspaceRoot),
       goalArtifacts: this.#goalArtifactsFactory(workspaceRoot),
       goalMemory: this.#goalMemoryFactory(workspaceRoot),
+      loopState: this.#loopStateFactory(workspaceRoot),
       hitl,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,

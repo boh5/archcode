@@ -33,10 +33,22 @@ export interface GoalRunnerOptions {
   goalArtifacts: GoalArtifactManager;
   hitlService: HitlGateway;
   workspaceRoot: string;
-  createSession: () => Promise<string>;
+  createSession: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   now?: () => Date;
   retryDelay?: (ms: number, abort: AbortSignal) => Promise<void>;
+}
+
+export interface GoalRunnerCreateSessionOptions {
+  readonly goalId?: string;
+  readonly loopId?: string;
+  readonly sessionRole?: SessionRole;
+  readonly title?: string;
+}
+
+export interface GoalRunnerStartOptions {
+  readonly loopId?: string;
+  readonly sessionTitle?: string;
 }
 
 export interface FailedVerificationOptions {
@@ -88,7 +100,7 @@ export class GoalRunner {
   readonly #hitlService: HitlGateway;
   readonly #approvalGate: GoalApprovalGate;
   readonly #workspaceRoot: string;
-  readonly #createSession: () => Promise<string>;
+  readonly #createSession: (options?: GoalRunnerCreateSessionOptions) => Promise<string>;
   readonly #isSessionActive: (sessionId: string) => Promise<boolean>;
   readonly #now: () => Date;
   readonly #retryDelay: (ms: number, abort: AbortSignal) => Promise<void>;
@@ -109,9 +121,14 @@ export class GoalRunner {
     this.#retryDelay = options.retryDelay ?? sleepAbortable;
   }
 
-  async start(goalId: string): Promise<GoalState> {
+  async start(goalId: string, options: GoalRunnerStartOptions = {}): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
-    const sessionId = current.mainSessionId ?? await this.#createSession();
+    const sessionId = current.mainSessionId ?? await this.#createSession({
+      goalId,
+      ...(options.loopId === undefined ? {} : { loopId: options.loopId }),
+      sessionRole: "main",
+      title: options.sessionTitle ?? `Goal: ${current.title}`,
+    });
     return this.claimStart(goalId, sessionId);
   }
 
@@ -354,7 +371,11 @@ export class GoalRunner {
       return this.#escalateFailedGoal(current, current.retryState?.lastFailure?.message ?? current.lastError ?? "Retry budget exhausted");
     }
 
-    const freshSessionId = await this.#createSession();
+    const freshSessionId = await this.#createSession({
+      goalId,
+      sessionRole: "main",
+      title: `Goal retry: ${current.title}`,
+    });
     const startedAt = this.#now().toISOString();
     const attempt = current.retryCount + 1;
     const retryState: GoalRetryState = {

@@ -5,6 +5,7 @@ import { GoalArtifactManager } from "../../goals/artifacts";
 import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalStateManager } from "../../goals/state";
 import { HitlService } from "../../hitl/service";
+import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
@@ -31,6 +32,7 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
     goalState: new GoalStateManager(TMP_DIR),
     goalArtifacts: new GoalArtifactManager(TMP_DIR),
     goalMemory: new GoalMemoryManager(TMP_DIR),
+    loopState: new LoopStateManager(TMP_DIR),
     hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),
