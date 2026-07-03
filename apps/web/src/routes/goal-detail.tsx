@@ -8,8 +8,9 @@ import type { GoalStatus } from "../api/types";
 import { GoalOverview } from "../components/features/GoalOverview";
 import { GoalSessions } from "../components/features/GoalSessions";
 import { GoalChat } from "../components/features/GoalChat";
+import { GoalArtifacts } from "../components/features/GoalArtifacts";
 
-type Tab = "overview" | "chat" | "sessions";
+type Tab = "overview" | "chat" | "sessions" | "artifacts";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
@@ -23,10 +24,11 @@ const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   paused: "bg-warning-muted text-warning",
 };
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "chat", label: "Chat" },
-  { id: "sessions", label: "Sessions" },
+const TABS: { id: Tab; label: string; testId: string }[] = [
+  { id: "overview", label: "Overview", testId: "goal-overview-tab" },
+  { id: "chat", label: "Chat", testId: "goal-chat-tab" },
+  { id: "sessions", label: "Sessions", testId: "goal-sessions-tab" },
+  { id: "artifacts", label: "Artifacts", testId: "goal-artifacts-tab" },
 ];
 
 export function GoalDetailRoute() {
@@ -123,6 +125,7 @@ export function GoalDetailRoute() {
           <button
             key={tab.id}
             id={`goal-tab-${tab.id}`}
+            data-testid={tab.testId}
             type="button"
             role="tab"
             aria-selected={activeTab === tab.id}
@@ -144,6 +147,7 @@ export function GoalDetailRoute() {
           {activeTab === "overview" && <GoalOverview goal={goal} />}
           {activeTab === "chat" && <GoalChat slug={slug} goal={goal} />}
           {activeTab === "sessions" && <GoalSessions slug={slug} goal={goal} />}
+          {activeTab === "artifacts" && <GoalArtifacts slug={slug} goalId={goal.id} />}
         </section>
       </div>
     </div>

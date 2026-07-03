@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { GoalState, DoneCondition, DoneResult } from "../api/types";
+import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult } from "../api/types";
 import { GoalDetailRoute } from "./goal-detail";
 
 // ─── Test helpers ───
@@ -177,7 +177,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -225,7 +225,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -292,7 +292,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -337,7 +337,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -390,7 +390,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -444,7 +444,7 @@ describe("GoalDetailRoute", () => {
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(goal);
       }
       return new Response("Not found", { status: 404 });
@@ -510,7 +510,7 @@ describe("GoalDetailRoute", () => {
         currentGoal = lockedGoal;
         return Response.json(lockedGoal);
       }
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(currentGoal);
       }
       return new Response("Not found", { status: 404 });
@@ -563,7 +563,7 @@ describe("GoalDetailRoute", () => {
         currentGoal = runningGoal;
         return Response.json(runningGoal);
       }
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(currentGoal);
       }
       return new Response("Not found", { status: 404 });
@@ -616,7 +616,7 @@ describe("GoalDetailRoute", () => {
         currentGoal = reservedGoal;
         return Response.json(reservedGoal);
       }
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(currentGoal);
       }
       return new Response("Not found", { status: 404 });
@@ -666,7 +666,7 @@ describe("GoalDetailRoute", () => {
       if (url.includes("/api/projects/demo/goals/goal-1/run") && init?.method === "POST") {
         return Response.json({ error: { code: "BAD_REQUEST", message: "Goal is already reserved" } }, { status: 409 });
       }
-      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals")) {
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
         return Response.json(lockedGoal);
       }
       return new Response("Not found", { status: 404 });
@@ -723,6 +723,250 @@ describe("GoalDetailRoute", () => {
 
       await waitFor(() => {
         expect(container.textContent).toContain("Request failed with status 404");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  // ─── Artifacts tab tests ───
+
+  function makeArtifactFile(name: GoalArtifactName, overrides: Partial<GoalArtifactFile> = {}): GoalArtifactFile {
+    return {
+      name,
+      path: `.archcode/goals/goal-1/artifacts/${name}`,
+      mediaType: "text/markdown",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sizeBytes: 128,
+      sha256: "abc123",
+      ...overrides,
+    };
+  }
+
+  function installArtifactFetchMock(opts: {
+    goal: GoalState;
+    artifacts: GoalArtifactFile[];
+    contents: Record<string, string>;
+  }): ReturnType<typeof mock> {
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+
+      if (url.endsWith("/artifacts")) {
+        return Response.json({ artifacts: opts.artifacts });
+      }
+      const artifactMatch = url.match(/\/artifacts\/([^/]+)$/);
+      if (artifactMatch) {
+        const name = decodeURIComponent(artifactMatch[1]);
+        const content = opts.contents[name];
+        if (content === undefined) {
+          return new Response("Not found", { status: 404 });
+        }
+        const artifact = opts.artifacts.find((file) => file.name === name);
+        return Response.json({ artifact, content });
+      }
+      if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
+        return Response.json(opts.goal);
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    return fetchMock;
+  }
+
+  test("artifacts tab renders read-only markdown for present artifacts", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ status: "running", phase: "build" });
+    const artifacts = [
+      makeArtifactFile("plan.md"),
+      makeArtifactFile("review.md"),
+      makeArtifactFile("budget.md"),
+    ];
+    const contents: Record<string, string> = {
+      "plan.md": "# Plan\n\nImplementation steps for the goal.",
+      "review.md": "# Review\n\nReviewer notes.",
+      "budget.md": "# Budget\n\nToken usage ledger.",
+    };
+
+    installArtifactFetchMock({ goal, artifacts, contents });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Test Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Artifacts").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="goal-tab-artifacts"]')).not.toBeNull();
+      });
+
+      await act(async () => {
+        container.querySelector('[data-testid="artifact-tab-plan"]')!.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
+        expect(viewer).not.toBeNull();
+        expect(viewer!.textContent).toContain("Plan");
+        expect(viewer!.textContent).toContain("Implementation steps for the goal");
+      });
+
+      expect(container.querySelector('[data-testid="artifact-edit-button"]')).toBeNull();
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("artifacts tab shows review and budget content when selected", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ status: "running", phase: "review" });
+    const artifacts = [
+      makeArtifactFile("plan.md"),
+      makeArtifactFile("review.md"),
+      makeArtifactFile("budget.md"),
+    ];
+    const contents: Record<string, string> = {
+      "plan.md": "# Plan\n\nSteps.",
+      "review.md": "# Review\n\nReviewer evidence and verdict.",
+      "budget.md": "# Budget\n\n| Phase | Tokens |\n|---|---|\n| plan | 100 |",
+    };
+
+    installArtifactFetchMock({ goal, artifacts, contents });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Test Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Artifacts").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="goal-tab-artifacts"]')).not.toBeNull();
+      });
+
+      await act(async () => {
+        container.querySelector('[data-testid="artifact-tab-review"]')!.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
+        expect(viewer).not.toBeNull();
+        expect(viewer!.textContent).toContain("Reviewer evidence and verdict");
+      });
+
+      await act(async () => {
+        container.querySelector('[data-testid="artifact-tab-budget"]')!.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
+        expect(viewer).not.toBeNull();
+        expect(viewer!.textContent).toContain("Budget");
+        expect(viewer!.textContent).toContain("plan");
+        expect(viewer!.textContent).toContain("100");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("missing artifact empty state shows No artifact available", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ status: "running", phase: "build" });
+    const artifacts = [
+      makeArtifactFile("plan.md"),
+      makeArtifactFile("review.md"),
+      makeArtifactFile("budget.md"),
+    ];
+    const contents: Record<string, string> = {
+      "plan.md": "# Plan\n\nSteps.",
+      "review.md": "# Review\n\nNotes.",
+      "budget.md": "# Budget\n\nLedger.",
+    };
+
+    installArtifactFetchMock({ goal, artifacts, contents });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("Test Goal");
+      });
+
+      await act(async () => {
+        findElementByText(container, "Artifacts").dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="goal-tab-artifacts"]')).not.toBeNull();
+      });
+
+      await act(async () => {
+        container.querySelector('[data-testid="artifact-tab-final-report"]')!.dispatchEvent(
+          new dom.window.MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await waitFor(() => {
+        const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
+        expect(viewer).not.toBeNull();
+        expect(viewer!.textContent).toContain("No artifact available");
       });
     } finally {
       await act(async () => {
