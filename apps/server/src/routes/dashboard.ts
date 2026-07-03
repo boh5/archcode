@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type { GoalState, GoalStatus } from "@archcode/protocol";
+import type { GoalState, GoalStatus, LoopMode, LoopRunKind, LoopRunReport, LoopStatus } from "@archcode/protocol";
 import { BadRequestError } from "../errors";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
@@ -23,6 +23,13 @@ const ActiveGoalStatuses = new Set<GoalStatus>([
   "paused",
 ]);
 
+const LoopStatusSchemaValues = new Set<LoopStatus>([
+  "active",
+  "paused",
+  "disabled",
+  "error",
+]);
+
 type DashboardGoal = GoalState & {
   projectSlug: string;
   projectName: string;
@@ -32,6 +39,19 @@ type DashboardProjectError = {
   projectSlug: string;
   projectName: string;
   message: string;
+};
+
+type DashboardLoop = {
+  loopId: string;
+  title: string;
+  status: LoopStatus;
+  currentRun?: LoopRunReport;
+  lastRun?: LoopRunReport;
+  nextRunAt?: number;
+  runKind: LoopRunKind;
+  mode: LoopMode;
+  projectSlug: string;
+  projectName: string;
 };
 
 export function createDashboardRoutes(runtime: AgentRuntime): Hono {
@@ -61,6 +81,38 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
     return c.json({ goals, errors });
   });
 
+  app.get("/loops", async (c) => {
+    const status = parseLoopStatusFilter(c.req.query("status"));
+    const loops: DashboardLoop[] = [];
+    const errors: DashboardProjectError[] = [];
+
+    for (const project of await listProjects(runtime)) {
+      try {
+        const projectLoops = await runtime.listLoops(project.workspaceRoot);
+        loops.push(
+          ...projectLoops
+            .filter((loop) => matchesLoopStatus(loop, status))
+            .map((loop) => ({
+              loopId: loop.loopId,
+              title: loop.config.title,
+              status: loop.status,
+              currentRun: loop.currentRun,
+              lastRun: loop.lastRun,
+              nextRunAt: loop.nextRunAt,
+              runKind: loop.config.runKind,
+              mode: loop.config.mode,
+              projectSlug: project.slug,
+              projectName: project.name,
+            })),
+        );
+      } catch (error) {
+        errors.push(withProjectError(project, error));
+      }
+    }
+
+    return c.json({ loops, errors });
+  });
+
   return app;
 }
 
@@ -77,6 +129,21 @@ function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | unde
   if (status === undefined) return true;
   if (status === "active") return ActiveGoalStatuses.has(goal.status);
   return goal.status === status;
+}
+
+function parseLoopStatusFilter(status: string | undefined): LoopStatus | "active" | undefined {
+  if (status === undefined) return undefined;
+  if (status === "active") return "active";
+  if (!LoopStatusSchemaValues.has(status as LoopStatus)) {
+    throw new BadRequestError("status must be active or a valid loop status");
+  }
+  return status as LoopStatus;
+}
+
+function matchesLoopStatus(loop: { status: LoopStatus }, status: LoopStatus | "active" | undefined): boolean {
+  if (status === undefined) return true;
+  if (status === "active") return loop.status === "active";
+  return loop.status === status;
 }
 
 function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
