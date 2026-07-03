@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
+import { TOOL_GOAL_CHECK_DONE } from "@archcode/protocol";
+
+import { agentDefinitions } from "../agents/definitions";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -59,8 +62,60 @@ const webLegacyWorkflowUiImportPatterns = [
 
 const directGoalRunningTransitionPattern = /\.transitionStatus\s*\(\s*[^,]+,\s*["']running["']\s*\)/;
 
+const directDoneResultRecordPattern = /\.recordDoneResult\s*\(/;
+
+const rawLlmPersistenceFieldPatterns = [
+  /\braw(?:Llm|LLM|Model|Reviewer)?(?:Output|Text|Transcript)\b/,
+  /\bchain(?:OfThought|_of_thought)\b/,
+  /\bprivate(?:Output|Text|Reasoning)\b/,
+] as const;
+
+const rawPrivateArtifactMarkerPatterns = [
+  /RAW_MODEL_PRIVATE_TEXT/,
+  /<\/?thinking>/i,
+  /<\/?chain[-_ ]?of[-_ ]?thought>/i,
+] as const;
+
+const goalArtifactVersionPathPatterns = [
+  /["']versions["']/,
+  /["']revisions["']/,
+  /["']latest(?:\.json)?["']/,
+  /["'][^"']*(?:-v\d+|\.v\d+)[^"']*\.md["']/i,
+] as const;
+
+const goalMemoryProjectMutationPatterns = [
+  /\bMemoryFileManager\b/,
+  /["']\.archcode\/memory(?:\/|["'])/,
+  /["']\.archcode["']\s*,\s*["']memory["']/,
+] as const;
+
+const workflowRegistrationPatterns = [
+  /createWorkflow/i,
+  /createArtifact(?:Read|Write)?Tool/,
+  ...legacyWorkflowToolPatterns,
+  ...legacyArtifactToolPatterns,
+] as const;
+
+const approvedDirectAiImportFiles = new Set([
+  "packages/agent-core/src/agents/query/loop-hooks.ts",
+  "packages/agent-core/src/agents/query/loop.ts",
+  "packages/agent-core/src/compact/compact.ts",
+  "packages/agent-core/src/compact/token-estimation.ts",
+  "packages/agent-core/src/mcp/tool-adapter.ts",
+  "packages/agent-core/src/provider/registry.ts",
+  "packages/agent-core/src/store/projection.ts",
+  "packages/agent-core/src/store/session-store-manager.ts",
+  "packages/agent-core/src/store/types.ts",
+  "packages/agent-core/src/tools/types.ts",
+]);
+
 const directGoalRunningTransitionAllowedFiles = new Set([
   "packages/agent-core/src/goals/runner.ts",
+]);
+
+const directDoneResultRecordAllowedFiles = new Set([
+  "packages/agent-core/src/goals/runner.ts",
+  "packages/agent-core/src/hitl/goal-gates.ts",
 ]);
 
 const legacyWorkflowToolDisplayFormatterFiles = new Set([
@@ -201,6 +256,25 @@ function findFilesMatchingName(scopeDir: string, pattern: RegExp): string[] {
     .map(relativeFile);
 }
 
+function findDirectAiSdkImportViolations(): Violation[] {
+  const violations: Violation[] = [];
+  const staticAiImportLineRegex = /^\s*import\s+(?:type\s+)?(?:[^;\n]*\s+from\s+)?["']ai["']/;
+  const dynamicAiImportRegex = /\bimport\s*\(\s*["']ai["']\s*\)/;
+
+  for (const file of findTsFiles(join(projectRoot, "packages/agent-core/src"))) {
+    const relativePath = relativeFile(file);
+    if (relativePath.startsWith("packages/agent-core/src/llm/")) continue;
+
+    const source = stripComments(readFileSync(file, "utf8"));
+    const hasAiImport = source.split("\n").some((line) => staticAiImportLineRegex.test(line)) || dynamicAiImportRegex.test(source);
+    if (hasAiImport && !approvedDirectAiImportFiles.has(relativePath)) {
+      violations.push({ file: relativePath, importPath: "ai" });
+    }
+  }
+
+  return violations;
+}
+
 describe("Goal migration boundaries", () => {
   test("goal-facing modules do not import legacy workflow domain or workflow tools", () => {
     const scopeDirs = ["packages/agent-core/src/goals", "packages/agent-core/src/hitl"];
@@ -299,5 +373,89 @@ describe("Goal migration boundaries", () => {
         directGoalRunningTransitionAllowedFiles,
       ),
     );
+  });
+
+  test("goal_check_done is exposed only to Reviewer tool allowlists", () => {
+    const exposedTo = agentDefinitions
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_CHECK_DONE))
+      .map((definition) => definition.name);
+
+    expect(exposedTo).toEqual(["reviewer"]);
+  });
+
+  test("production tool code does not directly record Goal done results", () => {
+    expectNoViolations(findSourceTextViolations("packages/agent-core/src/tools", [directDoneResultRecordPattern]));
+  });
+
+  test("direct Goal done result recording remains behind runner and HITL review boundaries", () => {
+    expectNoViolations(
+      withoutAllowedFiles(
+        findSourceTextViolations("packages/agent-core/src", [directDoneResultRecordPattern]),
+        directDoneResultRecordAllowedFiles,
+      ),
+    );
+  });
+
+  test("production registration and server app do not revive workflow runtime tools or routes", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([
+          join(projectRoot, "packages/agent-core/src/core/register-tools.ts"),
+          join(projectRoot, "apps/server/src/app.ts"),
+        ]),
+        [...workflowRegistrationPatterns, ...serverWorkflowRoutePatterns],
+      ),
+    );
+  });
+
+  test("spec artifacts and repair context schemas do not add raw LLM persistence fields", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([
+          join(projectRoot, "packages/protocol/src/types.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/state.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/operator-repair-context.ts"),
+        ]),
+        rawLlmPersistenceFieldPatterns,
+      ),
+    );
+  });
+
+  test("Goal artifact writers do not persist private-output markers or chain-of-thought tags", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([
+          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
+        ]),
+        rawPrivateArtifactMarkerPatterns,
+      ),
+    );
+  });
+
+  test("Goal artifact implementation has no artifact version files, revision directories, or latest pointers", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([
+          join(projectRoot, "packages/agent-core/src/goals/artifacts.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
+          join(projectRoot, "apps/server/src/routes/goals.ts"),
+        ]),
+        goalArtifactVersionPathPatterns,
+      ),
+    );
+  });
+
+  test("Goal memory manager does not mutate Project memory storage or indexes", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([join(projectRoot, "packages/agent-core/src/goals/goal-memory.ts")]),
+        goalMemoryProjectMutationPatterns,
+      ),
+    );
+  });
+
+  test("direct AI SDK imports outside llm stay limited to approved schema/provider/type seams", () => {
+    expectNoViolations(findDirectAiSdkImportViolations());
   });
 });
