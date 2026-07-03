@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import type { LoopState } from "../api/types";
 import { LoopsRoute } from "./loops";
-import { CreateLoopForm, buildLoopConfig } from "../components/features/CreateLoopDialog";
+import { CreateLoopForm } from "../components/features/CreateLoopDialog";
 import type { DoneCondition } from "../api/types";
 
 // ─── Test helpers ───
@@ -98,13 +98,6 @@ async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
   throw lastError;
 }
 
-function findElementByText(container: Element, text: string): Element {
-  const elements = Array.from(container.querySelectorAll("*")).reverse();
-  const match = elements.find((element) => element.textContent?.includes(text));
-  if (!match) throw new Error(`Unable to find element containing "${text}"`);
-  return match;
-}
-
 function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
   return {
     loopId: "loop-1",
@@ -149,11 +142,12 @@ async function renderCreateLoopForm(
   queryClient: QueryClient,
   slug = "demo",
   onCreated: (loopId: string) => void = () => {},
+  initialState?: Partial<import("../components/features/CreateLoopDialog").LoopFormState>,
 ): Promise<void> {
   await act(async () => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <CreateLoopForm slug={slug} onCreated={onCreated} />
+        <CreateLoopForm slug={slug} onCreated={onCreated} initialState={initialState} />
       </QueryClientProvider>,
     );
   });
@@ -296,112 +290,209 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("creates manual session loop with manual schedule", async () => {
-    const config = buildLoopConfig({
-      title: "Manual Session",
-      description: "",
-      scheduleKind: "manual",
-      everyMs: 60000,
-      runKind: "session",
-      mode: "report",
-      approvalPolicy: "interactive",
-      maxIterationsPerRun: 8,
-      taskPrompt: "",
-      instructions: "",
-      goalTitle: "",
-      goalAuthor: "architect",
-      goalPrompt: "",
-      goalInstructions: "",
-      goalConditions: [],
-      goalMaxRetries: 2,
-      goalEscalateOnFailure: true,
-      goalApprovalPoints: ["after_plan", "before_complete"],
-      goalReviewerAgent: "reviewer",
-    });
+  test("creates manual session loop", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
 
-    expect(config.title).toBe("Manual Session");
-    expect(config.schedule).toEqual({ kind: "manual" });
-    expect(config.runKind).toBe("session");
-    expect(config.mode).toBe("report");
-    expect(config.approvalPolicy).toBe("interactive");
-    expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
-    expect(config.goalTemplate).toBeUndefined();
-    expect("goalTemplateId" in config).toBe(false);
+    let postedBody: Record<string, unknown> | undefined;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
+        return Response.json({ loop: makeLoop() });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Manual Session",
+        scheduleKind: "manual",
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+      });
+
+      const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
+      expect(submitButton).not.toBeNull();
+      expect(submitButton.disabled).toBe(false);
+
+      await act(async () => {
+        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.title).toBe("Manual Session");
+      expect(config.schedule).toEqual({ kind: "manual" });
+      expect(config.runKind).toBe("session");
+      expect(config.mode).toBe("report");
+      expect(config.approvalPolicy).toBe("interactive");
+      expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
+      expect(config.goalTemplate).toBeUndefined();
+      expect("goalTemplateId" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
-  test("creates interval session loop with everyMs and interval schedule", async () => {
-    const config = buildLoopConfig({
-      title: "Interval Session",
-      description: "",
-      scheduleKind: "interval",
-      everyMs: 60000,
-      runKind: "session",
-      mode: "report",
-      approvalPolicy: "interactive",
-      maxIterationsPerRun: 8,
-      taskPrompt: "",
-      instructions: "",
-      goalTitle: "",
-      goalAuthor: "architect",
-      goalPrompt: "",
-      goalInstructions: "",
-      goalConditions: [],
-      goalMaxRetries: 2,
-      goalEscalateOnFailure: true,
-      goalApprovalPoints: ["after_plan", "before_complete"],
-      goalReviewerAgent: "reviewer",
-    });
+  test("creates interval session loop", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
 
-    expect(config.title).toBe("Interval Session");
-    expect(config.schedule).toEqual({ kind: "interval", everyMs: 60000 });
-    expect(config.runKind).toBe("session");
-    expect(config.mode).toBe("report");
-    expect(config.approvalPolicy).toBe("interactive");
-    expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
-    expect(config.goalTemplate).toBeUndefined();
-    expect("goalTemplateId" in config).toBe(false);
+    let postedBody: Record<string, unknown> | undefined;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
+        return Response.json({ loop: makeLoop() });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Interval Session",
+        scheduleKind: "interval",
+        everyMs: 60000,
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+      });
+
+      const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
+      expect(submitButton).not.toBeNull();
+      expect(submitButton.disabled).toBe(false);
+
+      await act(async () => {
+        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.title).toBe("Interval Session");
+      expect(config.schedule).toEqual({ kind: "interval", everyMs: 60000 });
+      expect(config.runKind).toBe("session");
+      expect(config.mode).toBe("report");
+      expect(config.approvalPolicy).toBe("interactive");
+      expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
+      expect(config.goalTemplate).toBeUndefined();
+      expect("goalTemplateId" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
-  test("goal loop inline template create submits goalTemplate fields and no goalTemplateId", async () => {
-    const condition = makeTestsPassCondition();
-    const config = buildLoopConfig({
-      title: "Goal Loop",
-      description: "",
-      scheduleKind: "manual",
-      everyMs: 60000,
-      runKind: "goal",
-      mode: "act",
-      approvalPolicy: "explicit_per_run",
-      maxIterationsPerRun: 4,
-      taskPrompt: "",
-      instructions: "",
-      goalTitle: "Inline Goal Title",
-      goalAuthor: "architect",
-      goalPrompt: "",
-      goalInstructions: "",
-      goalConditions: [condition],
-      goalMaxRetries: 2,
-      goalEscalateOnFailure: true,
-      goalApprovalPoints: ["after_plan", "before_complete"],
-      goalReviewerAgent: "reviewer",
-    });
+  test("goal loop inline template", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
 
-    expect(config.title).toBe("Goal Loop");
-    expect(config.runKind).toBe("goal");
-    expect(config.mode).toBe("act");
-    expect(config.approvalPolicy).toBe("explicit_per_run");
-    expect(config.limits).toEqual({ maxIterationsPerRun: 4 });
-    expect(config.goalTemplate).toBeDefined();
-    expect(config.goalTemplate!.title).toBe("Inline Goal Title");
-    expect(config.goalTemplate!.doneConditions).toBeDefined();
-    expect(config.goalTemplate!.doneConditions.length).toBe(1);
-    expect(config.goalTemplate!.doneConditions[0].kind).toBe("tests_pass");
-    expect(config.goalTemplate!.retryPolicy).toBeDefined();
-    expect(config.goalTemplate!.retryPolicy.maxRetries).toBe(2);
-    expect(config.goalTemplate!.approvalPoints).toEqual(["after_plan", "before_complete"]);
-    expect(config.goalTemplate!.reviewerAgent).toBe("reviewer");
-    expect(config.goalTemplate!.author).toBe("architect");
-    expect("goalTemplateId" in config).toBe(false);
+    let postedBody: Record<string, unknown> | undefined;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
+        return Response.json({ loop: makeLoop() });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      const condition = makeTestsPassCondition();
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Goal Loop",
+        scheduleKind: "manual",
+        runKind: "goal",
+        mode: "act",
+        approvalPolicy: "explicit_per_run",
+        maxIterationsPerRun: 4,
+        goalTitle: "Inline Goal Title",
+        goalAuthor: "architect",
+        goalConditions: [condition],
+        goalMaxRetries: 2,
+        goalEscalateOnFailure: true,
+        goalApprovalPoints: ["after_plan", "before_complete"],
+        goalReviewerAgent: "reviewer",
+      });
+
+      const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
+      expect(submitButton).not.toBeNull();
+      expect(submitButton.disabled).toBe(false);
+
+      await act(async () => {
+        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.title).toBe("Goal Loop");
+      expect(config.runKind).toBe("goal");
+      expect(config.mode).toBe("act");
+      expect(config.approvalPolicy).toBe("explicit_per_run");
+      expect(config.limits).toEqual({ maxIterationsPerRun: 4 });
+      expect(config.goalTemplate).toBeDefined();
+      const gt = config.goalTemplate as Record<string, unknown>;
+      expect(gt.title).toBe("Inline Goal Title");
+      expect(gt.doneConditions).toBeDefined();
+      expect(Array.isArray(gt.doneConditions)).toBe(true);
+      expect(gt.doneConditions).toHaveLength(1);
+      expect((gt.doneConditions as Array<Record<string, unknown>>)[0].kind).toBe("tests_pass");
+      expect(gt.retryPolicy).toBeDefined();
+      expect((gt.retryPolicy as Record<string, unknown>).maxRetries).toBe(2);
+      expect(gt.approvalPoints).toEqual(["after_plan", "before_complete"]);
+      expect(gt.reviewerAgent).toBe("reviewer");
+      expect(gt.author).toBe("architect");
+      expect("goalTemplateId" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
   });
 
   test("preset quick starts show only daily_triage and changelog_drafter as enabled", async () => {

@@ -60,6 +60,8 @@ interface CreateLoopFormProps {
   slug: string;
   onCreated: (loopId: string) => void;
   onClose?: () => void;
+  /** Testability hook: pre-fill form state without driving controlled inputs. */
+  initialState?: Partial<LoopFormState>;
 }
 
 function isNonEmpty(value: unknown): value is string {
@@ -208,6 +210,7 @@ export interface LoopFormState {
   maxIterationsPerRun: number;
   taskPrompt: string;
   instructions: string;
+  author: string;
   goalTitle: string;
   goalAuthor: string;
   goalPrompt: string;
@@ -256,33 +259,32 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
   return config;
 }
 
-export function CreateLoopForm({ slug, onCreated, onClose }: CreateLoopFormProps) {
+export function CreateLoopForm({ slug, onCreated, onClose, initialState }: CreateLoopFormProps) {
   const createLoop = useCreateLoop();
 
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [runKind, setRunKind] = useState<LoopRunKind>("session");
-  const [scheduleKind, setScheduleKind] = useState<ScheduleKind>("manual");
-  const [everyMs, setEveryMs] = useState(60000);
-  const [mode, setMode] = useState<LoopMode>("report");
-  const [approvalPolicy, setApprovalPolicy] = useState<LoopApprovalPolicy>("interactive");
-  const [maxIterationsPerRun, setMaxIterationsPerRun] = useState(8);
-  const [taskPrompt, setTaskPrompt] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [author, setAuthor] = useState("architect");
+  const [title, setTitle] = useState(initialState?.title ?? "");
+  const [description, setDescription] = useState(initialState?.description ?? "");
+  const [runKind, setRunKind] = useState<LoopRunKind>(initialState?.runKind ?? "session");
+  const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(initialState?.scheduleKind ?? "manual");
+  const [everyMs, setEveryMs] = useState(initialState?.everyMs ?? 60000);
+  const [mode, setMode] = useState<LoopMode>(initialState?.mode ?? "report");
+  const [approvalPolicy, setApprovalPolicy] = useState<LoopApprovalPolicy>(initialState?.approvalPolicy ?? "interactive");
+  const [maxIterationsPerRun, setMaxIterationsPerRun] = useState(initialState?.maxIterationsPerRun ?? 8);
+  const [taskPrompt, setTaskPrompt] = useState(initialState?.taskPrompt ?? "");
+  const [instructions, setInstructions] = useState(initialState?.instructions ?? "");
+  const [author, setAuthor] = useState(initialState?.author ?? "architect");
 
-  const [goalTitle, setGoalTitle] = useState("");
-  const [goalAuthor, setGoalAuthor] = useState("architect");
-  const [goalPrompt, setGoalPrompt] = useState("");
-  const [goalInstructions, setGoalInstructions] = useState("");
-  const [goalConditions, setGoalConditions] = useState<DoneCondition[]>([]);
-  const [goalMaxRetries, setGoalMaxRetries] = useState(2);
-  const [goalEscalateOnFailure, setGoalEscalateOnFailure] = useState(true);
-  const [goalApprovalPoints, setGoalApprovalPoints] = useState<ApprovalPoint[]>([
-    "after_plan",
-    "before_complete",
-  ]);
-  const [goalReviewerAgent, setGoalReviewerAgent] = useState("reviewer");
+  const [goalTitle, setGoalTitle] = useState(initialState?.goalTitle ?? "");
+  const [goalAuthor, setGoalAuthor] = useState(initialState?.goalAuthor ?? "architect");
+  const [goalPrompt, setGoalPrompt] = useState(initialState?.goalPrompt ?? "");
+  const [goalInstructions, setGoalInstructions] = useState(initialState?.goalInstructions ?? "");
+  const [goalConditions, setGoalConditions] = useState<DoneCondition[]>(initialState?.goalConditions ?? []);
+  const [goalMaxRetries, setGoalMaxRetries] = useState(initialState?.goalMaxRetries ?? 2);
+  const [goalEscalateOnFailure, setGoalEscalateOnFailure] = useState(initialState?.goalEscalateOnFailure ?? true);
+  const [goalApprovalPoints, setGoalApprovalPoints] = useState<ApprovalPoint[]>(
+    initialState?.goalApprovalPoints ?? ["after_plan", "before_complete"],
+  );
+  const [goalReviewerAgent, setGoalReviewerAgent] = useState(initialState?.goalReviewerAgent ?? "reviewer");
 
   const trimmedTitle = title.trim();
   const intervalValid = scheduleKind !== "interval" || (Number.isInteger(everyMs) && everyMs >= MIN_INTERVAL_MS);
@@ -332,6 +334,7 @@ export function CreateLoopForm({ slug, onCreated, onClose }: CreateLoopFormProps
       maxIterationsPerRun,
       taskPrompt,
       instructions,
+      author,
       goalTitle,
       goalAuthor,
       goalPrompt,
@@ -353,6 +356,7 @@ export function CreateLoopForm({ slug, onCreated, onClose }: CreateLoopFormProps
     maxIterationsPerRun,
     taskPrompt,
     instructions,
+    author,
     goalTitle,
     goalAuthor,
     goalPrompt,
