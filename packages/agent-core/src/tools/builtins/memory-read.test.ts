@@ -3,6 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
+import { GoalArtifactManager } from "../../goals/artifacts";
+import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalStateManager } from "../../goals/state";
 import { HitlService } from "../../hitl/service";
 import { storeManager } from "../../store/store";
@@ -80,6 +82,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
   const projectContext: ProjectContext = overrides.projectContext ?? {
     project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
     goalState: new GoalStateManager(workspaceRoot),
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalMemory: new GoalMemoryManager(workspaceRoot),
     hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),

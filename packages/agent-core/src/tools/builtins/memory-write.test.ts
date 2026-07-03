@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { GoalArtifactManager } from "../../goals/artifacts";
+import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalStateManager } from "../../goals/state";
 import { HitlService } from "../../hitl/service";
 import { MemoryFileManager } from "../../memory/file-manager";
@@ -27,6 +29,8 @@ function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExe
   const projectContext: ProjectContext = {
     project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
     goalState: new GoalStateManager(TMP_DIR),
+    goalArtifacts: new GoalArtifactManager(TMP_DIR),
+    goalMemory: new GoalMemoryManager(TMP_DIR),
     hitl: new HitlService(),
     memory: fileManager,
     approvals: new ProjectApprovalManager(silentLogger),
