@@ -29,6 +29,19 @@ export type { ProjectInfo } from "./projects/types";
 
 export { DoneConditionSchema, GoalArtifactNameSchema } from "./goals";
 
+export {
+  expandLoopPreset,
+  getUnsupportedLoopPresetReason,
+  isSupportedLoopPreset,
+  LoopActiveConflictError,
+  LoopConfigSchema,
+  LoopNotFoundError,
+  LoopRunLogError,
+  LoopStateError,
+  LoopUuidSchema,
+} from "./loops";
+export type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops";
+
 export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";
 export type {

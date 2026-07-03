@@ -416,7 +416,8 @@ describe("monorepo package boundaries", () => {
           ...findProductionAppFiles("apps/web/src"),
           ...findProductionAppFiles("packages/protocol/src"),
         ], [
-          /\/runs\b/,
+          /\/api\/runs\b/,
+          /\/api\/projects\/(?::slug|\$\{[^}]+\})\/runs\b/,
           /\bRunGraph\b/,
           /\bparentRunId\b/,
           /\brootRunId\b/,

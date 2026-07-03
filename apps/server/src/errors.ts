@@ -9,7 +9,8 @@ export type ServerErrorCode =
   | "CONCURRENT_SESSION_LIMIT"
   | "UNAUTHORIZED"
   | "INTERNAL_ERROR"
-  | "DELETE_CONFLICT";
+  | "DELETE_CONFLICT"
+  | "LOOP_ACTIVE_CONFLICT";
 
 export class ServerError extends Error {
   constructor(

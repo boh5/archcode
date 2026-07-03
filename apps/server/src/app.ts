@@ -14,6 +14,7 @@ import { createFilesRoutes } from "./routes/files";
 import { createGlobalEventsRoutes } from "./routes/global-events";
 import { createGoalsRoutes } from "./routes/goals";
 import { createHitlRoutes } from "./routes/hitl";
+import { createLoopsRoutes } from "./routes/loops";
 import { createMessagesRoutes } from "./routes/messages";
 import { createMcpRoutes } from "./routes/mcp";
 import { createPermissionRoutes } from "./routes/permissions";
@@ -80,6 +81,7 @@ export function createServerApp(
   const goals = createGoalsRoutes(serverRuntime);
   const hitl = createHitlRoutes(serverRuntime);
   const projectHitl = createHitlRoutes(serverRuntime, "project");
+  const loops = createLoopsRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
   const globalEvents = createGlobalEventsRoutes(globalEventBus);
@@ -95,6 +97,7 @@ export function createServerApp(
   app.route("/api", hitl);
   app.route("/api/projects", projects);
   app.route("/api/projects", goals);
+  app.route("/api/projects", loops);
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
