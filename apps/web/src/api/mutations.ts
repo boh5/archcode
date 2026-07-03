@@ -272,18 +272,20 @@ export function useRespondHitl() {
 
   return useMutation({
     mutationFn: async ({
+      projectSlug,
       hitlId,
       body,
     }: {
+      projectSlug: string;
       hitlId: string;
       body: {
         decision?: string;
         answers?: unknown;
-        verdict?: "approve" | "reject" | "request_changes";
+        outcome?: "DONE" | "NOT_DONE";
         comment?: string;
         data?: Record<string, unknown>;
       };
-    }) => apiFetch<{ ok: boolean; hitlId: string }>(`/api/hitl/${encodeURIComponent(hitlId)}/respond`, {
+    }) => apiFetch<{ ok: boolean; hitlId: string }>(`/api/projects/${encodeURIComponent(projectSlug)}/hitl/${encodeURIComponent(hitlId)}/respond`, {
       method: "POST",
       body,
     }),
@@ -298,8 +300,8 @@ export function useCancelHitl() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ hitlId, reason }: { hitlId: string; reason?: string }) =>
-      apiFetch<{ ok: boolean; hitlId: string }>(`/api/hitl/${encodeURIComponent(hitlId)}/cancel`, {
+    mutationFn: async ({ projectSlug, hitlId, reason }: { projectSlug: string; hitlId: string; reason?: string }) =>
+      apiFetch<{ ok: boolean; hitlId: string }>(`/api/projects/${encodeURIComponent(projectSlug)}/hitl/${encodeURIComponent(hitlId)}/cancel`, {
         method: "POST",
         body: reason ? { reason } : {},
       }),

@@ -171,7 +171,7 @@ function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitl
     hitlId: "hitl-1",
     sessionId: "session-1",
     kind: "approval",
-    payload: { kind: "approval", action: "run_tool", context: {}, title: "Approve?", message: "Please approve" },
+    displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
     trigger: { projectSlug: "demo", goalId: "goal-1", source: "test" },
     createdAt: 1_000,
     projectSlug: "demo",
@@ -272,8 +272,8 @@ describe("Dashboard", () => {
   });
 
   test("renders HITL cards in approval queue", async () => {
-    const hitl1 = makeHitlItem({ hitlId: "h1", kind: "approval", payload: { kind: "approval", action: "deploy", context: {}, title: "Deploy?", message: "Confirm" }, projectName: "Alpha Project" });
-    const hitl2 = makeHitlItem({ hitlId: "h2", kind: "question", payload: { kind: "question", options: [{ label: "Yes" }], title: "Which option?", message: "Pick one" }, projectName: "Beta Project" });
+    const hitl1 = makeHitlItem({ hitlId: "h1", kind: "approval", displayPayload: { title: "Deploy?", summary: "Confirm", redacted: true }, projectName: "Alpha Project" });
+    const hitl2 = makeHitlItem({ hitlId: "h2", kind: "question", displayPayload: { title: "Which option?", summary: "Pick one", redacted: true }, projectName: "Beta Project" });
     const ctx = await setupDashboard(createDashboardHandler({ hitl: [hitl1, hitl2] }));
 
     try {
@@ -387,6 +387,39 @@ describe("Dashboard", () => {
 
       await waitFor(() => {
         expect(ctx.container.textContent?.toLowerCase()).toContain("dashboard");
+      });
+    } finally {
+      await cleanupDashboard(ctx);
+    }
+  });
+
+  test("redacted HITL cards show [REDACTED] and never expose raw secrets", async () => {
+    const redactedItem = makeHitlItem({
+      hitlId: "h-redacted",
+      kind: "approval",
+      displayPayload: {
+        title: "Approve budget [REDACTED]",
+        summary: "Budget approval [REDACTED]",
+        fields: [
+          { label: "action", value: "approve_budget" },
+          { label: "context", value: "[REDACTED]" },
+        ],
+        redacted: true,
+      },
+      trigger: { projectSlug: "demo", goalId: "goal-budget", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    });
+    const ctx = await setupDashboard(createDashboardHandler({ hitl: [redactedItem] }));
+
+    try {
+      await renderDashboard(ctx.reactRoot, ctx.queryClient);
+
+      await waitFor(() => {
+        const queueSection = ctx.container.querySelector('[data-testid="dashboard-approval-queue"]');
+        expect(queueSection).not.toBeNull();
+        const text = queueSection?.textContent ?? "";
+        expect(text).toContain("[REDACTED]");
+        expect(text).not.toContain("sk-test-secret");
+        expect(text).not.toContain("apiKey=sk");
       });
     } finally {
       await cleanupDashboard(ctx);

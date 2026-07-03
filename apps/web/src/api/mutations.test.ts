@@ -111,16 +111,16 @@ describe("web goal mutation API calls", () => {
 });
 
 describe("web HITL mutation API calls", () => {
-  test("respondHitl calls POST /api/hitl/:id/respond", async () => {
+  test("respondHitl calls POST /api/projects/:slug/hitl/:id/respond", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/hitl/hitl-1/respond");
+      expect(String(input)).toBe("/api/projects/archcode/hitl/hitl-1/respond");
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/hitl/hitl-1/respond", {
+    const result = await apiFetch("/api/projects/archcode/hitl/hitl-1/respond", {
       method: "POST",
       body: { decision: "approved" },
     });
@@ -128,16 +128,73 @@ describe("web HITL mutation API calls", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("cancelHitl calls POST /api/hitl/:id/cancel", async () => {
+  test("cancelHitl calls POST /api/projects/:slug/hitl/:id/cancel", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/hitl/hitl-1/cancel");
+      expect(String(input)).toBe("/api/projects/archcode/hitl/hitl-1/cancel");
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/hitl/hitl-1/cancel", { method: "POST" });
+    const result = await apiFetch("/api/projects/archcode/hitl/hitl-1/cancel", { method: "POST" });
+    expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("respondHitl with review outcome sends project-scoped endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/demo/hitl/review-1/respond");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.outcome).toBe("DONE");
+      return jsonResponse({ ok: true, hitlId: "review-1" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/demo/hitl/review-1/respond", {
+      method: "POST",
+      body: { outcome: "DONE" },
+    });
+    expect(result).toEqual({ ok: true, hitlId: "review-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("cancelHitl with reason sends project-scoped endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/demo/hitl/hitl-cancel/cancel");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.reason).toBe("No longer needed");
+      return jsonResponse({ ok: true, hitlId: "hitl-cancel" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/demo/hitl/hitl-cancel/cancel", {
+      method: "POST",
+      body: { reason: "No longer needed" },
+    });
+    expect(result).toEqual({ ok: true, hitlId: "hitl-cancel" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("respondHitl never calls global /api/hitl/:id/respond endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url).not.toBe("/api/hitl/hitl-1/respond");
+      expect(url).not.toMatch(/^\/api\/hitl\/[^/]+\/respond$/);
+      expect(url).toBe("/api/projects/demo/hitl/hitl-1/respond");
+      return jsonResponse({ ok: true, hitlId: "hitl-1" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/demo/hitl/hitl-1/respond", {
+      method: "POST",
+      body: { decision: "approved" },
+    });
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
