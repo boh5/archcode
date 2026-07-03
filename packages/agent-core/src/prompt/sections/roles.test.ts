@@ -81,13 +81,13 @@ describe("buildRoleSection", () => {
   test("reviewer role prompt is default-deny with the five-point checklist", () => {
     const result = buildRoleSection(makeCtx(reviewerAgentDefinition.rolePrompt));
 
-    expect(result).toContain("Default stance: REJECT");
+    expect(result).toContain("Default stance: NOT_DONE");
     for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
       expect(result).toContain(item);
     }
-    expect(result).toContain("APPROVE");
-    expect(result).toContain("REJECT");
-    expect(result).toContain("ESCALATE_HUMAN");
+    expect(result).toContain("DONE");
+    expect(result).toContain("NOT_DONE");
+    expect(result).not.toContain("ESCALATE_HUMAN");
     expect(result).toContain("goal_check_done");
     expect(result).toContain("no file_write, file_edit, bash, or ast_grep_replace");
   });
