@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type {
   DoneCondition,
+  GoalArtifactFile,
+  GoalPhase,
+  GoalReviewReport,
   GoalState,
   GoalStatus,
+  HitlRecord,
   HitlPayload,
   HitlRequest,
   HitlResponse,
@@ -141,6 +145,13 @@ describe("global SSE wire protocol types", () => {
 });
 
 describe("Goal types", () => {
+  test("GoalPhase remains the canonical three-phase model", () => {
+    const phases: GoalPhase[] = ["plan", "build", "review"];
+
+    expect(phases).toEqual(["plan", "build", "review"]);
+    expect(phases).toHaveLength(3);
+  });
+
   test("GoalStatus includes paused for safe interruption", () => {
     const statuses: GoalStatus[] = [
       "draft", "locked", "running", "verifying",
@@ -178,7 +189,7 @@ describe("Goal types", () => {
     expect(fileExists.params.path).toBe("src/index.ts");
   });
 
-  test("DoneCondition spec_compliance is typed but marked Phase 2", () => {
+  test("DoneCondition spec_compliance is typed as Reviewer-owned structured evidence", () => {
     const specCheck: DoneCondition = {
       id: "cond-spec",
       kind: "spec_compliance",
@@ -187,7 +198,7 @@ describe("Goal types", () => {
 
     expect(specCheck.kind).toBe("spec_compliance");
     expect(specCheck.params.specPath).toBe("docs/spec.md");
-    // Phase 2: spec_compliance is not implemented in Phase 1 — type only
+    // Task 8: spec_compliance is implemented by Reviewer-owned structured per-criterion evidence.
   });
 
   test("serializes and deserializes GoalState round-trip", () => {
@@ -217,6 +228,126 @@ describe("Goal types", () => {
     expect(parsed.status).toBe("running");
     expect(parsed.doneConditions).toHaveLength(1);
     expect((parsed.doneConditions[0] as DoneCondition).kind).toBe("tests_pass");
+  });
+
+  test("round-trips Phase 2 Goal contracts without raw LLM transcript fields", () => {
+    const reviewReport: GoalReviewReport = {
+      reviewerAgent: "reviewer",
+      outcome: "NOT_DONE",
+      reviewedAt: "2026-07-03T00:10:00.000Z",
+      summary: "AC-001 needs stronger evidence.",
+      criteria: [
+        {
+          criterionId: "AC-001",
+          criterion: "The implementation satisfies the documented acceptance criterion.",
+          compliant: false,
+          evidence: ["review.md notes missing negative-path coverage"],
+          artifactNames: ["review.md", "spec-compliance.md"],
+        },
+      ],
+    };
+    const state: GoalState = {
+      id: "goal_test_123",
+      projectId: "my-project",
+      title: "Ship Phase 2 Goal contracts",
+      status: "verifying",
+      phase: "review",
+      doneConditions: [
+        { id: "AC-001", kind: "spec_compliance", params: { specPath: "docs/spec.md" } },
+      ],
+      doneResults: {
+        "AC-001": {
+          conditionId: "AC-001",
+          passed: false,
+          evidence: "Criterion AC-001 is NOT DONE.",
+          checkedAt: "2026-07-03T00:10:00.000Z",
+          specCompliance: {
+            checkedAt: "2026-07-03T00:09:00.000Z",
+            specPath: "docs/spec.md",
+            summary: "One criterion remains unmet.",
+            criteria: reviewReport.criteria,
+          },
+          review: reviewReport,
+        },
+      },
+      reviewerAgent: "reviewer",
+      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+      retryCount: 1,
+      retryState: {
+        retryCount: 1,
+        nextRetryAt: "2026-07-03T00:15:00.000Z",
+        lastFailure: {
+          failedAt: "2026-07-03T00:10:00.000Z",
+          errorKind: "review_not_done",
+          message: "Reviewer marked AC-001 NOT DONE",
+          phase: "review",
+        },
+        lastAttempt: {
+          attempt: 1,
+          status: "scheduled",
+          scheduledAt: "2026-07-03T00:10:00.000Z",
+          nextRetryAt: "2026-07-03T00:15:00.000Z",
+        },
+      },
+      tokenBudget: {
+        status: "warning",
+        maxTokens: 100_000,
+        warningThresholdTokens: 80_000,
+        inputTokens: 45_000,
+        outputTokens: 20_000,
+        reasoningTokens: 10_000,
+        cachedInputTokens: 5_000,
+        totalTokens: 75_000,
+        updatedAt: "2026-07-03T00:08:00.000Z",
+      },
+      artifacts: [
+        { name: "plan.md", path: ".archcode/goals/goal_test_123/artifacts/plan.md", mediaType: "text/markdown" },
+        { name: "review.md", path: ".archcode/goals/goal_test_123/artifacts/review.md", mediaType: "text/markdown" },
+      ],
+      reviewReport,
+      approvalPoints: ["after_plan", "before_complete"],
+      author: "orchestrator",
+      mainSessionId: "session-main",
+      childSessionIds: ["session-plan", "session-build", "session-review"],
+      createdAt: "2026-07-03T00:00:00.000Z",
+      updatedAt: "2026-07-03T00:10:00.000Z",
+    };
+
+    const parsed = serializeRoundTrip(state);
+    const serialized = JSON.stringify(parsed);
+
+    expect(parsed.id).toBe("goal_test_123");
+    expect(parsed.phase).toBe("review");
+    expect(parsed.reviewerAgent).toBe("reviewer");
+    expect(parsed.reviewReport?.outcome).toBe("NOT_DONE");
+    expect(parsed.reviewReport?.criteria[0]?.criterionId).toBe("AC-001");
+    expect(parsed.tokenBudget?.totalTokens).toBe(75_000);
+    expect(parsed.retryState?.nextRetryAt).toBe("2026-07-03T00:15:00.000Z");
+    expect(parsed.retryState?.lastFailure?.errorKind).toBe("review_not_done");
+    expect(parsed.artifacts?.map((artifact) => artifact.name)).toEqual(["plan.md", "review.md"]);
+    expect(serialized).not.toContain("rawLlmOutput");
+    expect(serialized).not.toContain("rawTranscript");
+    expect(serialized).not.toContain("transcript");
+  });
+
+  test("canonical Goal artifacts are current Markdown files without version pointers", () => {
+    const artifact: GoalArtifactFile = {
+      name: "final-report.md",
+      path: ".archcode/goals/goal-1/artifacts/final-report.md",
+      mediaType: "text/markdown",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+      sizeBytes: 128,
+      sha256: "abc123",
+    };
+
+    const parsed = serializeRoundTrip(artifact) as GoalArtifactFile & Record<string, unknown>;
+
+    expect(parsed.name).toBe("final-report.md");
+    expect(parsed.path).toContain("/artifacts/final-report.md");
+    expect(parsed.mediaType).toBe("text/markdown");
+    expect(parsed.version).toBeUndefined();
+    expect(parsed.revision).toBeUndefined();
+    expect(parsed.latest).toBeUndefined();
   });
 
   test("GoalState with optional fields round-trips", () => {
@@ -287,7 +418,7 @@ describe("HITL types", () => {
     const payload: HitlPayload = {
       kind: "review",
       artifacts: [
-        { path: "src/api.ts", description: "API route handler" },
+        { name: "review.md", path: ".archcode/goals/goal-1/artifacts/review.md", mediaType: "text/markdown" },
       ],
     };
 
@@ -323,13 +454,13 @@ describe("HITL types", () => {
   test("serializes HitlResponse review variant", () => {
     const response: HitlResponse = {
       kind: "review",
-      verdict: "request_changes",
+      outcome: "NOT_DONE",
       comment: "Needs more tests",
     };
 
     const parsed = serializeRoundTrip(response);
     expect(parsed).toEqual(response);
-    expect(parsed.verdict).toBe("request_changes");
+    expect(parsed.outcome).toBe("NOT_DONE");
   });
 
   test("serializes HitlRequest with all fields", () => {
@@ -344,6 +475,13 @@ describe("HITL types", () => {
       trigger: "approval_point",
       status: "pending",
       createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+      displayPayload: {
+        title: "Allow write",
+        summary: "Redacted write request",
+        redacted: true,
+      },
+      decisionKey: "goal-1:after-plan",
     };
 
     const parsed = serializeRoundTrip(request);
@@ -352,6 +490,38 @@ describe("HITL types", () => {
     expect(parsed.trigger).toBe("approval_point");
     expect(parsed.status).toBe("pending");
     expect(parsed.goalId).toBe("goal-1");
+    expect(parsed.displayPayload?.redacted).toBe(true);
+  });
+
+  test("serializes durable redacted HitlRecord", () => {
+    const record: HitlRecord = {
+      id: "hitl-1",
+      projectId: "my-project",
+      sessionId: "session-1",
+      goalId: "goal-1",
+      kind: "approval",
+      trigger: "approval_point",
+      decisionKey: "goal-1:before-complete",
+      status: "pending",
+      prompt: "Approve completion?",
+      displayPayload: {
+        title: "Approve completion",
+        summary: "Tool input redacted for dashboard display.",
+        fields: [{ label: "Goal", value: "goal-1" }],
+        redacted: true,
+      },
+      payload: { kind: "approval", action: "goal.complete", context: { goalId: "goal-1" } },
+      createdAt: "2026-07-03T00:00:00.000Z",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+    };
+
+    const parsed = serializeRoundTrip(record);
+    const serialized = JSON.stringify(parsed);
+
+    expect(parsed).toEqual(record);
+    expect(parsed.displayPayload.redacted).toBe(true);
+    expect(serialized).not.toContain("rawLlmOutput");
+    expect(serialized).not.toContain("rawTranscript");
   });
 
   test("serializes resolved HitlRequest with response", () => {

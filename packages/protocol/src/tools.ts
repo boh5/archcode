@@ -48,24 +48,14 @@ export const TOOL_SKILL_READ = "skill_read";
 export const TOOL_MEMORY_READ = "memory_read";
 export const TOOL_MEMORY_WRITE = "memory_write";
 
-// Workflow
-export const TOOL_WORKFLOW_CREATE = "workflow_create";
-export const TOOL_WORKFLOW_READ = "workflow_read";
-export const TOOL_WORKFLOW_UPDATE_STAGE = "workflow_update_stage";
-export const TOOL_WORKFLOW_PROPOSE_INTERACTIONS = "workflow_propose_interactions";
-export const TOOL_WORKFLOW_REQUEST_INTERACTIONS = "workflow_request_interactions";
-export const TOOL_WORKFLOW_TASK_CHECK = "workflow_task_check";
-
-// Artifacts
-export const TOOL_ARTIFACT_READ = "artifact_read";
-export const TOOL_ARTIFACT_WRITE = "artifact_write";
-
 // Goal (replaces Workflow in Phase 2 cutover)
 export const TOOL_GOAL_CREATE = "goal_create";
 export const TOOL_GOAL_LOCK = "goal_lock";
 export const TOOL_GOAL_RUN = "goal_run";
 export const TOOL_GOAL_RETRY = "goal_retry";
 export const TOOL_GOAL_CHECK_DONE = "goal_check_done";
+export const TOOL_GOAL_ARTIFACT_READ = "goal_artifact_read";
+export const TOOL_GOAL_ARTIFACT_WRITE = "goal_artifact_write";
 
 // ─── BuiltinToolName Union (derived from constants) ───
 export type BuiltinToolName =
@@ -95,19 +85,13 @@ export type BuiltinToolName =
   | typeof TOOL_SKILL_READ
   | typeof TOOL_MEMORY_READ
   | typeof TOOL_MEMORY_WRITE
-  | typeof TOOL_WORKFLOW_CREATE
-  | typeof TOOL_WORKFLOW_READ
-  | typeof TOOL_WORKFLOW_UPDATE_STAGE
-  | typeof TOOL_WORKFLOW_PROPOSE_INTERACTIONS
-  | typeof TOOL_WORKFLOW_REQUEST_INTERACTIONS
-  | typeof TOOL_WORKFLOW_TASK_CHECK
-  | typeof TOOL_ARTIFACT_READ
-  | typeof TOOL_ARTIFACT_WRITE
   | typeof TOOL_GOAL_CREATE
   | typeof TOOL_GOAL_LOCK
   | typeof TOOL_GOAL_RUN
   | typeof TOOL_GOAL_RETRY
-  | typeof TOOL_GOAL_CHECK_DONE;
+  | typeof TOOL_GOAL_CHECK_DONE
+  | typeof TOOL_GOAL_ARTIFACT_READ
+  | typeof TOOL_GOAL_ARTIFACT_WRITE;
 
 // ─── Tool Category (cross-package semantic classification) ───
 export type ToolCategory =
@@ -122,7 +106,6 @@ export type ToolCategory =
   | "delegation"
   | "skill"
   | "memory"
-  | "workflow"
   | "goal"
   | "mcp"
   | "other";
@@ -155,19 +138,13 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_SKILL_READ]: "skill",
   [TOOL_MEMORY_READ]: "memory",
   [TOOL_MEMORY_WRITE]: "memory",
-  [TOOL_WORKFLOW_CREATE]: "workflow",
-  [TOOL_WORKFLOW_READ]: "workflow",
-  [TOOL_WORKFLOW_UPDATE_STAGE]: "workflow",
-  [TOOL_WORKFLOW_PROPOSE_INTERACTIONS]: "workflow",
-  [TOOL_WORKFLOW_REQUEST_INTERACTIONS]: "workflow",
-  [TOOL_WORKFLOW_TASK_CHECK]: "workflow",
-  [TOOL_ARTIFACT_READ]: "fileRead",
-  [TOOL_ARTIFACT_WRITE]: "fileWrite",
   [TOOL_GOAL_CREATE]: "goal",
   [TOOL_GOAL_LOCK]: "goal",
   [TOOL_GOAL_RUN]: "goal",
   [TOOL_GOAL_RETRY]: "goal",
   [TOOL_GOAL_CHECK_DONE]: "goal",
+  [TOOL_GOAL_ARTIFACT_READ]: "goal",
+  [TOOL_GOAL_ARTIFACT_WRITE]: "goal",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;
 
 // ─── Helpers ───

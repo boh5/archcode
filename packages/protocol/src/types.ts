@@ -408,13 +408,6 @@ export interface QuestionTerminalEvent {
   answer?: string;
 }
 
-export interface WorkflowStateChangeEvent {
-  type: "workflow.state_change";
-  workflowId: string;
-  changed: Array<"stage" | "status" | "artifacts" | "stageCompletions" | "requiredInteractions" | "resolvedInteractions" | "sessionIds" | "derivedFrom" | "derivedWorkflows" | "lastError">;
-  updatedAt: string;
-}
-
 export interface ShutdownEvent {
   type: "shutdown";
   reason?: string;
@@ -426,9 +419,6 @@ export type SessionEventPayload =
   | PermissionTerminalEvent
   | QuestionRequestEvent
   | QuestionTerminalEvent
-  | WorkflowStateChangeEvent
-  | GoalStreamEvent
-  | HitlStreamEvent
   | ShutdownEvent;
 
 export interface TextPart {
@@ -629,10 +619,8 @@ export interface SessionSummary {
   agentName?: string | null;
   modelInfo?: SessionModelInfo | null;
   title?: string | null;
-  /** Goal this session belongs to (replaces legacy workflowId). */
+  /** Goal this session belongs to. */
   goalId?: string;
-  /** @deprecated Legacy workflow association — superseded by goalId. */
-  workflowId?: string;
   createdAt: number;
   lastUpdatedAt?: number;
 }
@@ -668,10 +656,8 @@ export interface Session {
   sessionId?: string;
   rootSessionId: string;
   title?: string | null;
-  /** Goal this session belongs to (replaces legacy workflowId). */
+  /** Goal this session belongs to. */
   goalId?: string;
-  /** @deprecated Legacy workflow association — superseded by goalId. */
-  workflowId?: string;
   createdAt: number;
   updatedAt?: number;
   lastUpdatedAt?: number;
@@ -687,60 +673,6 @@ export interface Session {
   eventCursor?: number;
   modelInfo?: SessionModelInfo | null;
   agentName?: string;
-}
-
-export interface WorkflowState {
-  id: string;
-  title: string;
-  type: "research_only" | "quick_fix" | "full_feature" | string;
-  stage: string;
-  status: "active" | "paused" | "completed" | "failed" | string;
-  sessionIds: Record<string, string>;
-  artifacts?: Record<string, string | string[] | undefined>;
-  stageCompletions?: Record<string, {
-    stage: string;
-    completedAt: string;
-    criticPassed?: boolean;
-    evidence?: string[];
-  }>;
-  requiredInteractions?: WorkflowInteraction[];
-  resolvedInteractions?: WorkflowInteraction[];
-  derivedFrom?: {
-    workflowId: string;
-    reason: "upgrade" | "branch" | string;
-    handoffSummaryId?: string;
-    triggeredAt: string;
-    triggerMessageId?: string;
-  };
-  derivedWorkflows?: Array<{
-    workflowId: string;
-    reason: "upgrade" | "branch" | string;
-    createdAt: string;
-  }>;
-  createdAt?: string;
-  updatedAt?: string;
-  retryCount?: number;
-  maxRetries?: number;
-  lastError?: string;
-}
-
-export interface WorkflowInteraction {
-  id: string;
-  decisionKey: string;
-  stage: string;
-  sourceAgent: string;
-  kind: "decision" | "preference" | "clarification" | "approval" | string;
-  question: string;
-  options: string[];
-  recommendedOption?: string;
-  rationale: string;
-  status: "proposed" | "requested" | "resolved" | "cancelled" | "superseded" | string;
-  answer?: string;
-  createdAt?: string;
-  resolvedAt?: string;
-  cancelledAt?: string;
-  supersededBy?: string;
-  revision: number;
 }
 
 export type DiffLineType = "context" | "add" | "delete";
@@ -823,8 +755,8 @@ export type DoneConditionKind =
   | "command_succeeds"
   // Layer 1: HITL (1 kind, non-machine check)
   | "user_confirmed"
-  // Layer 2: AI judgment (optional, Phase 2)
-  | "spec_compliance"; // Phase 2: not implemented in Phase 1
+  // Layer 2: Reviewer-owned structured per-criterion evidence
+  | "spec_compliance";
 
 // DoneCondition: discriminated union by kind (type-safe params)
 export type DoneCondition =
@@ -842,14 +774,125 @@ export type DoneCondition =
 export interface DoneResult {
   conditionId: string;
   passed: boolean;
-  evidence: string;   // machine output or AI judgment rationale
+  evidence: string;   // machine output or Reviewer evidence summary
   checkedAt: string;
+  specCompliance?: GoalSpecComplianceEvidence;
+  review?: GoalReviewReport;
+}
+
+export type GoalArtifactName =
+  | "plan.md"
+  | "build.md"
+  | "review.md"
+  | "spec-compliance.md"
+  | "approvals.md"
+  | "budget.md"
+  | "retry-log.md"
+  | "final-report.md";
+
+export interface GoalArtifactFile {
+  name: GoalArtifactName;
+  path: string;
+  mediaType: "text/markdown";
+  updatedAt?: string;
+  sizeBytes?: number;
+  sha256?: string;
+}
+
+export type GoalReviewOutcome = "DONE" | "NOT_DONE";
+
+export interface GoalSpecComplianceCriterionEvidence {
+  criterionId: string;
+  criterion: string;
+  compliant: boolean;
+  status?: "satisfied" | "failed";
+  evidence: string[];
+  artifactNames?: GoalArtifactName[];
+  commandRefs?: string[];
+  resultRefs?: string[];
+  fileRefs?: string[];
+  repairGuidance?: string;
+}
+
+export interface GoalSpecComplianceEvidence {
+  checkedAt: string;
+  specPath?: string;
+  summary: string;
+  criteria: GoalSpecComplianceCriterionEvidence[];
+}
+
+export interface GoalReviewReport {
+  reviewerAgent: string;
+  outcome: GoalReviewOutcome;
+  reviewedAt: string;
+  summary: string;
+  criteria: GoalSpecComplianceCriterionEvidence[];
+}
+
+export interface GoalRepairIssue {
+  conditionId: string;
+  evidenceSummary: string;
+  repairGuidance: string;
+  repairTarget?: string;
+  implicatedFiles?: string[];
+  failingCommands?: string[];
+  resultSummaries?: string[];
+}
+
+export interface GoalRepairContext {
+  generatedAt: string;
+  summary: string;
+  issues: GoalRepairIssue[];
+}
+
+export type GoalTokenBudgetStatus = "ok" | "warning" | "exceeded" | "paused";
+
+export interface GoalTokenBudgetState {
+  status: GoalTokenBudgetStatus;
+  maxTokens?: number;
+  warningThresholdTokens?: number;
+  warningApprovalPoint?: string;
+  warningApprovalThresholdTokens?: number;
+  warningApprovedAt?: string;
+  warningApprovedTotalTokens?: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+  totalTokens: number;
+  updatedAt: string;
 }
 
 export interface RetryPolicy {
   maxRetries: number;
   backoffMs: number;
   escalateOnFailure: boolean; // true = retries exhausted → escalated, not failed
+}
+
+export type GoalRetryAttemptStatus = "scheduled" | "running" | "failed" | "succeeded" | "escalated";
+
+export interface GoalRetryFailureMetadata {
+  failedAt: string;
+  errorKind: string;
+  message: string;
+  phase?: GoalPhase;
+}
+
+export interface GoalRetryAttemptMetadata {
+  attempt: number;
+  status: GoalRetryAttemptStatus;
+  scheduledAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  nextRetryAt?: string;
+  failure?: GoalRetryFailureMetadata;
+}
+
+export interface GoalRetryState {
+  retryCount: number;
+  nextRetryAt?: string;
+  lastFailure?: GoalRetryFailureMetadata;
+  lastAttempt?: GoalRetryAttemptMetadata;
 }
 
 export type ApprovalPoint = "after_plan" | "before_complete";
@@ -865,6 +908,11 @@ export interface GoalState {
   reviewerAgent: string;  // must ≠ executor, default "reviewer"
   retryPolicy: RetryPolicy;
   retryCount: number;
+  retryState?: GoalRetryState;
+  tokenBudget?: GoalTokenBudgetState;
+  artifacts?: GoalArtifactFile[];
+  reviewReport?: GoalReviewReport;
+  repairContext?: GoalRepairContext;
   approvalPoints: ApprovalPoint[];
   author: string;      // done condition author (orchestrator/plan/user)
   lockedBy?: string;   // locker (user id)
@@ -880,7 +928,7 @@ export interface GoalState {
 
 export type GoalStreamEvent =
   | { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState }
-  | { type: "goal.done_check"; goalId: string; results: DoneResult[] }
+  | { type: "goal.done_check"; goalId: string; results: DoneResult[]; review?: GoalReviewReport }
   | { type: "goal.escalation"; goalId: string; reason: string };
 
 // ─── HITL Types ───
@@ -888,6 +936,17 @@ export type GoalStreamEvent =
 // No separate "decision" kind: structurally same as question, semantic difference at prompt layer
 
 export type HitlKind = "question" | "approval" | "review";
+
+export type HitlTrigger = "approval_point" | "agent_request";
+
+export type HitlStatus = "pending" | "resolved" | "cancelled" | "timeout";
+
+export interface HitlDisplayPayload {
+  title: string;
+  summary?: string;
+  fields?: Array<{ label: string; value: string }>;
+  redacted: true;
+}
 
 export interface HitlRequest {
   id: string;
@@ -897,10 +956,14 @@ export interface HitlRequest {
   kind: HitlKind;
   prompt: string;
   payload: HitlPayload;  // kind-specific
-  trigger: "approval_point" | "agent_request";  // hard constraint vs soft request
-  status: "pending" | "resolved" | "cancelled" | "timeout";
+  displayPayload?: HitlDisplayPayload;
+  trigger: HitlTrigger;  // hard constraint vs soft request
+  decisionKey?: string;
+  status: HitlStatus;
   createdAt: string;
+  updatedAt?: string;
   resolvedAt?: string;
+  resolvedBy?: string;
   response?: HitlResponse;
 }
 
@@ -911,7 +974,7 @@ export type HitlPayload =
   // deny → tool not executed; approve_always → persisted — these are permission module's responsibility, not HITL.
   | { kind: "approval"; action: string; context: Record<string, unknown> }
   // review: architect batch-review of artifacts. Verdict drives Goal state machine.
-  | { kind: "review"; artifacts: Array<{ path: string; description: string }> };
+  | { kind: "review"; artifacts: GoalArtifactFile[] };
 
 export type HitlResponse =
   // question: answer flows back into conversation context. No options → free text; with options → selected label(s).
@@ -919,14 +982,34 @@ export type HitlResponse =
   // approval: user decision. HITL returns approved/approveAlways/comment;
   // permission module decides based on this value whether to allow/deny/persist scope.
   | { kind: "approval"; approved: boolean; approveAlways?: boolean; comment?: string }
-  // review: verdict drives Goal state machine.
-  | { kind: "review"; verdict: "approve" | "reject" | "request_changes"; comment?: string };
+  // review: DONE completes the Goal; NOT_DONE drives retry/escalation.
+  | { kind: "review"; outcome: GoalReviewOutcome; comment?: string; report?: GoalReviewReport };
+
+export interface HitlRecord {
+  id: string;
+  projectId: string;
+  sessionId: string;
+  goalId?: string;
+  loopId?: string;
+  kind: HitlKind;
+  trigger: HitlTrigger;
+  decisionKey: string;
+  status: HitlStatus;
+  prompt: string;
+  displayPayload: HitlDisplayPayload;
+  payload: HitlPayload;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  response?: HitlResponse;
+}
 
 // ─── HITL Stream Events ───
 
 export type HitlStreamEvent =
   | { type: "hitl.request"; request: HitlRequest }
-  | { type: "hitl.resolved"; hitlId: string; status: "resolved" | "cancelled" | "timeout"; response?: HitlResponse };
+  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "timeout">; response?: HitlResponse };
 
 export interface CommandResult {
   success: boolean;

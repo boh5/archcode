@@ -25,19 +25,13 @@ import {
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
-  TOOL_WORKFLOW_CREATE,
-  TOOL_WORKFLOW_READ,
-  TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
-  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-  TOOL_WORKFLOW_TASK_CHECK,
-  TOOL_ARTIFACT_READ,
-  TOOL_ARTIFACT_WRITE,
   TOOL_GOAL_CREATE,
   TOOL_GOAL_LOCK,
   TOOL_GOAL_RUN,
   TOOL_GOAL_RETRY,
   TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_CATEGORY_MAP,
   getToolCategory,
   isBuiltinToolName,
@@ -69,19 +63,13 @@ const ALL_BUILTIN_NAMES = [
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
-  TOOL_WORKFLOW_CREATE,
-  TOOL_WORKFLOW_READ,
-  TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_PROPOSE_INTERACTIONS,
-  TOOL_WORKFLOW_REQUEST_INTERACTIONS,
-  TOOL_WORKFLOW_TASK_CHECK,
-  TOOL_ARTIFACT_READ,
-  TOOL_ARTIFACT_WRITE,
   TOOL_GOAL_CREATE,
   TOOL_GOAL_LOCK,
   TOOL_GOAL_RUN,
   TOOL_GOAL_RETRY,
   TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
 ] as const;
 
 describe("tool name constants", () => {
@@ -111,19 +99,13 @@ describe("tool name constants", () => {
     expect(TOOL_SKILL_READ).toBe("skill_read");
     expect(TOOL_MEMORY_READ).toBe("memory_read");
     expect(TOOL_MEMORY_WRITE).toBe("memory_write");
-    expect(TOOL_WORKFLOW_CREATE).toBe("workflow_create");
-    expect(TOOL_WORKFLOW_READ).toBe("workflow_read");
-    expect(TOOL_WORKFLOW_UPDATE_STAGE).toBe("workflow_update_stage");
-    expect(TOOL_WORKFLOW_PROPOSE_INTERACTIONS).toBe("workflow_propose_interactions");
-    expect(TOOL_WORKFLOW_REQUEST_INTERACTIONS).toBe("workflow_request_interactions");
-    expect(TOOL_WORKFLOW_TASK_CHECK).toBe("workflow_task_check");
-    expect(TOOL_ARTIFACT_READ).toBe("artifact_read");
-    expect(TOOL_ARTIFACT_WRITE).toBe("artifact_write");
     expect(TOOL_GOAL_CREATE).toBe("goal_create");
     expect(TOOL_GOAL_LOCK).toBe("goal_lock");
     expect(TOOL_GOAL_RUN).toBe("goal_run");
     expect(TOOL_GOAL_RETRY).toBe("goal_retry");
     expect(TOOL_GOAL_CHECK_DONE).toBe("goal_check_done");
+    expect(TOOL_GOAL_ARTIFACT_READ).toBe("goal_artifact_read");
+    expect(TOOL_GOAL_ARTIFACT_WRITE).toBe("goal_artifact_write");
   });
 });
 
@@ -146,18 +128,15 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_REPLACE]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
-    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_UPDATE_STAGE]).toBe("workflow");
-    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_PROPOSE_INTERACTIONS]).toBe("workflow");
-    expect(TOOL_CATEGORY_MAP[TOOL_WORKFLOW_REQUEST_INTERACTIONS]).toBe("workflow");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
-    expect(TOOL_CATEGORY_MAP[TOOL_ARTIFACT_READ]).toBe("fileRead");
-    expect(TOOL_CATEGORY_MAP[TOOL_ARTIFACT_WRITE]).toBe("fileWrite");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CREATE]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_LOCK]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RUN]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RETRY]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CHECK_DONE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_READ]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_WRITE]).toBe("goal");
   });
 });
 
@@ -183,13 +162,17 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("file_read")).toBe("fileRead");
     expect(getToolCategory("grep")).toBe("search");
     expect(getToolCategory("bash")).toBe("shell");
-    expect(getToolCategory("workflow_create")).toBe("workflow");
-    expect(getToolCategory("workflow_update_stage")).toBe("workflow");
+    expect(getToolCategory("workflow_create")).toBe("other");
+    expect(getToolCategory("workflow_update_stage")).toBe("other");
+    expect(getToolCategory("artifact_read")).toBe("other");
+    expect(getToolCategory("artifact_write")).toBe("other");
     expect(getToolCategory("goal_create")).toBe("goal");
     expect(getToolCategory("goal_lock")).toBe("goal");
     expect(getToolCategory("goal_run")).toBe("goal");
     expect(getToolCategory("goal_retry")).toBe("goal");
     expect(getToolCategory("goal_check_done")).toBe("goal");
+    expect(getToolCategory("goal_artifact_read")).toBe("goal");
+    expect(getToolCategory("goal_artifact_write")).toBe("goal");
   });
 });
 
@@ -197,13 +180,16 @@ describe("isBuiltinToolName()", () => {
   test("returns true for known builtin names", () => {
     expect(isBuiltinToolName("file_read")).toBe(true);
     expect(isBuiltinToolName("grep")).toBe(true);
-    expect(isBuiltinToolName("workflow_update_stage")).toBe(true);
+    expect(isBuiltinToolName("workflow_update_stage")).toBe(false);
+    expect(isBuiltinToolName("artifact_read")).toBe(false);
     expect(isBuiltinToolName("ast_grep_replace")).toBe(true);
     expect(isBuiltinToolName("goal_create")).toBe(true);
     expect(isBuiltinToolName("goal_lock")).toBe(true);
     expect(isBuiltinToolName("goal_run")).toBe(true);
     expect(isBuiltinToolName("goal_retry")).toBe(true);
     expect(isBuiltinToolName("goal_check_done")).toBe(true);
+    expect(isBuiltinToolName("goal_artifact_read")).toBe(true);
+    expect(isBuiltinToolName("goal_artifact_write")).toBe(true);
   });
 
   test("returns false for unknown names", () => {
@@ -215,7 +201,7 @@ describe("isBuiltinToolName()", () => {
   test("acts as a type guard narrowing to BuiltinToolName", () => {
     const name: string = "file_read";
     if (isBuiltinToolName(name)) {
-      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "workflow" | "goal" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
+      const cat: "fileRead" | "fileWrite" | "search" | "git" | "shell" | "interaction" | "lsp" | "web" | "delegation" | "skill" | "memory" | "goal" | "mcp" | "other" = TOOL_CATEGORY_MAP[name];
       expect(cat).toBe("fileRead");
     }
   });
