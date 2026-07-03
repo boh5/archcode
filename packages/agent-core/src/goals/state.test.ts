@@ -261,6 +261,33 @@ describe("GoalStateManager", () => {
     expect((await manager.updateLastError(created.id, "failed tests")).lastError).toBe("failed tests");
   });
 
+  test("updateTokenBudget overwrites the persisted token budget", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const created = await manager.create("project-a", "Budget", "architect");
+    const firstBudget = {
+      status: "ok" as const,
+      inputTokens: 10,
+      outputTokens: 5,
+      reasoningTokens: 1,
+      cachedInputTokens: 2,
+      totalTokens: 15,
+      updatedAt: new Date().toISOString(),
+    };
+    const secondBudget = {
+      ...firstBudget,
+      status: "warning" as const,
+      inputTokens: 20,
+      outputTokens: 10,
+      totalTokens: 30,
+    };
+
+    await manager.updateTokenBudget(created.id, firstBudget);
+    const updated = await manager.updateTokenBudget(created.id, secondBudget);
+
+    expect(updated.tokenBudget).toEqual(secondBudget);
+    expect((await manager.read(created.id)).tokenBudget).toEqual(secondBudget);
+  });
+
   test("updateSessionIds updates mainSessionId and childSessionIds", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await manager.create("project-a", "Sessions", "architect");

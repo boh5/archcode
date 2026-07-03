@@ -7,9 +7,14 @@ import type {
   ApprovalPoint as ProtocolApprovalPoint,
   DoneCondition as ProtocolDoneCondition,
   DoneResult as ProtocolDoneResult,
+  GoalArtifactFile as ProtocolGoalArtifactFile,
   GoalPhase as ProtocolGoalPhase,
+  GoalReviewReport as ProtocolGoalReviewReport,
   GoalState as ProtocolGoalState,
   GoalStatus as ProtocolGoalStatus,
+  GoalTokenBudgetState as ProtocolGoalTokenBudgetState,
+  GoalRetryState as ProtocolGoalRetryState,
+  GoalRepairContext as ProtocolGoalRepairContext,
   RetryPolicy as ProtocolRetryPolicy,
 } from "@archcode/protocol";
 
@@ -129,7 +134,113 @@ export const DoneResultSchema = z.strictObject({
   passed: z.boolean(),
   evidence: z.string(),
   checkedAt: z.string(),
+  specCompliance: z.lazy(() => GoalSpecComplianceEvidenceSchema).optional(),
+  review: z.lazy(() => GoalReviewReportSchema).optional(),
 }) satisfies z.ZodType<ProtocolDoneResult>;
+
+export const GoalArtifactNameSchema = z.enum([
+  "plan.md",
+  "build.md",
+  "review.md",
+  "spec-compliance.md",
+  "approvals.md",
+  "budget.md",
+  "retry-log.md",
+  "final-report.md",
+]);
+
+export const GoalArtifactFileSchema = z.strictObject({
+  name: GoalArtifactNameSchema,
+  path: z.string().trim().min(1),
+  mediaType: z.literal("text/markdown"),
+  updatedAt: z.string().optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  sha256: z.string().optional(),
+}) satisfies z.ZodType<ProtocolGoalArtifactFile>;
+
+export const GoalSpecComplianceCriterionEvidenceSchema = z.strictObject({
+  criterionId: z.string().trim().min(1),
+  criterion: z.string().trim().min(1),
+  compliant: z.boolean(),
+  status: z.enum(["satisfied", "failed"]).optional(),
+  evidence: z.array(z.string()),
+  artifactNames: z.array(GoalArtifactNameSchema).optional(),
+  commandRefs: z.array(z.string().trim().min(1)).optional(),
+  resultRefs: z.array(z.string().trim().min(1)).optional(),
+  fileRefs: z.array(z.string().trim().min(1)).optional(),
+  repairGuidance: z.string().trim().min(1).optional(),
+});
+
+export const GoalSpecComplianceEvidenceSchema = z.strictObject({
+  checkedAt: z.string(),
+  specPath: z.string().trim().min(1).optional(),
+  summary: z.string(),
+  criteria: z.array(GoalSpecComplianceCriterionEvidenceSchema),
+});
+
+export const GoalReviewReportSchema = z.strictObject({
+  reviewerAgent: z.string().trim().min(1),
+  outcome: z.enum(["DONE", "NOT_DONE"]),
+  reviewedAt: z.string(),
+  summary: z.string(),
+  criteria: z.array(GoalSpecComplianceCriterionEvidenceSchema),
+}) satisfies z.ZodType<ProtocolGoalReviewReport>;
+
+export const GoalRepairIssueSchema = z.strictObject({
+  conditionId: z.string().trim().min(1),
+  evidenceSummary: z.string(),
+  repairGuidance: z.string().trim().min(1),
+  repairTarget: z.string().trim().min(1).optional(),
+  implicatedFiles: z.array(z.string().trim().min(1)).optional(),
+  failingCommands: z.array(z.string().trim().min(1)).optional(),
+  resultSummaries: z.array(z.string().trim().min(1)).optional(),
+});
+
+export const GoalRepairContextSchema = z.strictObject({
+  generatedAt: z.string(),
+  summary: z.string(),
+  issues: z.array(GoalRepairIssueSchema),
+}) satisfies z.ZodType<ProtocolGoalRepairContext>;
+
+export const GoalTokenBudgetStateSchema = z.strictObject({
+  status: z.enum(["ok", "warning", "exceeded", "paused"]),
+  maxTokens: z.number().int().nonnegative().optional(),
+  warningThresholdTokens: z.number().int().nonnegative().optional(),
+  warningApprovalPoint: z.string().trim().min(1).optional(),
+  warningApprovalThresholdTokens: z.number().int().nonnegative().optional(),
+  warningApprovedAt: z.string().optional(),
+  warningApprovedTotalTokens: z.number().int().nonnegative().optional(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  totalTokens: z.number().int().nonnegative(),
+  updatedAt: z.string(),
+}) satisfies z.ZodType<ProtocolGoalTokenBudgetState>;
+
+export const GoalRetryFailureMetadataSchema = z.strictObject({
+  failedAt: z.string(),
+  errorKind: z.string().trim().min(1),
+  message: z.string(),
+  phase: GoalPhaseSchema.optional(),
+});
+
+export const GoalRetryAttemptMetadataSchema = z.strictObject({
+  attempt: z.number().int().nonnegative(),
+  status: z.enum(["scheduled", "running", "failed", "succeeded", "escalated"]),
+  scheduledAt: z.string().optional(),
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  nextRetryAt: z.string().optional(),
+  failure: GoalRetryFailureMetadataSchema.optional(),
+});
+
+export const GoalRetryStateSchema = z.strictObject({
+  retryCount: z.number().int().nonnegative(),
+  nextRetryAt: z.string().optional(),
+  lastFailure: GoalRetryFailureMetadataSchema.optional(),
+  lastAttempt: GoalRetryAttemptMetadataSchema.optional(),
+}) satisfies z.ZodType<ProtocolGoalRetryState>;
 
 export const GoalStateSchema = z.strictObject({
   id: GoalUuidSchema,
@@ -142,6 +253,11 @@ export const GoalStateSchema = z.strictObject({
   reviewerAgent: z.string().trim().min(1),
   retryPolicy: RetryPolicySchema,
   retryCount: z.number().int().nonnegative().default(0),
+  retryState: GoalRetryStateSchema.optional(),
+  tokenBudget: GoalTokenBudgetStateSchema.optional(),
+  artifacts: z.array(GoalArtifactFileSchema).optional(),
+  reviewReport: GoalReviewReportSchema.optional(),
+  repairContext: GoalRepairContextSchema.optional(),
   approvalPoints: z.array(ApprovalPointSchema),
   author: z.string().trim().min(1),
   lockedBy: z.string().trim().min(1).optional(),
@@ -160,6 +276,8 @@ export type DoneResult = ProtocolDoneResult;
 export type RetryPolicy = ProtocolRetryPolicy;
 export type ApprovalPoint = ProtocolApprovalPoint;
 export type GoalState = ProtocolGoalState;
+export type GoalTokenBudgetState = ProtocolGoalTokenBudgetState;
+export type GoalRepairContext = ProtocolGoalRepairContext;
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 3,
@@ -403,6 +521,33 @@ export class GoalStateManager {
     const updated = GoalStateSchema.parse({
       ...state,
       lastError: error,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async recordReviewOutcome(
+    goalId: string,
+    reviewReport: ProtocolGoalReviewReport,
+    repairContext?: GoalRepairContext,
+  ): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      reviewReport: GoalReviewReportSchema.parse(reviewReport),
+      repairContext: repairContext ? GoalRepairContextSchema.parse(repairContext) : undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateTokenBudget(goalId: string, budget: GoalTokenBudgetState): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      tokenBudget: GoalTokenBudgetStateSchema.parse(budget),
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);
