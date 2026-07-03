@@ -21,12 +21,6 @@ import {
   TOOL_ASK_USER,
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
-  TOOL_WORKFLOW_CREATE,
-  TOOL_WORKFLOW_READ,
-  TOOL_WORKFLOW_UPDATE_STAGE,
-  TOOL_WORKFLOW_TASK_CHECK,
-  TOOL_ARTIFACT_READ,
-  TOOL_ARTIFACT_WRITE,
   TOOL_AST_GREP_SEARCH,
   TOOL_AST_GREP_REPLACE,
   TOOL_WAIT_FOR_REMINDER,
@@ -49,7 +43,6 @@ import {
   Handshake,
   Zap,
   Brain,
-  ListTodo,
   Plug,
   CircleQuestionMark,
   Target,
@@ -76,7 +69,6 @@ const CATEGORY_ICONS: Record<ToolCategory, LucideIcon> = {
   delegation: Handshake,
   skill: Zap,
   memory: Brain,
-  workflow: ListTodo,
   goal: Target,
   mcp: Plug,
   other: CircleQuestionMark,
@@ -224,24 +216,6 @@ export function getToolSummary(toolName: string, input: unknown): ToolSummary {
     return { icon, primary: topic ?? extractPath(obj) ?? "—" };
   }
 
-  // Workflow tools
-  if (toolName === TOOL_WORKFLOW_CREATE || toolName === TOOL_WORKFLOW_READ || toolName === TOOL_WORKFLOW_UPDATE_STAGE || toolName === TOOL_WORKFLOW_TASK_CHECK) {
-    const name = typeof obj.name === "string" ? obj.name : undefined;
-    return { icon, primary: name ?? "—" };
-  }
-
-  // Artifact tools
-  if (toolName === TOOL_ARTIFACT_READ || toolName === TOOL_ARTIFACT_WRITE) {
-    const kind = typeof obj.kind === "string" ? obj.kind : undefined;
-    const name = typeof obj.name === "string" ? obj.name : undefined;
-    const path = typeof obj.path === "string" ? obj.path : undefined;
-    const primary = kind ?? name ?? path ?? "—";
-    if (toolName === TOOL_ARTIFACT_WRITE && typeof obj.content === "string") {
-      return { icon, primary, secondary: summarizeContent(obj.content) };
-    }
-    return { icon, primary };
-  }
-
   // Skill tools
   if (toolName === TOOL_SKILL_LIST || toolName === TOOL_SKILL_READ) {
     const skillName = typeof obj.name === "string" ? obj.name : undefined;
@@ -298,12 +272,6 @@ const DETAIL_FIELDS_BY_TOOL: Partial<Record<BuiltinToolName, string[]>> = {
   [TOOL_ASK_USER]: ["question"],
   [TOOL_MEMORY_READ]: ["topic", "path"],
   [TOOL_MEMORY_WRITE]: ["topic", "path"],
-  [TOOL_WORKFLOW_CREATE]: ["name"],
-  [TOOL_WORKFLOW_READ]: ["name"],
-  [TOOL_WORKFLOW_UPDATE_STAGE]: ["name", "stage"],
-  [TOOL_WORKFLOW_TASK_CHECK]: ["name"],
-  [TOOL_ARTIFACT_READ]: ["workflowId", "kind", "name", "path"],
-  [TOOL_ARTIFACT_WRITE]: ["workflowId", "kind", "name", "path"],
   [TOOL_SKILL_LIST]: [],
   [TOOL_SKILL_READ]: ["name"],
   [TOOL_WAIT_FOR_REMINDER]: [],
@@ -371,9 +339,6 @@ export function formatToolInputDetails(
 
     // Content-like fields: always show stats only
     if (toolName === TOOL_FILE_WRITE && typeof obj.content === "string") {
-      result.content = summarizeContent(obj.content);
-    }
-    if (toolName === TOOL_ARTIFACT_WRITE && typeof obj.content === "string") {
       result.content = summarizeContent(obj.content);
     }
     if (toolName === TOOL_MEMORY_WRITE && typeof obj.content === "string") {

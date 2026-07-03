@@ -23,8 +23,8 @@ import {
   Handshake,
   Zap,
   Brain,
-  ListTodo,
   Plug,
+  Target,
   CircleQuestionMark,
 } from "lucide-react";
 
@@ -41,7 +41,7 @@ describe("getToolIcon", () => {
     expect(getToolIcon("delegation")).toBe(Handshake);
     expect(getToolIcon("skill")).toBe(Zap);
     expect(getToolIcon("memory")).toBe(Brain);
-    expect(getToolIcon("workflow")).toBe(ListTodo);
+    expect(getToolIcon("goal")).toBe(Target);
     expect(getToolIcon("mcp")).toBe(Plug);
     expect(getToolIcon("other")).toBe(CircleQuestionMark);
   });
@@ -158,12 +158,11 @@ describe("getToolSummary", () => {
     expect(result.primary).toBe("just a string");
   });
 
-  test("artifact_write returns content stats", () => {
+  test("artifact_write is treated as an unknown legacy tool", () => {
     const content = "a".repeat(300);
-    const result = getToolSummary("artifact_write", { workflowId: "wf-1", kind: "PRD", content });
-    expect(result.primary).toBe("PRD");
-    expect(result.secondary).toContain("chars");
-    expect(result.secondary).toContain("lines");
+    const result = getToolSummary("artifact_write", { legacyId: "wf-1", kind: "PRD", content });
+    expect(result.primary).toBe("wf-1");
+    expect(result.secondary).toBeUndefined();
   });
 
   test("truncates long primary values", () => {
@@ -191,13 +190,15 @@ describe("formatToolInputDetails", () => {
     expect(result!.content).not.toContain("aaa");
   });
 
-  test("artifact_write shows content stats only", () => {
+  test("artifact_write details use unknown-tool fallback", () => {
     const content = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
-    const result = formatToolInputDetails("artifact_write", { workflowId: "wf-1", kind: "PRD", content });
+    const result = formatToolInputDetails("artifact_write", { legacyId: "wf-1", kind: "PRD", content });
     expect(result).not.toBeNull();
+    expect(result!.legacyId).toBe("wf-1");
     expect(result!.kind).toBe("PRD");
     expect(result!.content).toContain("chars");
     expect(result!.content).toContain("lines");
+    expect(result!.content).not.toContain("line1");
   });
 
   test("file_edit shows edits count and per-edit stats", () => {
