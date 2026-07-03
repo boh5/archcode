@@ -7,7 +7,7 @@ import { resolveProject } from "../resolve";
 const HitlResponseBodySchema = z.strictObject({
   decision: z.string().trim().min(1).optional(),
   answers: z.unknown().optional(),
-  verdict: z.enum(["approve", "reject", "request_changes"]).optional(),
+  outcome: z.enum(["DONE", "NOT_DONE"]).optional(),
   comment: z.string().optional(),
   data: z.record(z.string(), z.unknown()).optional(),
 });
@@ -21,17 +21,35 @@ type HitlRequest = {
   sessionId: string;
   kind: "question" | "approval" | "review";
   payload: unknown;
+  displayPayload?: unknown;
+  approvalKey?: string;
   trigger: {
     projectSlug?: string;
     goalId?: string;
     loopId?: string;
     source?: string;
+    approvalPoint?: string;
+    toolCallId?: string;
     timeoutMs?: number;
   };
   createdAt: number;
 };
 
-type DashboardHitlRequest = HitlRequest & {
+type HitlDisplayPayload = {
+  title: string;
+  summary?: string;
+  fields?: Array<{ label: string; value: string }>;
+  redacted: true;
+};
+
+type DashboardHitlRequest = {
+  hitlId: string;
+  sessionId: string;
+  kind: HitlRequest["kind"];
+  trigger: HitlRequest["trigger"];
+  createdAt: number;
+  displayPayload?: HitlDisplayPayload;
+  approvalKey?: string;
   projectSlug: string;
   projectName: string;
   status: "pending";
@@ -51,22 +69,12 @@ export function createHitlRoutes(runtime: AgentRuntime, scope: HitlRouteScope = 
 
     app.post("/hitl/:id/respond", async (c) => {
       const hitlId = requiredParam(c.req.param("id"), "id");
-      const body = await readJsonBody(c.req.json(), HitlResponseBodySchema);
-      const found = await findPendingHitl(runtime, hitlId);
-      if (!found) throw hitlNotFound(hitlId);
-
-      if (!found.context.hitl.respond(hitlId, body)) throw hitlNotFound(hitlId);
-      return c.json({ ok: true, hitlId });
+      throw projectScopedHitlMutationRequired(hitlId);
     });
 
     app.post("/hitl/:id/cancel", async (c) => {
       const hitlId = requiredParam(c.req.param("id"), "id");
-      const body = await readOptionalJsonBody(c.req.json(), HitlCancelBodySchema);
-      const found = await findPendingHitl(runtime, hitlId);
-      if (!found) throw hitlNotFound(hitlId);
-
-      if (!found.context.hitl.cancel(hitlId, body.reason)) throw hitlNotFound(hitlId);
-      return c.json({ ok: true, hitlId });
+      throw projectScopedHitlMutationRequired(hitlId);
     });
   }
 
@@ -76,6 +84,28 @@ export function createHitlRoutes(runtime: AgentRuntime, scope: HitlRouteScope = 
       const context = await runtime.contextResolver.resolve(project.workspaceRoot);
       const hitl = context.hitl.listPending(project.slug).map((request) => withProject(request as HitlRequest, project));
       return c.json({ hitl });
+    });
+
+    app.post("/:slug/hitl/:id/respond", async (c) => {
+      const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+      const hitlIdentifier = requiredParam(c.req.param("id"), "id");
+      const body = await readJsonBody(c.req.json(), HitlResponseBodySchema);
+      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+      const hitlId = resolveProjectScopedHitlId(context.hitl.listPending(project.slug) as HitlRequest[], hitlIdentifier);
+
+      if (hitlId === undefined || !context.hitl.respond(hitlId, body, project.slug)) throw hitlNotFound(hitlIdentifier);
+      return c.json({ ok: true, hitlId });
+    });
+
+    app.post("/:slug/hitl/:id/cancel", async (c) => {
+      const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+      const hitlIdentifier = requiredParam(c.req.param("id"), "id");
+      const body = await readOptionalJsonBody(c.req.json(), HitlCancelBodySchema);
+      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+      const hitlId = resolveProjectScopedHitlId(context.hitl.listPending(project.slug) as HitlRequest[], hitlIdentifier);
+
+      if (hitlId === undefined || !context.hitl.cancel(hitlId, body.reason, project.slug)) throw hitlNotFound(hitlIdentifier);
+      return c.json({ ok: true, hitlId });
     });
   }
 
@@ -95,25 +125,50 @@ async function aggregatePendingHitl(runtime: AgentRuntime): Promise<DashboardHit
   return hitl;
 }
 
-async function findPendingHitl(runtime: AgentRuntime, hitlId: string): Promise<{ context: Awaited<ReturnType<AgentRuntime["contextResolver"]["resolve"]>> } | undefined> {
-  for (const project of await listProjects(runtime)) {
-    try {
-      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-      if (context.hitl.has(hitlId)) return { context };
-    } catch {
-      // Corrupt projects are skipped during global HITL lookup.
-    }
-  }
-  return undefined;
-}
-
 function withProject(request: HitlRequest, project: ProjectInfo): DashboardHitlRequest {
   return {
-    ...request,
+    hitlId: request.hitlId,
+    sessionId: request.sessionId,
+    kind: request.kind,
+    trigger: request.trigger,
+    createdAt: request.createdAt,
+    displayPayload: normalizeDisplayPayload(request.displayPayload),
+    approvalKey: request.approvalKey,
     projectSlug: project.slug,
     projectName: project.name,
     status: "pending",
   };
+}
+
+function normalizeDisplayPayload(displayPayload: unknown): HitlDisplayPayload | undefined {
+  if (displayPayload === undefined || displayPayload === null || typeof displayPayload !== "object") return undefined;
+  const payload = displayPayload as Record<string, unknown>;
+  if (typeof payload.title !== "string" || payload.redacted !== true) return undefined;
+
+  const fields = Array.isArray(payload.fields)
+    ? payload.fields.flatMap((field) => {
+      if (field === null || typeof field !== "object") return [];
+      const entry = field as Record<string, unknown>;
+      return typeof entry.label === "string" && typeof entry.value === "string"
+        ? [{ label: entry.label, value: entry.value }]
+        : [];
+    })
+    : undefined;
+
+  return {
+    title: payload.title,
+    summary: typeof payload.summary === "string" ? payload.summary : undefined,
+    fields: fields === undefined || fields.length === 0 ? undefined : fields,
+    redacted: true,
+  };
+}
+
+function resolveProjectScopedHitlId(pendingRequests: HitlRequest[], identifier: string): string | undefined {
+  const directMatch = pendingRequests.find((request) => request.hitlId === identifier || request.approvalKey === identifier);
+  if (directMatch) return directMatch.hitlId;
+
+  const approvalPointMatches = pendingRequests.filter((request) => request.trigger.approvalPoint === identifier);
+  return approvalPointMatches.length === 1 ? approvalPointMatches[0]!.hitlId : undefined;
 }
 
 function parseHitlStatusFilter(status: string | undefined): "pending" {
@@ -161,4 +216,12 @@ async function listProjects(runtime: AgentRuntime): Promise<ProjectInfo[]> {
 
 function hitlNotFound(hitlId: string): ServerError {
   return new ServerError("QUESTION_NOT_FOUND", `HITL request not found: ${hitlId}`, 404);
+}
+
+function projectScopedHitlMutationRequired(hitlId: string): ServerError {
+  return new ServerError(
+    "PROJECT_SCOPED_HITL_REQUIRED",
+    `HITL mutation requires a project-scoped route: ${hitlId}`,
+    404,
+  );
 }
