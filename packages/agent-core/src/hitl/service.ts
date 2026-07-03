@@ -8,9 +8,11 @@ import type {
   HitlResponsePayload,
   HitlTrigger,
 } from "./types";
+import { DurableHitlQueue } from "./durable-queue";
 
 interface PendingHitl {
   request: HitlRequest;
+  promise: Promise<HitlResponse>;
   resolve(response: HitlResponse): void;
   timeout?: ReturnType<typeof setTimeout>;
   cleanupAbortListener?(): void;
@@ -22,17 +24,23 @@ const SHUTDOWN_REASON = "Shutdown";
 const TIMEOUT_REASON = "Timed out";
 
 export class HitlService {
-  readonly #pending = new Map<string, PendingHitl>();
+  readonly #pendingResolvers = new Map<string, PendingHitl>();
   readonly #events: HitlEventSubmitter;
+  readonly #queue: DurableHitlQueue;
 
-  constructor(events: HitlEventSubmitter = { submitHitlEvent: () => {} }) {
+  constructor(events: HitlEventSubmitter = { submitHitlEvent: () => {} }, queue = new DurableHitlQueue()) {
     this.#events = events;
+    this.#queue = queue;
   }
 
-  /**
-   * HitlService does not persist its queue. Callers (Goal state, session events)
-   * persist business outcomes.
-   */
+  async load(workspaceRoot: string): Promise<void> {
+    await this.#queue.load(workspaceRoot);
+  }
+
+  async flush(): Promise<void> {
+    await this.#queue.flush();
+  }
+
   request(
     sessionId: string,
     kind: HitlKind,
@@ -48,89 +56,115 @@ export class HitlService {
       trigger: this.#serializeTrigger(trigger),
       createdAt: Date.now(),
     };
+    const record = this.#queue.createOrReusePending(request);
+    const durableRequest = this.#queue.toRequest(record);
 
-    this.#events.submitHitlEvent(sessionId, { type: "hitl.request", ...request });
+    const existingPending = this.#pendingResolvers.get(durableRequest.hitlId);
+    if (existingPending) return existingPending.promise;
+
+    this.#events.submitHitlEvent(sessionId, { type: "hitl.request", ...durableRequest });
 
     if (trigger.abortSignal?.aborted) {
-      const response = this.#terminalResponse(request, "cancelled", ABORT_REASON);
-      this.#emitResolved(request, response);
+      const response = this.#terminalResponse(durableRequest, "cancelled", ABORT_REASON);
+      this.#queue.cancel(durableRequest.trigger.projectSlug ?? "unknown-project", durableRequest.hitlId, ABORT_REASON);
+      this.#emitResolved(durableRequest, response);
       return Promise.resolve(response);
     }
 
-    return new Promise<HitlResponse>((resolve) => {
-      const pending: PendingHitl = { request, resolve };
-
-      const onAbort = (): void => {
-        this.#resolveTerminal(hitlId, "cancelled", ABORT_REASON);
-      };
-
-      if (trigger.abortSignal) {
-        trigger.abortSignal.addEventListener("abort", onAbort, { once: true });
-        pending.cleanupAbortListener = () => trigger.abortSignal?.removeEventListener("abort", onAbort);
-      }
-
-      if (trigger.timeoutMs !== undefined) {
-        pending.timeout = setTimeout(() => {
-          this.#resolveTerminal(hitlId, "timeout", TIMEOUT_REASON);
-        }, trigger.timeoutMs);
-      }
-
-      this.#pending.set(hitlId, pending);
+    let resolvePending!: (response: HitlResponse) => void;
+    const promise = new Promise<HitlResponse>((resolve) => {
+      resolvePending = resolve;
     });
+
+    const pending: PendingHitl = {
+      request: durableRequest,
+      promise,
+      resolve: resolvePending,
+    };
+
+    const onAbort = (): void => {
+      this.#resolveTerminal(durableRequest.hitlId, "cancelled", ABORT_REASON);
+    };
+
+    if (trigger.abortSignal) {
+      trigger.abortSignal.addEventListener("abort", onAbort, { once: true });
+      pending.cleanupAbortListener = () => trigger.abortSignal?.removeEventListener("abort", onAbort);
+    }
+
+    if (durableRequest.trigger.timeoutMs !== undefined) {
+      pending.timeout = setTimeout(() => {
+        this.#resolveTerminal(durableRequest.hitlId, "timeout", TIMEOUT_REASON);
+      }, durableRequest.trigger.timeoutMs);
+    }
+
+    this.#pendingResolvers.set(durableRequest.hitlId, pending);
+    return promise;
   }
 
-  respond(hitlId: string, responsePayload: HitlResponsePayload): boolean {
-    const pending = this.#pending.get(hitlId);
-    if (!pending) return false;
+  respond(hitlId: string, responsePayload: HitlResponsePayload, projectSlug?: string): boolean {
+    const pending = this.#pendingResolvers.get(hitlId);
+    const record = this.#queue.get(hitlId);
+    if (!record) return false;
+    const responseProjectSlug = projectSlug ?? record.projectSlug;
+    const result = this.#queue.resolve(responseProjectSlug, hitlId, responsePayload);
+    if (!result.ok) return false;
 
     const response: HitlResponse = {
       hitlId,
-      kind: pending.request.kind,
+      kind: result.record.kind,
       status: "resolved",
       response: responsePayload,
     };
 
-    this.#resolvePending(hitlId, response);
+    if (pending) this.#resolvePending(hitlId, response);
+    else this.#emitResolved(this.#queue.toRequest(result.record), response);
     return true;
   }
 
-  cancel(hitlId: string, reason = DEFAULT_CANCEL_REASON): boolean {
-    return this.#resolveTerminal(hitlId, "cancelled", reason);
+  cancel(hitlId: string, reason = DEFAULT_CANCEL_REASON, projectSlug?: string): boolean {
+    return this.#resolveTerminal(hitlId, "cancelled", reason, projectSlug);
   }
 
   has(hitlId: string): boolean {
-    return this.#pending.has(hitlId);
+    return this.#queue.has(hitlId);
   }
 
   listPending(projectSlug?: string, goalId?: string, loopId?: string): HitlRequest[] {
-    const pendingRequests = Array.from(this.#pending.values()).map((pending) => pending.request);
-    return pendingRequests.filter((request) => {
-      if (projectSlug !== undefined && request.trigger.projectSlug !== projectSlug) return false;
-      if (goalId !== undefined && request.trigger.goalId !== goalId) return false;
-      if (loopId !== undefined && request.trigger.loopId !== loopId) return false;
-      return true;
-    });
+    return this.#queue.listPending(projectSlug, goalId, loopId).map((record) => this.#queue.toRequest(record));
   }
 
   shutdown(): void {
-    for (const hitlId of Array.from(this.#pending.keys())) {
+    for (const hitlId of Array.from(this.#pendingResolvers.keys())) {
       this.#resolveTerminal(hitlId, "cancelled", SHUTDOWN_REASON);
     }
   }
 
-  #resolveTerminal(hitlId: string, status: Exclude<HitlResolutionStatus, "resolved">, reason: string): boolean {
-    const pending = this.#pending.get(hitlId);
-    if (!pending) return false;
+  #resolveTerminal(
+    hitlId: string,
+    status: Exclude<HitlResolutionStatus, "resolved">,
+    reason: string,
+    projectSlug?: string,
+  ): boolean {
+    const pending = this.#pendingResolvers.get(hitlId);
+    const record = this.#queue.get(hitlId);
+    if (!record) return false;
+    const responseProjectSlug = projectSlug ?? record.projectSlug;
+    const result = status === "timeout"
+      ? this.#queue.timeout(responseProjectSlug, hitlId, reason)
+      : this.#queue.cancel(responseProjectSlug, hitlId, reason);
+    if (!result.ok) return false;
 
-    this.#resolvePending(hitlId, this.#terminalResponse(pending.request, status, reason));
+    const response = this.#terminalResponse(this.#queue.toRequest(result.record), status, reason);
+    if (pending) this.#resolvePending(hitlId, response);
+    else this.#emitResolved(this.#queue.toRequest(result.record), response);
     return true;
   }
 
   #resolvePending(hitlId: string, response: HitlResponse): void {
-    const pending = this.#pending.get(hitlId);
+    const pending = this.#pendingResolvers.get(hitlId);
     if (!pending) return;
 
-    this.#pending.delete(hitlId);
+    this.#pendingResolvers.delete(hitlId);
     this.#cleanup(pending);
     pending.resolve(response);
     this.#emitResolved(pending.request, response);

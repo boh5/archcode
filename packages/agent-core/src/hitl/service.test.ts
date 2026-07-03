@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
 import { HitlService } from "./service";
 import type { HitlEvent, HitlPayload, HitlResponsePayload, HitlTrigger } from "./types";
+
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "service");
 
 const basePayload: HitlPayload = {
   title: "Approve plan",
@@ -31,12 +36,27 @@ function createService() {
   return { service, events, sessionId: `session-${crypto.randomUUID()}` };
 }
 
+async function createLoadedService(workspaceRoot: string) {
+  const created = createService();
+  await created.service.load(workspaceRoot);
+  return created;
+}
+
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
 
 describe("HitlService", () => {
+  beforeEach(async () => {
+    await rm(TMP_ROOT, { recursive: true, force: true });
+    await mkdir(TMP_ROOT, { recursive: true });
+  });
+
+  afterAll(async () => {
+    await rm(TMP_ROOT, { recursive: true, force: true });
+  });
+
   test("request creates a pending approval and emits hitl.request", () => {
     const { service, events, sessionId } = createService();
 
@@ -223,5 +243,25 @@ describe("HitlService", () => {
 
     expect(service.respond("missing", approvePayload)).toBe(false);
     expect(service.cancel("missing")).toBe(false);
+  });
+
+  test("recreated service lists durable pending records without resuming old Promise", async () => {
+    const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
+    const first = await createLoadedService(workspaceRoot);
+    const promise = first.service.request("session-reload", "approval", basePayload, baseTrigger);
+    const requestEvent = first.events.at(0)?.event;
+    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
+    await first.service.flush();
+
+    const recreated = await createLoadedService(workspaceRoot);
+    const [pending] = recreated.service.listPending("archcode", "goal-1");
+
+    expect(pending).toMatchObject({ hitlId: requestEvent.hitlId, status: "pending" });
+    expect(recreated.service.respond(requestEvent.hitlId, approvePayload, "archcode")).toBe(true);
+    const raceResult = await Promise.race([
+      promise.then(() => "resolved"),
+      new Promise((resolve) => setTimeout(() => resolve("still-pending"), 5)),
+    ]);
+    expect(raceResult).toBe("still-pending");
   });
 });
