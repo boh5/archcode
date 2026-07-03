@@ -25,7 +25,7 @@ import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
-import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
+import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult, ToolExecutionOrigin } from "../tools/types";
 import type { Logger } from "../logger";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
@@ -66,7 +66,7 @@ export interface StartSessionExecutionInput {
   readonly sessionId: string;
   readonly userMessage: string;
   readonly agentName?: string;
-  readonly origin?: SessionExecutionOrigin;
+  readonly origin?: SessionExecutionOrigin | ToolExecutionOrigin;
   readonly maxSteps?: number;
 }
 
@@ -141,7 +141,7 @@ export class SessionExecutionManager {
       sessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
       agentName: input.agentName ?? "orchestrator",
-      origin: input.origin ?? "user_message",
+      origin: sessionExecutionOrigin(input.origin),
       abortController,
       executionToken,
       startedAt: Date.now(),
@@ -449,6 +449,7 @@ export class SessionExecutionManager {
           this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal),
         askUser: (request) => this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request),
         ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+        ...(isToolExecutionOrigin(input.origin) ? { origin: input.origin } : {}),
       });
     } catch (error) {
       if (!execution.abortController.signal.aborted) {
@@ -715,6 +716,15 @@ function childTerminalStatus(run: SessionExecutionRecord | undefined, signal: Ab
     return "cancelled";
   }
   return "failed";
+}
+
+function sessionExecutionOrigin(origin: SessionExecutionOrigin | ToolExecutionOrigin | undefined): SessionExecutionOrigin {
+  if (origin === "tool_call") return "tool_call";
+  return "user_message";
+}
+
+function isToolExecutionOrigin(origin: SessionExecutionOrigin | ToolExecutionOrigin | undefined): origin is ToolExecutionOrigin {
+  return typeof origin === "object" && origin !== null && origin.kind === "loop";
 }
 
 function sessionRoleForAgent(agentName: string): SessionRole | undefined {

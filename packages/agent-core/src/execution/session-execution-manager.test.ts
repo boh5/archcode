@@ -293,6 +293,24 @@ describe("SessionExecutionManager", () => {
     expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ maxSteps: 1 }));
   });
 
+  test("startExecution forwards loop origin to agent.run options", async () => {
+    const agent = new MockAgent("loop-origin-session", Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ "loop-origin-session": agent });
+    const origin = {
+      kind: "loop" as const,
+      loopId: crypto.randomUUID(),
+      trigger: "manual" as const,
+      mode: "act" as const,
+      approvalPolicy: "interactive" as const,
+    };
+
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "loop-origin-session", userMessage: "work", origin });
+    await execution.promise;
+
+    expect(execution.origin).toBe("user_message");
+    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ origin }));
+  });
+
   test("enforces concurrent session limit with ConcurrentSessionLimitError", () => {
     const agentOne = new MockAgent("one", new Promise(() => undefined));
     const agentTwo = new MockAgent("two", new Promise(() => undefined));
