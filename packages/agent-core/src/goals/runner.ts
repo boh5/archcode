@@ -3,6 +3,8 @@ import type {
   DoneResult,
   GoalPhase,
   GoalRepairContext,
+  GoalRetryFailureMetadata,
+  GoalRetryState,
   GoalReviewOutcome,
   GoalReviewReport,
   GoalSpecComplianceCriterionEvidence,
@@ -33,6 +35,13 @@ export interface GoalRunnerOptions {
   workspaceRoot: string;
   createSession: () => Promise<string>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
+  now?: () => Date;
+  retryDelay?: (ms: number, abort: AbortSignal) => Promise<void>;
+}
+
+export interface FailedVerificationOptions {
+  readonly abort?: AbortSignal;
+  readonly waitForBackoff?: boolean;
 }
 
 export class GoalRunnerError extends Error {
@@ -54,6 +63,8 @@ export interface GoalReviewerDoneAuthorization {
 export interface ReviewerReviewOptions {
   readonly reviewerAgent?: string;
   readonly summary?: string;
+  readonly abort?: AbortSignal;
+  readonly waitForBackoff?: boolean;
 }
 
 export class GoalReviewerAuthorizationError extends Error {
@@ -79,6 +90,8 @@ export class GoalRunner {
   readonly #workspaceRoot: string;
   readonly #createSession: () => Promise<string>;
   readonly #isSessionActive: (sessionId: string) => Promise<boolean>;
+  readonly #now: () => Date;
+  readonly #retryDelay: (ms: number, abort: AbortSignal) => Promise<void>;
 
   constructor(options: GoalRunnerOptions) {
     this.#goalStateManager = options.goalStateManager;
@@ -92,6 +105,8 @@ export class GoalRunner {
     this.#workspaceRoot = options.workspaceRoot;
     this.#createSession = options.createSession;
     this.#isSessionActive = options.isSessionActive ?? (async () => false);
+    this.#now = options.now ?? (() => new Date());
+    this.#retryDelay = options.retryDelay ?? sleepAbortable;
   }
 
   async start(goalId: string): Promise<GoalState> {
@@ -192,9 +207,9 @@ export class GoalRunner {
     await this.#goalStateManager.updateLastError(goalId, repairContext.summary);
     const failed = await this.#goalStateManager.transitionStatus(goalId, "failed");
     if (failed.retryCount >= failed.retryPolicy.maxRetries) {
-      await writeGoalFinalReport(this.#goalArtifacts, failed, repairContext.summary);
+      return this.#escalateFailedGoal(failed, repairContext.summary);
     }
-    return failed;
+    return this.#scheduleAndMaybeStartRetry(failed, repairContext.summary, options);
   }
 
   async complete(goalId: string): Promise<GoalState> {
@@ -220,7 +235,19 @@ export class GoalRunner {
     return completed;
   }
 
-  async handleFailedVerification(goalId: string, error: string): Promise<GoalState> {
+  async handleFailedVerification(
+    goalId: string,
+    error: string,
+    options: FailedVerificationOptions = {},
+  ): Promise<GoalState> {
+    return withGoalClaimLock(goalId, async () => this.#handleFailedVerificationUnlocked(goalId, error, options));
+  }
+
+  async #handleFailedVerificationUnlocked(
+    goalId: string,
+    error: string,
+    options: FailedVerificationOptions,
+  ): Promise<GoalState> {
     let current = await this.#goalStateManager.updateLastError(goalId, error);
     if (current.status !== "failed") {
       if (current.status !== "running" && current.status !== "verifying") {
@@ -230,29 +257,24 @@ export class GoalRunner {
     }
 
     if (current.retryCount >= current.retryPolicy.maxRetries) {
-      const escalated = await this.#goalStateManager.transitionStatus(goalId, "escalated");
-      await writeGoalRetryArtifact(this.#goalArtifacts, escalated, {
-        attempt: escalated.retryCount + 1,
-        status: "escalated",
-        failureSummary: error,
-        exhausted: true,
-      });
-      await writeGoalFinalReport(this.#goalArtifacts, escalated, error);
-      return escalated;
+      return this.#escalateFailedGoal(current, error);
     }
 
-    const freshSessionId = await this.#createSession();
-    current = await this.#goalStateManager.incrementRetryCount(goalId);
-    current = await this.#goalStateManager.updatePhase(goalId, "plan");
-    current = await this.#goalStateManager.updateSessionIds(goalId, freshSessionId, []);
-    const running = await this.#goalStateManager.transitionStatus(current.id, "running");
-    await writeGoalRetryArtifact(this.#goalArtifacts, running, {
-      attempt: running.retryCount,
-      status: "running",
-      failureSummary: error,
-      freshSessionId,
-    });
-    return running;
+    return this.#scheduleAndMaybeStartRetry(current, error, options);
+  }
+
+  async recoverDueScheduledRetries(workspaceRoot = this.#workspaceRoot): Promise<GoalState[]> {
+    if (workspaceRoot !== this.#workspaceRoot) {
+      throw new GoalRunnerError("recovery", `Runner is scoped to ${this.#workspaceRoot}, not ${workspaceRoot}`);
+    }
+
+    const recovered: GoalState[] = [];
+    const goals = await this.#goalStateManager.listGoals();
+    for (const goal of goals) {
+      if (!isDueScheduledRetry(goal, this.#now())) continue;
+      recovered.push(await withGoalClaimLock(goal.id, async () => this.#startScheduledRetryIfDue(goal.id)));
+    }
+    return recovered;
   }
 
   async recoverInterruptedGoals(workspaceRoot = this.#workspaceRoot): Promise<GoalState[]> {
@@ -277,7 +299,107 @@ export class GoalRunner {
       }
     }
 
-    return recovered;
+    return [...recovered, ...await this.recoverDueScheduledRetries(workspaceRoot)];
+  }
+
+  async #scheduleRetry(goal: GoalState, error: string): Promise<GoalState> {
+    const now = this.#now();
+    const scheduledAt = now.toISOString();
+    const nextRetryAt = new Date(now.getTime() + goal.retryPolicy.backoffMs).toISOString();
+    const failure = retryFailure(goal, error, scheduledAt);
+    const retryState: GoalRetryState = {
+      retryCount: goal.retryCount,
+      nextRetryAt,
+      lastFailure: failure,
+      lastAttempt: {
+        attempt: goal.retryCount + 1,
+        status: "scheduled",
+        scheduledAt,
+        nextRetryAt,
+        failure,
+      },
+    };
+    const scheduled = await this.#goalStateManager.updateRetryState(goal.id, retryState);
+    await writeGoalRetryArtifact(this.#goalArtifacts, scheduled, {
+      attempt: goal.retryCount + 1,
+      status: "scheduled",
+      failureSummary: error,
+      nextRetryAt,
+    });
+    return scheduled;
+  }
+
+  async #scheduleAndMaybeStartRetry(
+    goal: GoalState,
+    error: string,
+    options: FailedVerificationOptions,
+  ): Promise<GoalState> {
+    const scheduled = await this.#scheduleRetry(goal, error);
+    if (options.waitForBackoff === false) return scheduled;
+    if (scheduled.retryPolicy.backoffMs <= 0) {
+      return this.#startScheduledRetryIfDue(goal.id);
+    }
+
+    const abort = options.abort ?? new AbortController().signal;
+    await this.#retryDelay(delayUntil(scheduled.retryState?.nextRetryAt, this.#now()), abort);
+    if (abort.aborted) return this.#goalStateManager.read(goal.id);
+    return this.#startScheduledRetryIfDue(goal.id);
+  }
+
+  async #startScheduledRetryIfDue(goalId: string): Promise<GoalState> {
+    const current = await this.#goalStateManager.read(goalId);
+    if (current.status !== "failed") return current;
+    if (!isDueScheduledRetry(current, this.#now())) return current;
+    if (current.retryCount >= current.retryPolicy.maxRetries) {
+      return this.#escalateFailedGoal(current, current.retryState?.lastFailure?.message ?? current.lastError ?? "Retry budget exhausted");
+    }
+
+    const freshSessionId = await this.#createSession();
+    const startedAt = this.#now().toISOString();
+    const attempt = current.retryCount + 1;
+    const retryState: GoalRetryState = {
+      retryCount: attempt,
+      lastFailure: current.retryState?.lastFailure,
+      lastAttempt: {
+        attempt,
+        status: "running",
+        scheduledAt: current.retryState?.lastAttempt?.scheduledAt,
+        startedAt,
+        failure: current.retryState?.lastFailure,
+      },
+    };
+    const running = await this.#goalStateManager.startRetryAttempt(goalId, freshSessionId, retryState);
+    await writeGoalRetryArtifact(this.#goalArtifacts, running, {
+      attempt: running.retryCount,
+      status: "running",
+      failureSummary: current.retryState?.lastFailure?.message ?? current.lastError ?? "Verification failed",
+      freshSessionId,
+    });
+    return running;
+  }
+
+  async #escalateFailedGoal(goal: GoalState, error: string): Promise<GoalState> {
+    const completedAt = this.#now().toISOString();
+    const failure = retryFailure(goal, error, goal.retryState?.lastFailure?.failedAt ?? completedAt);
+    const withRetryState = await this.#goalStateManager.updateRetryState(goal.id, {
+      retryCount: goal.retryCount,
+      lastFailure: failure,
+      lastAttempt: {
+        attempt: goal.retryCount + 1,
+        status: "escalated",
+        completedAt,
+        failure,
+      },
+    });
+    const escalated = await this.#goalStateManager.transitionStatus(withRetryState.id, "escalated");
+    await writeGoalRetryArtifact(this.#goalArtifacts, escalated, {
+      attempt: escalated.retryCount + 1,
+      status: "escalated",
+      failureSummary: error,
+      exhausted: true,
+    });
+    await writeGoalFinalReport(this.#goalArtifacts, escalated, error);
+    return escalated;
   }
 
   #assertRunning(goal: GoalState): void {
@@ -408,6 +530,44 @@ function repairTargetForCondition(condition: DoneCondition): string | undefined 
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
+function retryFailure(goal: GoalState, error: string, failedAt: string): GoalRetryFailureMetadata {
+  return {
+    failedAt,
+    errorKind: goal.reviewReport?.outcome === "NOT_DONE" ? "review_not_done" : "verification_failed",
+    message: error,
+    phase: goal.phase,
+  };
+}
+
+function isDueScheduledRetry(goal: GoalState, now: Date): boolean {
+  if (goal.status !== "failed") return false;
+  if (goal.retryState?.lastAttempt?.status !== "scheduled") return false;
+  const nextRetryAt = goal.retryState.nextRetryAt;
+  if (!nextRetryAt) return false;
+  const nextRetryMs = Date.parse(nextRetryAt);
+  return Number.isFinite(nextRetryMs) && nextRetryMs <= now.getTime();
+}
+
+function delayUntil(nextRetryAt: string | undefined, now: Date): number {
+  if (!nextRetryAt) return 0;
+  const nextRetryMs = Date.parse(nextRetryAt);
+  if (!Number.isFinite(nextRetryMs)) return 0;
+  return Math.max(0, nextRetryMs - now.getTime());
+}
+
+async function sleepAbortable(ms: number, abort: AbortSignal): Promise<void> {
+  if (ms <= 0 || abort.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timeout);
+      abort.removeEventListener("abort", done);
+      resolve();
+    }
+    abort.addEventListener("abort", done, { once: true });
+  });
 }
 
 export function assertGoalReviewerDoneAuthorized(

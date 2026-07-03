@@ -372,7 +372,7 @@ describe("goal_check_done tool", () => {
     const result = await evaluateCondition(goal.doneConditions[0]!, workspaceRoot);
     await runner.recordReviewerDoneResult(goal.id, "spec-check", result);
 
-    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
 
     expect(failed.status).toBe("failed");
     expect(failed.reviewReport?.outcome).toBe("NOT_DONE");

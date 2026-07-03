@@ -22,9 +22,10 @@ export interface BudgetArtifactEvent {
 
 export interface RetryArtifactEvent {
   readonly attempt: number;
-  readonly status: "running" | "escalated";
+  readonly status: "scheduled" | "running" | "escalated";
   readonly failureSummary: string;
   readonly freshSessionId?: string;
+  readonly nextRetryAt?: string;
   readonly exhausted?: boolean;
 }
 
@@ -145,6 +146,7 @@ export async function writeGoalRetryArtifact(
     event.status,
     event.failureSummary,
     event.freshSessionId ?? "none",
+    event.nextRetryAt ?? "not scheduled",
     event.exhausted ? "retry budget exhausted" : "not exhausted",
   ]);
 
@@ -164,7 +166,7 @@ export async function writeGoalRetryArtifact(
     "## Attempts",
     "",
     table([
-      ["Recorded at", "Attempt", "Status", "Failure summary", "Fresh session", "Escalation"],
+      ["Recorded at", "Attempt", "Status", "Failure summary", "Fresh session", "Next retry at", "Escalation"],
       ...rows,
     ]),
     "",

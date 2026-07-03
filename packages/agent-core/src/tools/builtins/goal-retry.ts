@@ -35,7 +35,9 @@ export function createGoalRetryTool(): AnyToolDescriptor {
           workspaceRoot: ctx.workspaceRoot,
           createSession: async () => ctx.store.getState().sessionId,
         });
-        const goal = await runner.handleFailedVerification(input.goalId, "Retry requested by goal_retry");
+        const goal = await runner.handleFailedVerification(input.goalId, "Retry requested by goal_retry", {
+          abort: ctx.abort,
+        });
         return JSON.stringify(goal, null, 2);
       } catch (error) {
         return goalToolErrorResult(error);

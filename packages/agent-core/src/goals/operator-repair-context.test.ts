@@ -148,7 +148,7 @@ describe("Operator repair context flow", () => {
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, specCondition.id, failedAc002SpecResult());
 
-    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
     const issue = failed.repairContext?.issues[0];
 
     expect(failed.status).toBe("failed");

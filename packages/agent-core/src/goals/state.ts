@@ -278,6 +278,7 @@ export type ApprovalPoint = ProtocolApprovalPoint;
 export type GoalState = ProtocolGoalState;
 export type GoalTokenBudgetState = ProtocolGoalTokenBudgetState;
 export type GoalRepairContext = ProtocolGoalRepairContext;
+export type GoalRetryState = ProtocolGoalRetryState;
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 3,
@@ -510,6 +511,39 @@ export class GoalStateManager {
     const updated = GoalStateSchema.parse({
       ...state,
       retryCount: state.retryCount + 1,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateRetryState(goalId: string, retryState: GoalRetryState): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      retryState: GoalRetryStateSchema.parse(retryState),
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async startRetryAttempt(goalId: string, mainSessionId: string, retryState: GoalRetryState): Promise<GoalState> {
+    const state = await this.read(goalId);
+    if (state.status !== "failed") {
+      throw new GoalStateError(goalId, `Cannot start retry attempt from status ${state.status}`);
+    }
+    this.assertValidTransition(state, "running");
+    const retryCount = state.retryCount + 1;
+    const parsedRetryState = GoalRetryStateSchema.parse({ ...retryState, retryCount });
+    const updated = GoalStateSchema.parse({
+      ...state,
+      status: "running",
+      phase: "plan",
+      retryCount,
+      retryState: parsedRetryState,
+      mainSessionId,
+      childSessionIds: [],
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);

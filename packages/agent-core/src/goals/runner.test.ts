@@ -262,7 +262,7 @@ describe("GoalRunner", () => {
       await runToReview(goal.id, runner);
       await runner.recordReviewerDoneResult(goal.id, "AC-001", passingResult("AC-001"));
 
-      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
 
       expect(failed.status).toBe("failed");
       expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE" });
@@ -280,7 +280,7 @@ describe("GoalRunner", () => {
       await runner.recordReviewerDoneResult(goal.id, "AC-002", customFailingResult("AC-002", "typecheck failed"));
       await runner.recordReviewerDoneResult(goal.id, "AC-003", passingResult("AC-003"));
 
-      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
 
       expect(failed.status).toBe("failed");
       expect(failed.reviewReport?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({

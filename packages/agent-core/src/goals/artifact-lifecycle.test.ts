@@ -49,10 +49,10 @@ describe("Goal artifact lifecycle", () => {
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, "spec-check", specComplianceFailureResult());
 
-    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
-    const escalated = await runner.handleFailedVerification(goal.id, "Reviewer NOT_DONE after AC-002 failure");
+    const escalated = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", {
+      summary: "Reviewer NOT_DONE after AC-002 failure",
+    });
 
-    expect(failed.status).toBe("failed");
     expect(escalated.status).toBe("escalated");
     const review = await artifacts.readArtifact(goal.id, "review.md");
     const spec = await artifacts.readArtifact(goal.id, "spec-compliance.md");
@@ -72,7 +72,7 @@ describe("Goal artifact lifecycle", () => {
     expect(final).toContain("Final status | escalated");
     expect(final).toContain("Review outcome | NOT_DONE");
     expect(final).toContain("AC-002");
-    expect(final).toContain("Reviewer NOT_DONE after AC-002 failure");
+    expect(final).toContain("Reviewer NOT_DONE: required Done Conditions need repair (AC-002).");
   });
 
   test("DONE path writes current review, optional spec-compliance, build, and final report artifacts", async () => {
@@ -134,7 +134,7 @@ describe("Goal artifact lifecycle", () => {
     expect(retry.status).toBe("running");
     const retryLog = await artifacts.readArtifact(goal.id, "retry-log.md");
     expect(retryLog).toContain("# Retry Log");
-    expect(retryLog).toContain("| 1 | running | Tests failed on AC-003 | fresh-session-2 | not exhausted |");
+    expect(retryLog).toContain("| 1 | running | Tests failed on AC-003 | fresh-session-2 | not scheduled | not exhausted |");
   });
 
   test("approval gates append request and resolution history to approvals artifact", async () => {
@@ -160,8 +160,7 @@ describe("Goal artifact lifecycle", () => {
     const runner = createRunner();
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, "spec-check", specComplianceFailureResult());
-    await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
-    await runner.handleFailedVerification(goal.id, "AC-002 still failing");
+    await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { summary: "AC-002 still failing" });
 
     const artifactDir = join(workspaceRoot, ".archcode", "goals", goal.id, "artifacts");
     const names = (await readdir(artifactDir)).sort();
