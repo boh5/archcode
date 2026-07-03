@@ -295,7 +295,7 @@ export class ToolRegistry {
 
     ctx.permissionOutcome = "ask";
 
-    const unsatisfiedAsk = await this.findFirstUnsatisfiedAsk(askDecisions, ctx);
+    const unsatisfiedAsk = await this.findFirstUnsatisfiedAsk(askDecisions, descriptor, ctx);
     if (!unsatisfiedAsk) {
       return undefined;
     }
@@ -326,6 +326,7 @@ export class ToolRegistry {
         ...(ctx.currentDepth !== undefined ? { currentDepth: ctx.currentDepth } : {}),
         ...(unsatisfiedAsk.display ? { decisionDisplay: unsatisfiedAsk.display } : {}),
         ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
+        ...(ctx.origin ? { origin: ctx.origin } : {}),
       }, ctx.abort);
 
       if (ctx.abort.aborted || confirmation === "timeout") {
@@ -368,12 +369,13 @@ export class ToolRegistry {
 
   private async findFirstUnsatisfiedAsk(
     askDecisions: PermissionDecision[],
+    descriptor: AnyToolDescriptor,
     ctx: ToolExecutionContext,
   ): Promise<PermissionDecision | undefined> {
     for (const decision of askDecisions) {
       const approval = decision.approval;
       if (approval?.eligible === true && approval.scope) {
-        if (ctx.projectContext.approvals.hasApproval(approval.scope)) {
+        if (shouldUseProjectApprovalForAsk(descriptor, ctx) && ctx.projectContext.approvals.hasApproval(approval.scope)) {
           continue;
         }
       }
@@ -487,6 +489,18 @@ function isAllowedTool(ctx: ToolExecutionContext, name: string): boolean {
 
 function isEffectfulTool(descriptor: AnyToolDescriptor): boolean {
   return descriptor.traits.destructive || !descriptor.traits.readOnly;
+}
+
+function shouldUseProjectApprovalForAsk(
+  descriptor: AnyToolDescriptor,
+  ctx: ToolExecutionContext,
+): boolean {
+  const origin = ctx.origin;
+  if (origin?.kind === "loop" && origin.mode === "act" && isEffectfulTool(descriptor)) {
+    return false;
+  }
+
+  return true;
 }
 
 export class ResolvedToolSet {

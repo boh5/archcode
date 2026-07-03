@@ -1,13 +1,14 @@
 import type { StoreApi } from "zustand";
 import type { CommandResult } from "../commands/types";
 import type { SessionStoreState } from "../store/types";
-import type { AskUserCallback, ToolConfirmationCallback } from "../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionOrigin } from "../tools/index";
 
 export interface AgentRunOptions {
   abort?: AbortSignal;
   confirmPermission?: ToolConfirmationCallback;
   askUser?: AskUserCallback;
   maxSteps?: number;
+  origin?: ToolExecutionOrigin;
 }
 
 export interface Agent {

@@ -1,4 +1,5 @@
 import type { Schema as AiSchema } from "ai";
+import type { LoopApprovalPolicy, LoopMode, LoopRunTrigger } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -31,6 +32,14 @@ export interface ToolAttemptMetadata {
   destructive: boolean;
 }
 
+export type ToolExecutionOrigin = {
+  kind: "loop";
+  loopId: string;
+  trigger: LoopRunTrigger;
+  mode: LoopMode;
+  approvalPolicy: LoopApprovalPolicy;
+};
+
 export interface ToolExecutionContext {
   store: StoreApi<SessionStoreState>;
   storeManager: SessionStoreManager;
@@ -58,6 +67,7 @@ export interface ToolExecutionContext {
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   currentDepth?: number;
+  origin?: ToolExecutionOrigin;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
@@ -126,6 +136,7 @@ export interface ToolConfirmationRequest {
   currentDepth?: number;
   decisionDisplay?: string;
   ruleId?: string;
+  origin?: ToolExecutionOrigin;
 }
 
 export type ToolConfirmationResult =

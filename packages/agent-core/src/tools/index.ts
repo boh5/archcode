@@ -4,6 +4,7 @@ export type {
   ToolTraits,
   ToolExecutionResult,
   ToolExecutionContext,
+  ToolExecutionOrigin,
   BeforeHook,
   AfterHook,
   ToolDescriptor,

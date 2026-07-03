@@ -173,7 +173,7 @@ export class ConfiguredAgent implements Agent {
       throw new Error("Agent has been disposed");
     }
 
-    const { abort, confirm, askUser, maxSteps } = this.parseRunOptions(abortOrOptions, confirmPermission);
+    const { abort, confirm, askUser, maxSteps, origin } = this.parseRunOptions(abortOrOptions, confirmPermission);
 
     if (this.running) {
       throw new AgentRunningError();
@@ -242,6 +242,7 @@ export class ConfiguredAgent implements Agent {
             currentDepth: this.depth,
             hooks,
             ...(maxSteps === undefined ? {} : { maxSteps }),
+            ...(origin === undefined ? {} : { origin }),
           },
           currentUserMessage,
         );
@@ -313,6 +314,7 @@ export class ConfiguredAgent implements Agent {
     confirm: ToolConfirmationCallback | undefined;
     askUser: AskUserCallback | undefined;
     maxSteps: number | undefined;
+    origin: AgentRunOptions["origin"];
   } {
     if (abortOrOptions && typeof abortOrOptions === "object" && abortOrOptions instanceof AbortSignal) {
       return {
@@ -320,6 +322,7 @@ export class ConfiguredAgent implements Agent {
         confirm: confirmPermission ?? this.confirmPermission,
         askUser: this.askUserDefault,
         maxSteps: undefined,
+        origin: undefined,
       };
     }
 
@@ -330,6 +333,7 @@ export class ConfiguredAgent implements Agent {
         confirm: opts.confirmPermission ?? this.confirmPermission,
         askUser: opts.askUser ?? this.askUserDefault,
         maxSteps: opts.maxSteps,
+        origin: opts.origin,
       };
     }
 
@@ -338,6 +342,7 @@ export class ConfiguredAgent implements Agent {
       confirm: confirmPermission ?? this.confirmPermission,
       askUser: this.askUserDefault,
       maxSteps: undefined,
+      origin: undefined,
     };
   }
 

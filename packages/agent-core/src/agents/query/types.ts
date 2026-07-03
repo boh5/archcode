@@ -4,7 +4,7 @@ import type { ModelInfo } from "../../provider/model";
 import type { CommandRegistry } from "../../commands/registry";
 import type { SessionStoreManager } from "../../store/session-store-manager";
 import type { SessionStoreState } from "../../store/types";
-import type { AskUserCallback, ToolConfirmationCallback } from "../../tools/index";
+import type { AskUserCallback, ToolConfirmationCallback, ToolExecutionOrigin } from "../../tools/index";
 import type { ToolRegistry } from "../../tools/registry";
 import type { ProjectContext } from "../../projects/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../../delegation/types";
@@ -30,6 +30,7 @@ export interface QueryLoopOptions {
   abort?: AbortSignal;
   systemPrompt?: string;
   maxSteps?: number;
+  origin?: ToolExecutionOrigin;
   store: StoreApi<SessionStoreState>;
   commandRegistry?: CommandRegistry;
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;

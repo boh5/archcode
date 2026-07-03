@@ -177,6 +177,7 @@ export async function runQueryLoop(
     maxSteps = DEFAULT_MAX_STEPS,
     store,
     currentDepth,
+    origin: executionOrigin,
   } = options;
   const { beforeModelBuild, beforeModelCall, afterStepEnd, afterLoopEnd } = options.hooks ?? {};
   const abort = options.abort ?? new AbortController().signal;
@@ -390,6 +391,7 @@ export async function runQueryLoop(
         options.agentSkills,
         options.skillService,
         options.storeManager,
+        executionOrigin,
         currentDepth,
         doomTracker,
       );
@@ -895,6 +897,7 @@ async function executeToolCalls(
   agentSkills: QueryLoopOptions["agentSkills"],
   skillService: QueryLoopOptions["skillService"],
   storeManager: QueryLoopOptions["storeManager"],
+  executionOrigin: QueryLoopOptions["origin"],
   currentDepth?: number,
   doomTracker?: DoomTracker,
 ): Promise<void> {
@@ -952,6 +955,7 @@ async function executeToolCalls(
             ...(resumeChildSession ? { resumeChildSession } : {}),
             ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
+            ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
             onInputResolved(redactedInput) {
               store.getState().append({
                 type: "tool-input-resolved",
@@ -1009,6 +1013,7 @@ async function executeToolCalls(
         ...(resumeChildSession ? { resumeChildSession } : {}),
         ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
+        ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
         onInputResolved(redactedInput) {
           store.getState().append({
             type: "tool-input-resolved",
