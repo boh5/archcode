@@ -34,6 +34,11 @@ const legacyWorkflowToolPatterns = [
   /\bTOOL_WORKFLOW_(?:CREATE|READ|UPDATE_STAGE|PROPOSE_INTERACTIONS|REQUEST_INTERACTIONS|TASK_CHECK)\b/,
 ] as const;
 
+const legacyArtifactToolPatterns = [
+  /\bartifact_(?:read|write)\b/,
+  /\bTOOL_ARTIFACT_(?:READ|WRITE)\b/,
+] as const;
+
 const workflowStoragePathPatterns = [
   /["']\.archcode\/workflows\/?["']/,
   /["']\.archcode["']\s*,\s*["']workflows["']/,
@@ -190,6 +195,12 @@ function legacyWorkflowImplementationExists(): boolean {
   return existsSync(join(srcRoot, "agents/workflow")) || existsSync(join(srcRoot, "tools/builtins/workflow"));
 }
 
+function findFilesMatchingName(scopeDir: string, pattern: RegExp): string[] {
+  return findTsFiles(join(projectRoot, scopeDir))
+    .filter((file) => pattern.test(relativeFile(file)))
+    .map(relativeFile);
+}
+
 describe("Goal migration boundaries", () => {
   test("goal-facing modules do not import legacy workflow domain or workflow tools", () => {
     const scopeDirs = ["packages/agent-core/src/goals", "packages/agent-core/src/hitl"];
@@ -227,6 +238,25 @@ describe("Goal migration boundaries", () => {
     );
   });
 
+  test("production code does not reference legacy artifact tool names", () => {
+    expectNoViolations(
+      findWorkspaceTextViolations([
+        "apps/server/src",
+        "apps/web/src",
+        "packages/agent-core/src",
+      ], legacyArtifactToolPatterns),
+    );
+  });
+
+  test("web grouped tool display does not revive legacy artifact tool support", () => {
+    expectNoViolations(
+      findTextViolations(
+        readSpecificProductionSources([join(projectRoot, "apps/web/src/components/composite/GroupedToolCard.tsx")]),
+        legacyArtifactToolPatterns,
+      ),
+    );
+  });
+
   test("server app does not mount active workflow routes", () => {
     expectNoViolations(
       findTextViolations(
@@ -248,6 +278,14 @@ describe("Goal migration boundaries", () => {
         "packages/agent-core/src",
       ], workflowStoragePathPatterns),
     );
+  });
+
+  test("production source tree has no legacy workflow implementation files", () => {
+    expect([
+      ...findFilesMatchingName("packages/agent-core/src", /(^|\/)workflow/i),
+      ...findFilesMatchingName("apps/server/src", /(^|\/)workflow/i),
+      ...findFilesMatchingName("apps/web/src", /(^|\/)workflow/i),
+    ]).toEqual([]);
   });
 
   test("only GoalRunner production code claims Goal running status", () => {

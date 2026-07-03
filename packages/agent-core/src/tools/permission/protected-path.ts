@@ -34,8 +34,8 @@ export function isProtectedProjectPath(filePath: string, workspaceRoot: string):
  * Creates a permission guard that denies direct mutation of any file or
  * directory under `workspaceRoot/.archcode/**`. This protects the entire
  * `.archcode/` directory tree from being modified by ordinary file mutation
- * tools (file_write, file_edit), ensuring only internal managers (memory
- * manager, project approval manager) may mutate these paths via direct
+ * tools (file_write, file_edit), ensuring only internal managers (memory,
+ * Goal artifact, project approval managers) may mutate these paths via direct
  * filesystem APIs.
  *
  * The guard performs symlink-safe realpath resolution to prevent traversal
@@ -77,7 +77,7 @@ function denyProtectedPathMutation(): PermissionDecision {
     outcome: "deny",
     reason:
       "The .archcode/ directory is system-managed and cannot be edited directly. " +
-      "Use the appropriate internal tools (e.g., memory_write or artifact_write) to modify files in this directory.",
+      "Use the appropriate internal tools (e.g., memory_write or goal_artifact_write) to modify files in this directory.",
     errorKind: "permission-denied" as ToolErrorKind,
     errorCode: "PROTECTED_PATH_WRITE_DENIED",
   };
