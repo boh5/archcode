@@ -7,6 +7,7 @@ import { buildProjectSection } from "./sections/project";
 import { buildRoleSection } from "./sections/roles";
 import { buildSkillsSection } from "./sections/skills";
 import { buildToolSection } from "./sections/tools";
+import { buildOperatorRepairContextSection } from "../goals/operator-repair-context";
 
 /**
  * Assemble the full system prompt from context.
@@ -33,6 +34,13 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
   const memorySection = await buildMemorySection(ctx);
   if (memorySection !== null) {
     sections.push(memorySection);
+  }
+
+  const repairContextSection = buildOperatorRepairContextSection(ctx.goalRepairContext, {
+    sessionRole: ctx.sessionRole,
+  });
+  if (repairContextSection !== null) {
+    sections.push(repairContextSection);
   }
 
   if (ctx.agentsMd !== undefined) {

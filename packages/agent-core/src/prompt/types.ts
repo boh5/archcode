@@ -1,5 +1,8 @@
 import type { MemoryRoots } from "../memory";
+import type { GoalMemoryManager } from "../goals/goal-memory";
+import type { GoalRepairContext } from "@archcode/protocol";
 import type { ResolvedSkill, SkillIndexEntry } from "../skills/types";
+import type { SessionRole } from "../store/types";
 
 /**
  * Context provided to the system prompt builder.
@@ -26,6 +29,18 @@ export interface PromptContext {
 
   /** Resolved filesystem roots for project and user memory directories */
   readonly memoryRoots?: MemoryRoots;
+
+  /** Current Goal id for Goal-scoped prompt context, when this session belongs to a Goal. */
+  readonly goalId?: string;
+
+  /** Current session role; Goal memory is injected only for Plan/Build/Review roles. */
+  readonly sessionRole?: SessionRole;
+
+  /** Per-project manager for Goal-scoped memory roots. */
+  readonly goalMemory?: GoalMemoryManager;
+
+  /** Structured repair context from the previous NOT_DONE review, never raw Reviewer output. */
+  readonly goalRepairContext?: GoalRepairContext;
 
   /** Index of skills available to this agent (name, description, when_to_use, source, allowed_tools) */
   readonly availableSkills?: readonly SkillIndexEntry[];
