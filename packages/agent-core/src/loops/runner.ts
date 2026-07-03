@@ -1,14 +1,32 @@
 import type { SessionFile } from "../store/helpers";
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
+import type { GoalState } from "../goals/state";
 import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
-import type { LoopRunReport, LoopRunTrigger, LoopState } from "./state";
-import { LoopStateManager } from "./state";
+import type { LoopGoalTemplate, LoopRunReport, LoopRunTrigger, LoopState } from "./state";
+import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
 
 export interface LoopRunnerSessionRuntime {
   createSession(workspaceRoot: string, options?: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
+}
+
+export interface LoopRunnerGoalStateManager {
+  create(
+    projectId: string,
+    title: string,
+    author: string,
+    doneConditions: GoalState["doneConditions"],
+    retryPolicy: GoalState["retryPolicy"],
+    approvalPoints: GoalState["approvalPoints"],
+    reviewerAgent: string,
+  ): Promise<GoalState>;
+  lock(goalId: string, lockedBy: string): Promise<GoalState>;
+}
+
+export interface LoopRunnerGoalRuntime {
+  start(goalId: string): Promise<GoalState>;
 }
 
 export interface LoopRunnerCreateSessionOptions {
@@ -20,6 +38,8 @@ export interface LoopRunnerCreateSessionOptions {
 export interface LoopRunnerOptions {
   readonly stateManager: LoopStateManager;
   readonly runtime: LoopRunnerSessionRuntime;
+  readonly goalStateManager?: LoopRunnerGoalStateManager;
+  readonly goalRunner?: LoopRunnerGoalRuntime;
   readonly workspaceRoot: string;
   readonly projectSlug?: string;
   readonly now?: () => number;
@@ -42,6 +62,8 @@ export class LoopActiveConflictError extends Error {
 export class LoopRunner {
   readonly #stateManager: LoopStateManager;
   readonly #runtime: LoopRunnerSessionRuntime;
+  readonly #goalStateManager?: LoopRunnerGoalStateManager;
+  readonly #goalRunner?: LoopRunnerGoalRuntime;
   readonly #workspaceRoot: string;
   readonly #projectSlug: string;
   readonly #now: () => number;
@@ -50,6 +72,8 @@ export class LoopRunner {
   constructor(options: LoopRunnerOptions) {
     this.#stateManager = options.stateManager;
     this.#runtime = options.runtime;
+    this.#goalStateManager = options.goalStateManager;
+    this.#goalRunner = options.goalRunner;
     this.#workspaceRoot = options.workspaceRoot;
     this.#projectSlug = options.projectSlug ?? "";
     this.#now = options.now ?? (() => Date.now());
@@ -99,7 +123,47 @@ export class LoopRunner {
   }
 
   createSchedulerRunner(): LoopSchedulerRunner {
-    return async (input) => this.runScheduledSessionLoop(input);
+    return async (input) => input.loop.config.runKind === "goal"
+      ? this.runScheduledGoalLoop(input)
+      : this.runScheduledSessionLoop(input);
+  }
+
+  async runGoalLoop(loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
+    this.#assertGoalLoop(loopState);
+    const existing = this.#activeLoops.get(loopState.loopId);
+    if (existing !== undefined) {
+      throw new LoopActiveConflictError(loopState.loopId, trigger, existing.runId, existing.sessionId);
+    }
+
+    const current = await this.#stateManager.read(loopState.loopId);
+    this.#assertGoalLoop(current);
+    if (current.currentRun?.status === "running") {
+      throw new LoopActiveConflictError(current.loopId, trigger, current.currentRun.runId, current.currentRun.sessionId);
+    }
+
+    const startedAt = this.#now();
+    const runId = crypto.randomUUID();
+    const runningReport: LoopRunReport = {
+      runId,
+      loopId: current.loopId,
+      status: "running",
+      trigger,
+      startedAt,
+    };
+
+    this.#activeLoops.set(current.loopId, { runId });
+    let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
+    try {
+      const result = await this.#runGoal(startedState);
+      return await this.#finishRun(startedState, runningReport, result);
+    } catch (error) {
+      return await this.#finishRun(startedState, runningReport, {
+        status: "failed",
+        error: errorToMessage(error),
+      });
+    } finally {
+      this.#activeLoops.delete(current.loopId);
+    }
   }
 
   async runScheduledSessionLoop(input: LoopSchedulerRunInput): Promise<LoopSchedulerRunResult> {
@@ -114,6 +178,55 @@ export class LoopRunner {
       return await this.#runSession(input);
     } finally {
       this.#activeLoops.delete(input.loop.loopId);
+    }
+  }
+
+  async runScheduledGoalLoop(input: LoopSchedulerRunInput): Promise<LoopSchedulerRunResult> {
+    this.#assertGoalLoop(input.loop);
+    const existing = this.#activeLoops.get(input.loop.loopId);
+    if (existing !== undefined) {
+      throw new LoopActiveConflictError(input.loop.loopId, input.trigger, existing.runId, existing.sessionId);
+    }
+
+    this.#activeLoops.set(input.loop.loopId, { runId: input.runId });
+    try {
+      return await this.#runGoal(input.loop);
+    } finally {
+      this.#activeLoops.delete(input.loop.loopId);
+    }
+  }
+
+  async #runGoal(loop: LoopState): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
+    const goalStateManager = this.#requireGoalStateManager(loop.loopId);
+    const goalRunner = this.#requireGoalRunner(loop.loopId);
+    const template = snapshotGoalTemplate(loop);
+    let goalId: string | undefined;
+
+    try {
+      const draft = await goalStateManager.create(
+        loop.projectId,
+        template.title,
+        template.author,
+        template.doneConditions,
+        template.retryPolicy,
+        template.approvalPoints,
+        template.reviewerAgent,
+      );
+      goalId = draft.id;
+      const locked = await goalStateManager.lock(draft.id, template.author);
+      const started = await goalRunner.start(locked.id);
+      return {
+        status: "succeeded",
+        goalId: started.id,
+        sessionId: started.mainSessionId,
+        summary: `Goal ${started.id} started for loop "${loop.config.title}".`,
+      };
+    } catch (error) {
+      return {
+        status: "failed",
+        goalId,
+        error: errorToMessage(error),
+      };
     }
   }
 
@@ -197,9 +310,30 @@ export class LoopRunner {
   }
 
   #assertSessionLoop(loop: LoopState): void {
+    const config = LoopConfigSchema.parse(loop.config);
     if (loop.config.runKind !== "session") {
-      throw new Error(`Loop ${loop.loopId} is configured for ${loop.config.runKind} runs; session runner only handles session loops.`);
+      throw new Error(`Loop ${loop.loopId} is configured for ${config.runKind} runs; session runner only handles session loops.`);
     }
+  }
+
+  #assertGoalLoop(loop: LoopState): void {
+    const config = LoopConfigSchema.parse(loop.config);
+    if (config.runKind !== "goal") {
+      throw new Error(`Loop ${loop.loopId} is configured for ${config.runKind} runs; goal runner only handles goal loops.`);
+    }
+    if (config.goalTemplate === undefined) {
+      throw new Error(`Goal loop ${loop.loopId} requires an inline goalTemplate.`);
+    }
+  }
+
+  #requireGoalStateManager(loopId: string): LoopRunnerGoalStateManager {
+    if (this.#goalStateManager === undefined) throw new Error(`Goal loop ${loopId} requires a GoalStateManager.`);
+    return this.#goalStateManager;
+  }
+
+  #requireGoalRunner(loopId: string): LoopRunnerGoalRuntime {
+    if (this.#goalRunner === undefined) throw new Error(`Goal loop ${loopId} requires a GoalRunner.`);
+    return this.#goalRunner;
   }
 }
 
@@ -209,6 +343,14 @@ export function createLoopSchedulerRunner(options: LoopRunnerOptions): LoopSched
 
 export async function runSessionLoop(options: LoopRunnerOptions, loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
   return await new LoopRunner(options).runSessionLoop(loopState, trigger);
+}
+
+export async function runGoalLoop(options: LoopRunnerOptions, loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
+  return await new LoopRunner(options).runGoalLoop(loopState, trigger);
+}
+
+function snapshotGoalTemplate(loop: LoopState): LoopGoalTemplate {
+  return LoopGoalTemplateSchema.parse(structuredClone(loop.config.goalTemplate));
 }
 
 function buildSessionLoopPrompt(loop: LoopState): string {
