@@ -30,6 +30,7 @@ export function createGoalRetryTool(): AnyToolDescriptor {
       try {
         const runner = new GoalRunner({
           goalStateManager: ctx.projectContext.goalState,
+          goalArtifacts: ctx.projectContext.goalArtifacts,
           hitlService: ctx.projectContext.hitl,
           workspaceRoot: ctx.workspaceRoot,
           createSession: async () => ctx.store.getState().sessionId,

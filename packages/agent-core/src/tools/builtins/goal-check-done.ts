@@ -9,8 +9,12 @@ import {
   GoalInvalidIdError,
   GoalNotFoundError,
   GoalPathError,
+  GoalReviewerAuthorizationError,
+  GoalRunnerError,
   GoalStateError,
   GoalUuidSchema,
+  assertGoalReviewerDoneAuthorized,
+  recordAuthorizedReviewerDoneResult,
 } from "../../goals";
 
 const GoalCheckDoneInputSchema = z.strictObject({
@@ -30,6 +34,12 @@ export function createGoalCheckDoneTool(): AnyToolDescriptor {
       try {
         const manager = ctx.projectContext.goalState;
         const goal = await manager.read(input.goalId);
+        const authorization = {
+          agentName: ctx.agentName,
+          sessionRole: ctx.store.getState().sessionRole,
+          sessionGoalId: ctx.store.getState().goalId,
+        };
+        assertGoalReviewerDoneAuthorized(goal, authorization);
         const condition = goal.doneConditions.find((candidate) => candidate.id === input.conditionId);
         if (!condition) {
           return createToolErrorResult({
@@ -45,7 +55,7 @@ export function createGoalCheckDoneTool(): AnyToolDescriptor {
           toolName: ctx.toolName,
           toolCallId: ctx.toolCallId,
         });
-        await manager.recordDoneResult(input.goalId, input.conditionId, result);
+        await recordAuthorizedReviewerDoneResult(manager, input.goalId, input.conditionId, result, authorization);
         return JSON.stringify(result, null, 2);
       } catch (error) {
         return goalToolErrorResult(error);
@@ -57,6 +67,12 @@ export function createGoalCheckDoneTool(): AnyToolDescriptor {
 function goalToolErrorResult(error: unknown): ToolExecutionResult {
   if (error instanceof GoalNotFoundError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_NOT_FOUND", message: error.message });
+  }
+  if (error instanceof GoalReviewerAuthorizationError) {
+    return createToolErrorResult({ kind: "permission-denied", code: error.code, message: error.message });
+  }
+  if (error instanceof GoalRunnerError) {
+    return createToolErrorResult({ kind: "workspace", code: "GOAL_REVIEW_PHASE_REQUIRED", message: error.message });
   }
   if (error instanceof GoalStateError) {
     return createToolErrorResult({ kind: "workspace", code: "GOAL_INVALID_TRANSITION", message: error.message });

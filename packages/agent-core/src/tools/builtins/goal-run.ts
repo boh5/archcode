@@ -31,6 +31,7 @@ export function createGoalRunTool(): AnyToolDescriptor {
         const currentSessionId = ctx.store.getState().sessionId;
         const runner = new GoalRunner({
           goalStateManager: ctx.projectContext.goalState,
+          goalArtifacts: ctx.projectContext.goalArtifacts,
           hitlService: ctx.projectContext.hitl,
           workspaceRoot: ctx.workspaceRoot,
           createSession: async () => currentSessionId,
