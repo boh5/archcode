@@ -36,6 +36,7 @@ interface ModelAttemptOptions {
   logger: Logger;
   sessionId: string;
   agentName: string | undefined;
+  projectContext: QueryLoopOptions["projectContext"];
   beforeModelBuild: HookList<BeforeModelBuildContext>;
   beforeModelCall: HookList<BeforeModelCallContext>;
 }
@@ -116,6 +117,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
     logger,
     sessionId,
     agentName,
+    projectContext,
     beforeModelBuild,
     beforeModelCall,
   } = options;
@@ -128,7 +130,7 @@ async function runModelAttempt(options: ModelAttemptOptions): Promise<ModelAttem
   try {
     await runHooks("beforeModelBuild", beforeModelBuild, { store, modelInfo, logger, modelOptions, abort, systemPrompt }, logger, { sessionId, agentName });
     messages = store.getState().toModelMessages();
-    await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions, abort, messages }, logger, { sessionId, agentName });
+    await runHooks("beforeModelCall", beforeModelCall, { store, modelInfo, logger, modelOptions, abort, messages, projectContext }, logger, { sessionId, agentName });
     const resolved = toolRegistry.resolveForAgent(allowedTools);
     tools = resolved.descriptors.length > 0 ? resolved.toAITools() : undefined;
   } catch (err) {
@@ -238,6 +240,7 @@ export async function runQueryLoop(
         logger,
         sessionId,
         agentName,
+        projectContext: options.projectContext,
         beforeModelBuild,
         beforeModelCall,
       });
@@ -357,7 +360,7 @@ export async function runQueryLoop(
       lastText = finalized.text;
 
       store.getState().append({ type: "step-end", step: steps, finishReason: finalized.finishReason, usage: finalized.usage });
-      await runHooks("afterStepEnd", afterStepEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort }, logger, { sessionId, agentName });
+      await runHooks("afterStepEnd", afterStepEnd, { store, modelInfo, logger, modelOptions: options.modelOptions, abort, projectContext: options.projectContext }, logger, { sessionId, agentName });
 
       if (finalized.finishReason !== "tool-calls") break;
 

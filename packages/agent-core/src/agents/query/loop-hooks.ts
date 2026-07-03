@@ -21,6 +21,7 @@ export interface BeforeModelCallContext {
   logger: Logger;
   modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
+  projectContext?: ProjectContext;
   /** Mutable. Modifications only affect this LLM call, NOT persisted to store.
    *  To persist changes, use store.getState().append() with StreamEvent. */
   messages: ModelMessage[];
@@ -32,6 +33,7 @@ export interface AfterStepEndContext {
   logger: Logger;
   modelOptions?: ModelCallOptions;
   abort?: AbortSignal;
+  projectContext?: ProjectContext;
 }
 
 export interface AfterLoopEndContext {
