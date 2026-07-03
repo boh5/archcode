@@ -302,7 +302,8 @@ export type StreamEvent =
   | LlmRecoveryFailedEvent
   | CompactEvent
   | GoalStreamEvent
-  | HitlStreamEvent;
+  | HitlStreamEvent
+  | LoopStreamEvent;
 
 export const MAX_EVENTS = 10000;
 
@@ -586,6 +587,8 @@ export interface SessionProjection {
   goals?: Record<string, GoalState>;
   /** Pending HITL requests. Append-only via hitl.request, updated via hitl.resolved. */
   hitlRequests?: HitlRequest[];
+  /** Loop states indexed by loopId. Populated by loop.state_change events. */
+  loops?: Record<string, LoopState>;
 }
 
 export interface Project {
@@ -621,6 +624,8 @@ export interface SessionSummary {
   title?: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
+  /** Loop this session belongs to. */
+  loopId?: string;
   createdAt: number;
   lastUpdatedAt?: number;
 }
@@ -658,6 +663,8 @@ export interface Session {
   title?: string | null;
   /** Goal this session belongs to. */
   goalId?: string;
+  /** Loop this session belongs to. */
+  loopId?: string;
   createdAt: number;
   updatedAt?: number;
   lastUpdatedAt?: number;
@@ -1010,6 +1017,91 @@ export interface HitlRecord {
 export type HitlStreamEvent =
   | { type: "hitl.request"; request: HitlRequest }
   | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "timeout">; response?: HitlResponse };
+
+// ─── Loop Types ───
+
+export type LoopId = string;
+
+export type LoopStatus = "active" | "paused" | "disabled" | "error";
+
+export type LoopScheduleSpec =
+  | { kind: "manual" }
+  | { kind: "interval"; everyMs: number };
+
+export type LoopRunKind = "session" | "goal";
+
+export type LoopMode = "report" | "act";
+
+export type LoopApprovalPolicy = "interactive" | "explicit_per_run";
+
+export interface LoopLimits {
+  maxIterationsPerRun: number;
+}
+
+export interface LoopGoalTemplate {
+  title: string;
+  author: string;
+  doneConditions: DoneCondition[];
+  retryPolicy: RetryPolicy;
+  approvalPoints: ApprovalPoint[];
+  reviewerAgent: string;
+  prompt?: string;
+  instructions?: string;
+}
+
+export interface LoopConfig {
+  title: string;
+  description?: string;
+  schedule: LoopScheduleSpec;
+  runKind: LoopRunKind;
+  mode: LoopMode;
+  approvalPolicy: LoopApprovalPolicy;
+  limits: LoopLimits;
+  taskPrompt?: string;
+  instructions?: string;
+  goalTemplate?: LoopGoalTemplate;
+  sourcePreset?: string;
+}
+
+export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled";
+
+export type LoopRunTrigger = "manual" | "interval";
+
+export interface LoopRunReport {
+  runId: string;
+  loopId: string;
+  status: LoopRunReportStatus;
+  trigger: LoopRunTrigger;
+  startedAt: number;
+  endedAt?: number;
+  sessionId?: string;
+  goalId?: string;
+  summary?: string;
+  error?: string;
+  skippedReason?: string;
+}
+
+export interface LoopState {
+  loopId: string;
+  projectId: string;
+  config: LoopConfig;
+  status: LoopStatus;
+  createdAt: number;
+  updatedAt: number;
+  lastRun?: LoopRunReport;
+  currentRun?: LoopRunReport;
+  nextRunAt?: number;
+  runCount: number;
+  stateVersion: number;
+  generatedStateSummary?: string;
+  readinessScore?: null;
+}
+
+// ─── Loop Stream Events ───
+
+export type LoopStreamEvent =
+  | { type: "loop.state_change"; loopId: string; status: LoopStatus; state: LoopState }
+  | { type: "loop.run_appended"; loopId: string; report: LoopRunReport };
 
 export interface CommandResult {
   success: boolean;

@@ -22,6 +22,17 @@ import type {
   TextDeltaEvent,
   ToolAttemptEvent,
   SessionEventPayload,
+  LoopConfig,
+  LoopStatus,
+  LoopScheduleSpec,
+  LoopRunReport,
+  LoopRunReportStatus,
+  LoopRunTrigger,
+  LoopGoalTemplate,
+  LoopState,
+  LoopStreamEvent,
+  SessionSummary,
+  Session,
 } from "./types";
 
 function serializeRoundTrip<T>(value: T): T {
@@ -671,5 +682,388 @@ describe("Goal/HITL stream events", () => {
     expect(runningEvent.status).toBe("running");
     expect(pausedEvent.status).toBe("paused");
     expect(escalatedEvent.status).toBe("escalated");
+  });
+});
+
+describe("Loop types", () => {
+  function serializeRoundTrip<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  test("LoopStatus values are correct", () => {
+    const statuses: LoopStatus[] = ["active", "paused", "disabled", "error"];
+    expect(statuses).toHaveLength(4);
+    expect(statuses).toContain("active");
+    expect(statuses).toContain("paused");
+    expect(statuses).toContain("disabled");
+    expect(statuses).toContain("error");
+  });
+
+  test("LoopScheduleSpec accepts manual and interval", () => {
+    const manual: LoopScheduleSpec = { kind: "manual" };
+    const interval: LoopScheduleSpec = { kind: "interval", everyMs: 60000 };
+
+    expect(serializeRoundTrip(manual)).toEqual(manual);
+    expect(serializeRoundTrip(interval)).toEqual(interval);
+    expect(interval.everyMs).toBe(60000);
+  });
+
+  test("LoopScheduleSpec rejects cron at type level", () => {
+    // @ts-expect-error - "cron" is not a valid Phase 3 schedule kind
+    const invalid: LoopScheduleSpec = { kind: "cron", expression: "* * * * *" };
+    expect(invalid).toBeDefined();
+  });
+
+  test("LoopRunReportStatus values are correct", () => {
+    const statuses: LoopRunReportStatus[] = ["running", "succeeded", "failed", "skipped", "cancelled"];
+    expect(statuses).toHaveLength(5);
+    expect(statuses).toContain("running");
+    expect(statuses).toContain("succeeded");
+    expect(statuses).toContain("failed");
+    expect(statuses).toContain("skipped");
+    expect(statuses).toContain("cancelled");
+  });
+
+  test("LoopRunTrigger values are correct", () => {
+    const triggers: LoopRunTrigger[] = ["manual", "interval"];
+    expect(triggers).toHaveLength(2);
+    expect(triggers).toContain("manual");
+    expect(triggers).toContain("interval");
+  });
+
+  test("LoopRunReport serializes round-trip", () => {
+    const report: LoopRunReport = {
+      runId: "run-1",
+      loopId: "loop-1",
+      status: "succeeded",
+      trigger: "manual",
+      startedAt: 1000,
+      endedAt: 2000,
+      sessionId: "session-1",
+      summary: "Completed successfully",
+    };
+
+    const parsed = serializeRoundTrip(report);
+    expect(parsed).toEqual(report);
+    expect(parsed.status).toBe("succeeded");
+    expect(parsed.trigger).toBe("manual");
+    expect(parsed.sessionId).toBe("session-1");
+  });
+
+  test("LoopRunReport with error and skippedReason serializes", () => {
+    const report: LoopRunReport = {
+      runId: "run-2",
+      loopId: "loop-1",
+      status: "skipped",
+      trigger: "interval",
+      startedAt: 1000,
+      skippedReason: "Loop already active",
+    };
+
+    const parsed = serializeRoundTrip(report);
+    expect(parsed).toEqual(report);
+    expect(parsed.status).toBe("skipped");
+    expect(parsed.skippedReason).toBe("Loop already active");
+  });
+
+  test("LoopGoalTemplate has minimal snapshot fields", () => {
+    const template: LoopGoalTemplate = {
+      title: "Implement feature",
+      author: "orchestrator",
+      doneConditions: [
+        { id: "dc-1", kind: "tests_pass", params: { command: "bun test" } },
+      ],
+      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
+      approvalPoints: ["after_plan"],
+      reviewerAgent: "reviewer",
+      prompt: "Implement the feature according to spec",
+    };
+
+    const parsed = serializeRoundTrip(template);
+    expect(parsed).toEqual(template);
+    expect(parsed.title).toBe("Implement feature");
+    expect(parsed.author).toBe("orchestrator");
+    expect(parsed.doneConditions).toHaveLength(1);
+    expect(parsed.approvalPoints).toEqual(["after_plan"]);
+    expect(parsed.reviewerAgent).toBe("reviewer");
+  });
+
+  test("LoopGoalTemplate rejects goalTemplateId at type level", () => {
+    // @ts-expect-error - goalTemplateId is not a valid field; templates are inline only
+    const invalid: LoopGoalTemplate = { title: "t", author: "a", doneConditions: [], retryPolicy: { maxRetries: 1, backoffMs: 1000, escalateOnFailure: false }, approvalPoints: [], reviewerAgent: "r", goalTemplateId: "goal-123" };
+    expect(invalid).toBeDefined();
+  });
+
+  test("LoopConfig serializes minimal manual session report loop", () => {
+    const config: LoopConfig = {
+      title: "Daily Triage",
+      description: "Inspect git status and produce report",
+      schedule: { kind: "manual" },
+      runKind: "session",
+      mode: "report",
+      approvalPolicy: "interactive",
+      limits: { maxIterationsPerRun: 10 },
+      taskPrompt: "Inspect git status and report findings",
+    };
+
+    const parsed = serializeRoundTrip(config);
+    expect(parsed).toEqual(config);
+    expect(parsed.schedule).toEqual({ kind: "manual" });
+    expect(parsed.runKind).toBe("session");
+    expect(parsed.mode).toBe("report");
+    expect(parsed.approvalPolicy).toBe("interactive");
+    expect(parsed.limits.maxIterationsPerRun).toBe(10);
+  });
+
+  test("LoopConfig serializes interval goal loop with inline template", () => {
+    const config: LoopConfig = {
+      title: "Changelog Drafter",
+      schedule: { kind: "interval", everyMs: 3600000 },
+      runKind: "goal",
+      mode: "report",
+      approvalPolicy: "interactive",
+      limits: { maxIterationsPerRun: 5 },
+      goalTemplate: {
+        title: "Draft changelog",
+        author: "loop",
+        doneConditions: [
+          { id: "dc-1", kind: "file_exists", params: { path: "CHANGELOG.md" } },
+        ],
+        retryPolicy: { maxRetries: 2, backoffMs: 10000, escalateOnFailure: false },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+      },
+    };
+
+    const parsed = serializeRoundTrip(config);
+    expect(parsed).toEqual(config);
+    expect(parsed.schedule).toEqual({ kind: "interval", everyMs: 3600000 });
+    expect(parsed.runKind).toBe("goal");
+    expect(parsed.goalTemplate).toBeDefined();
+    expect(parsed.goalTemplate!.title).toBe("Draft changelog");
+  });
+
+  test("LoopConfig rejects cron schedule at type level", () => {
+    // @ts-expect-error - "cron" is not a valid Phase 3 schedule kind
+    const invalid: LoopConfig = { title: "t", schedule: { kind: "cron", expression: "* * * * *" }, runKind: "session", mode: "report", approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 } };
+    expect(invalid).toBeDefined();
+  });
+
+  test("LoopConfig rejects goalTemplateId at type level", () => {
+    // @ts-expect-error - goalTemplateId is not a valid LoopConfig field
+    const invalid: LoopConfig = { title: "t", schedule: { kind: "manual" }, runKind: "goal", mode: "report", approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 }, goalTemplateId: "goal-123" };
+    expect(invalid).toBeDefined();
+  });
+
+  test("LoopState serializes round-trip with no readinessScore", () => {
+    const state: LoopState = {
+      loopId: "loop-1",
+      projectId: "my-project",
+      config: {
+        title: "Daily Triage",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 10 },
+      },
+      status: "active",
+      createdAt: 1000,
+      updatedAt: 1000,
+      runCount: 0,
+      stateVersion: 1,
+    };
+
+    const parsed = serializeRoundTrip(state);
+    expect(parsed).toEqual(state);
+    expect(parsed.status).toBe("active");
+    expect(parsed.runCount).toBe(0);
+    expect(parsed.stateVersion).toBe(1);
+    expect(parsed.readinessScore).toBeUndefined();
+  });
+
+  test("LoopState with lastRun and currentRun serializes", () => {
+    const state: LoopState = {
+      loopId: "loop-1",
+      projectId: "my-project",
+      config: {
+        title: "Changelog",
+        schedule: { kind: "interval", everyMs: 60000 },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 5 },
+      },
+      status: "active",
+      createdAt: 1000,
+      updatedAt: 3000,
+      lastRun: {
+        runId: "run-1",
+        loopId: "loop-1",
+        status: "succeeded",
+        trigger: "interval",
+        startedAt: 2000,
+        endedAt: 3000,
+        summary: "Completed",
+      },
+      currentRun: {
+        runId: "run-2",
+        loopId: "loop-1",
+        status: "running",
+        trigger: "interval",
+        startedAt: 4000,
+      },
+      nextRunAt: 10000,
+      runCount: 1,
+      stateVersion: 2,
+      generatedStateSummary: "Loop has run 1 time(s). Last run: succeeded.",
+    };
+
+    const parsed = serializeRoundTrip(state);
+    expect(parsed).toEqual(state);
+    expect(parsed.lastRun!.status).toBe("succeeded");
+    expect(parsed.currentRun!.status).toBe("running");
+    expect(parsed.nextRunAt).toBe(10000);
+    expect(parsed.runCount).toBe(1);
+    expect(parsed.generatedStateSummary).toContain("succeeded");
+  });
+
+  test("LoopStreamEvent types are serializable", () => {
+    const stateChange: LoopStreamEvent = {
+      type: "loop.state_change",
+      loopId: "loop-1",
+      status: "active",
+      state: {
+        loopId: "loop-1",
+        projectId: "p",
+        config: {
+          title: "t",
+          schedule: { kind: "manual" },
+          runKind: "session",
+          mode: "report",
+          approvalPolicy: "interactive",
+          limits: { maxIterationsPerRun: 10 },
+        },
+        status: "active",
+        createdAt: 1000,
+        updatedAt: 1000,
+        runCount: 0,
+        stateVersion: 1,
+      },
+    };
+
+    const runAppended: LoopStreamEvent = {
+      type: "loop.run_appended",
+      loopId: "loop-1",
+      report: {
+        runId: "run-1",
+        loopId: "loop-1",
+        status: "succeeded",
+        trigger: "manual",
+        startedAt: 2000,
+        endedAt: 3000,
+        summary: "Done",
+      },
+    };
+
+    expect(serializeRoundTrip(stateChange)).toEqual(stateChange);
+    expect(serializeRoundTrip(runAppended)).toEqual(runAppended);
+  });
+
+  test("StreamEvent union accepts Loop events", () => {
+    const events: StreamEvent[] = [
+      {
+        type: "loop.state_change",
+        loopId: "loop-1",
+        status: "active",
+        state: {} as LoopState,
+      },
+      {
+        type: "loop.run_appended",
+        loopId: "loop-1",
+        report: {} as LoopRunReport,
+      },
+    ];
+
+    expect(events).toHaveLength(2);
+    expect(events[0]!.type).toBe("loop.state_change");
+    expect(events[1]!.type).toBe("loop.run_appended");
+  });
+
+  test("SessionSummary can carry loopId alongside goalId", () => {
+    const summary: SessionSummary = {
+      sessionId: "session-1",
+      rootSessionId: "session-1",
+      goalId: "goal-1",
+      loopId: "loop-1",
+      createdAt: 1000,
+    };
+
+    const parsed = serializeRoundTrip(summary);
+    expect(parsed.goalId).toBe("goal-1");
+    expect(parsed.loopId).toBe("loop-1");
+  });
+
+  test("SessionSummary without loopId still works", () => {
+    const summary: SessionSummary = {
+      sessionId: "session-1",
+      rootSessionId: "session-1",
+      goalId: "goal-1",
+      createdAt: 1000,
+    };
+
+    const parsed = serializeRoundTrip(summary);
+    expect(parsed.goalId).toBe("goal-1");
+    expect(parsed.loopId).toBeUndefined();
+  });
+
+  test("Session can carry loopId alongside goalId", () => {
+    const session: Session = {
+      id: "session-1",
+      rootSessionId: "session-1",
+      goalId: "goal-1",
+      loopId: "loop-1",
+      createdAt: 1000,
+    };
+
+    const parsed = serializeRoundTrip(session);
+    expect(parsed.goalId).toBe("goal-1");
+    expect(parsed.loopId).toBe("loop-1");
+  });
+
+  test("Session without loopId still works", () => {
+    const session: Session = {
+      id: "session-1",
+      rootSessionId: "session-1",
+      goalId: "goal-1",
+      createdAt: 1000,
+    };
+
+    const parsed = serializeRoundTrip(session);
+    expect(parsed.goalId).toBe("goal-1");
+    expect(parsed.loopId).toBeUndefined();
+  });
+
+  test("readinessScore is absent in Phase 3 LoopState fixtures", () => {
+    const state: LoopState = {
+      loopId: "loop-1",
+      projectId: "p",
+      config: {
+        title: "t",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 10 },
+      },
+      status: "active",
+      createdAt: 1000,
+      updatedAt: 1000,
+      runCount: 0,
+      stateVersion: 1,
+    };
+
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toContain("readinessScore");
   });
 });

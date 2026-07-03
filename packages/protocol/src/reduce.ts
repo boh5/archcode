@@ -4,6 +4,8 @@ import type {
   ErrorToolPart,
   GoalState,
   HitlRequest,
+  LoopState,
+  LoopRunReport,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -651,6 +653,29 @@ export function reduceStreamEvent(
 
       hitlRequests[existingIndex] = { ...hitlRequests[existingIndex]!, ...update };
       return { hitlRequests };
+    }
+
+    case "loop.state_change": {
+      const loops = { ...(state.loops ?? {}) };
+      loops[event.loopId] = event.state;
+
+      return { loops };
+    }
+
+    case "loop.run_appended": {
+      const loops = { ...(state.loops ?? {}) };
+      const existing = loops[event.loopId];
+
+      if (existing) {
+        loops[event.loopId] = {
+          ...existing,
+          lastRun: event.report,
+          runCount: existing.runCount + 1,
+          updatedAt: event.report.startedAt,
+        };
+      }
+
+      return { loops };
     }
 
     case "compact": {

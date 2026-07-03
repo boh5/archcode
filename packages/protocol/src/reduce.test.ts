@@ -6,6 +6,7 @@ import type {
   GoalState,
   GoalStatus,
   HitlRequest,
+  LoopState,
   Reminder,
   SessionMessage,
   SessionPart,
@@ -1496,5 +1497,152 @@ describe("HITL stream event reducers", () => {
     const second = applyEvents(createProjection(), events);
 
     expect(first.hitlRequests).toEqual(second.hitlRequests);
+  });
+});
+
+describe("Loop stream event reducers", () => {
+  function makeLoopState(overrides: Partial<LoopState> = {}): LoopState {
+    return {
+      loopId: "loop-1",
+      projectId: "p",
+      config: {
+        title: "Test Loop",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 10 },
+      },
+      status: "active",
+      createdAt: 1000,
+      updatedAt: 1000,
+      runCount: 0,
+      stateVersion: 1,
+      ...overrides,
+    };
+  }
+
+  test("loop.state_change adds a loop to empty projection", () => {
+    const state = createProjection();
+    const loopState = makeLoopState();
+
+    const result = reduceStreamEvent(state, {
+      type: "loop.state_change",
+      loopId: "loop-1",
+      status: "active",
+      state: loopState,
+    }, createDeterministicContext());
+
+    expect(result.loops).toBeDefined();
+    expect(result.loops!["loop-1"]).toEqual(loopState);
+  });
+
+  test("loop.state_change updates an existing loop in the projection", () => {
+    const loopState = makeLoopState({ status: "active" });
+    const state = createProjection({ loops: { "loop-1": loopState } });
+    const updated = makeLoopState({ status: "paused" });
+
+    const result = reduceStreamEvent(state, {
+      type: "loop.state_change",
+      loopId: "loop-1",
+      status: "paused",
+      state: updated,
+    }, createDeterministicContext());
+
+    expect(result.loops!["loop-1"]!.status).toBe("paused");
+    expect(result.loops!["loop-1"]!.config.title).toBe("Test Loop");
+  });
+
+  test("loop.state_change preserves other loops when updating one", () => {
+    const loop1 = makeLoopState({ loopId: "loop-1", status: "active" });
+    const loop2 = makeLoopState({ loopId: "loop-2", status: "paused" });
+    const state = createProjection({ loops: { "loop-1": loop1, "loop-2": loop2 } });
+    const updated = makeLoopState({ loopId: "loop-1", status: "disabled" });
+
+    const result = reduceStreamEvent(state, {
+      type: "loop.state_change",
+      loopId: "loop-1",
+      status: "disabled",
+      state: updated,
+    }, createDeterministicContext());
+
+    expect(result.loops!["loop-1"]!.status).toBe("disabled");
+    expect(result.loops!["loop-2"]!.status).toBe("paused");
+  });
+
+  test("loop.run_appended updates lastRun and increments runCount", () => {
+    const loopState = makeLoopState({ runCount: 0 });
+    const state = createProjection({ loops: { "loop-1": loopState } });
+
+    const result = reduceStreamEvent(state, {
+      type: "loop.run_appended",
+      loopId: "loop-1",
+      report: {
+        runId: "run-1",
+        loopId: "loop-1",
+        status: "succeeded",
+        trigger: "manual",
+        startedAt: 2000,
+        endedAt: 3000,
+        summary: "Done",
+      },
+    }, createDeterministicContext());
+
+    expect(result.loops!["loop-1"]!.lastRun!.status).toBe("succeeded");
+    expect(result.loops!["loop-1"]!.runCount).toBe(1);
+    expect(result.loops!["loop-1"]!.updatedAt).toBe(2000);
+  });
+
+  test("loop.run_appended is noop for unknown loop id", () => {
+    const state = createProjection();
+
+    const result = reduceStreamEvent(state, {
+      type: "loop.run_appended",
+      loopId: "nonexistent",
+      report: {
+        runId: "run-1",
+        loopId: "nonexistent",
+        status: "succeeded",
+        trigger: "manual",
+        startedAt: 2000,
+      },
+    }, createDeterministicContext());
+
+    expect(result).toEqual({ loops: {} });
+  });
+
+  test("accumulated loop events produce deterministic projection", () => {
+    const events: StreamEvent[] = [
+      {
+        type: "loop.state_change",
+        loopId: "loop-1",
+        status: "active",
+        state: makeLoopState(),
+      },
+      {
+        type: "loop.state_change",
+        loopId: "loop-1",
+        status: "paused",
+        state: makeLoopState({ status: "paused" }),
+      },
+      {
+        type: "loop.run_appended",
+        loopId: "loop-1",
+        report: {
+          runId: "run-1",
+          loopId: "loop-1",
+          status: "succeeded",
+          trigger: "manual",
+          startedAt: 2000,
+          endedAt: 3000,
+          summary: "Done",
+        },
+      },
+    ];
+
+    const first = applyEvents(createProjection(), events);
+    const second = applyEvents(createProjection(), events);
+
+    expect(first.loops).toEqual(second.loops);
   });
 });
