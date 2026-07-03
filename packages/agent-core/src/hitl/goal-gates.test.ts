@@ -39,12 +39,12 @@ function approvalResponse(decision: string, comment?: string): HitlResponse {
   };
 }
 
-function reviewResponse(verdict: "approve" | "reject" | "request_changes", comment?: string): HitlResponse {
+function reviewResponse(outcome: "DONE" | "NOT_DONE", comment?: string): HitlResponse {
   return {
     hitlId: crypto.randomUUID(),
     kind: "review",
     status: "resolved",
-    response: { verdict, comment },
+    response: { outcome, comment },
   };
 }
 
@@ -132,13 +132,13 @@ describe("GoalApprovalGate", () => {
 
   it("maps approve review responses and persists reviewer approval evidence", async () => {
     const goal = await createGoal();
-    const { gate, request } = createGate(reviewResponse("approve", "Artifacts look correct"));
+    const { gate, request } = createGate(reviewResponse("DONE", "Artifacts look correct"));
 
     const outcome = await gate.requestReview(goal.id, goal.mainSessionId!, [
       { path: "dist/output.txt", description: "Build output" },
     ], goal.projectId);
 
-    expect(outcome).toEqual({ verdict: "approve", comment: "Artifacts look correct" });
+    expect(outcome).toEqual({ outcome: "DONE", comment: "Artifacts look correct" });
     expect(request.mock.calls[0]).toMatchObject([
       "main-session-1",
       "review",
@@ -153,26 +153,26 @@ describe("GoalApprovalGate", () => {
     });
   });
 
-  it("maps reject review responses and persists failing review evidence", async () => {
+  it("maps NOT_DONE review responses and persists failing review evidence", async () => {
     const goal = await createGoal();
-    const { gate } = createGate(reviewResponse("reject", "Broken output"));
+    const { gate } = createGate(reviewResponse("NOT_DONE", "Broken output"));
 
     const outcome = await gate.requestReview(goal.id, goal.mainSessionId!, [], goal.projectId);
 
-    expect(outcome).toEqual({ verdict: "reject", comment: "Broken output" });
+    expect(outcome).toEqual({ outcome: "NOT_DONE", comment: "Broken output" });
     expect((await goalStateManager.read(goal.id)).doneResults.reviewer_approval).toMatchObject({
       passed: false,
       evidence: "Broken output",
     });
   });
 
-  it("maps request_changes review responses and persists failing review evidence", async () => {
+  it("maps terminal review responses to NOT_DONE and persists failing review evidence", async () => {
     const goal = await createGoal();
-    const { gate } = createGate(reviewResponse("request_changes", "Please add tests"));
+    const { gate } = createGate(reviewResponse("NOT_DONE", "Please add tests"));
 
     const outcome = await gate.requestReview(goal.id, goal.mainSessionId!, [], goal.projectId);
 
-    expect(outcome).toEqual({ verdict: "request_changes", comment: "Please add tests" });
+    expect(outcome).toEqual({ outcome: "NOT_DONE", comment: "Please add tests" });
     expect((await goalStateManager.read(goal.id)).doneResults.reviewer_approval).toMatchObject({
       passed: false,
       evidence: "Please add tests",

@@ -1,5 +1,7 @@
-import type { DoneResult } from "@archcode/protocol";
+import type { DoneResult, GoalReviewOutcome } from "@archcode/protocol";
 
+import type { GoalArtifactManager } from "../goals/artifacts";
+import { writeGoalApprovalArtifactEvent } from "../goals/artifact-lifecycle";
 import type { GoalStateManager } from "../goals/state";
 import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "./types";
 
@@ -15,7 +17,7 @@ export type ReviewArtifact = {
 };
 
 export type ReviewOutcome = {
-  verdict: "approve" | "reject" | "request_changes";
+  outcome: GoalReviewOutcome;
   comment?: string;
 };
 
@@ -26,15 +28,18 @@ type GoalHitlGateway = {
 export interface GoalApprovalGateOptions {
   hitlService: GoalHitlGateway;
   goalStateManager: GoalStateManager;
+  goalArtifacts?: GoalArtifactManager;
 }
 
 export class GoalApprovalGate {
   readonly #hitlService: GoalHitlGateway;
   readonly #goalStateManager: GoalStateManager;
+  readonly #goalArtifacts?: GoalArtifactManager;
 
   constructor(options: GoalApprovalGateOptions) {
     this.#hitlService = options.hitlService;
     this.#goalStateManager = options.goalStateManager;
+    this.#goalArtifacts = options.goalArtifacts;
   }
 
   async requestApproval(
@@ -44,6 +49,11 @@ export class GoalApprovalGate {
     goalTitle: string,
     projectSlug: string,
   ): Promise<ApprovalOutcome> {
+    await this.#recordApprovalArtifact(goalId, {
+      approvalPoint,
+      sessionId,
+      status: "requested",
+    });
     const response = await this.#hitlService.request(
       sessionId,
       "approval",
@@ -61,11 +71,18 @@ export class GoalApprovalGate {
         ],
         recommendedOptionId: "approved",
       },
-      { goalId, projectSlug, source: `goal.approval.${approvalPoint}` },
+      { goalId, projectSlug, source: `goal.approval.${approvalPoint}`, approvalPoint },
     );
 
     const outcome = approvalOutcomeFromResponse(response);
     await this.#recordApprovalOutcome(goalId, approvalPoint, response, outcome);
+    await this.#recordApprovalArtifact(goalId, {
+      approvalPoint,
+      sessionId,
+      status: approvalArtifactStatus(response, outcome),
+      decision: outcome.decision,
+      comment: outcome.comment ?? (response.status === "resolved" ? undefined : response.reason),
+    });
     return outcome;
   }
 
@@ -84,7 +101,7 @@ export class GoalApprovalGate {
         message: "Review the artifacts produced for this goal.",
         artifacts,
       },
-      { goalId, projectSlug, source: "goal.review" },
+      { goalId, projectSlug, source: "goal.review", approvalPoint: "review" },
     );
 
     const outcome = reviewOutcomeFromResponse(response);
@@ -111,11 +128,24 @@ export class GoalApprovalGate {
   async #recordReviewOutcome(goalId: string, outcome: ReviewOutcome): Promise<void> {
     const result: DoneResult = {
       conditionId: "reviewer_approval",
-      passed: outcome.verdict === "approve",
-      evidence: outcome.comment ?? `Review verdict: ${outcome.verdict}`,
+      passed: outcome.outcome === "DONE",
+      evidence: outcome.comment ?? `Review outcome: ${outcome.outcome}`,
       checkedAt: new Date().toISOString(),
     };
     await this.#goalStateManager.recordDoneResult(goalId, "reviewer_approval", result);
+  }
+
+  async #recordApprovalArtifact(goalId: string, event: {
+    approvalPoint: string;
+    sessionId: string;
+    status: "requested" | "approved" | "denied" | "cancelled" | "timeout";
+    decision?: string;
+    comment?: string;
+  }): Promise<void> {
+    const goalArtifacts = this.#goalArtifacts;
+    if (goalArtifacts === undefined) return;
+    const goal = await this.#goalStateManager.read(goalId);
+    await writeGoalApprovalArtifactEvent(goalArtifacts, goal, event);
   }
 }
 
@@ -126,19 +156,24 @@ function approvalOutcomeFromResponse(response: HitlResponse): ApprovalOutcome {
     ?? (typeof response.response.data?.approved === "boolean"
       ? (response.response.data.approved ? "approved" : "denied")
       : undefined);
-  const approved = decision === "approved" || response.response.verdict === "approve";
+  const approved = decision === "approved" || response.response.outcome === "DONE";
   return withoutUndefined({ approved, decision, comment: response.response.comment });
 }
 
 function reviewOutcomeFromResponse(response: HitlResponse): ReviewOutcome {
   if (response.status !== "resolved") {
-    return { verdict: "request_changes", comment: response.reason };
+    return { outcome: "NOT_DONE", comment: response.reason };
   }
 
   return withoutUndefined({
-    verdict: response.response.verdict ?? (response.response.decision === "approved" ? "approve" : "request_changes"),
+    outcome: response.response.outcome ?? (response.response.decision === "approved" ? "DONE" : "NOT_DONE"),
     comment: response.response.comment,
   });
+}
+
+function approvalArtifactStatus(response: HitlResponse, outcome: ApprovalOutcome): "approved" | "denied" | "cancelled" | "timeout" {
+  if (response.status === "cancelled" || response.status === "timeout") return response.status;
+  return outcome.approved ? "approved" : "denied";
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
