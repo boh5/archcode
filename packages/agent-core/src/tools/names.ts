@@ -32,4 +32,6 @@ export {
   TOOL_GOAL_RUN,
   TOOL_GOAL_RETRY,
   TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
 } from "@archcode/protocol";
