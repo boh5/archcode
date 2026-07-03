@@ -35,13 +35,25 @@ export type {
   QuestionAnswerBody,
   GoalArtifactName,
   GoalArtifactFile,
+  LoopConfig,
+  LoopState,
+  LoopStatus,
+  LoopRunReport,
+  LoopRunKind,
+  LoopMode,
+  LoopApprovalPolicy,
+  LoopLimits,
+  LoopGoalTemplate,
+  LoopScheduleSpec,
+  LoopRunReportStatus,
+  LoopRunTrigger,
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───
 // Server augments GoalState/HitlRequest with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalArtifactFile, GoalState, HitlKind } from "@archcode/protocol";
+import type { GoalArtifactFile, GoalState, HitlKind, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {
@@ -93,4 +105,26 @@ export interface GoalArtifactsListResponse {
 export interface GoalArtifactReadResponse {
   artifact?: GoalArtifactFile;
   content: string;
+}
+
+// ─── Loop API response types ───
+
+/** Dashboard loop summary matching Task 11 minimal fields. */
+export interface DashboardLoop {
+  loopId: string;
+  title: string;
+  status: LoopStatus;
+  currentRun?: LoopRunReport;
+  lastRun?: LoopRunReport;
+  nextRunAt?: number;
+  runKind: LoopRunKind;
+  mode: LoopMode;
+  projectSlug: string;
+  projectName: string;
+}
+
+/** Response of GET /api/projects/:slug/loops/:loopId/state. */
+export interface LoopStateResponse {
+  markdown: string;
+  state: LoopState;
 }

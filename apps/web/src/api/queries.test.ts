@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, HitlRequest, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
-import type { DashboardGoal } from "./types";
-import { activeGoalsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import type { GoalState, HitlRequest, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import type { DashboardGoal, DashboardLoop } from "./types";
+import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -320,5 +320,171 @@ describe("web session query contracts", () => {
 
   test("queryKeys.activeGoals is keyed correctly", () => {
     expect(queryKeys.activeGoals).toEqual(["goals", "active"]);
+  });
+});
+
+describe("web loop query contracts", () => {
+  test("loopsQueryOptions fetches project loops and returns LoopState array", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const loops: LoopState[] = [
+      {
+        loopId: "loop-1",
+        projectId: "archcode",
+        config: {
+          title: "Test Loop",
+          description: "A test loop",
+          schedule: { kind: "manual" },
+          runKind: "session",
+          mode: "report",
+          approvalPolicy: "interactive",
+          limits: { maxIterationsPerRun: 10 },
+        },
+        status: "active",
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        runCount: 0,
+        stateVersion: 1,
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops");
+      return jsonResponse({ loops });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopsQueryOptions("archcode");
+    const result = await (opts as unknown as QueryOptionWithFn<LoopState[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops"]);
+    expect(result).toEqual(loops);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopQueryOptions fetches a single loop by loopId", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const loop: LoopState = {
+      loopId: "loop-1",
+      projectId: "archcode",
+      config: {
+        title: "Single Loop",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 10 },
+      },
+      status: "active",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      runCount: 0,
+      stateVersion: 1,
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1");
+      return jsonResponse({ loop });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<LoopState>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1"]);
+    expect(result).toEqual(loop);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopRunsQueryOptions fetches run log for a loop", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const runs: LoopRunReport[] = [
+      {
+        runId: "run-1",
+        loopId: "loop-1",
+        status: "succeeded",
+        trigger: "manual",
+        startedAt: 1_000,
+        endedAt: 2_000,
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/runs");
+      return jsonResponse({ runs });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopRunsQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<LoopRunReport[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "runs"]);
+    expect(result).toEqual(runs);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopStateQueryOptions fetches generated state for a loop", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const loop: LoopState = {
+      loopId: "loop-1",
+      projectId: "archcode",
+      config: {
+        title: "State Loop",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 10 },
+      },
+      status: "active",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      runCount: 0,
+      stateVersion: 1,
+    };
+    const stateResponse = { markdown: "# State", state: loop };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/state");
+      return jsonResponse(stateResponse);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopStateQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<{ markdown: string; state: LoopState }>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "state"]);
+    expect(result).toEqual(stateResponse);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("activeLoopsQueryOptions fetches dashboard active loops", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const loops: DashboardLoop[] = [
+      {
+        loopId: "loop-1",
+        title: "Active Loop",
+        status: "active",
+        runKind: "session",
+        mode: "report",
+        projectSlug: "archcode",
+        projectName: "ArchCode",
+      },
+    ];
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/loops?status=active");
+      return jsonResponse({ loops });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = activeLoopsQueryOptions();
+    const result = await (opts as unknown as QueryOptionWithFn<DashboardLoop[]>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["loops", "active"]);
+    expect(result).toEqual(loops);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys include project slug and loopId", () => {
+    expect(queryKeys.projectLoops("archcode")).toEqual(["projects", "archcode", "loops"]);
+    expect(queryKeys.loop("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc"]);
+    expect(queryKeys.loopRuns("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "runs"]);
+    expect(queryKeys.loopState("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "state"]);
+    expect(queryKeys.activeLoops).toEqual(["loops", "active"]);
   });
 });

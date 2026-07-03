@@ -200,6 +200,196 @@ describe("web HITL mutation API calls", () => {
   });
 });
 
+describe("web loop mutation invalidation helpers", () => {
+  function createFakeQc() {
+    const calls: Array<{ queryKey: readonly unknown[] }> = [];
+    return {
+      invalidateQueries: mock((opts: { queryKey: readonly unknown[] }) => {
+        calls.push(opts);
+        return Promise.resolve();
+      }),
+      getCalls: () => calls,
+    };
+  }
+
+  test("invalidateLoopAfterCreate invalidates project loop list and dashboard active loops", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterCreate } = await import("./mutations");
+
+    await invalidateLoopAfterCreate(qc, "archcode");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["loops", "active"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
+  });
+
+  test("loop trigger mutation invalidates run-log, generated state, and dashboard keys", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterTrigger } = await import("./mutations");
+
+    await invalidateLoopAfterTrigger(qc, "archcode", "loop-1");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "runs"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["loops", "active"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  test("invalidateLoopAfterUpdate invalidates list, detail, generated state, and dashboard keys", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterUpdate } = await import("./mutations");
+
+    await invalidateLoopAfterUpdate(qc, "archcode", "loop-1");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["loops", "active"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  test("invalidateLoopAfterPauseResume invalidates list, detail, generated state, and dashboard keys", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterPauseResume } = await import("./mutations");
+
+    await invalidateLoopAfterPauseResume(qc, "archcode", "loop-1");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["loops", "active"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("web loop mutation URL contracts", () => {
+  test("createLoop posts to /api/projects/:slug/loops with config body", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.config).toBeDefined();
+      expect(body.config.title).toBe("New Loop");
+      expect(body.author).toBe("user");
+      expect(body.presetId).toBeUndefined();
+      return jsonResponse({ loop: { loopId: "loop-new", status: "active" } }, { status: 201 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops", {
+      method: "POST",
+      body: {
+        config: {
+          title: "New Loop",
+          schedule: { kind: "manual" },
+          runKind: "session",
+          mode: "report",
+          approvalPolicy: "interactive",
+          limits: { maxIterationsPerRun: 10 },
+        },
+        author: "user",
+      },
+    });
+
+    expect(result).toMatchObject({ loop: { loopId: "loop-new" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("createLoop with presetId does not include goalTemplateId", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.presetId).toBe("daily_triage");
+      expect(body.config).toBeUndefined();
+      expect(body.goalTemplateId).toBeUndefined();
+      return jsonResponse({ loop: { loopId: "loop-new", status: "active" } }, { status: 201 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops", {
+      method: "POST",
+      body: { presetId: "daily_triage" },
+    });
+
+    expect(result).toMatchObject({ loop: { loopId: "loop-new" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loop trigger mutation calls POST /api/projects/:slug/loops/:loopId/trigger", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/trigger");
+      expect(init?.method).toBe("POST");
+      return jsonResponse({ report: { runId: "run-1", loopId: "loop-1", status: "running", trigger: "manual", startedAt: 1_000 } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/loop-1/trigger", { method: "POST" });
+    expect(result).toMatchObject({ report: { runId: "run-1" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("pauseLoop calls POST /api/projects/:slug/loops/:loopId/pause", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/pause");
+      expect(init?.method).toBe("POST");
+      return jsonResponse({ loop: { loopId: "loop-1", status: "paused" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/loop-1/pause", { method: "POST" });
+    expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "paused" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("resumeLoop calls POST /api/projects/:slug/loops/:loopId/resume", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/resume");
+      expect(init?.method).toBe("POST");
+      return jsonResponse({ loop: { loopId: "loop-1", status: "active" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/loop-1/resume", { method: "POST" });
+    expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "active" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("updateLoop calls PATCH /api/projects/:slug/loops/:loopId with status", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1");
+      expect(init?.method).toBe("PATCH");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.status).toBe("paused");
+      expect(body.config).toBeUndefined();
+      return jsonResponse({ loop: { loopId: "loop-1", status: "paused" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/loop-1", {
+      method: "PATCH",
+      body: { status: "paused" },
+    });
+    expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "paused" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("web has no agent-core imports", () => {
   test("queries.ts does not import from @archcode/agent-core or @archcode/server", async () => {
     const content = await Bun.file(

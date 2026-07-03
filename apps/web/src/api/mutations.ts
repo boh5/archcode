@@ -6,6 +6,9 @@ import type {
   CommandResult,
   DoneCondition,
   GoalState,
+  LoopConfig,
+  LoopRunReport,
+  LoopState,
   PermissionDecision,
   Project,
   QuestionAnswerBody,
@@ -308,6 +311,164 @@ export function useCancelHitl() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.hitl });
       await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
+    },
+  });
+}
+
+// ─── Loop Mutations ───
+
+/** Pure invalidation helper for createLoop onSuccess. */
+export function invalidateLoopAfterCreate(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+  ]);
+}
+
+/** Pure invalidation helper for updateLoop onSuccess. */
+export function invalidateLoopAfterUpdate(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+  loopId: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+  ]);
+}
+
+/** Pure invalidation helper for triggerLoop onSuccess. */
+export function invalidateLoopAfterTrigger(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+  loopId: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+  ]);
+}
+
+/** Pure invalidation helper for pauseLoop / resumeLoop onSuccess. */
+export function invalidateLoopAfterPauseResume(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+  loopId: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+  ]);
+}
+
+export function useCreateLoop() {
+  const queryClient = useQueryClient();
+
+  type CreateLoopVariables = { slug: string; author?: string } & (
+    | { config: LoopConfig; presetId?: never }
+    | { presetId: string; config?: never }
+  );
+
+  return useMutation({
+    mutationFn: async ({
+      slug,
+      config,
+      presetId,
+      author,
+    }: CreateLoopVariables) => {
+      const body = config
+        ? { config, ...(author ? { author } : {}) }
+        : { presetId, ...(author ? { author } : {}) };
+      return apiFetch<{ loop: LoopState }>(`/api/projects/${encodeURIComponent(slug)}/loops`, {
+        method: "POST",
+        body,
+      });
+    },
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterCreate(queryClient, variables.slug);
+    },
+  });
+}
+
+export function useUpdateLoop() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      slug,
+      loopId,
+      config,
+      status,
+    }: {
+      slug: string;
+      loopId: string;
+      config?: LoopConfig;
+      status?: "active" | "paused" | "disabled" | "error";
+    }) => {
+      const body: Record<string, unknown> = {};
+      if (config !== undefined) body.config = config;
+      if (status !== undefined) body.status = status;
+      return apiFetch<{ loop: LoopState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}`,
+        { method: "PATCH", body },
+      );
+    },
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterUpdate(queryClient, variables.slug, variables.loopId);
+    },
+  });
+}
+
+export function useTriggerLoop() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, loopId }: { slug: string; loopId: string }) =>
+      apiFetch<{ report: LoopRunReport | null }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/trigger`,
+        { method: "POST" },
+      ),
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterTrigger(queryClient, variables.slug, variables.loopId);
+    },
+  });
+}
+
+export function usePauseLoop() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, loopId }: { slug: string; loopId: string }) =>
+      apiFetch<{ loop: LoopState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/pause`,
+        { method: "POST" },
+      ),
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterPauseResume(queryClient, variables.slug, variables.loopId);
+    },
+  });
+}
+
+export function useResumeLoop() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, loopId }: { slug: string; loopId: string }) =>
+      apiFetch<{ loop: LoopState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/resume`,
+        { method: "POST" },
+      ),
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterPauseResume(queryClient, variables.slug, variables.loopId);
     },
   });
 }

@@ -3,12 +3,16 @@ import { apiFetch } from "./client";
 import type {
   DashboardGoal,
   DashboardHitlItem,
+  DashboardLoop,
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
   GoalArtifactReadResponse,
   GoalArtifactsListResponse,
   GoalState,
+  LoopRunReport,
+  LoopState,
+  LoopStateResponse,
   Project,
   Session,
   SessionSummary,
@@ -35,6 +39,12 @@ export const queryKeys = {
     list: (path: string, limit?: number) => ["directories", "list", path, limit] as const,
     search: (query: string, limit?: number) => ["directories", "search", query, limit] as const,
   },
+  // ─── Loop query keys ───
+  projectLoops: (slug: string) => ["projects", slug, "loops"] as const,
+  loop: (slug: string, loopId: string) => ["projects", slug, "loops", loopId] as const,
+  loopRuns: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "runs"] as const,
+  loopState: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "state"] as const,
+  activeLoops: ["loops", "active"] as const,
 };
 
 export function projectsQueryOptions() {
@@ -273,6 +283,92 @@ export function useDirectorySearch(query: string, limit?: number) {
     },
     enabled: query.trim().length > 0,
   });
+}
+
+// ─── Loop query options ───
+
+export function loopsQueryOptions(slug: string) {
+  return queryOptions({
+    queryKey: queryKeys.projectLoops(slug),
+    queryFn: async () => {
+      const response = await apiFetch<{ loops: LoopState[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops`,
+      );
+      return response.loops;
+    },
+    enabled: slug.length > 0,
+  });
+}
+
+export function loopQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loop(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<{ loop: LoopState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}`,
+      );
+      return response.loop;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function loopRunsQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopRuns(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<{ runs: LoopRunReport[] }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/runs`,
+      );
+      return response.runs;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function loopStateQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopState(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<LoopStateResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/state`,
+      );
+      return response;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function activeLoopsQueryOptions() {
+  return queryOptions({
+    queryKey: queryKeys.activeLoops,
+    queryFn: async () => {
+      const response = await apiFetch<{ loops: DashboardLoop[] }>("/api/loops?status=active");
+      return response.loops;
+    },
+  });
+}
+
+// ─── Loop hooks ───
+
+export function useLoops(slug: string) {
+  return useQuery(loopsQueryOptions(slug));
+}
+
+export function useLoop(slug: string, loopId: string) {
+  return useQuery(loopQueryOptions(slug, loopId));
+}
+
+export function useLoopRuns(slug: string, loopId: string) {
+  return useQuery(loopRunsQueryOptions(slug, loopId));
+}
+
+export function useLoopState(slug: string, loopId: string) {
+  return useQuery(loopStateQueryOptions(slug, loopId));
+}
+
+export function useActiveLoops() {
+  return useQuery(activeLoopsQueryOptions());
 }
 
 interface SessionResponse extends Omit<Session, "id"> {
