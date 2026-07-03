@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
+import { GoalArtifactManager } from "../goals/artifacts";
+import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -10,8 +12,14 @@ import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 
 export interface ProjectContextResolverOptions {
+  /** Factory primarily for runtime registry-backed ProjectInfo lookup. */
+  projectInfoFactory?: (workspaceRoot: string) => Promise<ProjectInfo | undefined> | ProjectInfo | undefined;
   /** Factory primarily for testing alternate GoalStateManager construction. */
   goalStateFactory?: (workspaceRoot: string) => GoalStateManager;
+  /** Factory primarily for testing alternate GoalArtifactManager construction. */
+  goalArtifactsFactory?: (workspaceRoot: string) => GoalArtifactManager;
+  /** Factory primarily for testing alternate GoalMemoryManager construction. */
+  goalMemoryFactory?: (workspaceRoot: string) => GoalMemoryManager;
   /** Factory primarily for testing alternate HitlService construction. */
   hitlFactory?: (workspaceRoot: string) => HitlService;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
@@ -24,15 +32,25 @@ export interface ProjectContextResolverOptions {
 export class ProjectContextResolver {
   #contexts = new Map<string, Promise<ProjectContext>>();
   readonly #logger: Logger;
+  readonly #projectInfoFactory: (workspaceRoot: string) => Promise<ProjectInfo | undefined> | ProjectInfo | undefined;
   readonly #goalStateFactory: (workspaceRoot: string) => GoalStateManager;
+  readonly #goalArtifactsFactory: (workspaceRoot: string) => GoalArtifactManager;
+  readonly #goalMemoryFactory: (workspaceRoot: string) => GoalMemoryManager;
   readonly #hitlFactory: (workspaceRoot: string) => HitlService;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
   constructor(options: ProjectContextResolverOptions = {}) {
     this.#logger = (options.logger ?? silentLogger).child({ module: "projects.context" });
+    this.#projectInfoFactory = options.projectInfoFactory ?? (() => undefined);
     this.#goalStateFactory = options.goalStateFactory ?? ((workspaceRoot) => {
       return new GoalStateManager(workspaceRoot, this.#logger.child({ module: "goals.state" }));
+    });
+    this.#goalArtifactsFactory = options.goalArtifactsFactory ?? ((workspaceRoot) => {
+      return new GoalArtifactManager(workspaceRoot);
+    });
+    this.#goalMemoryFactory = options.goalMemoryFactory ?? ((workspaceRoot) => {
+      return new GoalMemoryManager(workspaceRoot);
     });
     this.#hitlFactory = options.hitlFactory ?? (() => new HitlService());
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
@@ -63,11 +81,16 @@ export class ProjectContextResolver {
   async #buildContext(workspaceRoot: string): Promise<ProjectContext> {
     const approvals = this.#approvalsFactory();
     await approvals.load(workspaceRoot);
+    const hitl = this.#hitlFactory(workspaceRoot);
+    await hitl.load(workspaceRoot);
+    const project = await this.#projectInfoFactory(workspaceRoot) ?? this.#createPlaceholderProjectInfo(workspaceRoot);
 
     return {
-      project: this.#createPlaceholderProjectInfo(workspaceRoot),
+      project,
       goalState: this.#goalStateFactory(workspaceRoot),
-      hitl: this.#hitlFactory(workspaceRoot),
+      goalArtifacts: this.#goalArtifactsFactory(workspaceRoot),
+      goalMemory: this.#goalMemoryFactory(workspaceRoot),
+      hitl,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
     };

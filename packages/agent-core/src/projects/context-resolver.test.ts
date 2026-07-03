@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { GoalArtifactManager } from "../goals/artifacts";
+import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -65,6 +67,8 @@ describe("ProjectContextResolver", () => {
 
     expect(second).not.toBe(first);
     expect(second.goalState).not.toBe(first.goalState);
+    expect(second.goalArtifacts).not.toBe(first.goalArtifacts);
+    expect(second.goalMemory).not.toBe(first.goalMemory);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
     expect(second.approvals).not.toBe(first.approvals);
@@ -128,6 +132,10 @@ describe("ProjectContextResolver", () => {
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
+    expect(context.goalArtifacts).toBeInstanceOf(GoalArtifactManager);
+    expect(context.goalArtifacts.workspaceRoot).toBe(workspace);
+    expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
+    expect(context.goalMemory.workspaceRoot).toBe(workspace);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
@@ -138,6 +146,26 @@ describe("ProjectContextResolver", () => {
     expect(new Date(context.project.addedAt).toString()).not.toBe("Invalid Date");
   });
 
+  test("projectInfoFactory overrides placeholder slug for registry-backed contexts", async () => {
+    const workspace = await makeWorkspace("registry-info");
+    const projectInfo = {
+      slug: "registry-slug",
+      name: "Registry Project",
+      workspaceRoot: workspace,
+      addedAt: new Date().toISOString(),
+    };
+    const resolver = new ProjectContextResolver({
+      projectInfoFactory: mock((workspaceRoot: string) => {
+        expect(workspaceRoot).toBe(workspace);
+        return projectInfo;
+      }),
+    });
+
+    const context = await resolver.resolve(workspace);
+
+    expect(context.project).toEqual(projectInfo);
+  });
+
   test("project contexts expose Goal/HITL services and no active Workflow managers", async () => {
     const workspace = await makeWorkspace("goal-hitl-shape");
     const resolver = new ProjectContextResolver();
@@ -146,6 +174,8 @@ describe("ProjectContextResolver", () => {
     const contextRecord = context as unknown as Record<string, unknown>;
 
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
+    expect(context.goalArtifacts).toBeInstanceOf(GoalArtifactManager);
+    expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(contextRecord.workflowState).toBeUndefined();
     expect(contextRecord.artifacts).toBeUndefined();
@@ -169,14 +199,48 @@ describe("ProjectContextResolver", () => {
     expect(await Bun.file(join(workspaceB, ".archcode", "goals", goalA.id, "goal.json")).exists()).toBe(false);
   });
 
+  test("HITL queue is loaded from the project workspace after context recreation", async () => {
+    const workspace = await makeWorkspace("hitl-reload");
+    const resolver = new ProjectContextResolver();
+    const first = await resolver.resolve(workspace);
+
+    first.hitl.request(
+      "session-1",
+      "approval",
+      { kind: "approval", action: "continue", context: { approvalPoint: "after_plan" }, title: "Continue?", message: "Approve next step" },
+      { projectSlug: first.project.slug, goalId: "goal-1", source: "goal.approval.after_plan", approvalPoint: "after_plan" },
+    );
+    const [created] = first.hitl.listPending(first.project.slug, "goal-1");
+    expect(created).toBeDefined();
+    await first.hitl.flush();
+
+    resolver.dispose(workspace);
+    const second = await resolver.resolve(workspace);
+
+    expect(second.hitl).not.toBe(first.hitl);
+    expect(second.hitl.listPending(first.project.slug, "goal-1")).toEqual([
+      expect.objectContaining({ hitlId: created!.hitlId, status: "pending" }),
+    ]);
+  });
+
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
+    const goalArtifacts = new GoalArtifactManager(workspace);
+    const goalMemory = new GoalMemoryManager(workspace);
     const hitl = new HitlService({ submitHitlEvent: () => {} });
     const resolver = new ProjectContextResolver({
       goalStateFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);
         return goalState;
+      }),
+      goalArtifactsFactory: mock((workspaceRoot: string) => {
+        expect(workspaceRoot).toBe(workspace);
+        return goalArtifacts;
+      }),
+      goalMemoryFactory: mock((workspaceRoot: string) => {
+        expect(workspaceRoot).toBe(workspace);
+        return goalMemory;
       }),
       hitlFactory: mock(() => hitl),
     });
@@ -184,6 +248,8 @@ describe("ProjectContextResolver", () => {
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBe(goalState);
+    expect(context.goalArtifacts).toBe(goalArtifacts);
+    expect(context.goalMemory).toBe(goalMemory);
     expect(context.hitl).toBe(hitl);
   });
 });

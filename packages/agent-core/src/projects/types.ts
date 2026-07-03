@@ -1,8 +1,10 @@
 import { z } from "zod/v4";
-import type { GoalStateManager } from "../goals/state.ts";
-import type { HitlService } from "../hitl/service.ts";
-import type { MemoryFileManager } from "../memory/file-manager.ts";
-import type { ProjectApprovalManager } from "../tools/permission/project-approvals.ts";
+import type { GoalArtifactManager } from "../goals/artifacts";
+import type { GoalMemoryManager } from "../goals/goal-memory";
+import type { GoalStateManager } from "../goals/state";
+import type { HitlService } from "../hitl/service";
+import type { MemoryFileManager } from "../memory/file-manager";
+import type { ProjectApprovalManager } from "../tools/permission/project-approvals";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,6 +23,8 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
+  goalArtifacts: GoalArtifactManager;
+  goalMemory: GoalMemoryManager;
   hitl: HitlService;
   memory: MemoryFileManager;
   approvals: ProjectApprovalManager;
