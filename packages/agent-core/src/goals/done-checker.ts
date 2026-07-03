@@ -1,7 +1,7 @@
 import { access, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import type { DoneCondition, DoneResult } from "@archcode/protocol";
+import type { DoneCondition, DoneResult, GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunnerResult } from "../process/types";
 import { classifyCommand } from "../tools/security";
@@ -15,6 +15,8 @@ const MAX_EVIDENCE_LENGTH = 8_000;
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".turbo", ".next", "__test_tmp__"]);
 const GREP_MAX_FILES = 500;
 const ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL"] as const;
+const ACCEPTANCE_CRITERION_ID_PATTERN = /\bAC-\d{3,}\b/u;
+const PRIVATE_TEXT_MARKER_PATTERN = /RAW_MODEL_PRIVATE_TEXT/gu;
 
 export interface EvaluateConditionOptions {
   readonly confirmPermission?: ToolConfirmationCallback;
@@ -65,8 +67,116 @@ export async function evaluateCondition(
     case "user_confirmed":
       return doneResult(condition.id, true, "user_confirmed: awaiting HITL");
     case "spec_compliance":
-      return doneResult(condition.id, false, "spec_compliance is not implemented in Phase 1");
+      return evaluateSpecCompliance(condition, workspaceRoot);
   }
+}
+
+async function evaluateSpecCompliance(
+  condition: Extract<DoneCondition, { kind: "spec_compliance" }>,
+  workspaceRoot: string,
+): Promise<DoneResult> {
+  const resolvedPath = resolveWorkspacePath(workspaceRoot, condition.params.specPath);
+  if (!(await pathExists(resolvedPath))) {
+    return specComplianceResult(condition.id, false, condition.params.specPath, [], `spec_compliance: spec file not found: ${condition.params.specPath}`);
+  }
+
+  const content = await Bun.file(resolvedPath).text();
+  const parsedCriteria = parseSpecComplianceCriteria(content, condition.params.specPath);
+  const criteria = filterSpecComplianceCriteria(parsedCriteria, condition.params.focusAreas);
+  if (criteria.length === 0) {
+    return specComplianceResult(
+      condition.id,
+      false,
+      condition.params.specPath,
+      [],
+      `spec_compliance: no acceptance criteria found in ${condition.params.specPath}`,
+    );
+  }
+
+  const failedIds = criteria
+    .filter((criterion) => criterion.status === "failed" || criterion.compliant === false)
+    .map((criterion) => criterion.criterionId);
+  const satisfiedCount = criteria.length - failedIds.length;
+  const evidence = failedIds.length === 0
+    ? `spec_compliance: ${satisfiedCount}/${criteria.length} criteria satisfied in ${condition.params.specPath}`
+    : `spec_compliance: ${satisfiedCount}/${criteria.length} criteria satisfied in ${condition.params.specPath}; failed: ${failedIds.join(", ")}`;
+
+  return specComplianceResult(condition.id, failedIds.length === 0, condition.params.specPath, criteria, evidence);
+}
+
+function parseSpecComplianceCriteria(content: string, specPath: string): GoalSpecComplianceCriterionEvidence[] {
+  const criteria: GoalSpecComplianceCriterionEvidence[] = [];
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const idMatch = rawLine.match(ACCEPTANCE_CRITERION_ID_PATTERN);
+    if (!idMatch) continue;
+
+    const status = parseCriterionStatus(rawLine);
+    const criterionId = idMatch[0];
+    const compliant = status === "satisfied";
+    const criterion = sanitizeSummary(extractCriterionText(rawLine, criterionId));
+    const evidenceSummary = sanitizeSummary(parseField(rawLine, "evidence") ?? `${criterionId} is ${status} according to ${specPath}.`);
+    const repairGuidance = status === "failed"
+      ? sanitizeSummary(parseField(rawLine, "repair") ?? parseField(rawLine, "guidance") ?? `Repair ${criterionId}, then run goal_check_done again.`)
+      : undefined;
+
+    criteria.push(withoutUndefined({
+      criterionId,
+      criterion: criterion || `${criterionId} acceptance criterion`,
+      compliant,
+      status,
+      evidence: [evidenceSummary],
+      commandRefs: parseListField(rawLine, "command"),
+      resultRefs: parseListField(rawLine, "result"),
+      fileRefs: parseListField(rawLine, "file"),
+      repairGuidance,
+    }));
+  }
+  return criteria;
+}
+
+function parseCriterionStatus(line: string): "satisfied" | "failed" {
+  const explicit = line.match(/(?:status|result)\s*[:=]\s*(satisfied|failed)\b/iu)
+    ?? line.match(/[\[(]\s*(satisfied|failed)\s*[\])]/iu);
+  if (explicit?.[1]?.toLowerCase() === "satisfied") return "satisfied";
+  if (explicit?.[1]?.toLowerCase() === "failed") return "failed";
+  return "failed";
+}
+
+function extractCriterionText(line: string, criterionId: string): string {
+  const idIndex = line.indexOf(criterionId);
+  const afterId = line.slice(idIndex + criterionId.length);
+  return afterId
+    .replace(/^\s*[:\-)\]]\s*/u, "")
+    .replace(/(?:status|result)\s*[:=]\s*(satisfied|failed)\b/giu, "")
+    .replace(/[\[(]\s*(satisfied|failed)\s*[\])]/giu, "")
+    .replace(/\b(?:evidence|repair|guidance|commands?|results?|files?)\s*:\s*.*$/iu, "");
+}
+
+function parseField(line: string, fieldName: string): string | undefined {
+  const pattern = new RegExp(`\\b${fieldName}s?\\s*:\\s*([^;]+)`, "iu");
+  return line.match(pattern)?.[1]?.trim();
+}
+
+function parseListField(line: string, fieldName: string): string[] | undefined {
+  const field = parseField(line, fieldName);
+  if (!field) return undefined;
+  const values = field
+    .split(",")
+    .map((value) => sanitizeSummary(value))
+    .filter((value) => value.length > 0);
+  return values.length > 0 ? values : undefined;
+}
+
+function filterSpecComplianceCriteria(
+  criteria: GoalSpecComplianceCriterionEvidence[],
+  focusAreas: string[] | undefined,
+): GoalSpecComplianceCriterionEvidence[] {
+  if (!focusAreas || focusAreas.length === 0) return criteria;
+  const normalizedFocus = focusAreas.map((focusArea) => focusArea.toLowerCase());
+  return criteria.filter((criterion) => {
+    const searchable = `${criterion.criterionId} ${criterion.criterion}`.toLowerCase();
+    return normalizedFocus.some((focusArea) => searchable.includes(focusArea));
+  });
 }
 
 async function evaluateFileExists(
@@ -280,6 +390,45 @@ function doneResult(conditionId: string, passed: boolean, evidence: string): Don
     evidence: truncateEvidence(evidence),
     checkedAt: new Date().toISOString(),
   };
+}
+
+function specComplianceResult(
+  conditionId: string,
+  passed: boolean,
+  specPath: string,
+  criteria: GoalSpecComplianceCriterionEvidence[],
+  evidence: string,
+): DoneResult {
+  const checkedAt = new Date().toISOString();
+  return {
+    conditionId,
+    passed,
+    evidence: truncateEvidence(sanitizeSummary(evidence)),
+    checkedAt,
+    specCompliance: {
+      checkedAt,
+      specPath,
+      summary: summarizeSpecCompliance(criteria, specPath),
+      criteria,
+    },
+  };
+}
+
+function summarizeSpecCompliance(criteria: GoalSpecComplianceCriterionEvidence[], specPath: string): string {
+  if (criteria.length === 0) return `No acceptance criteria were found in ${specPath}.`;
+  const failedIds = criteria
+    .filter((criterion) => criterion.status === "failed" || criterion.compliant === false)
+    .map((criterion) => criterion.criterionId);
+  if (failedIds.length === 0) return `All ${criteria.length} acceptance criteria are satisfied.`;
+  return `${failedIds.length}/${criteria.length} acceptance criteria failed: ${failedIds.join(", ")}.`;
+}
+
+function sanitizeSummary(value: string): string {
+  return value.replace(PRIVATE_TEXT_MARKER_PATTERN, "[private text redacted]").replace(/\s+/gu, " ").trim();
+}
+
+function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
 function formatCommandEvidence(result: CommandResult): string {

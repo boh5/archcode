@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TOOL_GOAL_CHECK_DONE, type DoneCondition, type DoneResult } from "@archcode/protocol";
+import { TOOL_GOAL_CHECK_DONE, type DoneCondition, type DoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
 
 import { createGoalCheckDoneTool } from "../tools/builtins/goal-check-done";
 import { createRegistry } from "../tools/registry";
@@ -13,6 +13,7 @@ import { createMockStore } from "../store/test-helpers";
 import { storeManager } from "../store/store";
 import { GoalStateManager } from "./state";
 import { evaluateCondition } from "./done-checker";
+import { GoalRunner } from "./runner";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "done-checker");
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -34,6 +35,22 @@ function expectResult(result: DoneResult, conditionId: string, passed: boolean):
   expect(result.passed).toBe(passed);
   expect(result.evidence.length).toBeGreaterThan(0);
   expect(Date.parse(result.checkedAt)).toBeGreaterThan(0);
+}
+
+function specComplianceFixture(): string {
+  return [
+    "# Spec",
+    "- AC-001: CLI records reviewer evidence status: satisfied; evidence: reviewer artifact confirms evidence persisted; file: packages/agent-core/src/goals/done-checker.ts",
+    "- AC-002: Repair context references failed criterion status: failed; evidence: structured summary says RAW_MODEL_PRIVATE_TEXT must not persist; repair: update repair context so AC-002 is actionable; file: packages/agent-core/src/goals/runner.ts; command: bun test packages/agent-core/src/goals/done-checker.test.ts -t \"spec compliance\"; result: focused spec compliance test failed",
+    "- AC-003: Raw private output is excluded status: satisfied; evidence: persisted state contains summaries only; file: packages/protocol/src/types.ts",
+    "",
+  ].join("\n");
+}
+
+function findCriterion(criteria: GoalSpecComplianceCriterionEvidence[], criterionId: string): GoalSpecComplianceCriterionEvidence {
+  const criterion = criteria.find((candidate) => candidate.criterionId === criterionId);
+  if (!criterion) throw new Error(`Missing criterion ${criterionId}`);
+  return criterion;
 }
 
 describe("evaluateCondition", () => {
@@ -208,18 +225,32 @@ describe("evaluateCondition", () => {
     expect(result.evidence).toBe("user_confirmed: awaiting HITL");
   });
 
-  it("returns an explicit unsupported result for spec_compliance", async () => {
-    const condition: DoneCondition = { id: "spec-fail", kind: "spec_compliance", params: { specPath: "SPEC.md" } };
+  it("spec compliance records three per-criterion evidence summaries with satisfied and failed statuses", async () => {
+    await writeFile(join(workspaceRoot, "SPEC.md"), specComplianceFixture());
+    const condition: DoneCondition = { id: "spec-check", kind: "spec_compliance", params: { specPath: "SPEC.md" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
 
-    expectResult(result, "spec-fail", false);
-    expect(result.evidence).toBe("spec_compliance is not implemented in Phase 1");
+    expectResult(result, "spec-check", false);
+    expect(result.evidence).toContain("failed: AC-002");
+    expect(result.specCompliance?.summary).toBe("1/3 acceptance criteria failed: AC-002.");
+    expect(result.specCompliance?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002", "AC-003"]);
+    expect(findCriterion(result.specCompliance?.criteria ?? [], "AC-001")).toMatchObject({ status: "satisfied", compliant: true });
+    expect(findCriterion(result.specCompliance?.criteria ?? [], "AC-002")).toMatchObject({
+      status: "failed",
+      compliant: false,
+      fileRefs: ["packages/agent-core/src/goals/runner.ts"],
+      commandRefs: ["bun test packages/agent-core/src/goals/done-checker.test.ts -t \"spec compliance\""],
+      resultRefs: ["focused spec compliance test failed"],
+      repairGuidance: "update repair context so AC-002 is actionable",
+    });
+    expect(findCriterion(result.specCompliance?.criteria ?? [], "AC-003")).toMatchObject({ status: "satisfied", compliant: true });
+    expect(JSON.stringify(result)).not.toContain("RAW_MODEL_PRIVATE_TEXT");
   });
 });
 
 describe("goal_check_done tool", () => {
-  it("evaluates a condition and persists the result through GoalStateManager", async () => {
+  it("evaluates a condition and persists through the guarded Reviewer boundary", async () => {
     await writeFile(join(workspaceRoot, "artifact.txt"), "done\n");
     const manager = new GoalStateManager(workspaceRoot);
     const goal = await manager.create(
@@ -230,8 +261,16 @@ describe("goal_check_done tool", () => {
       { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
       [],
     );
+    await manager.lock(goal.id, "review-test");
+    await manager.transitionStatus(goal.id, "running");
+    await manager.updatePhase(goal.id, "review");
     const registry = createRegistry([createGoalCheckDoneTool()]);
-    const store = createMockStore({ sessionId: "review-session" });
+    const store = createMockStore({
+      sessionId: "review-session",
+      agentName: "reviewer",
+      sessionRole: "review",
+      goalId: goal.id,
+    });
     const input = { goalId: goal.id, conditionId: "artifact-exists" };
     const ctx = createToolExecutionContext({
       store,
@@ -255,6 +294,140 @@ describe("goal_check_done tool", () => {
     const doneResult = JSON.parse(toolResult.output) as DoneResult;
     expectResult(doneResult, "artifact-exists", true);
     const persisted = await manager.read(goal.id);
+    expect(persisted.status).toBe("verifying");
     expect(persisted.doneResults["artifact-exists"]).toEqual(doneResult);
+  });
+
+  it("spec compliance persists only structured summaries through reviewer-owned goal_check_done", async () => {
+    await writeFile(join(workspaceRoot, "SPEC.md"), specComplianceFixture());
+    const manager = new GoalStateManager(workspaceRoot);
+    const goal = await manager.create(
+      "test-project",
+      "Check spec compliance evidence",
+      "reviewer",
+      [{ id: "spec-check", kind: "spec_compliance", params: { specPath: "SPEC.md" } }],
+      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
+      [],
+    );
+    await manager.lock(goal.id, "review-test");
+    await manager.transitionStatus(goal.id, "running");
+    await manager.updatePhase(goal.id, "review");
+    const registry = createRegistry([createGoalCheckDoneTool()]);
+    const store = createMockStore({
+      sessionId: "review-session",
+      agentName: "reviewer",
+      sessionRole: "review",
+      goalId: goal.id,
+    });
+    const input = { goalId: goal.id, conditionId: "spec-check" };
+    const ctx = createToolExecutionContext({
+      store,
+      storeManager,
+      toolName: TOOL_GOAL_CHECK_DONE,
+      toolCallId: "goal-check-done-spec-call",
+      input,
+      step: 1,
+      abort: new AbortController().signal,
+      startedAt: Date.now(),
+      allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+      agentName: store.getState().agentName,
+      agentSkills: [],
+      skillService: testSkillService,
+      projectContext: createTestProjectContext(workspaceRoot),
+    });
+
+    const toolResult = await registry.execute({ toolName: TOOL_GOAL_CHECK_DONE, toolCallId: "goal-check-done-spec-call", input }, ctx);
+
+    expect(toolResult.isError).toBe(false);
+    const persisted = await manager.read(goal.id);
+    const serialized = JSON.stringify(persisted);
+    expect(persisted.doneResults["spec-check"]?.passed).toBe(false);
+    expect(persisted.doneResults["spec-check"]?.specCompliance?.criteria).toHaveLength(3);
+    expect(findCriterion(persisted.doneResults["spec-check"]?.specCompliance?.criteria ?? [], "AC-002").status).toBe("failed");
+    expect(serialized).toContain("structured summary says [private text redacted] must not persist");
+    expect(serialized).not.toContain("RAW_MODEL_PRIVATE_TEXT");
+  });
+
+  it("spec compliance partial failure drives NOT_DONE repair context that references AC-002", async () => {
+    await writeFile(join(workspaceRoot, "SPEC.md"), specComplianceFixture());
+    const manager = new GoalStateManager(workspaceRoot);
+    const goal = await manager.create(
+      "test-project",
+      "Finalize spec compliance",
+      "reviewer",
+      [{ id: "spec-check", kind: "spec_compliance", params: { specPath: "SPEC.md" } }],
+      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
+      [],
+    );
+    await manager.lock(goal.id, "review-test");
+    await manager.transitionStatus(goal.id, "running");
+    await manager.updatePhase(goal.id, "review");
+    const runner = new GoalRunner({
+      goalStateManager: manager,
+      goalArtifacts: createTestProjectContext(workspaceRoot).goalArtifacts,
+      workspaceRoot,
+      hitlService: { request: async () => ({ hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "approved" } }), listPending: () => [] },
+      createSession: async () => "retry-session",
+    });
+    const result = await evaluateCondition(goal.doneConditions[0]!, workspaceRoot);
+    await runner.recordReviewerDoneResult(goal.id, "spec-check", result);
+
+    const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE");
+
+    expect(failed.status).toBe("failed");
+    expect(failed.reviewReport?.outcome).toBe("NOT_DONE");
+    expect(failed.reviewReport?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002", "AC-003"]);
+    expect(failed.reviewReport?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({ status: "failed", compliant: false });
+    expect(failed.repairContext?.issues).toHaveLength(1);
+    expect(failed.repairContext?.issues[0]).toMatchObject({
+      conditionId: "AC-002",
+      repairGuidance: "update repair context so AC-002 is actionable",
+      repairTarget: "packages/agent-core/src/goals/runner.ts",
+    });
+    expect(failed.lastError).toContain("AC-002");
+  });
+
+  it("spec compliance is not evaluated or recorded for a wrong caller before authorization", async () => {
+    await writeFile(join(workspaceRoot, "SPEC.md"), specComplianceFixture());
+    const manager = new GoalStateManager(workspaceRoot);
+    const goal = await manager.create(
+      "test-project",
+      "Reject wrong spec compliance caller",
+      "reviewer",
+      [{ id: "spec-check", kind: "spec_compliance", params: { specPath: "SPEC.md" } }],
+      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
+      [],
+    );
+    await manager.lock(goal.id, "review-test");
+    await manager.transitionStatus(goal.id, "running");
+    await manager.updatePhase(goal.id, "review");
+    const registry = createRegistry([createGoalCheckDoneTool()]);
+    const store = createMockStore({ agentName: "build", sessionRole: "review", goalId: goal.id });
+    const input = { goalId: goal.id, conditionId: "spec-check" };
+    const ctx = createToolExecutionContext({
+      store,
+      storeManager,
+      toolName: TOOL_GOAL_CHECK_DONE,
+      toolCallId: "goal-check-done-denied-spec-call",
+      input,
+      step: 1,
+      abort: new AbortController().signal,
+      startedAt: Date.now(),
+      allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+      agentName: store.getState().agentName,
+      agentSkills: [],
+      skillService: testSkillService,
+      projectContext: createTestProjectContext(workspaceRoot),
+    });
+
+    const toolResult = await registry.execute({ toolName: TOOL_GOAL_CHECK_DONE, toolCallId: "goal-check-done-denied-spec-call", input }, ctx);
+
+    expect(toolResult.isError).toBe(true);
+    expect(toolResult.output).toContain("GOAL_REVIEWER_REQUIRED");
+    const persisted = await manager.read(goal.id);
+    expect(persisted.doneResults).toEqual({});
+    await rm(join(workspaceRoot, "SPEC.md"));
+    const stillNotEvaluated = await readFile(join(workspaceRoot, ".archcode", "goals", goal.id, "goal.json"), "utf8");
+    expect(stillNotEvaluated).not.toContain("AC-002");
   });
 });
