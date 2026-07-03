@@ -27,7 +27,7 @@ export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
 
-export { DoneConditionSchema } from "./goals";
+export { DoneConditionSchema, GoalArtifactNameSchema } from "./goals";
 
 export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";

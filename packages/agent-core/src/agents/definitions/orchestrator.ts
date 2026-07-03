@@ -17,8 +17,8 @@ import {
   TOOL_FILE_WRITE,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
+  TOOL_GOAL_ARTIFACT_READ,
   TOOL_GLOB,
-  TOOL_GOAL_CHECK_DONE,
   TOOL_GOAL_CREATE,
   TOOL_GOAL_LOCK,
   TOOL_GOAL_RETRY,
@@ -48,7 +48,7 @@ Goal operating loop:
 2. Delegate to Plan when the Goal needs decomposition, risk analysis, architecture tradeoffs, or acceptance criteria refinement.
 3. Use goal_lock only after the Goal is concrete enough to execute and has non-empty Done Conditions.
 4. Use goal_run to start execution. Delegate implementation work to Build and focused research to Explore or Librarian.
-5. Delegate final validation to Reviewer. Reviewer must use goal_check_done for evidence and must be convinced by independent checks.
+5. Delegate final validation to Reviewer. Reviewer must use its Reviewer-only goal_check_done access for evidence and must be convinced by independent checks.
 6. If Reviewer rejects, route fixes back to Plan or Build, use goal_retry when needed, and repeat review.
 7. Mark completion only after required Done Conditions pass and Reviewer approves the outcome.
 
@@ -61,6 +61,7 @@ Delegation boundaries:
 Critical gates:
 - Never skip Reviewer before declaring a Goal done.
 - Treat goal_check_done evidence as canonical verification evidence.
+- Use goal_artifact_read for status and final reporting; do not write Goal artifacts directly from Orchestrator.
 - Ask the user only for real product decisions, security/permission choices, or unrecoverable ambiguity. Batch related questions when possible.
 - Do not rely on implementer claims when independent evidence is available.
 
@@ -97,7 +98,7 @@ Reporting:
       TOOL_GOAL_LOCK,
       TOOL_GOAL_RUN,
       TOOL_GOAL_RETRY,
-      TOOL_GOAL_CHECK_DONE,
+      TOOL_GOAL_ARTIFACT_READ,
       ...SKILL_TOOLS,
     ],
     delegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],

@@ -40,7 +40,7 @@ import { SessionExecutionManager } from "./execution";
 import type { ActiveSessionExecution, SubscribeSessionEventsInput } from "./execution";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
-import type { HitlEvent, HitlPayload, HitlResponsePayload } from "./hitl/types";
+import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -166,14 +166,16 @@ export async function createRuntime(
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
     const sessionStoreManager = new SessionStoreManager({ logger });
-    const hitl = new HitlService({
+    const hitlEvents: HitlEventSubmitter = {
       submitHitlEvent: (sessionId, event) => {
         const protocolEvent = toProtocolHitlEvent(event);
         if (protocolEvent) sessionStoreManager.appendSessionEvent(sessionId, protocolEvent);
       },
-    });
+    };
+    const hitl = new HitlService(hitlEvents);
     const contextResolver = new ProjectContextResolver({
-      hitlFactory: () => hitl,
+      projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
+      hitlFactory: () => new HitlService(hitlEvents),
       logger: runtimeLogger.child({ module: "projects" }),
     });
     const sessionAgentManager = new SessionAgentManager({
@@ -328,7 +330,9 @@ function toProtocolHitlEvent(event: HitlEvent): HitlStreamEvent | undefined {
         kind: event.kind,
         prompt: hitlPrompt(event.payload),
         payload: protocolHitlPayload(event.payload),
+        ...(event.displayPayload === undefined ? {} : { displayPayload: event.displayPayload }),
         trigger: event.trigger.source?.startsWith("goal.") || event.kind !== "question" ? "approval_point" : "agent_request",
+        ...(event.approvalKey === undefined ? {} : { decisionKey: event.approvalKey }),
         status: "pending",
         createdAt: new Date(event.createdAt).toISOString(),
       } satisfies ProtocolHitlRequest,
@@ -362,14 +366,21 @@ function protocolHitlPayload(payload: HitlPayload): ProtocolHitlPayload {
     return { kind: "approval", action: payload.action, context: payload.context };
   }
   if (payload.kind === "review") {
-    return { kind: "review", artifacts: payload.artifacts };
+    return {
+      kind: "review",
+      artifacts: payload.artifacts.map((artifact) => ({
+        name: "review.md",
+        path: artifact.path,
+        mediaType: "text/markdown",
+      })),
+    };
   }
   return { kind: "question", custom: true };
 }
 
 function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePayload): ProtocolHitlResponse {
   if (kind === "approval") {
-    const approved = response.decision === "approved" || response.decision === "approve" || response.verdict === "approve" || response.data?.approved === true;
+    const approved = response.decision === "approved" || response.decision === "approve" || response.outcome === "DONE" || response.data?.approved === true;
     return {
       kind: "approval",
       approved,
@@ -380,7 +391,7 @@ function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePay
   if (kind === "review") {
     return {
       kind: "review",
-      verdict: response.verdict ?? (response.decision === "approved" ? "approve" : "request_changes"),
+      outcome: response.outcome ?? (response.decision === "approved" ? "DONE" : "NOT_DONE"),
       ...(response.comment === undefined ? {} : { comment: response.comment }),
     };
   }
@@ -408,6 +419,7 @@ async function recoverRegisteredProjectGoals(input: {
       const projectContext = await input.contextResolver.resolve(project.workspaceRoot);
       const runner = new GoalRunner({
         goalStateManager: projectContext.goalState,
+        goalArtifacts: projectContext.goalArtifacts,
         hitlService: projectContext.hitl,
         workspaceRoot: project.workspaceRoot,
         createSession: () => input.createSession(project.workspaceRoot),
