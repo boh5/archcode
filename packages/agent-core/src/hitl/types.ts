@@ -48,7 +48,7 @@ export type HitlPayload = HitlDisplayFields & (
 export type HitlResponsePayload = {
   decision?: string;
   answers?: unknown;
-  verdict?: "approve" | "reject" | "request_changes";
+  outcome?: "DONE" | "NOT_DONE";
   comment?: string;
   data?: Record<string, unknown>;
 };
@@ -58,6 +58,8 @@ export interface HitlTrigger {
   goalId?: string;
   loopId?: string;
   source?: string;
+  approvalPoint?: string;
+  toolCallId?: string;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
 }
@@ -69,6 +71,14 @@ export interface HitlRequest {
   payload: HitlPayload;
   trigger: Omit<HitlTrigger, "abortSignal">;
   createdAt: number;
+  status?: "pending" | HitlResolutionStatus;
+  displayPayload?: {
+    title: string;
+    summary?: string;
+    fields?: Array<{ label: string; value: string }>;
+    redacted: true;
+  };
+  approvalKey?: string;
 }
 
 export type HitlResponse =
