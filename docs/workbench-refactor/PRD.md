@@ -7,7 +7,7 @@
 
 **本文档是 PRD(产品需求)** —— 定义"做什么、为谁做、为什么、成功标准"。
 **配套技术设计在 `docs/workbench-refactor/TDD.md`** —— 那里定义"怎么实现"(类型/schema/路由/组件)。
-**状态**:产品规格,描述完整产品意图。实施按 5 阶段(先 Goal 后 Loop)分步,由用户根据本 PRD 拆任务执行。
+**状态**:产品规格,描述完整产品意图。实施按 5 阶段(先 Goal 后 Loop)分步,由用户根据本 PRD 拆任务执行。Phase 2 Goal 语义以 §5.2 为当前实现边界。
 
 ---
 
@@ -60,7 +60,7 @@
 |---|---|---|
 | 多项目 AI 编码没有统一指挥台 | 每个仓库开一个 Claude Code/Cursor tab,context 割裂 | 跨项目 Mission Control,一处看全部 |
 | AI 说"我做完了"但不可信 | 模型自评,无独立验证 | 机器可检 Done 条件 + 独立 Reviewer + 默认拒绝 |
-| 长任务不敢放手跑 | 怕烧钱、怕跑飞、怕回来不知道发生了什么 | Budget 护栏 + kill switch + 审计日志 + run-log |
+| 长任务不敢放手跑 | 怕 token 烧穿、怕跑飞、怕回来不知道发生了什么 | token Budget 护栏 + kill switch + 审计日志 + run-log |
 | 重复性维护工作占精力 | 每天手动看 CI、triage PR、查依赖 | Loop 自动跑,人审门控风险,State 持续积累 |
 | 代码不出域 | 云端 AI 工程师 SaaS 黑盒 | 自托管 + BYOM + 全透明可审计 |
 | 合上笔记本工作就停 | 终端 agent 是 session-scoped | 持久 server + SSE 推送 + 工作继续 |
@@ -76,7 +76,7 @@
 2. ArchCode 分解 → plan / build / review 任务
 3. AI agents 执行 → 架构师不写代码
 4. 架构师监督 → Web UI 显示进度,审批关键操作,审查证据
-5. 架构师合上笔记本 → 工作继续,Budget 护栏,SSE 推送通知
+5. 架构师合上笔记本 → 工作继续,token Budget 护栏,SSE 推送通知
 6. 回来审查 → Reviewer 提供机器可检完成证据,架构师决定 merge/retry/escalate
 ```
 
@@ -146,7 +146,7 @@
 |---|---|---|---|
 | `question` | agent 主动要信息,回答回流到对话 | 无选项或有选项(现有 `ask_user` 已支持 options/multiple/custom),回答回流对话上下文 | 替代 `ask_user` 工具 + 现有 workflow interaction 的 `decision`/`preference`/`clarification` 三种 kind(结构相同,区别纯语义,合并) |
 | `approval` | 某个门控层需要人审时,HITL 呈现 yes/no 给用户并拿回决策 | 呈现 approve/deny/approve_always 选项,拿回用户决策 | **被两个独立调用方调用**:(1) Goal phase 转换 guard(详见下文 approvalPoints)(2) 现有 tool permission guard(单次工具调用时调,guard 返回 `outcome:"ask"` → permission 模块调 HITL `approval` → 拿回决策 → 放行/拒绝/持久化)。HITL 只管"呈现+拿决策",不管"判断要不要问"(调用方的事)和"deny 后做什么"(调用方根据返回值处理) |
-| `review` | 架构师批量审查产物,verdict 决定 Goal 走向 | verdict 是 approve/reject/request_changes,驱动 Goal 状态机 | **新能力**,现有代码无对应 |
+| `review` | 架构师批量审查产物,outcome 决定 Goal 走向 | outcome 是 `DONE` / `NOT_DONE`,驱动 Goal 状态机 | **新能力**,现有代码无对应 |
 
 **为什么不是 4 种(没有单独的 `decision` kind)**:`decision` 和 `question` 的结构完全相同(都可以有 options + recommendedOption + rationale),区别只在 agent 怎么用答案——这是 prompt 层语义,不是 runtime 层。机器无法强制区分的,不应该分成两个 kind。agent 想表达"这是分叉决策",在 prompt 里说,不需要单独 kind。
 
@@ -159,7 +159,7 @@
 
 **HITL 架构:不合并现有 service**。保留 `PermissionService`(tool permission 安全边界)+ `AskUserService`(已有 ask_user)不动。新增 `HitlService` 只管 Goal approvalPoints 和 review kind 的 queue + respond + cancel。`HitlService` 复用现有 deferred Promise + SSE 推送 + 超时/abort 安全 resolve 模式,但是独立 service。
 
-**HITL 持久化:MVP in-memory only**。pending HITL 不持久化到磁盘。Server restart 后 pending HITL 丢失,关联的 Goal 标 `paused`(或 `escalated`,由 retry policy 决定),用户手动 resume。不引入磁盘持久化的复杂度。
+**HITL 持久化:Phase 2 durable project-scoped queue**。pending/resolved/cancelled/timeout approval records 持久化到项目工作区,server restart 后 pending records 仍可见。旧进程内 Promise 不恢复;runner recovery 会暂停受影响 Goal 或通过 deterministic approval key 复用 existing pending record。Dashboard/Web 只展示 redacted `displayPayload`,不展示 raw payload。
 
 **approvalPoints 是 Goal 系统的产品规则**:
 - 架构师在 Goal 配置里声明 `after_plan` / `before_complete`
@@ -282,12 +282,15 @@
 
 **目标**:Goal 体验完整,架构师可日常依赖 Goal 做真实工程工作。
 
-- retry/fresh-context retry 完整(maxRetries + backoff + escalate)
-- `spec_compliance` Done 条件(Layer 2 AI 判断,可选)
-- Goal 详情 tabs 完整(Plan/Build/Review 结构化产物视图)
-- Approval Queue 完整(全局 Dashboard + 就地,操作同步)
-- Goal budget 基础(per-Goal token 上限 + 超限暂停)
-- memory 接通 Goal(跨 session 记忆)
+- retry/fresh-context retry 完整:`retryPolicy`/`retryState` 持久化 `maxRetries`、`backoffMs`、`nextRetryAt` 和 exhausted escalation;到期 retry 可在 runner/service 重建后恢复。
+- `spec_compliance` Done 条件由 Reviewer 在 `goal_check_done` 下产生结构化逐 criterion 证据;不保存 raw LLM 输出,不加单独 spec agent/model/config。
+- Reviewer 验证是硬边界:`goal_check_done` 仅 Reviewer review session 可用;外部 verdict 只有 `DONE` / `NOT_DONE`,其中 `NOT_DONE` 生成 Operator 修复上下文并进入现有 failed/retry/escalated 流程。
+- Goal artifacts 是当前 canonical Markdown 文件:`plan.md`,`build.md`,`review.md`,`spec-compliance.md`,`approvals.md`,`budget.md`,`retry-log.md`,`final-report.md`;不做 artifact version/revision/latest 指针。
+- Approval Queue 完整:durable、project-scoped、全局 Dashboard + 就地列表同步;Web/Dashboard 使用 redacted `displayPayload`,不展示 raw payload。
+- Goal budget 基础:per-Goal token 上限 + warning/hard pause;只统计 token,不做价格/cost accounting。
+- Goal memory 接通 Plan/Build/Review prompt,且与 Project memory 隔离;不自动 promotion/transfer。
+- Phase 2 不新增 `.archcode.json` budget/retry schema 字段或默认值;budget/retry 是 Goal 创建输入和持久化 Goal state。
+- Legacy workflow runtime/tool/routes 已移除;Goal/HITL/artifact API 是当前实现路径。
 
 ### 阶段 3:Loop MVP(可跑通)
 
@@ -340,7 +343,7 @@
 | 架构师能跨项目监督 AI 编码工作 | Dashboard 一屏看全 active goals/loops/approvals |
 | 架构师能合上笔记本工作继续 | 持久 server + SSE,回来看到完整 run-log + evidence |
 | AI 不能虚假完成 | Done 条件机器可检,Reviewer 独立 + 能跑工具 + 默认拒绝 |
-| AI 不能烧钱失控 | Budget hardStop + kill switch + stagnation breaker |
+| AI 不能 token 烧穿 | Budget hardStop + kill switch + stagnation breaker |
 | 重复性维护可委派给 AI | Loop 跑 triage/fix/verify,人审门控风险 |
 | 代码不出域 | 自托管 + BYOM + 全透明审计 |
 | 长任务可恢复 | Session 持久化 + Goal/Loop state git 可跟踪 |
@@ -402,7 +405,10 @@
 - ❌ 不做 cron/trigger 调度(Phase 5a 必需,非反范围,但不在 Phase 1-4)
 - ❌ 不做用户自定义 pattern(Phase 5b 可选,预设库已足够起步)
 - ❌ 不做独立 worker 进程(单进程足够)
-- ❌ 不做 cost / 美元预算(tokens + iterations 足够,后续再说)
+- ❌ 不做 pricing/cost / 美元预算(tokens + iterations 足够,后续再说)
+- ❌ Phase 2 不做 checkpoint/rollback/rerun 功能
+- ❌ Phase 2 不做 artifact versions/revisions/latest 指针
+- ❌ Phase 2 不做 Safe/Balanced/Brave approval modes
 - ❌ 不做 headless / daemon 部署模式(用户自行部署到 always-on 主机)
 - ❌ 不做 OpenHands 式训练 critic 模型(研究阶段,成本高)
 - ❌ 不做 Kiro EARS notation + property testing(太正式,IDE 中心)
@@ -490,7 +496,7 @@
 5. **预设 pattern 的 BudgetSpec 默认值** —— 用 loop-engineering cost registry 的数字作为起点,实现时按实际调整(决策 2026-06)
 6. **Goal phases 承认** —— Goal 有显式 phases(plan→build→review),持久化到 goal.json,approvalPoints 是 phase 转换门(决策 2026-06)
 7. **Reviewer day-one 强制** —— Phase 1 起 Reviewer 强制,不分阶段(决策 2026-06)
-8. **HITL 不合并** —— 保留 PermissionService + AskUserService 不动,新增 HitlService。MVP in-memory only,restart 后 pending HITL 丢失,Goal 标 paused(决策 2026-06)
+8. **HITL 不合并** —— 保留 PermissionService + AskUserService 不动,新增 HitlService。Phase 2 使用 durable project-scoped queue;旧 live Promise 不恢复,但 pending record 可通过 deterministic key 复用(Phase 2 实现更新,2026-07)
 9. **command_succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command_succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
 10. **Dashboard 留 Phase 1** —— 遍历 ProjectRegistry.list() + 各项目 .archcode/goals/ 文件聚合,REST 初始快照 + SSE 增量,不需新存储(决策 2026-06)
 11. **Phase 3 Loop 允许 action loop** —— 允许 Loop 跑 Goal(可改代码),靠 Reviewer 强制 + approvalPoints + 基础 budget 兜底。Phase 4 补完整护栏(throttle/hardStop/stagnation/kill switch)后才真正可无人看(决策 2026-07)
@@ -498,6 +504,6 @@
 13. **Phase 4 加第一批 external integrations** —— GitHub(PR/issue)+ CI 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可用。Phase 3 只本地预设可用(决策 2026-07)
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
 15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 6-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
-16. **Budget 不加 cost** —— tokens + iterations 足够,不加美元换算,后续视需要再说(决策 2026-07)
+16. **Budget 不加 pricing/cost** —— tokens + iterations 足够,不加美元换算,后续视需要再说(决策 2026-07)
 17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge。bash guard 拦截 git push/merge/rebase/reset --hard。AI 可开 PR + 开 issue(Phase 4+ 有 connector)(决策 2026-07)
 18. **self-hosted 不加 headless 模式** —— 用户自行部署到 always-on 主机,ArchCode 不做 headless/daemon 模式,文档指引即可(决策 2026-07)

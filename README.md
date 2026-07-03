@@ -51,9 +51,21 @@ bun test             # Run tests
 
 ### Projects and Web UI
 
-ArchCode is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, memory, workflow state, approvals, and artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
+ArchCode is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, Goal state, project memory, durable approvals, and current Goal artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
 
 Use the Web UI **Add Project** flow to register an existing workspace directory. The server validates that the path is an absolute existing directory, stores it in the registry, assigns a stable slug, and then opens project-specific sessions against that workspace.
+
+### Phase 2 Goal Boundaries
+
+Phase 2 makes Goal daily-usable without adding new `.archcode.json` budget or retry schema fields/defaults. Budget and retry settings are Goal-scoped create inputs and persisted Goal state (`retryPolicy`, `retryState`, `tokenBudget`).
+
+- `goal_check_done` is Reviewer-only; external Reviewer outcomes are exactly `DONE` or `NOT_DONE`.
+- Goal artifacts are current canonical Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files.
+- Durable approvals are project-scoped. Web and Dashboard approval views render redacted `displayPayload` data, not raw payloads.
+- Goal budget accounting is token-only (`inputTokens`, `outputTokens`, `totalTokens`); pricing/cost accounting is not implemented.
+- Goal memory is isolated from Project memory; there is no automatic promotion or transfer.
+- Retry/backoff persists scheduled retry metadata such as `nextRetryAt`; due retries can resume after runner/service recreation.
+- Legacy workflow runtime, tools, and routes were removed; Goal/HITL/artifact APIs are the supported Phase 2 path.
 
 ## Configuration (`.archcode.json`)
 
@@ -308,7 +320,7 @@ Memory extraction runs automatically after each query loop on the root orchestra
 | `minContentLength` | `1000` | Minimum total text content length (in characters) required before extraction triggers |
 | `cooldownMs` | `300000` | Minimum time (ms) between successive extractions (5 minutes) |
 
-Memory extraction also applies smart message filtering: only user messages and read-only tool outputs are sent to the extraction LLM. Assistant reasoning, write operations, and delegation results are excluded to reduce noise and token cost.
+Memory extraction also applies smart message filtering: only user messages and read-only tool outputs are sent to the extraction LLM. Assistant reasoning, write operations, and delegation results are excluded to reduce noise and token use.
 
 ### Agent Configuration
 
@@ -362,10 +374,12 @@ All errors fail fast at agent creation time — not mid-stream.
 apps/server/src/main.ts                           # Headless server entry: createRuntime() → config → providers → tools → MCP → boot Hono
 packages/agent-core/src/config/                   # Config loading (JSON), Zod validation (.strict() on all schemas)
 packages/agent-core/src/provider/                  # Provider registry & ModelInfo (wraps AI SDK instances)
-packages/agent-core/src/agents/definitions/        # AgentDefinition records for orchestrator, explore, and workflow roles
+packages/agent-core/src/agents/definitions/        # AgentDefinition records for orchestrator, plan/build/reviewer, explore, librarian
 packages/agent-core/src/agents/factory.ts          # Agent creation and delegation through ConfiguredAgent
 packages/agent-core/src/agents/model-resolver.ts   # Agent → model + resolved options (fail-fast)
 packages/agent-core/src/agents/query/loop.ts       # runLlmStream + tool execution cycle (max 50 steps)
+packages/agent-core/src/goals/                     # Goal state, Reviewer checks, artifacts, retry, token budget, isolated Goal memory
+packages/agent-core/src/hitl/                      # Durable project-scoped HITL approval queue with redacted display payloads
 packages/agent-core/src/projects/                  # Multi-project registry and per-workspace context resolver
 apps/server/src/                                   # Hono REST + SSE server with auth, CORS, errors, lifecycle
 apps/web/                                          # Vite + React + Tailwind frontend
