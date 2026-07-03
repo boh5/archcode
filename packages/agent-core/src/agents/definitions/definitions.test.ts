@@ -20,6 +20,8 @@ import {
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
   TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_GOAL_CREATE,
   TOOL_GOAL_LOCK,
   TOOL_GOAL_RETRY,
@@ -86,7 +88,9 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_GOAL_LOCK);
     expect(tools).toContain(TOOL_GOAL_RUN);
     expect(tools).toContain(TOOL_GOAL_RETRY);
-    expect(tools).toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).not.toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).not.toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_DELEGATE);
     expect(orchestratorAgentDefinition.tools.delegateTargets).toEqual([
       "plan",
@@ -112,6 +116,8 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("glob");
     expect(tools).toContain("web_fetch");
     expect(tools).toContain("lsp_diagnostics");
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
     expect(planAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
@@ -121,6 +127,9 @@ describe("agentDefinitions", () => {
     const tools = buildAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
+    expect(tools).not.toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
   });
@@ -133,6 +142,8 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
     expect(tools).toContain("lsp_diagnostics");
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
   });
@@ -140,13 +151,13 @@ describe("agentDefinitions", () => {
   test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
     const prompt = reviewerAgentDefinition.rolePrompt;
 
-    expect(prompt).toContain("Default stance: REJECT");
+    expect(prompt).toContain("Default stance: NOT_DONE");
     for (const item of ["Scope", "Intent", "Tests", "No cheating", "Risk"] as const) {
       expect(prompt).toContain(item);
     }
-    expect(prompt).toContain("APPROVE");
-    expect(prompt).toContain("REJECT");
-    expect(prompt).toContain("ESCALATE_HUMAN");
+    expect(prompt).toContain("DONE");
+    expect(prompt).toContain("NOT_DONE");
+    expect(prompt).not.toContain("ESCALATE_HUMAN");
   });
 
   test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
