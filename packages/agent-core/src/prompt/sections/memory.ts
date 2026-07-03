@@ -14,7 +14,10 @@ const MEMORY_TOOLS_DESCRIPTION = `You have access to project and user memory via
 - memory_read: Read memory (no name = combined context with user preferences + project index; name "preferences" = user preferences; name "index" = project index; otherwise name = knowledge topic)
 - memory_write: Write memory (name "preferences" with scope="user" to save user preferences; any other name to write a project knowledge topic; index is auto-managed)
 
-Memory is automatically injected into your context. When you learn something durable about the user's preferences or working style, use memory_write with name="preferences". For project knowledge and conventions, use any other topic name. Do not save secrets, API keys, or passwords.`;
+Memory is automatically injected into your context. Goal-scoped memory, when present, is read-only prompt context for the active Goal and is separate from project/user memory. When you learn something durable about the user's preferences or working style, use memory_write with name="preferences". For project knowledge and conventions, use any other topic name. Do not save secrets, API keys, or passwords.`;
+
+const GOAL_MEMORY_CONTEXT_START = "<archcode-goal-memory-context>";
+const GOAL_MEMORY_CONTEXT_END = "</archcode-goal-memory-context>";
 
 function truncateIndex(content: string, maxLines: number): string {
   const lines = content.split("\n");
@@ -31,15 +34,14 @@ function truncateByBytes(content: string, maxBytes: number): string {
 }
 
 export async function buildMemorySection(ctx: PromptContext): Promise<string | null> {
-  if (ctx.memoryRoots === undefined) {
+  if (ctx.memoryRoots === undefined && !shouldInjectGoalMemory(ctx)) {
     return null;
   }
 
-  const fm = new MemoryFileManager(ctx.memoryRoots);
-
-  const [index, userPrefs] = await Promise.all([
-    fm.readIndex(),
-    fm.readPreferences(),
+  const [index, userPrefs, goalIndex] = await Promise.all([
+    ctx.memoryRoots === undefined ? Promise.resolve(null) : new MemoryFileManager(ctx.memoryRoots).readIndex(),
+    ctx.memoryRoots === undefined ? Promise.resolve(null) : new MemoryFileManager(ctx.memoryRoots).readPreferences(),
+    readGoalMemoryIndex(ctx),
   ]);
 
   const parts: string[] = [];
@@ -58,7 +60,27 @@ export async function buildMemorySection(ctx: PromptContext): Promise<string | n
     );
   }
 
+  if (goalIndex !== null) {
+    const truncated = truncateIndex(goalIndex, DEFAULT_MAX_INDEX_LINES);
+    parts.push(
+      `${GOAL_MEMORY_CONTEXT_START}\n${truncated}\n${GOAL_MEMORY_CONTEXT_END}`,
+    );
+  }
+
   if (parts.length === 0) return null;
 
   return `## Memory\n\n${parts.join("\n\n")}\n\n${MEMORY_TOOLS_DESCRIPTION}`;
+}
+
+function shouldInjectGoalMemory(ctx: PromptContext): boolean {
+  return ctx.goalId !== undefined &&
+    ctx.goalMemory !== undefined &&
+    (ctx.sessionRole === "plan" || ctx.sessionRole === "build" || ctx.sessionRole === "review");
+}
+
+async function readGoalMemoryIndex(ctx: PromptContext): Promise<string | null> {
+  if (!shouldInjectGoalMemory(ctx)) return null;
+  const { goalId, goalMemory } = ctx;
+  if (goalId === undefined || goalMemory === undefined) return null;
+  return await goalMemory.readIndex(goalId);
 }

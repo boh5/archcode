@@ -1,6 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { buildSystemPrompt } from "../builder";
 import type { PromptContext } from "../types";
+import { GoalMemoryManager } from "../../goals/goal-memory";
 import {
   DEFAULT_MAX_PREFERENCES_BYTES,
 } from "../../memory/constants";
@@ -31,6 +32,12 @@ async function createMemoryDirs(): Promise<MemoryRoots> {
   await mkdir(projectRoot, { recursive: true });
   await mkdir(userRoot, { recursive: true });
   return { project: projectRoot, user: userRoot };
+}
+
+async function createWorkspaceRoot(): Promise<string> {
+  const workspaceRoot = join(TEST_TMP, crypto.randomUUID(), "workspace");
+  await mkdir(workspaceRoot, { recursive: true });
+  return workspaceRoot;
 }
 
 async function writeMemoryFile(
@@ -236,5 +243,96 @@ describe("buildSystemPrompt — Memory section", () => {
     expect(result).toContain("## Memory");
     expect(result).toContain("<archcode-memory-context>");
     expect(result).not.toContain("<archcode-memory-preferences>");
+  });
+
+  test("injects matching Goal memory for Plan, Build, and Review goal sessions", async () => {
+    const roots = await createMemoryDirs();
+    await writeMemoryFile(roots, "project", "index.md", "PROJECT_MEMORY");
+    const workspaceRoot = await createWorkspaceRoot();
+    const goalId = crypto.randomUUID();
+    const goalMemory = new GoalMemoryManager(workspaceRoot);
+    await goalMemory.writeTopic(
+      goalId,
+      "phase_notes",
+      { name: "Phase Notes", description: "Goal-local context", type: "project" },
+      "Only this goal should see it.",
+    );
+
+    for (const sessionRole of ["plan", "build", "review"] as const) {
+      const result = await buildSystemPrompt(
+        makeCtx({ memoryRoots: roots, workspaceRoot, goalId, sessionRole, goalMemory }),
+      );
+      expect(result).toContain("<archcode-memory-context>\nPROJECT_MEMORY\n</archcode-memory-context>");
+      expect(result).toContain("<archcode-goal-memory-context>");
+      expect(result).toContain("- [Phase Notes](phase_notes) — Goal-local context");
+      expect(result).toContain("</archcode-goal-memory-context>");
+    }
+  });
+
+  test("does not inject Goal memory when the session has no goalId", async () => {
+    const roots = await createMemoryDirs();
+    const workspaceRoot = await createWorkspaceRoot();
+    const goalId = crypto.randomUUID();
+    const goalMemory = new GoalMemoryManager(workspaceRoot);
+    await goalMemory.writeTopic(
+      goalId,
+      "hidden_notes",
+      { name: "Hidden Notes", description: "Requires goal id", type: "project" },
+      "Hidden without goal id.",
+    );
+
+    const result = await buildSystemPrompt(
+      makeCtx({ memoryRoots: roots, workspaceRoot, sessionRole: "build", goalMemory }),
+    );
+
+    expect(result).not.toContain("<archcode-goal-memory-context>");
+    expect(result).not.toContain("Hidden Notes");
+  });
+
+  test("does not inject Goal memory for non Plan/Build/Review roles", async () => {
+    const roots = await createMemoryDirs();
+    const workspaceRoot = await createWorkspaceRoot();
+    const goalId = crypto.randomUUID();
+    const goalMemory = new GoalMemoryManager(workspaceRoot);
+    await goalMemory.writeTopic(
+      goalId,
+      "orchestrator_hidden",
+      { name: "Orchestrator Hidden", description: "Role gated", type: "project" },
+      "Hidden from non execution roles.",
+    );
+
+    const result = await buildSystemPrompt(
+      makeCtx({ memoryRoots: roots, workspaceRoot, goalId, sessionRole: "main", goalMemory }),
+    );
+
+    expect(result).not.toContain("<archcode-goal-memory-context>");
+    expect(result).not.toContain("Orchestrator Hidden");
+  });
+
+  test("matching Goal memory does not reveal other Goal memory", async () => {
+    const roots = await createMemoryDirs();
+    const workspaceRoot = await createWorkspaceRoot();
+    const goalAId = crypto.randomUUID();
+    const goalBId = crypto.randomUUID();
+    const goalMemory = new GoalMemoryManager(workspaceRoot);
+    await goalMemory.writeTopic(
+      goalAId,
+      "goal_a_notes",
+      { name: "Goal A Notes", description: "A only", type: "project" },
+      "A-only prompt context.",
+    );
+    await goalMemory.writeTopic(
+      goalBId,
+      "goal_b_notes",
+      { name: "Goal B Notes", description: "B only", type: "project" },
+      "B-only prompt context.",
+    );
+
+    const result = await buildSystemPrompt(
+      makeCtx({ memoryRoots: roots, workspaceRoot, goalId: goalAId, sessionRole: "review", goalMemory }),
+    );
+
+    expect(result).toContain("Goal A Notes");
+    expect(result).not.toContain("Goal B Notes");
   });
 });
