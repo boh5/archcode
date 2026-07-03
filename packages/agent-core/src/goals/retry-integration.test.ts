@@ -7,6 +7,7 @@ import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
 import { GoalApprovalGate, type ReviewOutcome } from "../hitl/goal-gates";
 import type { HitlResponse } from "../hitl/types";
 import { setLlmAdapterForTest } from "../llm";
+import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner, GoalRunnerError } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -34,12 +35,12 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function reviewResponse(verdict: ReviewOutcome["verdict"], comment: string): HitlResponse {
+function reviewResponse(outcome: ReviewOutcome["outcome"], comment: string): HitlResponse {
   return {
     hitlId: crypto.randomUUID(),
     kind: "review",
     status: "resolved",
-    response: { verdict, comment },
+    response: { outcome, comment },
   };
 }
 
@@ -56,9 +57,10 @@ function createRunner(options: { sessionIds?: string[] } = {}): GoalRunner {
 
   return new GoalRunner({
     goalStateManager: manager,
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
     workspaceRoot,
     hitlService: {
-      request: mock(async () => reviewResponse("approve", "Approved")),
+      request: mock(async () => reviewResponse("DONE", "Approved")),
       listPending: mock(() => []),
     },
     createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
@@ -66,10 +68,11 @@ function createRunner(options: { sessionIds?: string[] } = {}): GoalRunner {
   });
 }
 
-function createReviewGate(verdict: ReviewOutcome["verdict"], comment: string): GoalApprovalGate {
+function createReviewGate(outcome: ReviewOutcome["outcome"], comment: string): GoalApprovalGate {
   return new GoalApprovalGate({
     goalStateManager: manager,
-    hitlService: { request: mock(async () => reviewResponse(verdict, comment)) },
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    hitlService: { request: mock(async () => reviewResponse(outcome, comment)) },
   });
 }
 
@@ -105,14 +108,14 @@ describe("Goal retry integration", () => {
   test("reviewer rejection prevents completion", async () => {
     const goal = await lockedGoal(1);
     const runner = createRunner({ sessionIds: ["main-session-1", "fresh-session-2"] });
-    const reviewGate = createReviewGate("reject", "Output is broken");
+    const reviewGate = createReviewGate("NOT_DONE", "Output is broken");
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, condition.id, passingResult());
 
     const outcome = await reviewGate.requestReview(goal.id, "main-session-1", [], goal.projectId);
     const retry = await runner.handleFailedVerification(goal.id, outcome.comment ?? "Reviewer rejected");
 
-    expect(outcome).toEqual({ verdict: "reject", comment: "Output is broken" });
+    expect(outcome).toEqual({ outcome: "NOT_DONE", comment: "Output is broken" });
     await expectGoalRunnerError(() => runner.complete(goal.id));
     expect(retry.status).toBe("running");
     expect(retry.phase).toBe("plan");

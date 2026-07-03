@@ -7,6 +7,7 @@ import type { DoneCondition, DoneResult } from "@archcode/protocol";
 import { HitlService } from "../hitl/service";
 import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "../hitl/types";
 import { setLlmAdapterForTest } from "../llm";
+import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -56,6 +57,7 @@ async function lockedGoal(approvalPoints: Array<"after_plan" | "before_complete"
 function createRunner(hitlService: HitlService, options: { timeoutMs?: number } = {}): GoalRunner {
   return new GoalRunner({
     goalStateManager: manager,
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
     workspaceRoot,
     hitlService: {
       request: mock((sessionId: string, kind: HitlKind, payload: HitlPayload, trigger: HitlTrigger): Promise<HitlResponse> => {

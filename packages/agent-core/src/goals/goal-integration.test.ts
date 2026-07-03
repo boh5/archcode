@@ -21,6 +21,7 @@ import { createRegistry } from "../tools/registry";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { createToolExecutionContext } from "../tools/types";
 import { createGoalCheckDoneTool } from "../tools/builtins/goal-tools";
+import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -77,6 +78,7 @@ function createRunner(sessionIds: string[] = ["main-session-1"]): GoalRunner {
   const remainingSessionIds = [...sessionIds];
   return new GoalRunner({
     goalStateManager: manager,
+    goalArtifacts: new GoalArtifactManager(workspaceRoot),
     workspaceRoot,
     hitlService: {
       request: mock(async () => approvedResponse()),
@@ -188,6 +190,7 @@ describe("Goal integration happy path", () => {
     const reviewPhase = await runner.advancePhase(build.id, "review");
     appendGoalStateChange(sessionStore, reviewPhase);
     expect(reviewPhase.phase).toBe("review");
+    sessionStore.setState({ agentName: "reviewer", sessionRole: "review", goalId: reviewPhase.id });
 
     const reviewOutput = await runLlmText({ model: dummyModel, prompt: `Review goal ${reviewPhase.id}` });
     expect(reviewOutput.text).toContain("goal_check_done");
@@ -201,7 +204,7 @@ describe("Goal integration happy path", () => {
     expect(grepResult).toMatchObject({ conditionId: artifactMentionsPlanCondition.id, passed: true });
     expect(grepResult.evidence).toContain("matches");
 
-    const verifying = await runner.recordReviewerDoneResult(reviewPhase.id, artifactExistsCondition.id, fileExistsResult);
+    const verifying = await manager.read(reviewPhase.id);
     appendGoalStateChange(sessionStore, verifying);
     expect(verifying.status).toBe("verifying");
 
