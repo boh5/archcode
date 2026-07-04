@@ -26,6 +26,22 @@ function createTestSkillService(): SkillService {
   return new SkillService({ builtinSkills: {} });
 }
 
+function createSkillServiceWithToolGrant(): SkillService {
+  return new SkillService({
+    builtinSkills: {
+      "github-skill": [
+        "---",
+        "name: github-skill",
+        "description: GitHub skill",
+        "when_to_use: Use for GitHub watching.",
+        "allowed_tools: [github_get_pull_request, github_merge_pull_request]",
+        "---",
+        "This skill can describe GitHub workflows but cannot grant tools.",
+      ].join("\n"),
+    },
+  });
+}
+
 class RecordingBackgroundTaskManager {
   readonly dispatched: string[] = [];
   drainCalls = 0;
@@ -518,6 +534,112 @@ describe("ConfiguredAgent", () => {
     expect(result).toEqual({ text: "", steps: 1 });
     expect(streamFn).toHaveBeenCalledTimes(1);
     expect(agent.store.getState().executions.at(-1)?.status).toBe("max_steps");
+  });
+
+  test("non-loop runs keep definition tools unchanged and do not expose profile-only GitHub tools", async () => {
+    const streamFn = setupMockStreamText("default tools ok");
+    const toolRegistry = createRegistry(orchestratorAgentDefinition.tools.tools.map(makeTool));
+    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
+
+    await agent.run("default run");
+
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).toContain("- file_read");
+    expect(callArgs.system).toContain("- file_write");
+    expect(callArgs.system).toContain("- bash");
+    expect(callArgs.system).not.toContain("github_get_pull_request");
+    expect(callArgs.system).not.toContain("github_create_issue_comment");
+  });
+
+  test("Loop PR-watch profile narrows prompt tools and adds explicit profile-only connector tools", async () => {
+    const streamFn = setupMockStreamText("profile tools ok");
+    const agent = createAgent({ definition: orchestratorAgentDefinition });
+
+    await agent.run("profile run", {
+      origin: {
+        kind: "loop",
+        loopId: crypto.randomUUID(),
+        runId: "run-1",
+        trigger: "manual",
+        mode: "report",
+        approvalPolicy: "interactive",
+        toolProfileId: "loop_github_pr_watch",
+      },
+    });
+
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).toContain("- file_read");
+    expect(callArgs.system).toContain("- github_get_pull_request");
+    expect(callArgs.system).toContain("- github_create_issue_comment");
+    expect(callArgs.system).not.toContain("- file_write");
+    expect(callArgs.system).not.toContain("- bash");
+    expect(callArgs.system).not.toContain("github_rerun_workflow_run");
+  });
+
+  test("Loop profile effective tools are enforced in tool execution context", async () => {
+    setupToolCallStreamText("github_create_issue_comment");
+    let capturedAllowedTools: string[] = [];
+    let capturedOriginProfileId: string | undefined;
+    const toolRegistry = makeToolRegistry();
+    toolRegistry.register({
+      name: "github_create_issue_comment",
+      description: "Create a GitHub issue comment placeholder",
+      inputSchema: z.object({}).strict(),
+      traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      execute: (_input, ctx) => {
+        capturedAllowedTools = [...ctx.allowedTools];
+        capturedOriginProfileId = ctx.origin?.toolProfileId;
+        return "commented";
+      },
+    });
+    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
+
+    await agent.run("comment on PR", {
+      maxSteps: 1,
+      origin: {
+        kind: "loop",
+        loopId: crypto.randomUUID(),
+        runId: "run-1",
+        trigger: "manual",
+        mode: "report",
+        approvalPolicy: "interactive",
+        toolProfileId: "loop_github_pr_watch",
+      },
+    });
+
+    expect(capturedOriginProfileId).toBe("loop_github_pr_watch");
+    expect(capturedAllowedTools).toContain("file_read");
+    expect(capturedAllowedTools).toContain("github_create_issue_comment");
+    expect(capturedAllowedTools).not.toContain("file_write");
+    expect(capturedAllowedTools).not.toContain("bash");
+  });
+
+  test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {
+    const streamFn = setupMockStreamText("skill metadata ok");
+    const skillService = createSkillServiceWithToolGrant();
+    const agent = createAgent({
+      definition: definitionWith({ tools: { tools: ["file_read"] }, skills: ["github-skill"] }),
+      skillService,
+      activeSkills: [{
+        metadata: {
+          name: "github-skill",
+          description: "GitHub skill",
+          when_to_use: "Use for GitHub watching.",
+          allowed_tools: ["github_get_pull_request"],
+        },
+        body: "Prompt-only GitHub playbook.",
+        source: "builtin",
+      }],
+    });
+
+    await agent.run("skill metadata run");
+
+    const callArgs = streamFn.mock.calls[0]![0] as { system: string };
+    expect(callArgs.system).toContain("[allowed_tools: github_get_pull_request, github_merge_pull_request]");
+    expect(callArgs.system).toContain("Prompt-only GitHub playbook.");
+    expect(callArgs.system).toContain("- file_read");
+    expect(callArgs.system).not.toContain("- github_get_pull_request");
+    expect(callArgs.system).not.toContain("- github_merge_pull_request");
   });
 
   test("enforceToolOutputQuota controls quota enforcement", async () => {

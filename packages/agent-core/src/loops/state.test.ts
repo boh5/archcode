@@ -87,6 +87,8 @@ describe("Loop schemas", () => {
     expect(() => LoopStateSchema.parse({ ...state, extra: true })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, goalTemplateId: "goal-1" })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, schedule: { kind: "cron", expression: "* * * * *" } })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, tools: ["github_get_pull_request"] })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, allowedTools: ["github_get_pull_request"] })).toThrow();
   });
 
   test("normalizes legacy loop limits to phase 4 budget threshold defaults", () => {

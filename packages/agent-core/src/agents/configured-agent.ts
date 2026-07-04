@@ -21,6 +21,7 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
+import { resolveLoopToolProfile } from "../loops/tool-profiles";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
@@ -187,7 +188,8 @@ export class ConfiguredAgent implements Agent {
       await this.enforceToolOutputQuotaIfNeeded();
       await this.ensureAgentsMd();
 
-      const allowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
+      const definitionAllowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
+      const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, origin);
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
@@ -413,6 +415,20 @@ export class ConfiguredAgent implements Agent {
     }
 
     return hooks;
+  }
+
+  private resolveEffectiveTools(
+    definitionAllowedTools: readonly string[],
+    origin: AgentRunOptions["origin"],
+  ): string[] {
+    if (origin?.kind !== "loop") {
+      return [...definitionAllowedTools];
+    }
+
+    return [...resolveLoopToolProfile({
+      agentAllowedTools: definitionAllowedTools,
+      toolProfileId: origin.toolProfileId,
+    }).tools];
   }
 
   private hasUnconsumedTodoContinuation(): boolean {
