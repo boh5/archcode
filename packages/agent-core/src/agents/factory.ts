@@ -40,6 +40,7 @@ export interface AgentFactoryConfig {
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   readonly logger: Logger;
 }
 
@@ -196,6 +197,7 @@ function createConfiguredAgent(
     startChildExecution: config.startChildExecution,
     cancelChildSession: config.cancelChildSession,
     resumeChildSession: config.resumeChildSession,
+    abortSessionExecutionAndWait: config.abortSessionExecutionAndWait,
     activeSkills: options.activeSkills,
   });
 }

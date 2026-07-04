@@ -11,6 +11,7 @@ import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
 import { shouldExposeOperatorRepairContext } from "../goals/operator-repair-context";
+import { createLoopBudgetEnforcementHooks } from "../loops/budget-hooks";
 import type { Registry as ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SkillService } from "../skills";
@@ -59,6 +60,7 @@ export interface ConfiguredAgentOptions {
   readonly startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   readonly quotaEnforcer?: (directory: string) => Promise<void>;
   readonly memoryConfig?: MemoryExtractionConfig;
   readonly logger: Logger;
@@ -97,6 +99,7 @@ export class ConfiguredAgent implements Agent {
   private readonly startChildExecution: ((request: ChildExecutionRequest) => Promise<ChildExecutionHandle>) | undefined;
   private readonly cancelChildSession: ((workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean) | undefined;
   private readonly resumeChildSession: ((workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>) | undefined;
+  private readonly abortSessionExecutionAndWait: ((workspaceRoot: string, sessionId: string) => Promise<void>) | undefined;
   private readonly quotaEnforcer: (directory: string) => Promise<void>;
   private readonly memoryConfig: MemoryExtractionConfig | undefined;
   private readonly logger: Logger;
@@ -136,6 +139,7 @@ export class ConfiguredAgent implements Agent {
     this.startChildExecution = options.startChildExecution;
     this.cancelChildSession = options.cancelChildSession;
     this.resumeChildSession = options.resumeChildSession;
+    this.abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.memoryConfig = options.memoryConfig;
     this.quotaEnforcer = options.quotaEnforcer ?? (async (directory) => {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
@@ -215,7 +219,7 @@ export class ConfiguredAgent implements Agent {
         ...(goalRepairContext === undefined ? {} : { goalRepairContext }),
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
-      const hooks = this.buildHooks(btm);
+      const hooks = this.buildHooks(btm, origin);
       let currentUserMessage = userMessage;
 
       while (true) {
@@ -240,6 +244,7 @@ export class ConfiguredAgent implements Agent {
             startChildExecution: this.startChildExecution,
             cancelChildSession: this.cancelChildSession,
             resumeChildSession: this.resumeChildSession,
+            abortSessionExecutionAndWait: this.abortSessionExecutionAndWait,
             agentName: this.definition.name,
             currentDepth: this.depth,
             hooks,
@@ -367,7 +372,7 @@ export class ConfiguredAgent implements Agent {
     }
   }
 
-  private buildHooks(btm: BackgroundTaskManager): QueryLoopHooks {
+  private buildHooks(btm: BackgroundTaskManager, origin: AgentRunOptions["origin"]): QueryLoopHooks {
     const hooks: QueryLoopHooks = {};
     const policy = this.definition.hooks;
     const isCancelled = () => this.disposed;
@@ -387,7 +392,12 @@ export class ConfiguredAgent implements Agent {
       beforeModelCall.push(createTitleGenerationHook(btm, this.workspaceRoot, isCancelled));
     }
     const budgetEnforcement = createGoalBudgetEnforcementHooks();
+    const loopBudgetEnforcement = createLoopBudgetEnforcementHooks({
+      origin,
+      abortSessionExecutionAndWait: this.abortSessionExecutionAndWait,
+    });
     beforeModelCall.push(budgetEnforcement.beforeModelCall);
+    beforeModelCall.push(loopBudgetEnforcement.beforeModelCall);
     if (beforeModelCall.length > 0) {
       hooks.beforeModelCall = beforeModelCall;
     }
@@ -395,10 +405,10 @@ export class ConfiguredAgent implements Agent {
     const afterLoopEnd = [];
     if (policy.todoContinuation) {
       const todoContinuation = createTodoContinuationHook();
-      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, todoContinuation.afterStepEnd];
+      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd, todoContinuation.afterStepEnd];
       afterLoopEnd.push(todoContinuation.afterLoopEnd);
     } else {
-      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd];
+      hooks.afterStepEnd = [budgetEnforcement.afterStepEnd, loopBudgetEnforcement.afterStepEnd];
     }
     // Memory hooks only run on the root orchestrator (depth 0).
     // Sub-agents at depth > 0 must not write to project/user memory independently.

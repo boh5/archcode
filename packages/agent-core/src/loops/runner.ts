@@ -5,6 +5,7 @@ import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
 import type { LoopGoalTemplate, LoopRunReport, LoopRunTrigger, LoopState } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
+import { LoopBudgetLedger } from "./budget-ledger";
 
 export interface LoopRunnerSessionRuntime {
   createSession(workspaceRoot: string, options?: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
@@ -73,6 +74,7 @@ export class LoopRunner {
   readonly #workspaceRoot: string;
   readonly #projectSlug: string;
   readonly #now: () => number;
+  readonly #budgetLedger: LoopBudgetLedger;
   readonly #activeLoops = new Map<string, { runId: string; sessionId?: string }>();
 
   constructor(options: LoopRunnerOptions) {
@@ -83,6 +85,11 @@ export class LoopRunner {
     this.#workspaceRoot = options.workspaceRoot;
     this.#projectSlug = options.projectSlug ?? "";
     this.#now = options.now ?? (() => Date.now());
+    this.#budgetLedger = new LoopBudgetLedger({
+      stateManager: options.stateManager,
+      workspaceRoot: options.workspaceRoot,
+      clock: { now: this.#now },
+    });
   }
 
   async runSessionLoop(loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
@@ -99,6 +106,8 @@ export class LoopRunner {
 
     const startedAt = this.#now();
     const runId = crypto.randomUUID();
+    const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
+    if (preRunBlocked !== undefined) return preRunBlocked;
     const runningReport: LoopRunReport = {
       runId,
       loopId: current.loopId,
@@ -109,6 +118,7 @@ export class LoopRunner {
 
     this.#activeLoops.set(current.loopId, { runId });
     let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
+    await this.#budgetLedger.recordRunStart(current.loopId, runId);
     let currentReport = runningReport;
     try {
       const session = await this.#createLoopSession(startedState);
@@ -118,6 +128,8 @@ export class LoopRunner {
       const result = await this.#executeLoopSession({ loop: startedState, trigger, runId, startedAt }, session.sessionId);
       return await this.#finishRun(startedState, currentReport, result);
     } catch (error) {
+      const budgetExceeded = await this.#budgetExceededResult(startedState, runId, currentReport.sessionId);
+      if (budgetExceeded !== undefined) return await this.#finishRun(startedState, currentReport, budgetExceeded);
       return await this.#finishRun(startedState, currentReport, {
         status: "failed",
         sessionId: currentReport.sessionId,
@@ -149,6 +161,8 @@ export class LoopRunner {
 
     const startedAt = this.#now();
     const runId = crypto.randomUUID();
+    const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
+    if (preRunBlocked !== undefined) return preRunBlocked;
     const runningReport: LoopRunReport = {
       runId,
       loopId: current.loopId,
@@ -159,10 +173,13 @@ export class LoopRunner {
 
     this.#activeLoops.set(current.loopId, { runId });
     let startedState = await this.#stateManager.recordRunStart(current.loopId, runningReport);
+    await this.#budgetLedger.recordRunStart(current.loopId, runId);
     try {
       const result = await this.#runGoal({ loop: startedState, trigger, runId, startedAt });
       return await this.#finishRun(startedState, runningReport, result);
     } catch (error) {
+      const budgetExceeded = await this.#budgetExceededResult(startedState, runId, runningReport.sessionId);
+      if (budgetExceeded !== undefined) return await this.#finishRun(startedState, runningReport, budgetExceeded);
       return await this.#finishRun(startedState, runningReport, {
         status: "failed",
         error: errorToMessage(error),
@@ -226,6 +243,8 @@ export class LoopRunner {
       });
       return await this.#executeGoalSession(input, started);
     } catch (error) {
+      const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, undefined);
+      if (budgetExceeded !== undefined) return budgetExceeded;
       return {
         status: "failed",
         goalId,
@@ -266,6 +285,8 @@ export class LoopRunner {
           : result.summary,
       };
     } catch (error) {
+      const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, sessionId);
+      if (budgetExceeded !== undefined) return budgetExceeded;
       return {
         status: "failed",
         goalId: goal.id,
@@ -307,6 +328,8 @@ export class LoopRunner {
       await execution.promise;
       return await this.#sessionResultFromFinalState(input.loop, sessionId);
     } catch (error) {
+      const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, sessionId);
+      if (budgetExceeded !== undefined) return budgetExceeded;
       return {
         status: "failed",
         sessionId,
@@ -320,6 +343,8 @@ export class LoopRunner {
     sessionId: string,
   ): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
     const session = await this.#runtime.getSessionFile(this.#workspaceRoot, sessionId);
+    const budgetExceeded = await this.#budgetExceededResult(loop, loop.currentRun?.runId, sessionId);
+    if (budgetExceeded !== undefined) return budgetExceeded;
     const execution = session.executions.at(-1);
     if (execution?.status === "completed" || execution?.status === "max_steps") {
       return {
@@ -349,9 +374,31 @@ export class LoopRunner {
       goalId: result.goalId,
       summary: result.summary,
       error: result.error,
+      reason: result.reason,
+      budgetUsage: result.budgetUsage,
+      toolProfileId: loop.config.toolProfileId,
     };
     await this.#stateManager.recordRunFinish(loop.loopId, report);
     return report;
+  }
+
+  async #budgetExceededResult(
+    loop: LoopState,
+    runId: string | undefined,
+    sessionId: string | undefined,
+  ): Promise<(Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult) | undefined> {
+    if (runId === undefined) return undefined;
+    const latest = await this.#stateManager.read(loop.loopId);
+    if (latest.lastRun?.runId !== runId || latest.lastRun.status !== "budget_exceeded") return undefined;
+    return {
+      status: "budget_exceeded",
+      sessionId: latest.lastRun.sessionId ?? sessionId,
+      goalId: latest.lastRun.goalId,
+      reason: latest.lastRun.reason,
+      budgetUsage: latest.lastRun.budgetUsage,
+      summary: latest.lastRun.summary,
+      error: latest.lastRun.error,
+    };
   }
 
   #assertSessionLoop(loop: LoopState): void {

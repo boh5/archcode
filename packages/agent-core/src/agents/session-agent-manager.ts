@@ -30,6 +30,7 @@ export interface SessionAgentManagerConfig {
   readonly startChildExecution?: (workspaceRoot: string, request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   readonly logger: Logger;
 }
 
@@ -49,6 +50,7 @@ export class SessionAgentManager {
   #startChildExecution: SessionAgentManagerConfig["startChildExecution"];
   #cancelChildSession: SessionAgentManagerConfig["cancelChildSession"];
   #resumeChildSession: SessionAgentManagerConfig["resumeChildSession"];
+  #abortSessionExecutionAndWait: SessionAgentManagerConfig["abortSessionExecutionAndWait"];
 
   constructor(config: SessionAgentManagerConfig) {
     this.#config = config;
@@ -57,6 +59,7 @@ export class SessionAgentManager {
     this.#startChildExecution = config.startChildExecution;
     this.#cancelChildSession = config.cancelChildSession;
     this.#resumeChildSession = config.resumeChildSession;
+    this.#abortSessionExecutionAndWait = config.abortSessionExecutionAndWait;
     this.maxConcurrentSessions = config.maxConcurrentSessions ?? 4;
     this.tombstoneTtlMs = config.tombstoneTtlMs ?? DEFAULT_TOMBSTONE_TTL_MS;
   }
@@ -71,6 +74,10 @@ export class SessionAgentManager {
 
   setResumeChildSession(callback: SessionAgentManagerConfig["resumeChildSession"]): void {
     this.#resumeChildSession = callback;
+  }
+
+  setAbortSessionExecutionAndWait(callback: SessionAgentManagerConfig["abortSessionExecutionAndWait"]): void {
+    this.#abortSessionExecutionAndWait = callback;
   }
 
   async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
@@ -236,6 +243,7 @@ export class SessionAgentManager {
         },
         cancelChildSession: this.#cancelChildSession,
         resumeChildSession: this.#resumeChildSession,
+        abortSessionExecutionAndWait: this.#abortSessionExecutionAndWait,
         logger: this.#logger,
       });
       this.#factories.set(workspaceRoot, factory);

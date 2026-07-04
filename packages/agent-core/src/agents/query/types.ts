@@ -36,6 +36,7 @@ export interface QueryLoopOptions {
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   agentName?: string;
   currentDepth?: number;
   hooks?: QueryLoopHooks;

@@ -3,6 +3,7 @@ import type {
   ModelConfig,
   ModelLimit,
   ModelModalities,
+  ModelPricing,
 } from "../config/index";
 
 /**
@@ -25,6 +26,9 @@ export class ModelInfo {
   /** Supported input/output modalities. */
   readonly modalities: ModelModalities;
 
+  /** Optional passive USD pricing metadata from config. */
+  readonly pricing?: ModelPricing;
+
   /** The provider ID this model belongs to (e.g. "xxx"). */
   readonly providerId: string;
 
@@ -41,6 +45,7 @@ export class ModelInfo {
     this.displayName = options.config.name;
     this.limit = options.config.limit;
     this.modalities = options.config.modalities;
+    this.pricing = options.config.pricing;
     this.providerId = options.providerId;
     this.modelId = options.modelId;
   }

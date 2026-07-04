@@ -1,7 +1,8 @@
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import { LoopBudgetLedger } from "./budget-ledger";
 import { LoopActiveConflictError } from "./runner";
-import type { LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
+import type { LoopBudgetUsage, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
 import { LoopStateManager } from "./state";
 
 export interface LoopSchedulerClock {
@@ -30,6 +31,8 @@ export interface LoopSchedulerRunResult {
   readonly goalId?: string;
   readonly summary?: string;
   readonly error?: string;
+  readonly reason?: LoopRunReason;
+  readonly budgetUsage?: LoopBudgetUsage;
 }
 
 export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
@@ -44,6 +47,7 @@ export interface LoopSchedulerOptions {
   readonly runner: LoopSchedulerRunner;
   readonly clock?: LoopSchedulerClock;
   readonly timer?: LoopSchedulerTimer;
+  readonly budgetLedger?: LoopBudgetLedger;
   readonly logger?: Logger;
 }
 
@@ -69,6 +73,7 @@ export class LoopScheduler {
   readonly #runner: LoopSchedulerRunner;
   readonly #clock: LoopSchedulerClock;
   readonly #timer: LoopSchedulerTimer;
+  readonly #budgetLedger?: LoopBudgetLedger;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
   readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
@@ -79,6 +84,7 @@ export class LoopScheduler {
     this.#runner = options.runner;
     this.#clock = options.clock ?? systemClock;
     this.#timer = options.timer ?? systemTimer;
+    this.#budgetLedger = options.budgetLedger;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
   }
 
@@ -171,6 +177,8 @@ export class LoopScheduler {
 
     const runId = crypto.randomUUID();
     const startedAt = this.#clock.now();
+    const preRunBlocked = await this.#budgetLedger?.assertCanStartRun(loop, runId, trigger);
+    if (preRunBlocked !== undefined) return preRunBlocked;
     const runningReport: LoopRunReport = {
       runId,
       loopId: loop.loopId,
@@ -183,6 +191,7 @@ export class LoopScheduler {
     let startedState = loop;
     try {
       startedState = await this.#stateManager.recordRunStart(loop.loopId, runningReport);
+      await this.#budgetLedger?.recordRunStart(loop.loopId, runId);
       const result = await this.#runner({
         loop: startedState,
         trigger,
@@ -195,6 +204,8 @@ export class LoopScheduler {
         goalId: result?.goalId,
         summary: result?.summary,
         error: result?.error,
+        reason: result?.reason,
+        budgetUsage: result?.budgetUsage,
       });
     } catch (error) {
       this.#logger.warn("loops.scheduler.run.failed", {
@@ -232,6 +243,9 @@ export class LoopScheduler {
       goalId: result.goalId,
       summary: result.summary,
       error: result.error,
+      reason: result.reason,
+      budgetUsage: result.budgetUsage,
+      toolProfileId: loop.config.toolProfileId,
     };
     const finishedState = await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
 

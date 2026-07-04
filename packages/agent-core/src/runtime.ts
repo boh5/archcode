@@ -41,6 +41,7 @@ import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessi
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
 import { LoopRunner } from "./loops/runner";
+import { LoopBudgetLedger } from "./loops/budget-ledger";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
@@ -321,11 +322,17 @@ export async function createRuntime(
 
       const projectContext = await contextResolver.resolve(workspaceRoot);
       const runner = await createLoopRunner(workspaceRoot);
+      const schedulerClock = options.loopSchedulerClock ?? { now: () => Date.now() };
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
         runner: runner.createSchedulerRunner(),
-        ...(options.loopSchedulerClock === undefined ? {} : { clock: options.loopSchedulerClock }),
+        clock: schedulerClock,
         ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
+        budgetLedger: new LoopBudgetLedger({
+          stateManager: projectContext.loopState,
+          workspaceRoot,
+          clock: schedulerClock,
+        }),
         logger: runtimeLogger.child({ module: "loops.scheduler" }),
       });
       loopSchedulers.set(workspaceRoot, scheduler);
@@ -411,6 +418,7 @@ export async function createRuntime(
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
+    sessionAgentManager.setAbortSessionExecutionAndWait((workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId));
 
     return {
       mcpManager,

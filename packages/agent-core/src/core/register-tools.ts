@@ -8,6 +8,7 @@ import {
   createRedactionHook,
 } from "../tools/hooks";
 import { createGoalBootstrapPermission } from "../tools/permission";
+import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
@@ -39,6 +40,7 @@ export function registerBuiltinTools(
   registry.register(createGoalArtifactWriteTool());
 
   registry.globalPermissions.push(createGoalBootstrapPermission());
+  registry.globalPermissions.push(createLoopBudgetToolPermission());
 
   registry.globalHooks.after.push(createRedactionHook());
   registry.globalHooks.after.push(createOutputTruncator({ logger: logger.child({ module: "tools.truncate" }) }));

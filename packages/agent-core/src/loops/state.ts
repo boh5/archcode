@@ -445,6 +445,18 @@ export class LoopStateManager {
     return updated;
   }
 
+  async updateBudgetSnapshot(loopId: string, snapshot: LoopBudgetSnapshot): Promise<LoopState> {
+    const state = await this.read(loopId);
+    const parsed = LoopBudgetSnapshotSchema.parse(snapshot);
+    const updated = this.nextState({
+      ...state,
+      latestBudget: parsed,
+    }, parsed.updatedAt);
+
+    await this.write(updated);
+    return updated;
+  }
+
   async appendRunReport(loopId: string, report: LoopRunReport): Promise<LoopRunReport> {
     this.assertLoopId(loopId);
     const parsed = this.parseRunReport(loopId, report);

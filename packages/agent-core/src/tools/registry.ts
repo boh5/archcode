@@ -111,6 +111,7 @@ export class ToolRegistry {
       );
       return this.runGlobalAfterHooks(result, ctx);
     }
+    ctx.toolTraits = descriptor.traits;
 
     let rawInput = toolCall.input;
     if (descriptor.prepareInput) {

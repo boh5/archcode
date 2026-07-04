@@ -49,6 +49,7 @@ export interface ToolExecutionContext {
   toolCallId: string;
   input: unknown;
   redactedInput?: unknown;
+  toolTraits?: ToolTraits;
   permissionOutcome?: "allow" | "deny" | "ask";
   step: number;
   abort: AbortSignal;
@@ -68,6 +69,7 @@ export interface ToolExecutionContext {
   startChildExecution?: (request: ChildExecutionRequest) => Promise<ChildExecutionHandle>;
   cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
+  abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
   currentDepth?: number;
   origin?: ToolExecutionOrigin;
   /** Called once after prepareInput + safeParse succeeds, with the resolved (defaults-filled, redacted) input. */
