@@ -3,7 +3,7 @@ import type { ActiveSessionExecution, StartSessionExecutionInput } from "../exec
 import type { GoalState } from "../goals/state";
 import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
-import type { LoopGoalTemplate, LoopRunReport, LoopRunTrigger, LoopState } from "./state";
+import type { LoopGoalTemplate, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
 import { LoopBudgetLedger } from "./budget-ledger";
 
@@ -267,6 +267,8 @@ export class LoopRunner {
     }
 
     await this.#recordScheduledSessionLink(input, sessionId, goal.id);
+    const stopped = await this.#terminalResultIfRunStopped(input, sessionId, goal.id);
+    if (stopped !== undefined) return stopped;
 
     try {
       const execution = this.#runtime.startSessionExecution({
@@ -299,6 +301,9 @@ export class LoopRunner {
   }
 
   async #runSession(input: LoopSchedulerRunInput): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
+    const alreadyStopped = await this.#terminalResultIfRunStopped(input);
+    if (alreadyStopped !== undefined) return alreadyStopped;
+
     const session = await this.#createLoopSession(input.loop);
     const active = this.#activeLoops.get(input.loop.loopId);
     if (active !== undefined) this.#activeLoops.set(input.loop.loopId, { ...active, sessionId: session.sessionId });
@@ -318,6 +323,9 @@ export class LoopRunner {
     input: LoopSchedulerRunInput,
     sessionId: string,
   ): Promise<Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult> {
+    const stopped = await this.#terminalResultIfRunStopped(input, sessionId);
+    if (stopped !== undefined) return stopped;
+
     const execution = this.#runtime.startSessionExecution({
       slug: this.#projectSlug,
       workspaceRoot: this.#workspaceRoot,
@@ -393,6 +401,25 @@ export class LoopRunner {
       sessionId,
       ...(goalId === undefined ? {} : { goalId }),
     });
+  }
+
+  async #terminalResultIfRunStopped(
+    input: LoopSchedulerRunInput,
+    sessionId?: string,
+    goalId?: string,
+  ): Promise<(Required<Pick<LoopSchedulerRunResult, "status">> & LoopSchedulerRunResult) | undefined> {
+    const latest = await this.#stateManager.read(input.loop.loopId);
+    const lastRun = latest.lastRun;
+    if (lastRun?.runId !== input.runId || !isSchedulerTerminalStatus(lastRun.status)) return undefined;
+    return {
+      status: lastRun.status,
+      sessionId: lastRun.sessionId ?? sessionId,
+      goalId: lastRun.goalId ?? goalId,
+      reason: lastRun.reason,
+      budgetUsage: lastRun.budgetUsage,
+      summary: lastRun.summary,
+      error: lastRun.error,
+    };
   }
 
   async #budgetExceededResult(
@@ -496,6 +523,10 @@ function loopOrigin(loop: LoopState, trigger: LoopRunTrigger, runId: string): To
 function errorToMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isSchedulerTerminalStatus(status: LoopRunReportStatus): status is Exclude<LoopRunReportStatus, "running" | "skipped"> {
+  return status !== "running" && status !== "skipped";
 }
 
 function executionFailureMessage(status: SessionFile["executions"][number]["status"] | undefined, error: string | undefined): string {

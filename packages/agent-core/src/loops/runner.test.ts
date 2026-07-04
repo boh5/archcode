@@ -174,6 +174,78 @@ describe("session loop runner", () => {
       trigger: "interval",
     });
   });
+
+  test("scheduler-compatible callback does not start a session after the run was cancelled before session creation", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const started = await fixture.stateManager.recordRunStart(loop.loopId, {
+      runId: "cancel-before-session",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "interval",
+      startedAt: 2_000,
+    });
+    await fixture.stateManager.recordRunFinish(loop.loopId, {
+      runId: "cancel-before-session",
+      loopId: loop.loopId,
+      status: "cancelled",
+      trigger: "interval",
+      startedAt: 2_000,
+      endedAt: 2_010,
+      reason: "global_kill_active",
+    });
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop: started,
+      trigger: "interval",
+      runId: "cancel-before-session",
+      startedAt: 2_000,
+    });
+
+    expect(result).toMatchObject({ status: "cancelled", reason: "global_kill_active" });
+    expect(fixture.runtime.createSessionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+  });
+
+  test("scheduler-compatible callback does not start execution when cancellation wins after session creation", async () => {
+    let stateManager!: LoopStateManager;
+    let loopId = "";
+    const fixture = await createFixture({
+      afterCreateSession: async (sessionId) => {
+        await stateManager.recordRunFinish(loopId, {
+          runId: "cancel-after-session",
+          loopId,
+          status: "cancelled",
+          trigger: "interval",
+          startedAt: 2_000,
+          endedAt: 2_020,
+          reason: "cancelled_by_user",
+          sessionId,
+        });
+      },
+    });
+    stateManager = fixture.stateManager;
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    loopId = loop.loopId;
+    const started = await fixture.stateManager.recordRunStart(loop.loopId, {
+      runId: "cancel-after-session",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "interval",
+      startedAt: 2_000,
+    });
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop: started,
+      trigger: "interval",
+      runId: "cancel-after-session",
+      startedAt: 2_000,
+    });
+
+    expect(result).toMatchObject({ status: "cancelled", reason: "cancelled_by_user", sessionId: "session-1" });
+    expect(fixture.runtime.createSessionMock).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("goal loop runner", () => {
@@ -334,9 +406,57 @@ describe("goal loop runner", () => {
     expect(result).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
     expect(await fixture.stateManager.readRunLog(loop.loopId)).toEqual([]);
   });
+
+  test("scheduler-compatible callback does not start goal session execution when cancellation wins after goal start", async () => {
+    let stateManager!: LoopStateManager;
+    let loopId = "";
+    const fixture = await createFixture({
+      afterGoalStart: async (goal) => {
+        const sessionId = goal.mainSessionId;
+        if (sessionId === undefined) throw new Error("Expected fake goal session");
+        await stateManager.recordRunFinish(loopId, {
+          runId: "cancel-goal-after-start",
+          loopId,
+          status: "cancelled",
+          trigger: "interval",
+          startedAt: 3_000,
+          endedAt: 3_010,
+          reason: "global_kill_active",
+          goalId: goal.id,
+          sessionId,
+        });
+      },
+    });
+    stateManager = fixture.stateManager;
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    loopId = loop.loopId;
+    const started = await fixture.stateManager.recordRunStart(loop.loopId, {
+      runId: "cancel-goal-after-start",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "interval",
+      startedAt: 3_000,
+    });
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop: started,
+      trigger: "interval",
+      runId: "cancel-goal-after-start",
+      startedAt: 3_000,
+    });
+
+    expect(result).toMatchObject({ status: "cancelled", reason: "global_kill_active", goalId: "goal-1", sessionId: "goal-session-1" });
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+  });
 });
 
-async function createFixture(options: { executionPromise?: Promise<void>; sessionExecutions?: SessionExecutionRecord[]; goalStartError?: Error } = {}): Promise<{
+async function createFixture(options: {
+  executionPromise?: Promise<void>;
+  sessionExecutions?: SessionExecutionRecord[];
+  goalStartError?: Error;
+  afterCreateSession?: (sessionId: string) => Promise<void>;
+  afterGoalStart?: (goal: GoalState) => Promise<void>;
+} = {}): Promise<{
   stateManager: LoopStateManager;
   runtime: FakeLoopRuntime;
   goalStateManager: FakeGoalStateManager;
@@ -347,9 +467,9 @@ async function createFixture(options: { executionPromise?: Promise<void>; sessio
   const workspaceRoot = join(RUN_DIR, `workspace-${nextWorkspaceId++}-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
-  const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions);
+  const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions, options.afterCreateSession);
   const goalStateManager = new FakeGoalStateManager();
-  const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError);
+  const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart);
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -369,6 +489,7 @@ class FakeLoopRuntime {
     const sessionId = `session-${this.#nextSession++}`;
     const session = this.#makeSession(sessionId, options);
     this.#sessions.set(sessionId, session);
+    await this.afterCreateSession?.(sessionId);
     return session;
   });
   readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => {
@@ -411,6 +532,7 @@ class FakeLoopRuntime {
   constructor(
     private readonly executionPromise: Promise<void>,
     private readonly sessionExecutions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }],
+    private readonly afterCreateSession?: (sessionId: string) => Promise<void>,
   ) {}
 
   async createSession(workspaceRoot: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
@@ -494,6 +616,7 @@ class FakeGoalRunner {
     if (goal === undefined) throw new Error(`Missing fake goal ${goalId}`);
     const running: GoalState = { ...goal, status: "running", mainSessionId: `goal-session-${this.startMock.mock.calls.length}` };
     this.goalStateManager.goals.set(goalId, running);
+    await this.afterGoalStart?.(running);
     return running;
   });
   readonly doneEvaluationCount = 0;
@@ -501,6 +624,7 @@ class FakeGoalRunner {
   constructor(
     private readonly goalStateManager: FakeGoalStateManager,
     private readonly startError?: Error,
+    private readonly afterGoalStart?: (goal: GoalState) => Promise<void>,
   ) {}
 
   async start(goalId: string, options?: { loopId?: string; sessionTitle?: string }): Promise<GoalState> {
