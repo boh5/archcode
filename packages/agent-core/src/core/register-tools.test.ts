@@ -143,12 +143,13 @@ describe("registerBuiltinTools", () => {
     ]);
   });
 
-  it("registers global after hooks in redaction, truncation, audit, logger order", () => {
+  it("registers collision release before redaction, truncation, audit, and logger after hooks", () => {
     const registry = new ToolRegistry();
 
     registerBuiltinTools(registry, silentLogger);
 
     expect(registry.globalHooks.after.map((hook) => hook.name)).toEqual([
+      "collisionReleaseAfterHook",
       "redactionAfterHook",
       "truncationAfterHook",
       "auditAfterHook",

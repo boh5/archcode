@@ -26,6 +26,11 @@ const manualSessionLoopConfig: LoopConfig = {
   taskPrompt: "Summarize local project health.",
 };
 
+const normalizedManualSessionLoopConfig: LoopConfig = {
+  ...manualSessionLoopConfig,
+  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+};
+
 const intervalSessionLoopConfig: LoopConfig = {
   ...manualSessionLoopConfig,
   title: "Interval session loop",
@@ -74,7 +79,7 @@ describe("loops routes", () => {
     expect(createBody.loop).toMatchObject({ projectId: project.slug, status: "active", config: { title: "Manual session loop", schedule: { kind: "manual" } } });
     expect(createBody.loop.nextRunAt).toBeUndefined();
     expect(createBody.loop.readinessScore ?? null).toBeNull();
-    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, manualSessionLoopConfig, "tester");
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, normalizedManualSessionLoopConfig, "tester");
 
     const listRes = await app.request(`/api/projects/${project.slug}/loops`);
     const listBody = await listRes.json() as { loops: LoopState[] };
@@ -113,13 +118,21 @@ describe("loops routes", () => {
     expect(presetBody.loop.config.title).toBe("Daily Triage");
     expect(presetBody.loop.readinessScore ?? null).toBeNull();
 
-    const unsupportedRes = await app.request(`/api/projects/${project.slug}/loops`, {
+    const prBabysitterRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
       body: JSON.stringify({ presetId: "pr_babysitter" }),
       headers: { "content-type": "application/json" },
     });
-    expect(unsupportedRes.status).toBe(400);
-    expect(await unsupportedRes.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: expect.stringContaining("Unsupported loop preset: pr_babysitter") } });
+    const prBabysitterBody = await prBabysitterRes.json() as { loop: LoopState };
+    expect(prBabysitterRes.status).toBe(201);
+    expect(prBabysitterBody.loop.config).toMatchObject({
+      sourcePreset: "pr_babysitter",
+      runKind: "session",
+      toolProfileId: "loop_github_pr_watch",
+      title: "PR Babysitter",
+    });
+    expect(prBabysitterBody.loop.config.description).toContain("PR watch/status/comment");
+    expect(prBabysitterBody.loop.readinessScore ?? null).toBeNull();
   });
 
   test("creates a goal loop with inline goalTemplate and rejects goalTemplateId", async () => {
