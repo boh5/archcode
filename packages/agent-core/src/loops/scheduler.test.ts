@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
+import { LoopActiveConflictError } from "./runner";
 import { LoopStateManager, type LoopConfig } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
@@ -125,6 +126,66 @@ describe("LoopScheduler", () => {
     expect(reports.map((report) => report.status)).toEqual(["succeeded", "skipped"]);
     expect(fixture.runs).toHaveLength(1);
     expect(fixture.timer.nextDue()).toBe(280);
+  });
+
+  test("manual trigger rejects same-loop active run with conflict instead of skipped report", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    const deferred = createDeferred<void>();
+    const runnerStarted = createDeferred<void>();
+    fixture.runner = async () => {
+      runnerStarted.resolve();
+      await deferred.promise;
+      return { sessionId: "session-1", summary: "eventually done" };
+    };
+
+    const firstRun = fixture.scheduler.runManual(loop.loopId);
+    await runnerStarted.promise;
+
+    const conflict = await captureAsyncError(() => fixture.scheduler.runManual(loop.loopId));
+    expect(conflict).toBeInstanceOf(LoopActiveConflictError);
+    expect(conflict).toMatchObject({
+      code: "LOOP_ACTIVE_CONFLICT",
+      loopId: loop.loopId,
+      trigger: "manual",
+      activeRunId: fixture.runs[0]?.runId,
+    });
+    expect(fixture.runs).toHaveLength(1);
+    expect(await fixture.manager.readRunLog(loop.loopId)).toEqual([]);
+
+    fixture.clock.set(25);
+    deferred.resolve();
+    const report = await firstRun;
+
+    expect(report).toMatchObject({ status: "succeeded", trigger: "manual", sessionId: "session-1" });
+    const reports = await fixture.manager.readRunLog(loop.loopId);
+    expect(reports.map((entry) => entry.status)).toEqual(["succeeded"]);
+  });
+
+  test("manual trigger rejects persisted currentRun conflict with deterministic details", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "persisted-run",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 10,
+      sessionId: "persisted-session",
+    });
+
+    const conflict = await captureAsyncError(() => fixture.scheduler.runManual(loop.loopId));
+
+    expect(conflict).toBeInstanceOf(LoopActiveConflictError);
+    expect(conflict).toMatchObject({
+      code: "LOOP_ACTIVE_CONFLICT",
+      loopId: loop.loopId,
+      trigger: "manual",
+      activeRunId: "persisted-run",
+      sessionId: "persisted-session",
+    });
+    expect(fixture.runs).toEqual([]);
+    expect(await fixture.manager.readRunLog(loop.loopId)).toEqual([]);
   });
 
   test("pause clears future timer without cancelling an active run", async () => {
@@ -300,4 +361,13 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
     resolve = res;
   });
   return { promise, resolve };
+}
+
+async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected action to throw");
 }

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
 import { createRuntime, type AgentRuntime } from "./runtime";
+import { LoopActiveConflictError } from "./loops/runner";
 import type { LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopConfig } from "./loops/state";
 import { __setSessionsDirForTest } from "./store/sessions-dir";
@@ -145,6 +146,50 @@ describe("AgentRuntime Loop wiring", () => {
     });
     expect(persisted.executions).toEqual([expect.objectContaining({ status: "completed" })]);
   });
+
+  test("triggerLoopRun rejects overlapping manual trigger through real scheduler without skipped report", async () => {
+    const fixture = await createRuntimeFixture();
+    const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
+    const streamStarted = createDeferred<void>();
+    const releaseStream = createDeferred<void>();
+    setLlmAdapterForTest({
+      streamText: mock(() => ({
+        fullStream: (async function* () {
+          streamStarted.resolve();
+          await releaseStream.promise;
+          yield { type: "text-delta", text: "Manual loop execution complete." };
+        })(),
+        finishReason: releaseStream.promise.then(() => "stop"),
+        usage: releaseStream.promise.then(() => ({ totalTokens: 1 })),
+        text: releaseStream.promise.then(() => "Manual loop execution complete."),
+        toolCalls: Promise.resolve([]),
+      })) as never,
+      generateText: mock(async () => ({ text: "Runtime manual loop" })) as never,
+    });
+
+    const firstRun = fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId);
+    await streamStarted.promise;
+
+    const conflict = await captureAsyncError(() => fixture.runtime.triggerLoopRun(fixture.workspaceRoot, loop.loopId));
+    expect(conflict).toBeInstanceOf(LoopActiveConflictError);
+    expect(conflict).toMatchObject({
+      code: "LOOP_ACTIVE_CONFLICT",
+      loopId: loop.loopId,
+      trigger: "manual",
+    });
+    expect((conflict as LoopActiveConflictError).activeRunId).toBeString();
+    expect((conflict as LoopActiveConflictError).activeRunId).not.toBe("");
+    expect(await fixture.runtime.readLoopRunLog(fixture.workspaceRoot, loop.loopId)).toEqual([]);
+
+    releaseStream.resolve();
+    const firstReport = await firstRun;
+
+    expect(firstReport).toMatchObject({ status: "succeeded", trigger: "manual" });
+    const reports = await fixture.runtime.readLoopRunLog(fixture.workspaceRoot, loop.loopId);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ runId: firstReport?.runId, status: "succeeded", trigger: "manual" });
+    expect(reports.some((report) => report.status === "skipped" && report.trigger === "manual")).toBe(false);
+  });
 });
 
 function installLlmMocks(): void {
@@ -209,6 +254,23 @@ async function readPersistedSession(path: string): Promise<Record<string, unknow
     }
   }
   throw lastError;
+}
+
+function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected action to throw");
 }
 
 function makeConfig(): Record<string, unknown> {

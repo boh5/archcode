@@ -1,5 +1,6 @@
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
+import { LoopActiveConflictError } from "./runner";
 import type { LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
 import { LoopStateManager } from "./state";
 
@@ -33,6 +34,11 @@ export interface LoopSchedulerRunResult {
 
 export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
 
+interface ActiveSchedulerRun {
+  readonly runId: string;
+  readonly sessionId?: string;
+}
+
 export interface LoopSchedulerOptions {
   readonly stateManager: LoopStateManager;
   readonly runner: LoopSchedulerRunner;
@@ -65,7 +71,7 @@ export class LoopScheduler {
   readonly #timer: LoopSchedulerTimer;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
-  readonly #activeRuns = new Set<string>();
+  readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
   #disposed = false;
 
   constructor(options: LoopSchedulerOptions) {
@@ -155,7 +161,11 @@ export class LoopScheduler {
   private async runLoop(loop: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
     if (this.#disposed) return undefined;
 
-    if (this.#activeRuns.has(loop.loopId)) {
+    const activeRun = this.activeRunFor(loop);
+    if (activeRun !== undefined) {
+      if (trigger === "manual") {
+        throw new LoopActiveConflictError(loop.loopId, trigger, activeRun.runId, activeRun.sessionId);
+      }
       return await this.appendSkippedReport(loop.loopId, trigger, `Loop already has an active run; skipped overlapping ${trigger} trigger.`);
     }
 
@@ -169,7 +179,7 @@ export class LoopScheduler {
       startedAt,
     };
 
-    this.#activeRuns.add(loop.loopId);
+    this.#activeRuns.set(loop.loopId, { runId });
     let startedState = loop;
     try {
       startedState = await this.#stateManager.recordRunStart(loop.loopId, runningReport);
@@ -198,6 +208,15 @@ export class LoopScheduler {
     } finally {
       this.#activeRuns.delete(loop.loopId);
     }
+  }
+
+  private activeRunFor(loop: LoopState): ActiveSchedulerRun | undefined {
+    const activeRun = this.#activeRuns.get(loop.loopId);
+    if (activeRun !== undefined) return activeRun;
+    if (loop.currentRun?.status === "running") {
+      return { runId: loop.currentRun.runId, sessionId: loop.currentRun.sessionId };
+    }
+    return undefined;
   }
 
   private async finishRun(
