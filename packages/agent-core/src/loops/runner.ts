@@ -266,6 +266,8 @@ export class LoopRunner {
       };
     }
 
+    await this.#recordScheduledSessionLink(input, sessionId, goal.id);
+
     try {
       const execution = this.#runtime.startSessionExecution({
         slug: this.#projectSlug,
@@ -300,6 +302,7 @@ export class LoopRunner {
     const session = await this.#createLoopSession(input.loop);
     const active = this.#activeLoops.get(input.loop.loopId);
     if (active !== undefined) this.#activeLoops.set(input.loop.loopId, { ...active, sessionId: session.sessionId });
+    await this.#recordScheduledSessionLink(input, session.sessionId);
     return await this.#executeLoopSession(input, session.sessionId);
   }
 
@@ -380,6 +383,16 @@ export class LoopRunner {
     };
     await this.#stateManager.recordRunFinish(loop.loopId, report);
     return report;
+  }
+
+  async #recordScheduledSessionLink(input: LoopSchedulerRunInput, sessionId: string, goalId?: string): Promise<void> {
+    const latest = await this.#stateManager.read(input.loop.loopId);
+    if (latest.currentRun?.runId !== input.runId || latest.currentRun.status !== "running") return;
+    await this.#stateManager.recordRunStart(input.loop.loopId, {
+      ...latest.currentRun,
+      sessionId,
+      ...(goalId === undefined ? {} : { goalId }),
+    });
   }
 
   async #budgetExceededResult(

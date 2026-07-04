@@ -190,6 +190,30 @@ describe("AgentRuntime Loop wiring", () => {
     expect(reports[0]).toMatchObject({ runId: firstReport?.runId, status: "succeeded", trigger: "manual" });
     expect(reports.some((report) => report.status === "skipped" && report.trigger === "manual")).toBe(false);
   });
+
+  test("runtime global kill persists, blocks manual trigger, and clear preserves paused loops", async () => {
+    const fixture = await createRuntimeFixture({ now: 1_000 });
+    const active = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
+    const paused = await fixture.runtime.createLoop(fixture.workspaceRoot, { ...intervalLoopConfig, title: "Runtime paused loop" });
+    await fixture.runtime.pauseLoop(fixture.workspaceRoot, paused.loopId);
+
+    const activated = await fixture.runtime.activateLoopGlobalKill(fixture.workspaceRoot, {
+      activatedBy: "runtime-test",
+      reason: "maintenance",
+    });
+    const blocked = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, active.loopId);
+
+    expect(activated).toMatchObject({ globalKillActive: true, activatedAt: 1_000, activatedBy: "runtime-test", reason: "maintenance" });
+    expect(await fixture.runtime.readLoopKillState(fixture.workspaceRoot)).toEqual(activated);
+    expect(blocked).toMatchObject({ status: "skipped", reason: "global_kill_active", trigger: "manual" });
+
+    const cleared = await fixture.runtime.clearLoopGlobalKill(fixture.workspaceRoot);
+    const accepted = await fixture.runtime.triggerLoopRun(fixture.workspaceRoot, active.loopId);
+
+    expect(cleared).toEqual({ globalKillActive: false });
+    expect((await fixture.runtime.readLoop(fixture.workspaceRoot, paused.loopId)).status).toBe("paused");
+    expect(accepted).toMatchObject({ status: "succeeded", trigger: "manual" });
+  });
 });
 
 function installLlmMocks(): void {

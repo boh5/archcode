@@ -3,8 +3,10 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
+import { LoopKillStateManager } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
 import { LoopStateManager, type LoopConfig } from "./state";
+import { FakeSessionExecutionManager } from "./test-utils";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
 
@@ -234,6 +236,113 @@ describe("LoopScheduler", () => {
     expect(fixture.timer.nextDue()).toBe(600);
   });
 
+  test("cancelCurrentRun aborts linked session and records cancelled_by_user in run log", async () => {
+    const fixture = await createFixture(1_000);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "run-cancel",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 900,
+      sessionId: "session-cancel",
+    });
+
+    const report = await fixture.scheduler.cancelCurrentRun(loop.loopId);
+
+    expect(report).toMatchObject({
+      runId: "run-cancel",
+      status: "cancelled",
+      reason: "cancelled_by_user",
+      endedAt: 1_000,
+      sessionId: "session-cancel",
+    });
+    fixture.executionManager.assertCallCount("abortAndWait", 1);
+    expect(fixture.executionManager.getCalls("abortAndWait")[0]).toMatchObject({
+      workspaceRoot: TMP_DIR,
+      sessionId: "session-cancel",
+    });
+    const state = await fixture.manager.read(loop.loopId);
+    expect(state.currentRun).toBeUndefined();
+    expect(state.lastRun).toMatchObject({ status: "cancelled", reason: "cancelled_by_user" });
+    expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ status: "cancelled", reason: "cancelled_by_user" });
+  });
+
+  test("cancelCurrentRun is a no-op when the run already finished", async () => {
+    const fixture = await createFixture(1_000);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "run-finished",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 900,
+      sessionId: "session-finished",
+    });
+    await fixture.manager.recordRunFinish(loop.loopId, {
+      runId: "run-finished",
+      loopId: loop.loopId,
+      status: "succeeded",
+      trigger: "manual",
+      startedAt: 900,
+      endedAt: 950,
+      sessionId: "session-finished",
+    });
+
+    const report = await fixture.scheduler.cancelCurrentRun(loop.loopId);
+
+    expect(report).toBeUndefined();
+    fixture.executionManager.assertCallCount("abortAndWait", 0);
+    expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "succeeded" });
+  });
+
+  test("global kill persists, cancels active runs, and blocks manual and interval triggers until cleared", async () => {
+    const fixture = await createFixture(0);
+    const loop = await fixture.manager.create("project-a", intervalConfig);
+    const paused = await fixture.manager.create("project-a", { ...intervalConfig, title: "Paused interval" });
+    await fixture.scheduler.pause(paused.loopId);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "run-global-kill",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "interval",
+      startedAt: 0,
+      sessionId: "session-global-kill",
+    });
+
+    const state = await fixture.scheduler.activateGlobalKill({ activatedBy: "architect", reason: "stop automation" });
+
+    expect(state).toMatchObject({ globalKillActive: true, activatedAt: 0, activatedBy: "architect", reason: "stop automation" });
+    fixture.executionManager.assertCallCount("abortAndWait", 1);
+    expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "cancelled", reason: "global_kill_active" });
+    expect(await new LoopKillStateManager(TMP_DIR).read()).toEqual(state);
+
+    await fixture.manager.update(loop.loopId, { nextRunAt: 100 });
+    await fixture.scheduler.scheduleLoop(loop.loopId);
+    expect(fixture.timer.size()).toBe(0);
+
+    const manualBlocked = await fixture.scheduler.runManual(loop.loopId);
+    await fixture.scheduler.clearGlobalKill();
+    await fixture.scheduler.scheduleLoop(loop.loopId);
+    expect(fixture.timer.nextDue()).toBe(100);
+    await fixture.scheduler.activateGlobalKill({ reason: "block due timer" });
+    await fixture.timer.advanceTo(100);
+
+    expect(manualBlocked).toMatchObject({ status: "skipped", trigger: "manual", reason: "global_kill_active" });
+    const blockedReports = await fixture.manager.readRunLog(loop.loopId);
+    expect(blockedReports.filter((report) => report.status === "skipped" && report.reason === "global_kill_active").map((report) => report.trigger).sort()).toEqual(["interval", "manual"]);
+    expect(fixture.runs).toEqual([]);
+
+    fixture.clock.set(150);
+    const cleared = await fixture.scheduler.clearGlobalKill();
+    expect(cleared).toEqual({ globalKillActive: false });
+    expect((await fixture.manager.read(paused.loopId)).status).toBe("paused");
+
+    const accepted = await fixture.scheduler.runManual(loop.loopId);
+    expect(accepted).toMatchObject({ status: "succeeded", trigger: "manual" });
+    expect(fixture.runs).toHaveLength(1);
+  });
+
   test("stop clears timers and prevents new runs", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
@@ -257,18 +366,24 @@ async function createFixture(now: number = 0): Promise<{
   scheduler: LoopScheduler;
   clock: FakeClock;
   timer: FakeTimer;
+  killStateManager: LoopKillStateManager;
+  executionManager: FakeSessionExecutionManager;
   runs: LoopSchedulerRunInput[];
   runner: (input: LoopSchedulerRunInput) => Promise<{ summary: string } | void>;
 }> {
   const manager = new LoopStateManager(TMP_DIR);
   const clock = new FakeClock(now);
   const timer = new FakeTimer(clock);
+  const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
+  const executionManager = new FakeSessionExecutionManager();
   const runs: LoopSchedulerRunInput[] = [];
   const fixture = {
     manager,
     scheduler: undefined as unknown as LoopScheduler,
     clock,
     timer,
+    killStateManager,
+    executionManager,
     runs,
     runner: async (_input: LoopSchedulerRunInput) => ({ summary: "done" }),
   };
@@ -276,6 +391,8 @@ async function createFixture(now: number = 0): Promise<{
     stateManager: manager,
     clock,
     timer,
+    killStateManager,
+    abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(TMP_DIR, sessionId),
     runner: async (input) => {
       runs.push(input);
       return await fixture.runner(input);

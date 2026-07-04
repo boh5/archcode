@@ -42,6 +42,7 @@ import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
 import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
+import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
@@ -103,6 +104,10 @@ export interface AgentRuntime {
   pauseLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
   resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
   triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
+  readLoopKillState(workspaceRoot: string): Promise<LoopKillState>;
+  cancelCurrentLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
+  activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState>;
+  clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState>;
   readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]>;
   readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
   startLoopSchedulers(): Promise<void>;
@@ -333,6 +338,11 @@ export async function createRuntime(
           workspaceRoot,
           clock: schedulerClock,
         }),
+        killStateManager: new LoopKillStateManager(workspaceRoot, {
+          clock: schedulerClock,
+          logger: runtimeLogger.child({ module: "loops.kill-state" }),
+        }),
+        abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
         logger: runtimeLogger.child({ module: "loops.scheduler" }),
       });
       loopSchedulers.set(workspaceRoot, scheduler);
@@ -382,6 +392,22 @@ export async function createRuntime(
 
     async function triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
       return await (await getLoopScheduler(workspaceRoot)).runManual(loopId);
+    }
+
+    async function readLoopKillState(workspaceRoot: string): Promise<LoopKillState> {
+      return await (await getLoopScheduler(workspaceRoot)).readKillState();
+    }
+
+    async function cancelCurrentLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
+      return await (await getLoopScheduler(workspaceRoot)).cancelCurrentRun(loopId);
+    }
+
+    async function activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState> {
+      return await (await getLoopScheduler(workspaceRoot)).activateGlobalKill(input);
+    }
+
+    async function clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState> {
+      return await (await getLoopScheduler(workspaceRoot)).clearGlobalKill();
     }
 
     async function readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]> {
@@ -454,6 +480,10 @@ export async function createRuntime(
       pauseLoop,
       resumeLoop,
       triggerLoopRun,
+      readLoopKillState,
+      cancelCurrentLoopRun,
+      activateLoopGlobalKill,
+      clearLoopGlobalKill,
       readLoopRunLog,
       readLoopStateMarkdown,
       startLoopSchedulers,

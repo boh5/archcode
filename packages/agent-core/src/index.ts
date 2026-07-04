@@ -40,7 +40,7 @@ export {
   LoopStateError,
   LoopUuidSchema,
 } from "./loops";
-export type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops";
+export type { LoopConfig, LoopKillActivateInput, LoopKillState, LoopRunReport, LoopState, LoopUpdateInput } from "./loops";
 
 export { NotRootSessionError, SessionDeleteConflictError, SessionFileNotFoundError } from "./store/errors";
 export { reduceStreamEvent } from "./store/reduce";

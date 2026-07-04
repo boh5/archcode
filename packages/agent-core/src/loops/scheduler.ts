@@ -1,6 +1,7 @@
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { LoopBudgetLedger } from "./budget-ledger";
+import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
 import type { LoopBudgetUsage, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
 import { LoopStateManager } from "./state";
@@ -48,6 +49,8 @@ export interface LoopSchedulerOptions {
   readonly clock?: LoopSchedulerClock;
   readonly timer?: LoopSchedulerTimer;
   readonly budgetLedger?: LoopBudgetLedger;
+  readonly killStateManager?: LoopKillStateManager;
+  readonly abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly logger?: Logger;
 }
 
@@ -74,6 +77,8 @@ export class LoopScheduler {
   readonly #clock: LoopSchedulerClock;
   readonly #timer: LoopSchedulerTimer;
   readonly #budgetLedger?: LoopBudgetLedger;
+  readonly #killStateManager?: LoopKillStateManager;
+  readonly #abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
   readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
@@ -85,6 +90,8 @@ export class LoopScheduler {
     this.#clock = options.clock ?? systemClock;
     this.#timer = options.timer ?? systemTimer;
     this.#budgetLedger = options.budgetLedger;
+    this.#killStateManager = options.killStateManager;
+    this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
   }
 
@@ -111,6 +118,35 @@ export class LoopScheduler {
     return await this.runLoop(loop, "manual");
   }
 
+  async readKillState(): Promise<LoopKillState> {
+    return await this.killStateManager().read();
+  }
+
+  async cancelCurrentRun(loopId: string): Promise<LoopRunReport | undefined> {
+    return await this.cancelCurrentRunWithReason(loopId, "cancelled_by_user");
+  }
+
+  async activateGlobalKill(input: LoopKillActivateInput = {}): Promise<LoopKillState> {
+    const state = await this.killStateManager().activate(input);
+
+    const loops = await this.#stateManager.list();
+    for (const loop of loops) {
+      if (loop.currentRun?.status === "running") {
+        await this.cancelCurrentRunWithReason(loop.loopId, "global_kill_active");
+      }
+    }
+    return state;
+  }
+
+  async clearGlobalKill(): Promise<LoopKillState> {
+    const state = await this.killStateManager().clear();
+    const loops = await this.#stateManager.list();
+    for (const loop of loops) {
+      if (loop.status === "active") await this.scheduleLoopState(loop, { restart: false });
+    }
+    return state;
+  }
+
   async pause(loopId: string): Promise<LoopState> {
     this.clearTimer(loopId);
     return await this.#stateManager.pause(loopId);
@@ -135,6 +171,7 @@ export class LoopScheduler {
     this.clearTimer(loop.loopId);
     if (this.#disposed) return;
     if (loop.status !== "active" || loop.config.schedule.kind !== "interval") return;
+    if (await this.isGlobalKillActive()) return;
 
     const now = this.#clock.now();
     if (!options.restart && this.#activeRuns.has(loop.loopId) && (loop.nextRunAt ?? now) <= now) {
@@ -166,6 +203,9 @@ export class LoopScheduler {
 
   private async runLoop(loop: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
     if (this.#disposed) return undefined;
+
+    const globalKillReport = await this.globalKillBlockedReport(loop, trigger);
+    if (globalKillReport !== undefined) return globalKillReport;
 
     const activeRun = this.activeRunFor(loop);
     if (activeRun !== undefined) {
@@ -235,6 +275,11 @@ export class LoopScheduler {
     runningReport: LoopRunReport,
     result: Required<Pick<LoopSchedulerRunResult, "status">> & Omit<LoopSchedulerRunResult, "status">,
   ): Promise<LoopRunReport> {
+    const latest = await this.#stateManager.read(loop.loopId);
+    if (latest.lastRun?.runId === runningReport.runId && latest.lastRun.status !== "running") {
+      return latest.lastRun;
+    }
+
     const finishedReport: LoopRunReport = {
       ...runningReport,
       status: result.status,
@@ -256,7 +301,7 @@ export class LoopScheduler {
     return finishedReport;
   }
 
-  private async appendSkippedReport(loopId: string, trigger: LoopRunTrigger, skippedReason: string): Promise<LoopRunReport> {
+  private async appendSkippedReport(loopId: string, trigger: LoopRunTrigger, skippedReason: string, reason?: LoopRunReason): Promise<LoopRunReport> {
     const now = this.#clock.now();
     const report: LoopRunReport = {
       runId: crypto.randomUUID(),
@@ -265,10 +310,63 @@ export class LoopScheduler {
       trigger,
       startedAt: now,
       endedAt: now,
+      reason,
       skippedReason,
     };
     await this.#stateManager.appendRunReport(loopId, report);
     return report;
+  }
+
+  private async cancelCurrentRunWithReason(loopId: string, reason: "cancelled_by_user" | "global_kill_active"): Promise<LoopRunReport | undefined> {
+    let loop = await this.#stateManager.read(loopId);
+    const running = loop.currentRun?.status === "running" ? loop.currentRun : undefined;
+    if (running === undefined) return undefined;
+
+    const abortPromise = running.sessionId === undefined
+      ? Promise.resolve()
+      : this.#abortSessionExecutionAndWait?.(running.sessionId) ?? Promise.resolve();
+
+    loop = await this.#stateManager.read(loopId);
+    if (loop.lastRun?.runId === running.runId && loop.lastRun.status !== "running") {
+      await abortPromise;
+      return loop.lastRun;
+    }
+
+    const current = loop.currentRun?.runId === running.runId ? loop.currentRun : running;
+    const report: LoopRunReport = {
+      ...current,
+      status: "cancelled",
+      endedAt: this.#clock.now(),
+      reason,
+      toolProfileId: loop.config.toolProfileId,
+    };
+
+    const finishedState = await this.#stateManager.recordRunFinish(loopId, report);
+    this.#activeRuns.delete(loopId);
+
+    if (!this.#disposed && reason === "cancelled_by_user") {
+      await this.scheduleLoopState(finishedState, { restart: false });
+    }
+
+    await abortPromise;
+    return report;
+  }
+
+  private async globalKillBlockedReport(loop: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
+    if (!(await this.isGlobalKillActive())) return undefined;
+    return await this.appendSkippedReport(loop.loopId, trigger, "Global Loop kill switch is active; skipped trigger.", "global_kill_active");
+  }
+
+  private async isGlobalKillActive(): Promise<boolean> {
+    if (this.#killStateManager === undefined) return false;
+    return (await this.#killStateManager.read()).globalKillActive;
+  }
+
+  private killStateManager(): LoopKillStateManager {
+    if (this.#killStateManager === undefined) {
+      throw new Error("LoopScheduler requires a LoopKillStateManager for kill-state operations.");
+    }
+    return this.#killStateManager;
   }
 
   private clearTimer(loopId: string): void {
