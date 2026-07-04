@@ -561,6 +561,34 @@ describe("parseConfig", () => {
 });
 
 describe("resolveGithubIntegrationConfig", () => {
+  test("keeps github integration disabled when config block is absent", () => {
+    expect(resolveGithubIntegrationConfig(undefined, {})).toEqual({
+      enabled: false,
+      apiBaseUrl: "https://api.github.com",
+    });
+  });
+
+  test("defaults github integration to enabled when config block is present", () => {
+    try {
+      resolveGithubIntegrationConfig({}, {});
+      throw new Error("Expected resolveGithubIntegrationConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GithubIntegrationTokenError);
+      expect((error as GithubIntegrationTokenError).attemptedEnvNames).toEqual([
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+      ]);
+      expect((error as GithubIntegrationTokenError).message).not.toContain("secret-sentinel");
+    }
+  });
+
+  test("keeps explicitly disabled github integration from resolving tokens", () => {
+    expect(resolveGithubIntegrationConfig({ enabled: false }, {})).toEqual({
+      enabled: false,
+      apiBaseUrl: "https://api.github.com",
+    });
+  });
+
   test("uses config token env before default GitHub variables", () => {
     const resolved = resolveGithubIntegrationConfig(
       { enabled: true, tokenEnv: "ARCHCODE_GITHUB_TOKEN" },
@@ -646,6 +674,17 @@ describe("resolveGithubIntegrationConfig", () => {
       ]);
       expect((error as GithubIntegrationTokenError).message).not.toContain("secret-sentinel");
     }
+  });
+
+  test("parsed empty github block is enabled and requires a token", () => {
+    const parsed = parseConfig({
+      ...VALID_CONFIG_WITH_AGENTS,
+      integrations: { github: {} },
+    });
+
+    expect(() => resolveGithubIntegrationConfig(parsed.integrations?.github, {})).toThrow(
+      GithubIntegrationTokenError,
+    );
   });
 });
 

@@ -347,7 +347,7 @@ GitHub integration metadata is configured under `integrations.github`. Phase 4 s
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `enabled` | No | Enables GitHub integration resolution when `true`; defaults to disabled when omitted |
+| `enabled` | No | Defaults to `true` when the `integrations.github` block is present; set `false` to explicitly disable token resolution |
 | `tokenEnv` | No | Environment variable name or env-expanded token reference used before defaults |
 | `apiBaseUrl` | No | Must be exactly `https://api.github.com` when provided |
 | `defaultOwner` | No | Optional default GitHub owner for later connector tasks |

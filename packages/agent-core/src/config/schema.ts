@@ -84,11 +84,24 @@ export function resolveGithubIntegrationConfig(
   config?: GithubIntegrationConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedGithubIntegrationConfig {
-  const enabled = config?.enabled ?? false;
+  if (!config) {
+    return { enabled: false, apiBaseUrl: GITHUB_API_BASE_URL };
+  }
+
+  const enabled = config.enabled ?? true;
   const apiBaseUrl = config?.apiBaseUrl ?? GITHUB_API_BASE_URL;
   const attemptedEnvNames: string[] = [];
 
-  if (config?.tokenEnv) {
+  if (!enabled) {
+    return {
+      enabled,
+      apiBaseUrl,
+      defaultOwner: config.defaultOwner,
+      defaultRepo: config.defaultRepo,
+    };
+  }
+
+  if (config.tokenEnv) {
     const expandedTokenEnv = expandEnvVars(config.tokenEnv, "integrations.github.tokenEnv", { env });
     const hasEnvExpression = config.tokenEnv.includes("${");
 
@@ -152,14 +165,5 @@ export function resolveGithubIntegrationConfig(
     }
   }
 
-  if (enabled) {
-    throw new GithubIntegrationTokenError(attemptedEnvNames);
-  }
-
-  return {
-    enabled,
-    apiBaseUrl,
-    defaultOwner: config?.defaultOwner,
-    defaultRepo: config?.defaultRepo,
-  };
+  throw new GithubIntegrationTokenError(attemptedEnvNames);
 }
