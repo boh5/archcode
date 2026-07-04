@@ -28,6 +28,7 @@ export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
 export type { ProjectInfo } from "./projects/types";
 
 export { DoneConditionSchema, GoalArtifactNameSchema } from "./goals";
+export * from "./integrations";
 
 export {
   expandLoopPreset,
