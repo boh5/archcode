@@ -12,7 +12,7 @@ import { ProjectContextResolver } from "../projects/context-resolver";
 import { silentLogger } from "../logger";
 import { TOOL_BASH, TOOL_FILE_EDIT, TOOL_FILE_WRITE } from "../tools/names";
 import { CollisionLedger } from "./collision-ledger";
-import { createLoopCollisionToolPermission } from "./collision-tool-guard";
+import { createLoopCollisionToolPermission, createLoopCollisionToolReleaseHook } from "./collision-tool-guard";
 import { createDefaultToolTargetExtractorRegistry } from "./tool-target-extractors";
 import { LoopStateManager, type LoopConfig } from "./state";
 import { FakeClock } from "./test-utils";
@@ -54,8 +54,54 @@ describe("createLoopCollisionToolPermission", () => {
     expect(result.output).toContain("LOOP_COLLISION_CONFLICT");
     expect(result.output).toContain("collision_conflict");
     expect(fixture.executedTools).toEqual([]);
+    expect(await fixture.ledger.readActiveLeases()).toEqual([
+      expect.objectContaining({ loopId: holder.loopId, runId: "run-a", targetKey: "file:src/app.ts" }),
+    ]);
     const conflicts = await fixture.ledger.readConflicts();
     expect(conflicts.at(-1)).toMatchObject({ targetKey: "file:src/app.ts" });
+  });
+
+  test("successful effectful tool call releases its acquired action-target lease immediately", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", config);
+
+    const result = await fixture.registry.execute(
+      { toolCallId: "write-success", toolName: TOOL_FILE_WRITE, input: { path: "src/success.ts", content: "export {};" } },
+      fixture.context(TOOL_FILE_WRITE, loop.loopId, "run-success"),
+    );
+
+    expect(result).toEqual({ output: "executed-write", isError: false });
+    expect(fixture.executedTools).toEqual([TOOL_FILE_WRITE]);
+    expect(await fixture.ledger.readActiveLeases()).toEqual([]);
+  });
+
+  test("effectful tool execution errors release acquired action-target lease", async () => {
+    const fixture = await createFixture({ failWriteExecution: true });
+    const loop = await fixture.stateManager.create("project-a", config);
+
+    const result = await fixture.registry.execute(
+      { toolCallId: "write-fail", toolName: TOOL_FILE_WRITE, input: { path: "src/fail.ts", content: "export {};" } },
+      fixture.context(TOOL_FILE_WRITE, loop.loopId, "run-fail"),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("write failed");
+    expect(await fixture.ledger.readActiveLeases()).toEqual([]);
+  });
+
+  test("descriptor permission denial after collision acquisition releases own action-target lease", async () => {
+    const fixture = await createFixture({ denyWritePermission: true });
+    const loop = await fixture.stateManager.create("project-a", config);
+
+    const result = await fixture.registry.execute(
+      { toolCallId: "write-denied", toolName: TOOL_FILE_WRITE, input: { path: "src/denied.ts", content: "export {};" } },
+      fixture.context(TOOL_FILE_WRITE, loop.loopId, "run-denied"),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("descriptor denied");
+    expect(fixture.executedTools).toEqual([]);
+    expect(await fixture.ledger.readActiveLeases()).toEqual([]);
   });
 
   test("file edit target conflict uses structured path input", async () => {
@@ -103,14 +149,15 @@ describe("createLoopCollisionToolPermission", () => {
   });
 });
 
-async function createFixture() {
+async function createFixture(options: { readonly failWriteExecution?: boolean; readonly denyWritePermission?: boolean } = {}) {
   const clock = new FakeClock(Date.UTC(2026, 6, 4, 12, 0, 0));
   const stateManager = new LoopStateManager(TMP_DIR);
   const resolver = new ProjectContextResolver({ projectInfoFactory: () => ({ slug: "project-a", name: "Project A", workspaceRoot: TMP_DIR, addedAt: "2026-07-04T00:00:00.000Z" }) });
   const projectContext = await resolver.resolve(TMP_DIR);
   const executedTools: string[] = [];
-  const registry = createRegistry(makeToolDescriptors(executedTools));
+  const registry = createRegistry(makeToolDescriptors(executedTools, options));
   registry.globalPermissions.push(createLoopCollisionToolPermission({ leaseTtlMs: 60_000 }));
+  registry.globalHooks.after.push(createLoopCollisionToolReleaseHook({ leaseTtlMs: 60_000 }));
   const ledger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
   const store = createSessionStore("session-1");
 
@@ -136,14 +183,19 @@ async function createFixture() {
   return { clock, stateManager, registry, ledger, context, executedTools };
 }
 
-function makeToolDescriptors(executedTools: string[]): AnyToolDescriptor[] {
+function makeToolDescriptors(
+  executedTools: string[],
+  options: { readonly failWriteExecution?: boolean; readonly denyWritePermission?: boolean } = {},
+): AnyToolDescriptor[] {
   return [
     {
       name: TOOL_FILE_WRITE,
       description: "test file write",
       inputSchema: z.object({ path: z.string(), content: z.string() }).strict(),
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
+      permissions: options.denyWritePermission === true ? [() => ({ outcome: "deny", reason: "descriptor denied" })] : undefined,
       execute: async () => {
+        if (options.failWriteExecution === true) throw new Error("write failed");
         executedTools.push(TOOL_FILE_WRITE);
         return { output: "executed-write", isError: false };
       },

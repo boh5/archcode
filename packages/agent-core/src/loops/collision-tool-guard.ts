@@ -1,7 +1,7 @@
 import type { CollisionConflict, CollisionTarget } from "./state";
 import { canonicalTargetKey, CollisionLedger } from "./collision-ledger";
 import { createDefaultToolTargetExtractorRegistry, type ToolTargetExtractorRegistry } from "./tool-target-extractors";
-import type { PermissionDecision, ToolExecutionContext, ToolPermission } from "../tools/types";
+import type { AfterHook, PermissionDecision, ToolExecutionContext, ToolPermission } from "../tools/types";
 
 export interface LoopCollisionToolPermissionOptions {
   readonly extractorRegistry?: ToolTargetExtractorRegistry;
@@ -43,6 +43,23 @@ export function createLoopCollisionToolPermission(options: LoopCollisionToolPerm
     if (conflict === undefined) return { outcome: "allow" };
 
     return collisionConflictDecision(conflict);
+  };
+}
+
+export function createLoopCollisionToolReleaseHook(options: Pick<LoopCollisionToolPermissionOptions, "leaseTtlMs"> = {}): AfterHook {
+  return async function collisionReleaseAfterHook(_result, ctx) {
+    const origin = ctx.origin;
+    if (origin?.kind !== "loop") return undefined;
+    if (origin.runId === undefined) return undefined;
+
+    const ledger = new CollisionLedger({
+      stateManager: ctx.projectContext.loopState,
+      workspaceRoot: ctx.workspaceRoot,
+      ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs }),
+    });
+    await ledger.releaseToolCall(origin.loopId, origin.runId, ctx.toolCallId);
+    await ledger.cleanupStale();
+    return undefined;
   };
 }
 

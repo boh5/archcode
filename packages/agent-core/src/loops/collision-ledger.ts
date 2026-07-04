@@ -180,6 +180,19 @@ export class CollisionLedger {
     await this.#persistSnapshots(next, [loopId]);
   }
 
+  async releaseToolCall(loopId: string, runId: string, toolCallId: string): Promise<void> {
+    const ledger = await this.#readPrunedLedger();
+    const nextLeases = ledger.leases.filter((lease) => {
+      if (lease.loopId !== loopId || lease.runId !== runId) return true;
+      return lease.toolCallId !== toolCallId;
+    });
+    if (nextLeases.length === ledger.leases.length) return;
+
+    const next = { ...ledger, leases: nextLeases, updatedAt: this.#clock.now() };
+    await this.#writeLedger(next);
+    await this.#persistSnapshots(next, [loopId]);
+  }
+
   async cleanupStale(): Promise<CollisionLease[]> {
     const ledger = await this.#readLedger();
     const active = this.#activeLeases(ledger.leases);
