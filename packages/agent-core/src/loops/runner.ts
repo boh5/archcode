@@ -254,7 +254,7 @@ export class LoopRunner {
         sessionId,
         userMessage: buildGoalLoopPrompt(input.loop, goal),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
-        origin: loopOrigin(input.loop, input.trigger),
+        origin: loopOrigin(input.loop, input.trigger, input.runId),
       });
       await execution.promise;
       const result = await this.#sessionResultFromFinalState(input.loop, sessionId);
@@ -300,7 +300,7 @@ export class LoopRunner {
       sessionId,
       userMessage: buildSessionLoopPrompt(input.loop),
       maxSteps: input.loop.config.limits.maxIterationsPerRun,
-      origin: loopOrigin(input.loop, input.trigger),
+      origin: loopOrigin(input.loop, input.trigger, input.runId),
     });
 
     try {
@@ -421,13 +421,15 @@ function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
   ].join("\n");
 }
 
-function loopOrigin(loop: LoopState, trigger: LoopRunTrigger): ToolExecutionOrigin {
+function loopOrigin(loop: LoopState, trigger: LoopRunTrigger, runId: string): ToolExecutionOrigin {
   return {
     kind: "loop",
     loopId: loop.loopId,
+    runId,
     trigger,
     mode: loop.config.mode,
     approvalPolicy: loop.config.approvalPolicy,
+    toolProfileId: loop.config.toolProfileId,
   };
 }
 

@@ -69,7 +69,7 @@ describe("expandLoopPreset", () => {
     expect(parsed.runKind).toBe("session");
     expect(parsed.mode).toBe("report");
     expect(parsed.approvalPolicy).toBe("interactive");
-    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8 });
+    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1.0 });
   });
 
   test("changelog_drafter expands to a valid LoopConfig with sourcePreset metadata", () => {
@@ -81,7 +81,7 @@ describe("expandLoopPreset", () => {
     expect(parsed.runKind).toBe("session");
     expect(parsed.mode).toBe("report");
     expect(parsed.approvalPolicy).toBe("interactive");
-    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8 });
+    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1.0 });
   });
 
   test("daily_triage taskPrompt is local-only (no external API dependency)", () => {

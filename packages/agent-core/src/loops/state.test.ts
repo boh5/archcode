@@ -4,10 +4,14 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  CollisionLeaseSchema,
+  CollisionTargetSchema,
+  LoopBudgetConfigSchema,
   LoopConfigSchema,
   LoopInvalidIdError,
   LoopPathError,
   LoopRunLogError,
+  LoopRunReportSchema,
   LoopStateManager,
   LoopStateSchema,
   type LoopConfig,
@@ -82,6 +86,138 @@ describe("Loop schemas", () => {
     expect(() => LoopStateSchema.parse({ ...state, extra: true })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, goalTemplateId: "goal-1" })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, schedule: { kind: "cron", expression: "* * * * *" } })).toThrow();
+  });
+
+  test("normalizes legacy loop limits to phase 4 budget threshold defaults", () => {
+    const parsedBudget = LoopBudgetConfigSchema.parse({ maxIterationsPerRun: 8 });
+    const parsedConfig = LoopConfigSchema.parse(manualConfig);
+
+    expect(parsedBudget).toEqual({
+      maxIterationsPerRun: 8,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    });
+    expect(parsedConfig.limits).toEqual(parsedBudget);
+  });
+
+  test("parses legacy loop state with minimal limits and keeps readiness score unsupported", () => {
+    const now = Date.now();
+    const state = LoopStateSchema.parse({
+      loopId: VALID_LOOP_ID,
+      projectId: "project-a",
+      config: manualConfig,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      runCount: 0,
+      stateVersion: 1,
+    });
+
+    expect(state.config.limits).toEqual({
+      maxIterationsPerRun: 8,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    });
+    expect(state.readinessScore).toBeUndefined();
+  });
+
+  test("rejects maturity fields and non-null readiness score", () => {
+    const now = Date.now();
+    const state = {
+      loopId: VALID_LOOP_ID,
+      projectId: "project-a",
+      config: manualConfig,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+      runCount: 0,
+      stateVersion: 1,
+    };
+
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, graduation: { level: "L2" } })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, noiseRate: 0.1 })).toThrow();
+    expect(() => LoopStateSchema.parse({ ...state, readinessScore: 0.9 })).toThrow();
+    expect(() => LoopStateSchema.parse({ ...state, noiseRate: 0.1 })).toThrow();
+  });
+
+  test("accepts phase 4 budget, collision, integration, profile, and run reason fields", () => {
+    const budget = LoopBudgetConfigSchema.parse({
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 100_000,
+      maxEstimatedUsdPerRun: 2,
+      maxWallClockMsPerRun: 900_000,
+      maxRunsPerDay: 4,
+      softThresholdRatio: 0.75,
+      hardThresholdRatio: 1,
+    });
+    const collisionTarget = CollisionTargetSchema.parse({ type: "pr", owner: "arch", repo: "code", number: 42 });
+    const lease = CollisionLeaseSchema.parse({
+      targetKey: "pr:arch/code#42",
+      target: collisionTarget,
+      loopId: VALID_LOOP_ID,
+      runId: "run-1",
+      actionId: "action-1",
+      toolCallId: "tool-1",
+      priority: 10,
+      createdAt: 1_000,
+      expiresAt: 2_000,
+    });
+    const report = LoopRunReportSchema.parse({
+      runId: "run-1",
+      loopId: VALID_LOOP_ID,
+      status: "budget_exceeded",
+      trigger: "manual",
+      startedAt: 1_000,
+      endedAt: 2_000,
+      reason: "hard_budget_exceeded",
+      budgetUsage: {
+        iterations: 8,
+        inputTokens: 10,
+        outputTokens: 20,
+        reasoningTokens: 5,
+        cachedInputTokens: 2,
+        totalTokens: 35,
+        estimatedUsd: 0.02,
+        wallClockMs: 1_000,
+        runsToday: 1,
+        resetDateUtc: "2026-07-05",
+        pricingUnavailable: false,
+      },
+      collisionTargets: [collisionTarget],
+      collisionConflicts: [{
+        targetKey: lease.targetKey,
+        target: collisionTarget,
+        conflictingLease: lease,
+        detectedAt: 1_500,
+      }],
+      integrationErrors: [{
+        integrationId: "github",
+        reason: "integration_rate_limited",
+        message: "GitHub rate limit reached",
+        retryAfterMs: 60_000,
+        occurredAt: 1_500,
+      }],
+      toolProfileId: "loop_github_pr_watch",
+    });
+    const state = LoopStateSchema.parse({
+      loopId: VALID_LOOP_ID,
+      projectId: "project-a",
+      config: { ...manualConfig, budget, toolProfileId: "loop_github_pr_watch", collisionTargets: [collisionTarget] },
+      status: "active",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      lastRun: report,
+      runCount: 1,
+      stateVersion: 1,
+      latestBudget: { budget, usage: report.budgetUsage!, updatedAt: 2_000 },
+      latestCollisions: { targets: [collisionTarget], activeLeases: [lease], conflicts: report.collisionConflicts!, updatedAt: 2_000 },
+      latestIntegrations: { errors: report.integrationErrors!, updatedAt: 2_000 },
+    });
+
+    expect(report.status).toBe("budget_exceeded");
+    expect(report.reason).toBe("hard_budget_exceeded");
+    expect(state.config.toolProfileId).toBe("loop_github_pr_watch");
+    expect(state.latestCollisions?.activeLeases[0]?.targetKey).toBe("pr:arch/code#42");
   });
 });
 

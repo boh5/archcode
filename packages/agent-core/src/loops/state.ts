@@ -5,17 +5,28 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import type {
   LoopApprovalPolicy as ProtocolLoopApprovalPolicy,
+  LoopBudgetConfig as ProtocolLoopBudgetConfig,
+  LoopBudgetSnapshot as ProtocolLoopBudgetSnapshot,
+  LoopBudgetUsage as ProtocolLoopBudgetUsage,
+  CollisionConflict as ProtocolCollisionConflict,
+  CollisionLease as ProtocolCollisionLease,
+  CollisionTarget as ProtocolCollisionTarget,
   LoopConfig as ProtocolLoopConfig,
   LoopGoalTemplate as ProtocolLoopGoalTemplate,
+  LoopIntegrationError as ProtocolLoopIntegrationError,
+  LoopIntegrationSnapshot as ProtocolLoopIntegrationSnapshot,
+  LoopCollisionSnapshot as ProtocolLoopCollisionSnapshot,
   LoopLimits as ProtocolLoopLimits,
   LoopMode as ProtocolLoopMode,
   LoopRunKind as ProtocolLoopRunKind,
+  LoopRunReason as ProtocolLoopRunReason,
   LoopRunReport as ProtocolLoopRunReport,
   LoopRunReportStatus as ProtocolLoopRunReportStatus,
   LoopRunTrigger as ProtocolLoopRunTrigger,
   LoopScheduleSpec as ProtocolLoopScheduleSpec,
   LoopState as ProtocolLoopState,
   LoopStatus as ProtocolLoopStatus,
+  LoopToolProfileId as ProtocolLoopToolProfileId,
 } from "@archcode/protocol";
 
 import { ApprovalPointSchema, DoneConditionSchema, RetryPolicySchema } from "../goals/state";
@@ -40,9 +51,116 @@ export const LoopRunKindSchema = z.enum(["session", "goal"]);
 export const LoopModeSchema = z.enum(["report", "act"]);
 export const LoopApprovalPolicySchema = z.enum(["interactive", "explicit_per_run"]);
 
-export const LoopLimitsSchema = z.strictObject({
+const BudgetThresholdRatioSchema = z.number().min(0).max(1);
+
+export const LoopBudgetConfigSchema = z.preprocess((value) => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    softThresholdRatio: record.softThresholdRatio ?? 0.8,
+    hardThresholdRatio: record.hardThresholdRatio ?? 1.0,
+  };
+}, z.strictObject({
   maxIterationsPerRun: z.number().int().positive(),
-}) satisfies z.ZodType<ProtocolLoopLimits>;
+  maxTokensPerRun: z.number().int().positive().optional(),
+  maxEstimatedUsdPerRun: z.number().positive().optional(),
+  maxWallClockMsPerRun: z.number().int().positive().optional(),
+  maxRunsPerDay: z.number().int().positive().optional(),
+  softThresholdRatio: BudgetThresholdRatioSchema,
+  hardThresholdRatio: BudgetThresholdRatioSchema,
+})) satisfies z.ZodType<ProtocolLoopBudgetConfig>;
+
+export const LoopLimitsSchema = LoopBudgetConfigSchema satisfies z.ZodType<ProtocolLoopLimits>;
+
+export const LoopBudgetUsageSchema = z.strictObject({
+  iterations: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  totalTokens: z.number().int().nonnegative(),
+  estimatedUsd: z.number().nonnegative().optional(),
+  wallClockMs: z.number().int().nonnegative(),
+  runsToday: z.number().int().nonnegative(),
+  resetDateUtc: z.iso.date(),
+  pricingUnavailable: z.boolean().optional(),
+}) satisfies z.ZodType<ProtocolLoopBudgetUsage>;
+
+export const LoopRunReasonSchema = z.enum([
+  "completed",
+  "soft_budget_blocked",
+  "hard_budget_exceeded",
+  "collision_conflict",
+  "cancelled_by_user",
+  "global_kill_active",
+  "loop_paused",
+  "integration_auth_missing",
+  "integration_rate_limited",
+  "execution_failed",
+  "max_steps_reached",
+  "scheduler_overlap",
+]) satisfies z.ZodType<ProtocolLoopRunReason>;
+
+export const LoopToolProfileIdSchema = z.enum([
+  "loop_local_report",
+  "loop_local_action",
+  "loop_github_pr_watch",
+  "loop_ci_watch",
+  "loop_goal_action",
+]) satisfies z.ZodType<ProtocolLoopToolProfileId>;
+
+export const CollisionTargetSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("pr"), owner: LoopIdentifierSchema, repo: LoopIdentifierSchema, number: z.number().int().positive() }),
+  z.strictObject({ type: z.literal("issue"), owner: LoopIdentifierSchema, repo: LoopIdentifierSchema, number: z.number().int().positive() }),
+  z.strictObject({ type: z.literal("branch"), owner: LoopIdentifierSchema, repo: LoopIdentifierSchema, branch: LoopIdentifierSchema }),
+  z.strictObject({ type: z.literal("file"), path: LoopTextSchema }),
+]) satisfies z.ZodType<ProtocolCollisionTarget>;
+
+export const CollisionLeaseSchema = z.strictObject({
+  targetKey: LoopIdentifierSchema,
+  target: CollisionTargetSchema,
+  loopId: LoopUuidSchema,
+  runId: LoopIdentifierSchema,
+  actionId: LoopIdentifierSchema.optional(),
+  toolCallId: LoopIdentifierSchema.optional(),
+  priority: z.number().int(),
+  createdAt: TimestampMsSchema,
+  expiresAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolCollisionLease>;
+
+export const CollisionConflictSchema = z.strictObject({
+  targetKey: LoopIdentifierSchema,
+  target: CollisionTargetSchema,
+  conflictingLease: CollisionLeaseSchema,
+  detectedAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolCollisionConflict>;
+
+export const LoopIntegrationErrorSchema = z.strictObject({
+  integrationId: z.enum(["github", "github_actions"]),
+  reason: z.enum(["integration_auth_missing", "integration_rate_limited"]),
+  message: z.string().trim().min(1).max(20_000),
+  retryAfterMs: z.number().int().positive().optional(),
+  occurredAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolLoopIntegrationError>;
+
+export const LoopBudgetSnapshotSchema = z.strictObject({
+  budget: LoopBudgetConfigSchema.optional(),
+  usage: LoopBudgetUsageSchema,
+  updatedAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolLoopBudgetSnapshot>;
+
+export const LoopCollisionSnapshotSchema = z.strictObject({
+  targets: z.array(CollisionTargetSchema).max(100),
+  activeLeases: z.array(CollisionLeaseSchema).max(100),
+  conflicts: z.array(CollisionConflictSchema).max(100),
+  updatedAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolLoopCollisionSnapshot>;
+
+export const LoopIntegrationSnapshotSchema = z.strictObject({
+  errors: z.array(LoopIntegrationErrorSchema).max(100),
+  updatedAt: TimestampMsSchema,
+}) satisfies z.ZodType<ProtocolLoopIntegrationSnapshot>;
 
 export const LoopGoalTemplateSchema = z.strictObject({
   title: LoopTitleSchema,
@@ -55,7 +173,7 @@ export const LoopGoalTemplateSchema = z.strictObject({
   instructions: LoopTextSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopGoalTemplate>;
 
-export const LoopConfigSchema = z.strictObject({
+export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   title: LoopTitleSchema,
   description: LoopTextSchema.optional(),
   schedule: LoopScheduleSpecSchema,
@@ -63,13 +181,16 @@ export const LoopConfigSchema = z.strictObject({
   mode: LoopModeSchema,
   approvalPolicy: LoopApprovalPolicySchema,
   limits: LoopLimitsSchema,
+  budget: LoopBudgetConfigSchema.optional(),
+  toolProfileId: LoopToolProfileIdSchema.optional(),
+  collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
   taskPrompt: LoopTextSchema.optional(),
   instructions: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateSchema.optional(),
   sourcePreset: LoopIdentifierSchema.optional(),
-}) satisfies z.ZodType<ProtocolLoopConfig>;
+});
 
-export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled"]);
+export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded"]);
 export const LoopRunTriggerSchema = z.enum(["manual", "interval"]);
 
 export const LoopRunReportSchema = z.strictObject({
@@ -79,6 +200,12 @@ export const LoopRunReportSchema = z.strictObject({
   trigger: LoopRunTriggerSchema,
   startedAt: TimestampMsSchema,
   endedAt: TimestampMsSchema.optional(),
+  reason: LoopRunReasonSchema.optional(),
+  budgetUsage: LoopBudgetUsageSchema.optional(),
+  collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
+  collisionConflicts: z.array(CollisionConflictSchema).max(100).optional(),
+  integrationErrors: z.array(LoopIntegrationErrorSchema).max(100).optional(),
+  toolProfileId: LoopToolProfileIdSchema.optional(),
   sessionId: LoopIdentifierSchema.optional(),
   goalId: LoopIdentifierSchema.optional(),
   summary: LoopTextSchema.optional(),
@@ -100,6 +227,9 @@ export const LoopStateSchema = z.strictObject({
   stateVersion: z.number().int().positive(),
   generatedStateSummary: z.string().max(20_000).optional(),
   readinessScore: z.null().optional(),
+  latestBudget: LoopBudgetSnapshotSchema.optional(),
+  latestCollisions: LoopCollisionSnapshotSchema.optional(),
+  latestIntegrations: LoopIntegrationSnapshotSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopState>;
 
 export type LoopStatus = ProtocolLoopStatus;
@@ -107,6 +237,17 @@ export type LoopScheduleSpec = ProtocolLoopScheduleSpec;
 export type LoopRunKind = ProtocolLoopRunKind;
 export type LoopMode = ProtocolLoopMode;
 export type LoopApprovalPolicy = ProtocolLoopApprovalPolicy;
+export type LoopBudgetConfig = ProtocolLoopBudgetConfig;
+export type LoopBudgetUsage = ProtocolLoopBudgetUsage;
+export type LoopRunReason = ProtocolLoopRunReason;
+export type LoopToolProfileId = ProtocolLoopToolProfileId;
+export type CollisionTarget = ProtocolCollisionTarget;
+export type CollisionLease = ProtocolCollisionLease;
+export type CollisionConflict = ProtocolCollisionConflict;
+export type LoopIntegrationError = ProtocolLoopIntegrationError;
+export type LoopBudgetSnapshot = ProtocolLoopBudgetSnapshot;
+export type LoopCollisionSnapshot = ProtocolLoopCollisionSnapshot;
+export type LoopIntegrationSnapshot = ProtocolLoopIntegrationSnapshot;
 export type LoopLimits = ProtocolLoopLimits;
 export type LoopGoalTemplate = ProtocolLoopGoalTemplate;
 export type LoopConfig = ProtocolLoopConfig;

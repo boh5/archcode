@@ -1,5 +1,5 @@
 import type { Schema as AiSchema } from "ai";
-import type { LoopApprovalPolicy, LoopMode, LoopRunTrigger } from "@archcode/protocol";
+import type { LoopApprovalPolicy, LoopMode, LoopRunTrigger, LoopToolProfileId } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { SessionStoreState } from "../store/index";
 import type { SessionStoreManager } from "../store/session-store-manager";
@@ -35,9 +35,11 @@ export interface ToolAttemptMetadata {
 export type ToolExecutionOrigin = {
   kind: "loop";
   loopId: string;
+  runId?: string;
   trigger: LoopRunTrigger;
   mode: LoopMode;
   approvalPolicy: LoopApprovalPolicy;
+  toolProfileId?: LoopToolProfileId;
 };
 
 export interface ToolExecutionContext {

@@ -1034,8 +1034,104 @@ export type LoopMode = "report" | "act";
 
 export type LoopApprovalPolicy = "interactive" | "explicit_per_run";
 
-export interface LoopLimits {
+export interface LoopBudgetConfig {
   maxIterationsPerRun: number;
+  maxTokensPerRun?: number;
+  maxEstimatedUsdPerRun?: number;
+  maxWallClockMsPerRun?: number;
+  maxRunsPerDay?: number;
+  softThresholdRatio: number;
+  hardThresholdRatio: number;
+}
+
+export type LoopLimits = LoopBudgetConfig | { maxIterationsPerRun: number };
+
+export interface LoopBudgetUsage {
+  iterations: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+  totalTokens: number;
+  estimatedUsd?: number;
+  wallClockMs: number;
+  runsToday: number;
+  resetDateUtc: string;
+  pricingUnavailable?: boolean;
+}
+
+export type LoopRunReason =
+  | "completed"
+  | "soft_budget_blocked"
+  | "hard_budget_exceeded"
+  | "collision_conflict"
+  | "cancelled_by_user"
+  | "global_kill_active"
+  | "loop_paused"
+  | "integration_auth_missing"
+  | "integration_rate_limited"
+  | "execution_failed"
+  | "max_steps_reached"
+  | "scheduler_overlap";
+
+export type LoopToolProfileId =
+  | "loop_local_report"
+  | "loop_local_action"
+  | "loop_github_pr_watch"
+  | "loop_ci_watch"
+  | "loop_goal_action";
+
+export type CollisionTarget =
+  | { type: "pr"; owner: string; repo: string; number: number }
+  | { type: "issue"; owner: string; repo: string; number: number }
+  | { type: "branch"; owner: string; repo: string; branch: string }
+  | { type: "file"; path: string };
+
+export interface CollisionLease {
+  targetKey: string;
+  target: CollisionTarget;
+  loopId: string;
+  runId: string;
+  actionId?: string;
+  toolCallId?: string;
+  priority: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface CollisionConflict {
+  targetKey: string;
+  target: CollisionTarget;
+  conflictingLease: CollisionLease;
+  detectedAt: number;
+}
+
+export type LoopIntegrationId = "github" | "github_actions";
+
+export interface LoopIntegrationError {
+  integrationId: LoopIntegrationId;
+  reason: Extract<LoopRunReason, "integration_auth_missing" | "integration_rate_limited">;
+  message: string;
+  retryAfterMs?: number;
+  occurredAt: number;
+}
+
+export interface LoopBudgetSnapshot {
+  budget?: LoopBudgetConfig;
+  usage: LoopBudgetUsage;
+  updatedAt: number;
+}
+
+export interface LoopCollisionSnapshot {
+  targets: CollisionTarget[];
+  activeLeases: CollisionLease[];
+  conflicts: CollisionConflict[];
+  updatedAt: number;
+}
+
+export interface LoopIntegrationSnapshot {
+  errors: LoopIntegrationError[];
+  updatedAt: number;
 }
 
 export interface LoopGoalTemplate {
@@ -1057,13 +1153,16 @@ export interface LoopConfig {
   mode: LoopMode;
   approvalPolicy: LoopApprovalPolicy;
   limits: LoopLimits;
+  budget?: LoopBudgetConfig;
+  toolProfileId?: LoopToolProfileId;
+  collisionTargets?: CollisionTarget[];
   taskPrompt?: string;
   instructions?: string;
   goalTemplate?: LoopGoalTemplate;
   sourcePreset?: string;
 }
 
-export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled";
+export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded";
 
 export type LoopRunTrigger = "manual" | "interval";
 
@@ -1074,6 +1173,12 @@ export interface LoopRunReport {
   trigger: LoopRunTrigger;
   startedAt: number;
   endedAt?: number;
+  reason?: LoopRunReason;
+  budgetUsage?: LoopBudgetUsage;
+  collisionTargets?: CollisionTarget[];
+  collisionConflicts?: CollisionConflict[];
+  integrationErrors?: LoopIntegrationError[];
+  toolProfileId?: LoopToolProfileId;
   sessionId?: string;
   goalId?: string;
   summary?: string;
@@ -1095,6 +1200,9 @@ export interface LoopState {
   stateVersion: number;
   generatedStateSummary?: string;
   readinessScore?: null;
+  latestBudget?: LoopBudgetSnapshot;
+  latestCollisions?: LoopCollisionSnapshot;
+  latestIntegrations?: LoopIntegrationSnapshot;
 }
 
 // ─── Loop Stream Events ───
