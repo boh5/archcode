@@ -7,23 +7,130 @@ import {
   expandLoopPreset,
   getUnsupportedLoopPresetReason,
   isSupportedLoopPreset,
+  type LoopPresetId,
 } from "./presets";
 
+const MINUTE_MS = 60_000;
+
+const EXPECTED_PRESETS = {
+  daily_triage: {
+    title: "Daily Triage",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_local_report",
+    limits: {
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120_000,
+      maxWallClockMsPerRun: 15 * MINUTE_MS,
+      maxRunsPerDay: 2,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  changelog_drafter: {
+    title: "Changelog Drafter",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_local_report",
+    limits: {
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120_000,
+      maxWallClockMsPerRun: 15 * MINUTE_MS,
+      maxRunsPerDay: 2,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  pr_babysitter: {
+    title: "PR Babysitter",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_github_pr_watch",
+    limits: {
+      maxIterationsPerRun: 12,
+      maxTokensPerRun: 160_000,
+      maxWallClockMsPerRun: 20 * MINUTE_MS,
+      maxRunsPerDay: 4,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  ci_sweeper: {
+    title: "CI Sweeper",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_ci_watch",
+    limits: {
+      maxIterationsPerRun: 16,
+      maxTokensPerRun: 200_000,
+      maxWallClockMsPerRun: 30 * MINUTE_MS,
+      maxRunsPerDay: 4,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  dependency_sweeper: {
+    title: "Dependency Sweeper",
+    runKind: "goal",
+    mode: "act",
+    toolProfileId: "loop_goal_action",
+    limits: {
+      maxIterationsPerRun: 20,
+      maxTokensPerRun: 240_000,
+      maxWallClockMsPerRun: 45 * MINUTE_MS,
+      maxRunsPerDay: 2,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  post_merge_cleanup: {
+    title: "Post-Land Cleanup",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_github_pr_watch",
+    limits: {
+      maxIterationsPerRun: 10,
+      maxTokensPerRun: 140_000,
+      maxWallClockMsPerRun: 20 * MINUTE_MS,
+      maxRunsPerDay: 3,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+  issue_triage: {
+    title: "Issue Triage",
+    runKind: "session",
+    mode: "report",
+    toolProfileId: "loop_github_pr_watch",
+    limits: {
+      maxIterationsPerRun: 10,
+      maxTokensPerRun: 140_000,
+      maxWallClockMsPerRun: 20 * MINUTE_MS,
+      maxRunsPerDay: 3,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1.0,
+    },
+  },
+} as const satisfies Record<LoopPresetId, {
+  title: string;
+  runKind: "session" | "goal";
+  mode: "report" | "act";
+  toolProfileId: string;
+  limits: {
+    maxIterationsPerRun: number;
+    maxTokensPerRun: number;
+    maxWallClockMsPerRun: number;
+    maxRunsPerDay: number;
+    softThresholdRatio: number;
+    hardThresholdRatio: number;
+  };
+}>;
+
 describe("isSupportedLoopPreset", () => {
-  test("returns true for daily_triage", () => {
-    expect(isSupportedLoopPreset("daily_triage")).toBe(true);
-  });
-
-  test("returns true for changelog_drafter", () => {
-    expect(isSupportedLoopPreset("changelog_drafter")).toBe(true);
-  });
-
-  test("returns false for connector-dependent presets", () => {
-    expect(isSupportedLoopPreset("pr_babysitter")).toBe(false);
-    expect(isSupportedLoopPreset("ci_sweeper")).toBe(false);
-    expect(isSupportedLoopPreset("dependency_sweeper")).toBe(false);
-    expect(isSupportedLoopPreset("post_merge_cleanup")).toBe(false);
-    expect(isSupportedLoopPreset("issue_triage")).toBe(false);
+  test("returns true for every Phase 4 preset template", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      expect(isSupportedLoopPreset(id)).toBe(true);
+    }
   });
 
   test("returns false for unknown ids", () => {
@@ -33,79 +140,115 @@ describe("isSupportedLoopPreset", () => {
 });
 
 describe("getUnsupportedLoopPresetReason", () => {
-  test("returns undefined for supported presets", () => {
-    expect(getUnsupportedLoopPresetReason("daily_triage")).toBeUndefined();
-    expect(getUnsupportedLoopPresetReason("changelog_drafter")).toBeUndefined();
-  });
-
-  test("returns a reason string for connector-dependent presets", () => {
-    expect(getUnsupportedLoopPresetReason("pr_babysitter")).toBeTruthy();
-    expect(getUnsupportedLoopPresetReason("ci_sweeper")).toBeTruthy();
-    expect(getUnsupportedLoopPresetReason("dependency_sweeper")).toBeTruthy();
-    expect(getUnsupportedLoopPresetReason("post_merge_cleanup")).toBeTruthy();
-    expect(getUnsupportedLoopPresetReason("issue_triage")).toBeTruthy();
+  test("returns undefined for all Phase 4 preset templates", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      expect(getUnsupportedLoopPresetReason(id)).toBeUndefined();
+    }
   });
 
   test("returns undefined for unknown ids", () => {
     expect(getUnsupportedLoopPresetReason("unknown")).toBeUndefined();
   });
-
-  test("each unsupported reason mentions the missing connector", () => {
-    expect(getUnsupportedLoopPresetReason("pr_babysitter")).toMatch(/GitHub/i);
-    expect(getUnsupportedLoopPresetReason("ci_sweeper")).toMatch(/CI/i);
-    expect(getUnsupportedLoopPresetReason("dependency_sweeper")).toMatch(/CI/i);
-    expect(getUnsupportedLoopPresetReason("post_merge_cleanup")).toMatch(/GitHub/i);
-    expect(getUnsupportedLoopPresetReason("issue_triage")).toMatch(/GitHub/i);
-  });
 });
 
 describe("expandLoopPreset", () => {
-  test("daily_triage expands to a valid LoopConfig with sourcePreset metadata", () => {
-    const config = expandLoopPreset("daily_triage");
-    const parsed = LoopConfigSchema.parse(config);
-    expect(parsed.title).toBe("Daily Triage");
-    expect(parsed.sourcePreset).toBe("daily_triage");
-    expect(parsed.schedule).toEqual({ kind: "manual" });
-    expect(parsed.runKind).toBe("session");
-    expect(parsed.mode).toBe("report");
-    expect(parsed.approvalPolicy).toBe("interactive");
-    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1.0 });
-  });
+  test("all Phase 4 preset ids expand to valid editable LoopConfig templates", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      const config = expandLoopPreset(id);
+      const parsed = LoopConfigSchema.parse(config);
+      const expected = EXPECTED_PRESETS[id];
 
-  test("changelog_drafter expands to a valid LoopConfig with sourcePreset metadata", () => {
-    const config = expandLoopPreset("changelog_drafter");
-    const parsed = LoopConfigSchema.parse(config);
-    expect(parsed.title).toBe("Changelog Drafter");
-    expect(parsed.sourcePreset).toBe("changelog_drafter");
-    expect(parsed.schedule).toEqual({ kind: "manual" });
-    expect(parsed.runKind).toBe("session");
-    expect(parsed.mode).toBe("report");
-    expect(parsed.approvalPolicy).toBe("interactive");
-    expect(parsed.limits).toEqual({ maxIterationsPerRun: 8, softThresholdRatio: 0.8, hardThresholdRatio: 1.0 });
-  });
-
-  test("daily_triage taskPrompt is local-only (no external API dependency)", () => {
-    const config = expandLoopPreset("daily_triage");
-    const prompt = config.taskPrompt ?? "";
-    expect(prompt).toMatch(/git status/);
-    expect(prompt).toMatch(/TODO|FIXME/);
-    expect(prompt).toMatch(/typecheck|test/);
-    expect(prompt).not.toMatch(/GitHub|Slack|Linear|CI|release/i);
-  });
-
-  test("changelog_drafter taskPrompt is local-only (no external API dependency)", () => {
-    const config = expandLoopPreset("changelog_drafter");
-    const prompt = config.taskPrompt ?? "";
-    expect(prompt).toMatch(/git log/);
-    expect(prompt).toMatch(/changelog/);
-    expect(prompt).not.toMatch(/GitHub|Slack|Linear|CI/i);
-  });
-
-  test("rejects connector-dependent presets with RangeError", () => {
-    for (const id of ["pr_babysitter", "ci_sweeper", "dependency_sweeper", "post_merge_cleanup", "issue_triage"] as const) {
-      expect(() => expandLoopPreset(id)).toThrow(RangeError);
-      expect(() => expandLoopPreset(id)).toThrow(/unsupported/i);
+      expect(parsed.title).toBe(expected.title);
+      expect(parsed.sourcePreset).toBe(id);
+      expect(parsed.schedule).toEqual({ kind: "manual" });
+      expect(parsed.runKind).toBe(expected.runKind);
+      expect(parsed.mode).toBe(expected.mode);
+      expect(parsed.approvalPolicy).toBe(expected.mode === "act" ? "explicit_per_run" : "interactive");
+      expect(parsed.toolProfileId).toBe(expected.toolProfileId);
+      expect(parsed.limits).toEqual(expected.limits);
+      expect(parsed.budget).toBeUndefined();
+      expect(parsed.taskPrompt ?? parsed.goalTemplate?.prompt ?? "").not.toHaveLength(0);
     }
+  });
+
+  test("conservative budget defaults are editable and omit USD guard when pricing is absent", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      const config = expandLoopPreset(id);
+      const parsed = LoopConfigSchema.parse(config);
+      const limits = parsed.limits as ExpandedPresetLimits;
+
+      expect(Object.hasOwn(limits, "maxEstimatedUsdPerRun")).toBe(false);
+      expect(limits.maxEstimatedUsdPerRun).toBeUndefined();
+
+      const edited = LoopConfigSchema.parse({
+        ...parsed,
+        limits: {
+          ...limits,
+          maxIterationsPerRun: limits.maxIterationsPerRun + 1,
+          maxTokensPerRun: limits.maxTokensPerRun + 1_000,
+        },
+      });
+      const editedLimits = edited.limits as ExpandedPresetLimits;
+      expect(editedLimits.maxIterationsPerRun).toBe(limits.maxIterationsPerRun + 1);
+      expect(editedLimits.maxTokensPerRun).toBe(limits.maxTokensPerRun + 1_000);
+      expect(editedLimits.maxEstimatedUsdPerRun).toBeUndefined();
+    }
+  });
+
+  test("PR Babysitter copy is watch/status/comment/optional-fix only", () => {
+    const config = expandLoopPreset("pr_babysitter");
+    const text = presetText(config);
+
+    expect(text).toMatch(/watch/i);
+    expect(text).toMatch(/status|checks/i);
+    expect(text).toMatch(/comment/i);
+    expect(text).toMatch(/optional fix goal/i);
+    expect(text).not.toMatch(/merge babysitting|approve PR|rebase|force push|force-push/i);
+  });
+
+  test("no preset text includes forbidden default behavior", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      expect(presetText(expandLoopPreset(id))).not.toMatch(/merge babysitting|approve PR|rebase|force push|force-push/i);
+    }
+  });
+
+  test("goal presets include inline goal templates and session presets do not require one", () => {
+    for (const id of LOOP_PRESET_IDS) {
+      const parsed = LoopConfigSchema.parse(expandLoopPreset(id));
+      if (parsed.runKind === "goal") {
+        expect(parsed.goalTemplate).toBeDefined();
+        expect(parsed.goalTemplate?.doneConditions.length).toBeGreaterThan(0);
+        expect(parsed.goalTemplate?.retryPolicy).toEqual({ maxRetries: 2, backoffMs: 1_000, escalateOnFailure: true });
+        continue;
+      }
+
+      expect(parsed.goalTemplate).toBeUndefined();
+    }
+  });
+
+  test("stored runKind and toolProfileId remain editable template data", () => {
+    const preset = LoopConfigSchema.parse(expandLoopPreset("pr_babysitter"));
+    const edited = LoopConfigSchema.parse({
+      ...preset,
+      runKind: "goal",
+      mode: "act",
+      approvalPolicy: "explicit_per_run",
+      toolProfileId: "loop_goal_action",
+      goalTemplate: {
+        title: "Edited PR follow-up Goal",
+        author: "architect",
+        doneConditions: [{ id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" } }],
+        retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: false },
+        approvalPoints: [],
+        reviewerAgent: "reviewer",
+        prompt: "Run the edited follow-up Goal from the stored LoopConfig values.",
+      },
+    });
+
+    expect(edited.sourcePreset).toBe("pr_babysitter");
+    expect(edited.runKind).toBe("goal");
+    expect(edited.toolProfileId).toBe("loop_goal_action");
+    expect(() => LoopConfigSchema.parse({ ...preset, toolProfileId: "github_merge_pull_request" })).toThrow();
   });
 
   test("rejects unknown preset ids with RangeError", () => {
@@ -128,8 +271,8 @@ describe("preset id constants", () => {
     ]);
   });
 
-  test("SUPPORTED_LOOP_PRESET_IDS contains exactly the 2 local presets", () => {
-    expect(SUPPORTED_LOOP_PRESET_IDS).toEqual(["daily_triage", "changelog_drafter"]);
+  test("SUPPORTED_LOOP_PRESET_IDS contains every editable Phase 4 template", () => {
+    expect(SUPPORTED_LOOP_PRESET_IDS).toEqual(LOOP_PRESET_IDS);
   });
 
   test("supported ids are a subset of all ids", () => {
@@ -180,6 +323,28 @@ describe("runtime does not branch on sourcePreset", () => {
     }
   });
 });
+
+function presetText(config: ReturnType<typeof expandLoopPreset>): string {
+  return [
+    config.title,
+    config.description,
+    config.taskPrompt,
+    config.instructions,
+    config.goalTemplate?.title,
+    config.goalTemplate?.prompt,
+    config.goalTemplate?.instructions,
+  ].filter((value): value is string => value !== undefined).join("\n");
+}
+
+type ExpandedPresetLimits = {
+  maxIterationsPerRun: number;
+  maxTokensPerRun: number;
+  maxEstimatedUsdPerRun?: number;
+  maxWallClockMsPerRun: number;
+  maxRunsPerDay: number;
+  softThresholdRatio: number;
+  hardThresholdRatio: number;
+};
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
