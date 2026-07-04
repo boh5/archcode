@@ -6,8 +6,9 @@ import { createEmptySessionStats, type SessionExecutionRecord } from "@archcode/
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { GoalState } from "../goals/state";
 import type { SessionFile } from "../store/helpers";
+import { CollisionLedger } from "./collision-ledger";
 import { LoopActiveConflictError, LoopRunner } from "./runner";
-import { LoopConfigSchema, LoopStateManager, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
+import { LoopConfigSchema, LoopStateManager, type CollisionTarget, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-runner");
 const RUN_DIR = join(TMP_DIR, `run-${crypto.randomUUID()}`);
@@ -49,6 +50,8 @@ const goalLoopConfig: LoopConfig = {
   limits: { maxIterationsPerRun: 4 },
   goalTemplate,
 };
+
+const staticFileTarget: CollisionTarget = { type: "file", path: "src/static.ts" };
 
 beforeAll(async () => {
   await rm(RUN_DIR, { recursive: true, force: true }).catch(() => {});
@@ -102,6 +105,76 @@ describe("session loop runner", () => {
     const log = await fixture.stateManager.readRunLog(loop.loopId);
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({ status: "succeeded", sessionId: "session-1" });
+  });
+
+  test("passes configured tool profile through Loop origin metadata", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      toolProfileId: "loop_github_pr_watch",
+    });
+
+    const report = await fixture.runner.runSessionLoop(loop, "manual");
+
+    const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
+    expect(report.toolProfileId).toBe("loop_github_pr_watch");
+    expect(executionInput?.origin).toMatchObject({
+      kind: "loop",
+      loopId: loop.loopId,
+      trigger: "manual",
+      mode: "act",
+      approvalPolicy: "interactive",
+      toolProfileId: "loop_github_pr_watch",
+    });
+    expect(loopRunId(executionInput)).toEqual(expect.any(String));
+  });
+
+  test("claims static collision targets and releases leases after session success", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      collisionTargets: [staticFileTarget],
+    });
+
+    const report = await fixture.runner.runSessionLoop(loop, "manual");
+
+    expect(report).toMatchObject({ status: "succeeded", collisionTargets: [staticFileTarget] });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("releases static collision leases after session execution failure", async () => {
+    const deferred = createDeferred<void>();
+    const fixture = await createFixture({ executionPromise: deferred.promise });
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      collisionTargets: [staticFileTarget],
+    });
+
+    const run = fixture.runner.runSessionLoop(loop, "manual");
+    await waitFor(() => fixture.runtime.startSessionExecutionMock.mock.calls.length === 1);
+    expect(await fixture.collisionLedger.readActiveLeases()).toHaveLength(1);
+    deferred.reject(new Error("boom"));
+    const report = await run;
+
+    expect(report.status).toBe("failed");
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("records collision_conflict skipped report when static target is already leased", async () => {
+    const fixture = await createFixture();
+    const holder = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      collisionTargets: [staticFileTarget],
+    });
+    await fixture.collisionLedger.acquire({ target: staticFileTarget, loopId: holder.loopId, runId: "holder-run", priority: 0, createdAt: 0 });
+
+    const report = await fixture.runner.runSessionLoop(loop, "manual");
+
+    expect(report).toMatchObject({ status: "skipped", reason: "collision_conflict" });
+    expect(report.collisionConflicts?.[0]?.targetKey).toBe("file:src/static.ts");
+    expect(fixture.runtime.createSessionMock).not.toHaveBeenCalled();
+    expect(await fixture.collisionLedger.readActiveLeases()).toHaveLength(1);
   });
 
   test("records failed report when session execution rejects", async () => {
@@ -392,6 +465,19 @@ describe("goal loop runner", () => {
     expect((await fixture.stateManager.read(loop.loopId)).lastRun).toMatchObject({ status: "failed", goalId: "goal-1", error: "goal start failed" });
   });
 
+  test("releases static collision leases when goal start throws", async () => {
+    const fixture = await createFixture({ goalStartError: new Error("goal start failed") });
+    const loop = await fixture.stateManager.create("project-a", {
+      ...goalLoopConfig,
+      collisionTargets: [staticFileTarget],
+    });
+
+    const report = await fixture.runner.runGoalLoop(loop, "manual");
+
+    expect(report).toMatchObject({ status: "failed", error: "goal start failed" });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
   test("scheduler-compatible callback starts goal loops without writing reports itself", async () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
@@ -462,6 +548,7 @@ async function createFixture(options: {
   goalStateManager: FakeGoalStateManager;
   goalRunner: FakeGoalRunner;
   runner: LoopRunner;
+  collisionLedger: CollisionLedger;
   workspaceRoot: string;
 }> {
   const workspaceRoot = join(RUN_DIR, `workspace-${nextWorkspaceId++}-${crypto.randomUUID()}`);
@@ -470,6 +557,7 @@ async function createFixture(options: {
   const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions, options.afterCreateSession);
   const goalStateManager = new FakeGoalStateManager();
   const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart);
+  const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot, clock: { now: () => 1_000 } });
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -478,8 +566,9 @@ async function createFixture(options: {
     workspaceRoot,
     projectSlug: "project-a",
     now: () => 1_000,
+    collisionLedger,
   });
-  return { stateManager, runtime, goalStateManager, goalRunner, runner, workspaceRoot };
+  return { stateManager, runtime, goalStateManager, goalRunner, runner, collisionLedger, workspaceRoot };
 }
 
 class FakeLoopRuntime {

@@ -6,6 +6,7 @@ import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner
 import type { LoopGoalTemplate, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
 import { LoopBudgetLedger } from "./budget-ledger";
+import { CollisionLedger } from "./collision-ledger";
 
 export interface LoopRunnerSessionRuntime {
   createSession(workspaceRoot: string, options?: LoopRunnerCreateSessionOptions): Promise<SessionFile>;
@@ -50,6 +51,7 @@ export interface LoopRunnerOptions {
   readonly workspaceRoot: string;
   readonly projectSlug?: string;
   readonly now?: () => number;
+  readonly collisionLedger?: CollisionLedger;
 }
 
 export class LoopActiveConflictError extends Error {
@@ -75,6 +77,7 @@ export class LoopRunner {
   readonly #projectSlug: string;
   readonly #now: () => number;
   readonly #budgetLedger: LoopBudgetLedger;
+  readonly #collisionLedger: CollisionLedger;
   readonly #activeLoops = new Map<string, { runId: string; sessionId?: string }>();
 
   constructor(options: LoopRunnerOptions) {
@@ -86,6 +89,11 @@ export class LoopRunner {
     this.#projectSlug = options.projectSlug ?? "";
     this.#now = options.now ?? (() => Date.now());
     this.#budgetLedger = new LoopBudgetLedger({
+      stateManager: options.stateManager,
+      workspaceRoot: options.workspaceRoot,
+      clock: { now: this.#now },
+    });
+    this.#collisionLedger = options.collisionLedger ?? new CollisionLedger({
       stateManager: options.stateManager,
       workspaceRoot: options.workspaceRoot,
       clock: { now: this.#now },
@@ -108,12 +116,15 @@ export class LoopRunner {
     const runId = crypto.randomUUID();
     const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
     if (preRunBlocked !== undefined) return preRunBlocked;
+    const collisionBlocked = await this.#acquireStaticCollisionTargets(current, runId, trigger);
+    if (collisionBlocked !== undefined) return collisionBlocked;
     const runningReport: LoopRunReport = {
       runId,
       loopId: current.loopId,
       status: "running",
       trigger,
       startedAt,
+      ...(current.config.collisionTargets === undefined ? {} : { collisionTargets: current.config.collisionTargets }),
     };
 
     this.#activeLoops.set(current.loopId, { runId });
@@ -136,6 +147,7 @@ export class LoopRunner {
         error: errorToMessage(error),
       });
     } finally {
+      await this.#releaseCollisionLeases(current.loopId, runId);
       this.#activeLoops.delete(current.loopId);
     }
   }
@@ -163,12 +175,15 @@ export class LoopRunner {
     const runId = crypto.randomUUID();
     const preRunBlocked = await this.#budgetLedger.assertCanStartRun(current, runId, trigger);
     if (preRunBlocked !== undefined) return preRunBlocked;
+    const collisionBlocked = await this.#acquireStaticCollisionTargets(current, runId, trigger);
+    if (collisionBlocked !== undefined) return collisionBlocked;
     const runningReport: LoopRunReport = {
       runId,
       loopId: current.loopId,
       status: "running",
       trigger,
       startedAt,
+      ...(current.config.collisionTargets === undefined ? {} : { collisionTargets: current.config.collisionTargets }),
     };
 
     this.#activeLoops.set(current.loopId, { runId });
@@ -185,6 +200,7 @@ export class LoopRunner {
         error: errorToMessage(error),
       });
     } finally {
+      await this.#releaseCollisionLeases(current.loopId, runId);
       this.#activeLoops.delete(current.loopId);
     }
   }
@@ -387,10 +403,52 @@ export class LoopRunner {
       error: result.error,
       reason: result.reason,
       budgetUsage: result.budgetUsage,
+      collisionTargets: result.collisionTargets ?? runningReport.collisionTargets,
+      collisionConflicts: result.collisionConflicts,
+      integrationErrors: result.integrationErrors,
       toolProfileId: loop.config.toolProfileId,
     };
     await this.#stateManager.recordRunFinish(loop.loopId, report);
+    await this.#releaseCollisionLeases(loop.loopId, runningReport.runId);
     return report;
+  }
+
+  async #acquireStaticCollisionTargets(loop: LoopState, runId: string, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
+    if ((loop.config.collisionTargets ?? []).length === 0) return undefined;
+
+    const results = await this.#collisionLedger.acquireStaticTargets({
+      loop,
+      runId,
+      priority: 0,
+      actionId: `loop:${trigger}`,
+    });
+    const conflicts = results
+      .map((result) => result.conflict)
+      .filter((conflict): conflict is NonNullable<typeof conflict> => conflict !== undefined);
+    if (conflicts.length === 0) return undefined;
+
+    await this.#releaseCollisionLeases(loop.loopId, runId);
+    const now = this.#now();
+    const report: LoopRunReport = {
+      runId,
+      loopId: loop.loopId,
+      status: "skipped",
+      trigger,
+      startedAt: now,
+      endedAt: now,
+      reason: "collision_conflict",
+      skippedReason: "Loop static collision targets conflict with an active run; skipped trigger.",
+      collisionTargets: loop.config.collisionTargets,
+      collisionConflicts: conflicts,
+      toolProfileId: loop.config.toolProfileId,
+    };
+    await this.#stateManager.appendRunReport(loop.loopId, report);
+    return report;
+  }
+
+  async #releaseCollisionLeases(loopId: string, runId: string): Promise<void> {
+    await this.#collisionLedger.releaseRun(loopId, runId);
+    await this.#collisionLedger.cleanupStale();
   }
 
   async #recordScheduledSessionLink(input: LoopSchedulerRunInput, sessionId: string, goalId?: string): Promise<void> {

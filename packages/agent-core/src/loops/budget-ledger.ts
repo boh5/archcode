@@ -74,7 +74,12 @@ export class LoopBudgetLedger {
     return this.#clock;
   }
 
-  async assertCanStartRun(loop: LoopState, runId: string, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
+  async assertCanStartRun(
+    loop: LoopState,
+    runId: string,
+    trigger: LoopRunTrigger,
+    options: { readonly recordReport?: boolean } = {},
+  ): Promise<LoopRunReport | undefined> {
     const current = await this.#stateManager.read(loop.loopId);
     const budget = effectiveBudget(current);
     const dateKey = utcDateKey(this.#clock.now());
@@ -88,7 +93,7 @@ export class LoopBudgetLedger {
       await this.#persistSnapshot(current.loopId, budget, usage);
       await this.#recordEvent({ event: "daily_run_blocked", loopId: current.loopId, runId, source: "before_run", reason: "hard_budget_exceeded", usage, budget });
       await this.#stateManager.pause(current.loopId);
-      await this.#stateManager.recordRunFinish(current.loopId, report);
+      if (options.recordReport !== false) await this.#stateManager.recordRunFinish(current.loopId, report);
       return report;
     }
 

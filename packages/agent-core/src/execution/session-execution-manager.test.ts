@@ -299,9 +299,11 @@ describe("SessionExecutionManager", () => {
     const origin = {
       kind: "loop" as const,
       loopId: crypto.randomUUID(),
+      runId: "run-1",
       trigger: "manual" as const,
       mode: "act" as const,
       approvalPolicy: "interactive" as const,
+      toolProfileId: "loop_github_pr_watch" as const,
     };
 
     const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "loop-origin-session", userMessage: "work", origin });
