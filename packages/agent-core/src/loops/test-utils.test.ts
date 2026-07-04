@@ -137,6 +137,36 @@ describe("fixtureCollisionTarget", () => {
     expect(target.type).toBe("issue");
     expect(target.number).toBe(7);
   });
+
+  test("PR variant respects owner and repo overrides", () => {
+    const target = fixtureCollisionTarget({ type: "pr", owner: "my-org", repo: "my-repo", number: 99 }) as { type: "pr"; owner: string; repo: string; number: number };
+
+    expect(target.owner).toBe("my-org");
+    expect(target.repo).toBe("my-repo");
+    expect(target.number).toBe(99);
+  });
+
+  test("issue variant respects owner and repo overrides", () => {
+    const target = fixtureCollisionTarget({ type: "issue", owner: "other-org", repo: "other-repo", number: 5 }) as { type: "issue"; owner: string; repo: string; number: number };
+
+    expect(target.owner).toBe("other-org");
+    expect(target.repo).toBe("other-repo");
+    expect(target.number).toBe(5);
+  });
+
+  test("branch variant respects owner, repo, and branch overrides", () => {
+    const target = fixtureCollisionTarget({ type: "branch", owner: "fork-org", repo: "fork-repo", branch: "feature/xyz" }) as { type: "branch"; owner: string; repo: string; branch: string };
+
+    expect(target.owner).toBe("fork-org");
+    expect(target.repo).toBe("fork-repo");
+    expect(target.branch).toBe("feature/xyz");
+  });
+
+  test("file variant respects path override", () => {
+    const target = fixtureCollisionTarget({ type: "file", path: "src/main.ts" }) as { type: "file"; path: string };
+
+    expect(target.path).toBe("src/main.ts");
+  });
 });
 
 describe("fixtureCollisionLease", () => {
@@ -371,6 +401,16 @@ describe("makeTestToolDescriptor", () => {
 
     expect(result.output).toBe("fake-bash");
     expect(result.isError).toBe(false);
+  });
+
+  test("uses strict Zod schema that rejects unknown keys", () => {
+    const desc = makeTestToolDescriptor("strict_test");
+
+    const ok = desc.inputSchema.safeParse({});
+    expect(ok.success).toBe(true);
+
+    const fail = desc.inputSchema.safeParse({ unknownKey: "value" });
+    expect(fail.success).toBe(false);
   });
 });
 

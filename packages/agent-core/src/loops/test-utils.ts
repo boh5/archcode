@@ -116,15 +116,15 @@ export function fixtureCollisionTarget(
   overrides?: { type?: CollisionTarget["type"]; owner?: string; repo?: string; number?: number; branch?: string; path?: string },
 ): CollisionTarget {
   if (overrides?.type === "issue") {
-    return { type: "issue", owner: "archcode", repo: "workbench", number: overrides.number ?? 42 };
+    return { type: "issue", owner: overrides.owner ?? "archcode", repo: overrides.repo ?? "workbench", number: overrides.number ?? 42 };
   }
   if (overrides?.type === "branch") {
-    return { type: "branch", owner: "archcode", repo: "workbench", branch: overrides.branch ?? "main" };
+    return { type: "branch", owner: overrides.owner ?? "archcode", repo: overrides.repo ?? "workbench", branch: overrides.branch ?? "main" };
   }
   if (overrides?.type === "file") {
     return { type: "file", path: overrides.path ?? ".archcode/config.json" };
   }
-  return { type: "pr", owner: "archcode", repo: "workbench", number: overrides?.number ?? 42 };
+  return { type: "pr", owner: overrides?.owner ?? "archcode", repo: overrides?.repo ?? "workbench", number: overrides?.number ?? 42 };
 }
 
 /**
@@ -417,7 +417,7 @@ export function makeTestToolDescriptor(
   return {
     name,
     description: `Test tool: ${name}`,
-    inputSchema: z.object({}),
+    inputSchema: z.object({}).strict(),
     traits,
     execute: async () => ({ output: `fake-${name}`, isError: false }),
   };
