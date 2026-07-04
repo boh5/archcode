@@ -62,7 +62,7 @@ Phase 2 makes Goal daily-usable without adding new `.archcode.json` budget or re
 - `goal_check_done` is Reviewer-only; external Reviewer outcomes are exactly `DONE` or `NOT_DONE`.
 - Goal artifacts are current canonical Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files.
 - Durable approvals are project-scoped. Web and Dashboard approval views render redacted `displayPayload` data, not raw payloads.
-- Goal budget accounting is token-only (`inputTokens`, `outputTokens`, `totalTokens`); pricing/cost accounting is not implemented.
+- Goal budget accounting is token-only (`inputTokens`, `outputTokens`, `totalTokens`); runtime cost accounting is not implemented even though model configs may carry passive pricing metadata.
 - Goal memory is isolated from Project memory; there is no automatic promotion or transfer.
 - Retry/backoff persists scheduled retry metadata such as `nextRetryAt`; due retries can resume after runner/service recreation.
 - Legacy workflow runtime, tools, and routes were removed; Goal/HITL/artifact APIs are the supported Phase 2 path.
@@ -120,6 +120,12 @@ ArchCode is configured via `.archcode.json` in the project root. The config uses
           "name": "GLM-5",
           "limit": { "context": 200000, "output": 128000 },
           "modalities": { "input": ["text"], "output": ["text"] },
+          "pricing": {
+            "inputUsdPerMillionTokens": 1.25,
+            "outputUsdPerMillionTokens": 10,
+            "reasoningUsdPerMillionTokens": 5,
+            "cachedInputUsdPerMillionTokens": 0.125
+          },
           "options": {
             "maxOutputTokens": 64000,
             "temperature": 0.2,
@@ -147,6 +153,15 @@ ArchCode is configured via `.archcode.json` in the project root. The config uses
           }
         }
       }
+    }
+  },
+  "integrations": {
+    "github": {
+      "enabled": true,
+      "tokenEnv": "ARCHCODE_GITHUB_TOKEN",
+      "apiBaseUrl": "https://api.github.com",
+      "defaultOwner": "archcode",
+      "defaultRepo": "workbench"
     }
   },
   "agents": {
@@ -204,8 +219,22 @@ Each model under `provider.<id>.models` has:
 | `name` | Yes | Model display name |
 | `limit` | Yes | `{ context, output }` token limits |
 | `modalities` | Yes | `{ input: [...], output: [...] }` supported modalities |
+| `pricing` | No | Passive USD pricing metadata per million tokens (see below) |
 | `options` | No | Base AI SDK call options (see below) |
 | `variants` | No | Named option profiles (see below) |
+
+### Model Pricing Metadata (`pricing`)
+
+Pricing is optional passive metadata stored under each model config. It is not a separate top-level map and does not change model-call options, variants, or provider behavior.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `inputUsdPerMillionTokens` | number | Input token price in USD per 1M tokens |
+| `outputUsdPerMillionTokens` | number | Output token price in USD per 1M tokens |
+| `reasoningUsdPerMillionTokens` | number | Reasoning token price in USD per 1M tokens, when the provider reports reasoning tokens separately |
+| `cachedInputUsdPerMillionTokens` | number | Cached-input token price in USD per 1M tokens, when the provider reports cache hits |
+
+All pricing fields are optional and non-negative. Unknown pricing fields are rejected by strict config validation.
 
 ### Model Call Options (`options`)
 
@@ -297,6 +326,40 @@ Variants are named option profiles under a model. An agent references a variant 
 ```
 
 The `variant` field is consumed during resolution — it is **never** passed to the AI SDK call.
+
+### GitHub Integration Configuration
+
+GitHub integration metadata is configured under `integrations.github`. Phase 4 scope supports GitHub.com only; GitHub Enterprise and custom API base URLs are intentionally rejected.
+
+```json
+{
+  "integrations": {
+    "github": {
+      "enabled": true,
+      "tokenEnv": "ARCHCODE_GITHUB_TOKEN",
+      "apiBaseUrl": "https://api.github.com",
+      "defaultOwner": "archcode",
+      "defaultRepo": "workbench"
+    }
+  }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `enabled` | No | Enables GitHub integration resolution when `true`; defaults to disabled when omitted |
+| `tokenEnv` | No | Environment variable name or env-expanded token reference used before defaults |
+| `apiBaseUrl` | No | Must be exactly `https://api.github.com` when provided |
+| `defaultOwner` | No | Optional default GitHub owner for later connector tasks |
+| `defaultRepo` | No | Optional default GitHub repository for later connector tasks |
+
+Token resolution order is:
+
+1. `integrations.github.tokenEnv` if configured. Plain values such as `"ARCHCODE_GITHUB_TOKEN"` are treated as environment variable names. Env-expanded values such as `"${ARCHCODE_GITHUB_TOKEN}"` or `"${ARCHCODE_GITHUB_TOKEN:-fallback-token}"` use the shared `${VAR}` / `${VAR:-default}` semantics.
+2. `GITHUB_TOKEN`
+3. `GH_TOKEN`
+
+Resolved token values are process-local only: they are not persisted back into `.archcode.json`, logs, evidence files, memory, or UI state, and token-resolution errors report only env variable names and config paths.
 
 ### Memory Configuration
 

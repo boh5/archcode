@@ -14,6 +14,8 @@ import {
   UnsupportedProviderPackageError,
   UnknownProviderError,
   UnknownModelError,
+  GithubIntegrationTokenError,
+  resolveGithubIntegrationConfig,
 } from "./index";
 
 const VALID_CONFIG = {
@@ -252,6 +254,69 @@ describe("parseConfig", () => {
     expect(model.variants!["precise"].topP).toBe(0.1);
   });
 
+  test("parses config with optional model pricing metadata", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
+      provider: {
+        xxx: {
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
+          models: {
+            "gpt-5.2": {
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
+              pricing: {
+                inputUsdPerMillionTokens: 1.25,
+                outputUsdPerMillionTokens: 10,
+                reasoningUsdPerMillionTokens: 5,
+                cachedInputUsdPerMillionTokens: 0.125,
+              },
+              options: {
+                maxOutputTokens: 8192,
+                providerOptions: { custom: { flag: true } },
+              },
+              variants: {
+                fast: { temperature: 0.1, topP: 0.9 },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const parsed = parseConfig(config);
+    const model = parsed.provider.xxx.models["gpt-5.2"];
+
+    expect(model.pricing).toEqual({
+      inputUsdPerMillionTokens: 1.25,
+      outputUsdPerMillionTokens: 10,
+      reasoningUsdPerMillionTokens: 5,
+      cachedInputUsdPerMillionTokens: 0.125,
+    });
+    expect(model.options).toEqual({
+      maxOutputTokens: 8192,
+      providerOptions: { custom: { flag: true } },
+    });
+    expect(model.variants).toEqual({ fast: { temperature: 0.1, topP: 0.9 } });
+  });
+
+  test("rejects unknown model pricing fields", () => {
+    const config = {
+      ...VALID_CONFIG_WITH_AGENTS,
+      provider: {
+        xxx: {
+          ...VALID_CONFIG_WITH_AGENTS.provider.xxx,
+          models: {
+            "gpt-5.2": {
+              ...VALID_CONFIG_WITH_AGENTS.provider.xxx.models["gpt-5.2"],
+              pricing: { inputUsdPerThousandTokens: 1 },
+            },
+          },
+        },
+      },
+    };
+
+    expect(() => parseConfig(config)).toThrow(ConfigValidationError);
+  });
+
   test("parses config with all 6 agents and per-agent options", () => {
     const config = {
       ...VALID_CONFIG_WITH_AGENTS,
@@ -334,6 +399,51 @@ describe("parseConfig", () => {
       ...VALID_CONFIG_WITH_AGENTS,
       memory: { enabled: true, unknown: true },
     })).toThrow(ConfigValidationError);
+  });
+
+  test("parses strict github integration config", () => {
+    const parsed = parseConfig({
+      ...VALID_CONFIG_WITH_AGENTS,
+      integrations: {
+        github: {
+          enabled: true,
+          tokenEnv: "ARCHCODE_GITHUB_TOKEN",
+          apiBaseUrl: "https://api.github.com",
+          defaultOwner: "archcode",
+          defaultRepo: "workbench",
+        },
+      },
+    });
+
+    expect(parsed.integrations?.github).toEqual({
+      enabled: true,
+      tokenEnv: "ARCHCODE_GITHUB_TOKEN",
+      apiBaseUrl: "https://api.github.com",
+      defaultOwner: "archcode",
+      defaultRepo: "workbench",
+    });
+  });
+
+  test("rejects github enterprise and custom api base urls", () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_CONFIG_WITH_AGENTS,
+        integrations: {
+          github: { apiBaseUrl: "https://github.enterprise.example/api/v3" },
+        },
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  test("rejects unknown github integration fields", () => {
+    expect(() =>
+      parseConfig({
+        ...VALID_CONFIG_WITH_AGENTS,
+        integrations: {
+          github: { enabled: true, clientSecret: "not-supported" },
+        },
+      }),
+    ).toThrow(ConfigValidationError);
   });
 
   test("rejects config with unknown agent key (strict object)", () => {
@@ -447,6 +557,95 @@ describe("parseConfig", () => {
   test("rejects config without agents (required)", () => {
     const { agents: _, ...noAgents } = VALID_CONFIG_WITH_AGENTS;
     expect(() => parseConfig(noAgents)).toThrow(ConfigValidationError);
+  });
+});
+
+describe("resolveGithubIntegrationConfig", () => {
+  test("uses config token env before default GitHub variables", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true, tokenEnv: "ARCHCODE_GITHUB_TOKEN" },
+      {
+        ARCHCODE_GITHUB_TOKEN: "configured-token",
+        GITHUB_TOKEN: "github-token",
+        GH_TOKEN: "gh-token",
+      },
+    );
+
+    expect(resolved.token).toBe("configured-token");
+    expect(resolved.tokenSource).toBe("ARCHCODE_GITHUB_TOKEN");
+  });
+
+  test("falls back to GITHUB_TOKEN", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true },
+      { GITHUB_TOKEN: "github-token", GH_TOKEN: "gh-token" },
+    );
+
+    expect(resolved.token).toBe("github-token");
+    expect(resolved.tokenSource).toBe("GITHUB_TOKEN");
+  });
+
+  test("falls back to GH_TOKEN after GITHUB_TOKEN", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true },
+      { GITHUB_TOKEN: "", GH_TOKEN: "gh-token" },
+    );
+
+    expect(resolved.token).toBe("gh-token");
+    expect(resolved.tokenSource).toBe("GH_TOKEN");
+  });
+
+  test("expands tokenEnv references to token values", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true, tokenEnv: "${ARCHCODE_GITHUB_TOKEN}" },
+      { ARCHCODE_GITHUB_TOKEN: "expanded-token" },
+    );
+
+    expect(resolved.token).toBe("expanded-token");
+    expect(resolved.tokenSource).toBe("integrations.github.tokenEnv");
+  });
+
+  test("expands tokenEnv default fallback values", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true, tokenEnv: "${ARCHCODE_GITHUB_TOKEN:-fallback-token}" },
+      {},
+    );
+
+    expect(resolved.token).toBe("fallback-token");
+    expect(resolved.tokenSource).toBe("integrations.github.tokenEnv");
+  });
+
+  test("allows expanded tokenEnv values to name another env variable", () => {
+    const resolved = resolveGithubIntegrationConfig(
+      { enabled: true, tokenEnv: "${ARCHCODE_TOKEN_ENV_NAME:-FALLBACK_TOKEN_ENV}" },
+      { FALLBACK_TOKEN_ENV: "fallback-token" },
+    );
+
+    expect(resolved.token).toBe("fallback-token");
+    expect(resolved.tokenSource).toBe("FALLBACK_TOKEN_ENV");
+  });
+
+  test("throws typed non-secret token errors when enabled token is missing", () => {
+    try {
+      resolveGithubIntegrationConfig(
+        { enabled: true, tokenEnv: "ARCHCODE_GITHUB_TOKEN" },
+        {
+          ARCHCODE_GITHUB_TOKEN: "",
+          GITHUB_TOKEN: "",
+          GH_TOKEN: "",
+        },
+      );
+      throw new Error("Expected resolveGithubIntegrationConfig to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GithubIntegrationTokenError);
+      expect((error as GithubIntegrationTokenError).name).toBe("GithubIntegrationTokenError");
+      expect((error as GithubIntegrationTokenError).attemptedEnvNames).toEqual([
+        "ARCHCODE_GITHUB_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+      ]);
+      expect((error as GithubIntegrationTokenError).message).not.toContain("secret-sentinel");
+    }
   });
 });
 

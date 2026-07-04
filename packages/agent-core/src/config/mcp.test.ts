@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { REDACTION_MARKER } from "../tools/security";
 import {
+  ConfigEnvExpansionError,
   type McpConfig,
   McpConfigEnvError,
   McpConfigError,
@@ -9,6 +10,7 @@ import {
   mcpServerConfigSchema,
   mcpServerNameSchema,
   resolveMcpConfig,
+  expandEnvVars,
 } from "./index";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -366,6 +368,31 @@ describe("resolveMcpConfig - env expansion", () => {
       expect((err as McpConfigEnvError).configPath).toBe(
         "mcp.servers.myserver",
       );
+    }
+  });
+});
+
+describe("expandEnvVars", () => {
+  test("uses shared ${VAR:-default} semantics outside mcp", () => {
+    const expanded = expandEnvVars(
+      "token-env:${ARCHCODE_TOKEN_ENV_NAME:-GITHUB_TOKEN}",
+      "integrations.github.tokenEnv",
+      { env: {} },
+    );
+
+    expect(expanded).toBe("token-env:GITHUB_TOKEN");
+  });
+
+  test("throws a typed shared env expansion error without leaking env values", () => {
+    try {
+      expandEnvVars("${MISSING_TOKEN_ENV}", "integrations.github.tokenEnv", {
+        env: { OTHER_TOKEN: "secret-sentinel" },
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConfigEnvExpansionError);
+      expect((err as ConfigEnvExpansionError).variableName).toBe("MISSING_TOKEN_ENV");
+      expect((err as ConfigEnvExpansionError).message).not.toContain("secret-sentinel");
     }
   });
 });

@@ -1,11 +1,24 @@
 export {
   agentConfigSchema,
+  GITHUB_API_BASE_URL,
+  GithubIntegrationTokenError,
+  githubIntegrationConfigSchema,
+  integrationsConfigSchema,
   memoryExtractionConfigSchema,
   archcodeConfigSchema,
   type AgentConfig,
+  type GithubIntegrationConfig,
+  type IntegrationsConfig,
   type MemoryExtractionConfig,
+  type ResolvedGithubIntegrationConfig,
   type ArchCodeConfig,
+  resolveGithubIntegrationConfig,
 } from "./schema";
+export {
+  ConfigEnvExpansionError,
+  expandEnvVars,
+  type ExpandEnvVarsOptions,
+} from "./env";
 export {
   ConfigLoadError,
   ConfigParseError,
@@ -20,6 +33,7 @@ export {
   type ModelLimit,
   type ModelModalities,
   type ModelModality,
+  type ModelPricing,
   type ProviderConfig,
   type ProviderOptions,
   type ProvidersConfig,
@@ -35,6 +49,7 @@ export {
   modelLimitSchema,
   modelModalitiesSchema,
   modelModalitySchema,
+  modelPricingSchema,
   providerConfigSchema,
   providerOptionsSchema,
   providersConfigSchema,

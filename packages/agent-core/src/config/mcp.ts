@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { REDACTION_MARKER } from "../tools/security";
+import { expandEnvVars } from "./env";
 
 // ─── Zod Schemas ────────────────────────────────────────────────────────────
-
-const ENV_VAR_PATTERN = /\$\{([^}]+)\}/g;
 
 const mcpServerNameSchema = z
   .string()
@@ -77,42 +76,15 @@ export class McpConfigEnvError extends Error {
 
 // ─── Env Expansion ───────────────────────────────────────────────────────────
 
-/**
- * Expand `${VAR}` and `${VAR:-default}` patterns in a string.
- *
- * - `${VAR}` throws McpConfigEnvError when process.env[VAR] is undefined or empty.
- * - `${VAR:-default}` falls back to `default` when process.env[VAR] is undefined or empty.
- * - No recursive expansion.
- */
-function expandEnvVars(value: string, configPath: string): string {
-  return value.replace(ENV_VAR_PATTERN, (_match, expression: string) => {
-    const colonIdx = expression.indexOf(":-");
-    if (colonIdx >= 0) {
-      const varName = expression.slice(0, colonIdx);
-      const defaultValue = expression.slice(colonIdx + 2);
-      const envVal = process.env[varName];
-      if (envVal === undefined || envVal === "") {
-        return defaultValue;
-      }
-      return envVal;
-    }
-
-    const varName = expression;
-    const envVal = process.env[varName];
-    if (envVal === undefined || envVal === "") {
-      throw new McpConfigEnvError(varName, configPath);
-    }
-    return envVal;
-  });
-}
-
 function expandHeaders(
   headers: Record<string, string>,
   configPath: string,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    result[key] = expandEnvVars(value, configPath);
+    result[key] = expandEnvVars(value, configPath, {
+      createMissingError: (variableName, path) => new McpConfigEnvError(variableName, path),
+    });
   }
   return result;
 }
@@ -139,7 +111,9 @@ export function resolveMcpConfig(config?: McpConfig): ResolvedMcpConfig {
     const configPath = `mcp.servers.${serverName}`;
 
     // Expand env vars in url
-    const url = expandEnvVars(serverConfig.url, `${configPath}.url`);
+    const url = expandEnvVars(serverConfig.url, `${configPath}.url`, {
+      createMissingError: (variableName, path) => new McpConfigEnvError(variableName, path),
+    });
 
     // Validate URL scheme (must happen after env expansion)
     try {
