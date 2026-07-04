@@ -3,6 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
+import { LoopBudgetLedger } from "./budget-ledger";
+import { CollisionLedger } from "./collision-ledger";
 import { LoopKillStateManager } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
 import { LoopStateManager, type LoopConfig } from "./state";
@@ -343,6 +345,136 @@ describe("LoopScheduler", () => {
     expect(fixture.runs).toHaveLength(1);
   });
 
+  test("manual trigger blocked by global kill records global_kill_active without starting runner", async () => {
+    const fixture = await createFixture(0);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.scheduler.activateGlobalKill({ reason: "stop all loops" });
+
+    const report = await fixture.scheduler.runManual(loop.loopId);
+
+    expect(report).toMatchObject({ status: "skipped", trigger: "manual", reason: "global_kill_active" });
+    expect(fixture.runs).toEqual([]);
+    expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ status: "skipped", reason: "global_kill_active" });
+  });
+
+  test("interval trigger with exhausted daily budget records skipped budget reason without starting runner", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 6, 4, 10, 0, 0));
+    const loop = await fixture.manager.create("project-a", {
+      ...intervalConfig,
+      limits: { ...intervalConfig.limits, maxRunsPerDay: 1, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+    });
+    await fixture.budgetLedger.recordRunStart(loop.loopId, "run-already-used");
+    await fixture.manager.update(loop.loopId, { nextRunAt: fixture.clock.now() + 100 });
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(fixture.clock.now() + 100);
+
+    expect(fixture.runs).toEqual([]);
+    const latest = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
+    expect(latest).toMatchObject({ status: "skipped", trigger: "interval", reason: "hard_budget_exceeded" });
+    expect(latest?.skippedReason).toMatch(/budget/i);
+    expect((await fixture.manager.read(loop.loopId)).status).toBe("paused");
+  });
+
+  test("static collision leases release after scheduled run success", async () => {
+    const fixture = await createFixture(100);
+    const loop = await fixture.manager.create("project-a", {
+      ...intervalConfig,
+      collisionTargets: [{ type: "file", path: "src/scheduled.ts" }],
+    });
+    await fixture.manager.update(loop.loopId, { nextRunAt: 200 });
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(200);
+
+    expect(fixture.runs).toHaveLength(1);
+    expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "succeeded", collisionTargets: [{ type: "file", path: "src/scheduled.ts" }] });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("static collision leases release after scheduled runner throws", async () => {
+    const fixture = await createFixture(100);
+    const loop = await fixture.manager.create("project-a", {
+      ...intervalConfig,
+      collisionTargets: [{ type: "file", path: "src/throws.ts" }],
+    });
+    await fixture.manager.update(loop.loopId, { nextRunAt: 200 });
+    fixture.runner = async () => {
+      throw new Error("runner failed");
+    };
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(200);
+
+    expect((await fixture.manager.read(loop.loopId)).lastRun).toMatchObject({ status: "failed", error: "runner failed" });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
+  test("static collision leases release after cancel and global-kill cancel", async () => {
+    const fixture = await createFixture(100);
+    const userCancelled = await fixture.manager.create("project-a", {
+      ...manualConfig,
+      collisionTargets: [{ type: "file", path: "src/user-cancel.ts" }],
+    });
+    const globalKilled = await fixture.manager.create("project-a", {
+      ...manualConfig,
+      title: "Global killed loop",
+      collisionTargets: [{ type: "file", path: "src/global-kill.ts" }],
+    });
+    const deferred = createDeferred<void>();
+    const runnerStarted = createDeferred<void>();
+    fixture.runner = async () => {
+      runnerStarted.resolve();
+      await deferred.promise;
+      return { summary: "late" };
+    };
+
+    const activeRun = fixture.scheduler.runManual(userCancelled.loopId);
+    await runnerStarted.promise;
+    expect(await fixture.collisionLedger.readActiveLeases()).toHaveLength(1);
+    await fixture.scheduler.cancelCurrentRun(userCancelled.loopId);
+    deferred.resolve();
+    await activeRun;
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+
+    const globalRunStarted = createDeferred<void>();
+    const globalDeferred = createDeferred<void>();
+    fixture.runner = async () => {
+      globalRunStarted.resolve();
+      await globalDeferred.promise;
+      return { summary: "late global" };
+    };
+    const globalRun = fixture.scheduler.runManual(globalKilled.loopId);
+    await globalRunStarted.promise;
+    expect(await fixture.collisionLedger.readActiveLeases()).toHaveLength(1);
+    await fixture.scheduler.activateGlobalKill({ reason: "stop" });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+    globalDeferred.resolve();
+    await globalRun;
+  });
+
+  test("static collision leases release after hard budget abort records terminal report", async () => {
+    const fixture = await createFixture(100);
+    const loop = await fixture.manager.create("project-a", {
+      ...manualConfig,
+      collisionTargets: [{ type: "file", path: "src/hard-budget.ts" }],
+    });
+    fixture.runner = async (input) => {
+      await fixture.budgetLedger.recordHardExceeded({
+        loopId: input.loop.loopId,
+        runId: input.runId,
+        source: "test",
+        summary: "hard stop",
+      });
+      return { status: "budget_exceeded", reason: "hard_budget_exceeded", summary: "hard stop" };
+    };
+
+    const report = await fixture.scheduler.runManual(loop.loopId);
+
+    expect(report).toMatchObject({ status: "budget_exceeded", reason: "hard_budget_exceeded" });
+    expect(await fixture.collisionLedger.readActiveLeases()).toEqual([]);
+  });
+
   test("stop clears timers and prevents new runs", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
@@ -367,6 +499,8 @@ async function createFixture(now: number = 0): Promise<{
   clock: FakeClock;
   timer: FakeTimer;
   killStateManager: LoopKillStateManager;
+  budgetLedger: LoopBudgetLedger;
+  collisionLedger: CollisionLedger;
   executionManager: FakeSessionExecutionManager;
   runs: LoopSchedulerRunInput[];
   runner: (input: LoopSchedulerRunInput) => Promise<{ summary: string } | void>;
@@ -375,6 +509,8 @@ async function createFixture(now: number = 0): Promise<{
   const clock = new FakeClock(now);
   const timer = new FakeTimer(clock);
   const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
+  const budgetLedger = new LoopBudgetLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock });
+  const collisionLedger = new CollisionLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
   const executionManager = new FakeSessionExecutionManager();
   const runs: LoopSchedulerRunInput[] = [];
   const fixture = {
@@ -383,15 +519,19 @@ async function createFixture(now: number = 0): Promise<{
     clock,
     timer,
     killStateManager,
+    budgetLedger,
+    collisionLedger,
     executionManager,
     runs,
     runner: async (_input: LoopSchedulerRunInput) => ({ summary: "done" }),
   };
   fixture.scheduler = new LoopScheduler({
     stateManager: manager,
-    clock,
-    timer,
-    killStateManager,
+        clock,
+        timer,
+        budgetLedger,
+        collisionLedger,
+        killStateManager,
     abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(TMP_DIR, sessionId),
     runner: async (input) => {
       runs.push(input);
