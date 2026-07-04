@@ -81,15 +81,17 @@ describe("session loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "session-1",
       maxSteps: 7,
-      origin: {
-        kind: "loop",
-        loopId: loop.loopId,
-        trigger: "manual",
-        mode: "act",
-        approvalPolicy: "interactive",
-      },
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
+    expect(executionInput?.origin).toMatchObject({
+      kind: "loop",
+      loopId: loop.loopId,
+      trigger: "manual",
+      mode: "act",
+      approvalPolicy: "interactive",
+      toolProfileId: undefined,
+    });
+    expect(loopRunId(executionInput)).toEqual(expect.any(String));
     expect(executionInput?.userMessage).toContain("Task prompt:\nInspect status and summarize risks.");
     expect(executionInput?.userMessage).toContain("Instructions:\nKeep the report concise.");
 
@@ -270,15 +272,17 @@ describe("goal loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "goal-session-1",
       maxSteps: 4,
-      origin: {
-        kind: "loop",
-        loopId: loop.loopId,
-        trigger: "manual",
-        mode: "act",
-        approvalPolicy: "explicit_per_run",
-      },
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
+    expect(executionInput?.origin).toMatchObject({
+      kind: "loop",
+      loopId: loop.loopId,
+      trigger: "manual",
+      mode: "act",
+      approvalPolicy: "explicit_per_run",
+      toolProfileId: undefined,
+    });
+    expect(loopRunId(executionInput)).toEqual(expect.any(String));
     expect(executionInput?.userMessage).toContain("Bootstrap an ArchCode Goal run.");
     expect(executionInput?.userMessage).toContain("Goal ID: goal-1");
     expect(executionInput?.userMessage).toContain(`Loop ID: ${loop.loopId}`);
@@ -512,6 +516,12 @@ function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void; re
     rejectValue = reject;
   });
   return { promise, resolve: resolveValue, reject: rejectValue };
+}
+
+function loopRunId(input: StartSessionExecutionInput | undefined): string | undefined {
+  const origin = input?.origin;
+  if (origin === undefined || typeof origin !== "object") return undefined;
+  return origin.kind === "loop" ? origin.runId : undefined;
 }
 
 function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
