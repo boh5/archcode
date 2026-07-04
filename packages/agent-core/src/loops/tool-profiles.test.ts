@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { LoopToolProfileId } from "@archcode/protocol";
 import {
+  LOOP_CI_WATCH_PLAYBOOK,
+  LOOP_GITHUB_PR_WATCH_PLAYBOOK,
   LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL,
   LOOP_GITHUB_GET_PULL_REQUEST_CHECKS_TOOL,
   LOOP_GITHUB_GET_PULL_REQUEST_TOOL,
@@ -9,6 +11,9 @@ import {
   LOOP_GITHUB_LIST_PULL_REQUESTS_TOOL,
   LOOP_GITHUB_LIST_WORKFLOW_RUNS_TOOL,
   LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL,
+  LOOP_GOAL_ACTION_PLAYBOOK,
+  LOOP_LOCAL_MAINTENANCE_PLAYBOOK,
+  LOOP_LOCAL_REPORT_PLAYBOOK,
   LOOP_PROFILE_ONLY_CONNECTOR_TOOLS,
   LOOP_TOOL_PROFILES,
   resolveLoopToolProfile,
@@ -22,6 +27,14 @@ const PROFILE_IDS = [
   "loop_goal_action",
 ] as const satisfies readonly LoopToolProfileId[];
 
+const EXPECTED_PLAYBOOKS = {
+  loop_local_report: [LOOP_LOCAL_REPORT_PLAYBOOK],
+  loop_local_maintenance: [LOOP_LOCAL_MAINTENANCE_PLAYBOOK],
+  loop_github_pr_watch: [LOOP_GITHUB_PR_WATCH_PLAYBOOK],
+  loop_ci_watch: [LOOP_CI_WATCH_PLAYBOOK],
+  loop_goal_action: [LOOP_GOAL_ACTION_PLAYBOOK],
+} as const satisfies Record<LoopToolProfileId, readonly string[]>;
+
 describe("Loop tool profiles", () => {
   test("defines every fixed code-owned Loop profile id", () => {
     expect(Object.keys(LOOP_TOOL_PROFILES).sort()).toEqual([...PROFILE_IDS].sort());
@@ -31,8 +44,18 @@ describe("Loop tool profiles", () => {
 
   test("returns default agent tools unchanged when no Loop profile is selected", () => {
     const tools = ["file_read", "github_get_pull_request", "bash"];
+    const resolved = resolveLoopToolProfile({ agentAllowedTools: tools });
 
-    expect(resolveLoopToolProfile({ agentAllowedTools: tools }).tools).toEqual(tools);
+    expect(resolved.tools).toEqual(tools);
+    expect(resolved.activeSkillPlaybookIds).toEqual([]);
+  });
+
+  test("defines deterministic prompt-only playbook ids for every profile", () => {
+    for (const profileId of PROFILE_IDS) {
+      expect(LOOP_TOOL_PROFILES[profileId].activeSkillPlaybookIds).toEqual(EXPECTED_PLAYBOOKS[profileId]);
+      expect(resolveLoopToolProfile({ agentAllowedTools: [], toolProfileId: profileId }).activeSkillPlaybookIds)
+        .toEqual(EXPECTED_PLAYBOOKS[profileId]);
+    }
   });
 
   test("narrows normal tools to the agent/profile intersection", () => {
@@ -79,5 +102,28 @@ describe("Loop tool profiles", () => {
 
     expect(LOOP_PROFILE_ONLY_CONNECTOR_TOOLS.length).toBeGreaterThan(0);
     expect(allProfileTools.filter((toolName) => /merge|approve|rebase|force.?push/i.test(toolName))).toEqual([]);
+  });
+
+  test("playbook ids are prompt-only metadata and do not grant tools", () => {
+    const withoutAgentTools = resolveLoopToolProfile({
+      agentAllowedTools: [],
+      toolProfileId: "loop_github_pr_watch",
+    });
+    const withReadTool = resolveLoopToolProfile({
+      agentAllowedTools: ["file_read"],
+      toolProfileId: "loop_github_pr_watch",
+    });
+
+    expect(withoutAgentTools.activeSkillPlaybookIds).toEqual([LOOP_GITHUB_PR_WATCH_PLAYBOOK]);
+    expect(withoutAgentTools.tools).toEqual([
+      LOOP_GITHUB_GET_PULL_REQUEST_TOOL,
+      LOOP_GITHUB_LIST_PULL_REQUESTS_TOOL,
+      LOOP_GITHUB_GET_PULL_REQUEST_CHECKS_TOOL,
+      LOOP_GITHUB_LIST_ISSUE_COMMENTS_TOOL,
+      LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL,
+    ]);
+    expect(withoutAgentTools.tools).not.toContain("file_read");
+    expect(withReadTool.activeSkillPlaybookIds).toEqual(withoutAgentTools.activeSkillPlaybookIds);
+    expect(withReadTool.tools).toEqual(["file_read", ...withoutAgentTools.tools]);
   });
 });

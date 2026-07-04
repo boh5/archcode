@@ -51,6 +51,12 @@ export const LOOP_PROFILE_ONLY_CONNECTOR_TOOLS = [
   LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL,
 ] as const;
 
+export const LOOP_LOCAL_REPORT_PLAYBOOK = "loop-local-report-playbook";
+export const LOOP_LOCAL_MAINTENANCE_PLAYBOOK = "loop-local-maintenance-playbook";
+export const LOOP_GITHUB_PR_WATCH_PLAYBOOK = "loop-github-pr-watch-playbook";
+export const LOOP_CI_WATCH_PLAYBOOK = "loop-ci-watch-playbook";
+export const LOOP_GOAL_ACTION_PLAYBOOK = "loop-goal-action-playbook";
+
 const LOCAL_REPORT_TOOLS = [
   TOOL_FILE_READ,
   TOOL_GREP,
@@ -95,6 +101,7 @@ export interface LoopToolProfile {
   readonly id: LoopToolProfileId;
   readonly allowedTools: readonly string[];
   readonly profileOnlyConnectorTools: readonly string[];
+  readonly activeSkillPlaybookIds: readonly string[];
 }
 
 export interface ResolveLoopToolProfileInput {
@@ -105,6 +112,7 @@ export interface ResolveLoopToolProfileInput {
 export interface ResolvedLoopToolProfile {
   readonly toolProfileId?: LoopToolProfileId;
   readonly tools: readonly string[];
+  readonly activeSkillPlaybookIds: readonly string[];
 }
 
 export const LOOP_TOOL_PROFILES = {
@@ -112,11 +120,13 @@ export const LOOP_TOOL_PROFILES = {
     id: "loop_local_report",
     allowedTools: LOCAL_REPORT_TOOLS,
     profileOnlyConnectorTools: [],
+    activeSkillPlaybookIds: [LOOP_LOCAL_REPORT_PLAYBOOK],
   },
   loop_local_maintenance: {
     id: "loop_local_maintenance",
     allowedTools: LOCAL_MAINTENANCE_TOOLS,
     profileOnlyConnectorTools: [],
+    activeSkillPlaybookIds: [LOOP_LOCAL_MAINTENANCE_PLAYBOOK],
   },
   loop_github_pr_watch: {
     id: "loop_github_pr_watch",
@@ -128,6 +138,7 @@ export const LOOP_TOOL_PROFILES = {
       LOOP_GITHUB_LIST_ISSUE_COMMENTS_TOOL,
       LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL,
     ],
+    activeSkillPlaybookIds: [LOOP_GITHUB_PR_WATCH_PLAYBOOK],
   },
   loop_ci_watch: {
     id: "loop_ci_watch",
@@ -137,11 +148,13 @@ export const LOOP_TOOL_PROFILES = {
       LOOP_GITHUB_GET_WORKFLOW_RUN_TOOL,
       LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL,
     ],
+    activeSkillPlaybookIds: [LOOP_CI_WATCH_PLAYBOOK],
   },
   loop_goal_action: {
     id: "loop_goal_action",
     allowedTools: GOAL_ACTION_TOOLS,
     profileOnlyConnectorTools: [],
+    activeSkillPlaybookIds: [LOOP_GOAL_ACTION_PLAYBOOK],
   },
 } as const satisfies Record<LoopToolProfileId, LoopToolProfile>;
 
@@ -151,7 +164,7 @@ export function getLoopToolProfile(toolProfileId: LoopToolProfileId): LoopToolPr
 
 export function resolveLoopToolProfile(input: ResolveLoopToolProfileInput): ResolvedLoopToolProfile {
   if (input.toolProfileId === undefined) {
-    return { tools: [...input.agentAllowedTools] };
+    return { tools: [...input.agentAllowedTools], activeSkillPlaybookIds: [] };
   }
 
   const profile = getLoopToolProfile(input.toolProfileId);
@@ -167,5 +180,6 @@ export function resolveLoopToolProfile(input: ResolveLoopToolProfileInput): Reso
   return {
     toolProfileId: input.toolProfileId,
     tools,
+    activeSkillPlaybookIds: [...profile.activeSkillPlaybookIds],
   };
 }
