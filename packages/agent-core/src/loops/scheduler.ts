@@ -1,6 +1,7 @@
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { LoopBudgetLedger } from "./budget-ledger";
+import { CollisionLedger } from "./collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
 import type { LoopBudgetUsage, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
@@ -49,6 +50,7 @@ export interface LoopSchedulerOptions {
   readonly clock?: LoopSchedulerClock;
   readonly timer?: LoopSchedulerTimer;
   readonly budgetLedger?: LoopBudgetLedger;
+  readonly collisionLedger?: CollisionLedger;
   readonly killStateManager?: LoopKillStateManager;
   readonly abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly logger?: Logger;
@@ -77,6 +79,7 @@ export class LoopScheduler {
   readonly #clock: LoopSchedulerClock;
   readonly #timer: LoopSchedulerTimer;
   readonly #budgetLedger?: LoopBudgetLedger;
+  readonly #collisionLedger?: CollisionLedger;
   readonly #killStateManager?: LoopKillStateManager;
   readonly #abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly #logger: Logger;
@@ -90,6 +93,7 @@ export class LoopScheduler {
     this.#clock = options.clock ?? systemClock;
     this.#timer = options.timer ?? systemTimer;
     this.#budgetLedger = options.budgetLedger;
+    this.#collisionLedger = options.collisionLedger;
     this.#killStateManager = options.killStateManager;
     this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
@@ -98,6 +102,7 @@ export class LoopScheduler {
   async start(projectId?: string): Promise<void> {
     if (this.#disposed) return;
 
+    await this.#collisionLedger?.cleanupStale();
     const loops = await this.#stateManager.list(projectId);
     for (const loop of loops) {
       await this.scheduleLoopState(loop, { restart: true });
@@ -293,6 +298,8 @@ export class LoopScheduler {
       toolProfileId: loop.config.toolProfileId,
     };
     const finishedState = await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
+    await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
+    await this.#collisionLedger?.cleanupStale();
 
     if (!this.#disposed) {
       await this.scheduleLoopState(finishedState, { restart: false });
@@ -342,6 +349,8 @@ export class LoopScheduler {
     };
 
     const finishedState = await this.#stateManager.recordRunFinish(loopId, report);
+    await this.#collisionLedger?.releaseRun(loopId, running.runId);
+    await this.#collisionLedger?.cleanupStale();
     this.#activeRuns.delete(loopId);
 
     if (!this.#disposed && reason === "cancelled_by_user") {

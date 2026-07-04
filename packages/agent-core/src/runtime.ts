@@ -42,6 +42,7 @@ import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
 import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
+import { CollisionLedger } from "./loops/collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
@@ -334,6 +335,11 @@ export async function createRuntime(
         clock: schedulerClock,
         ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
         budgetLedger: new LoopBudgetLedger({
+          stateManager: projectContext.loopState,
+          workspaceRoot,
+          clock: schedulerClock,
+        }),
+        collisionLedger: new CollisionLedger({
           stateManager: projectContext.loopState,
           workspaceRoot,
           clock: schedulerClock,
