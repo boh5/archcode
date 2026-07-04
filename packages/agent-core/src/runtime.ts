@@ -304,7 +304,7 @@ export async function createRuntime(
       }));
     };
 
-    async function createLoopRunner(workspaceRoot: string): Promise<LoopRunner> {
+    async function createLoopRunner(workspaceRoot: string, collisionLedger?: CollisionLedger): Promise<LoopRunner> {
       const projectContext = await contextResolver.resolve(workspaceRoot);
       return new LoopRunner({
         stateManager: projectContext.loopState,
@@ -319,6 +319,7 @@ export async function createRuntime(
         },
         workspaceRoot,
         projectSlug: projectContext.project.slug,
+        ...(collisionLedger === undefined ? {} : { collisionLedger }),
       });
     }
 
@@ -327,23 +328,25 @@ export async function createRuntime(
       if (existing) return existing;
 
       const projectContext = await contextResolver.resolve(workspaceRoot);
-      const runner = await createLoopRunner(workspaceRoot);
       const schedulerClock = options.loopSchedulerClock ?? { now: () => Date.now() };
+      const budgetLedger = new LoopBudgetLedger({
+        stateManager: projectContext.loopState,
+        workspaceRoot,
+        clock: schedulerClock,
+      });
+      const collisionLedger = new CollisionLedger({
+        stateManager: projectContext.loopState,
+        workspaceRoot,
+        clock: schedulerClock,
+      });
+      const runner = await createLoopRunner(workspaceRoot, collisionLedger);
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
         runner: runner.createSchedulerRunner(),
         clock: schedulerClock,
         ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
-        budgetLedger: new LoopBudgetLedger({
-          stateManager: projectContext.loopState,
-          workspaceRoot,
-          clock: schedulerClock,
-        }),
-        collisionLedger: new CollisionLedger({
-          stateManager: projectContext.loopState,
-          workspaceRoot,
-          clock: schedulerClock,
-        }),
+        budgetLedger,
+        collisionLedger,
         killStateManager: new LoopKillStateManager(workspaceRoot, {
           clock: schedulerClock,
           logger: runtimeLogger.child({ module: "loops.kill-state" }),
