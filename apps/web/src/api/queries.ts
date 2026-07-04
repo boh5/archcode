@@ -393,6 +393,7 @@ function normalizeSessionSummary(session: SessionSummary): Session {
     parentSessionId: session.parentSessionId,
     title: session.title,
     ...(session.goalId === undefined ? {} : { goalId: session.goalId }),
+    ...(session.loopId === undefined ? {} : { loopId: session.loopId }),
     createdAt: session.createdAt,
     updatedAt: session.lastUpdatedAt,
     lastUpdatedAt: session.lastUpdatedAt,
