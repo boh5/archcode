@@ -1076,7 +1076,7 @@ export type LoopRunReason =
 
 export type LoopToolProfileId =
   | "loop_local_report"
-  | "loop_local_action"
+  | "loop_local_maintenance"
   | "loop_github_pr_watch"
   | "loop_ci_watch"
   | "loop_goal_action";

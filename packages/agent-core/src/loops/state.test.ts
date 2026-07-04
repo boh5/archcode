@@ -14,6 +14,7 @@ import {
   LoopRunReportSchema,
   LoopStateManager,
   LoopStateSchema,
+  LoopToolProfileIdSchema,
   type LoopConfig,
   type LoopRunReport,
 } from "./state";
@@ -98,6 +99,11 @@ describe("Loop schemas", () => {
       hardThresholdRatio: 1.0,
     });
     expect(parsedConfig.limits).toEqual(parsedBudget);
+  });
+
+  test("uses the plan-aligned local maintenance profile id", () => {
+    expect(LoopToolProfileIdSchema.parse("loop_local_maintenance")).toBe("loop_local_maintenance");
+    expect(() => LoopToolProfileIdSchema.parse("loop_local_action")).toThrow();
   });
 
   test("parses legacy loop state with minimal limits and keeps readiness score unsupported", () => {

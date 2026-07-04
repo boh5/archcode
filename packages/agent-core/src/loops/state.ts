@@ -104,7 +104,7 @@ export const LoopRunReasonSchema = z.enum([
 
 export const LoopToolProfileIdSchema = z.enum([
   "loop_local_report",
-  "loop_local_action",
+  "loop_local_maintenance",
   "loop_github_pr_watch",
   "loop_ci_watch",
   "loop_goal_action",

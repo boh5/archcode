@@ -36,7 +36,7 @@ import {
   getToolCategory,
   isBuiltinToolName,
 } from "./tools";
-import type { CollisionLease, LoopConfig, LoopRunReason, LoopRunReport, LoopRunReportStatus } from "./types";
+import type { CollisionLease, LoopConfig, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopToolProfileId } from "./types";
 
 const ALL_BUILTIN_NAMES = [
   TOOL_FILE_READ,
@@ -114,6 +114,7 @@ describe("loop protocol compatibility", () => {
   test("phase 4 loop reason and budget status compile through protocol imports", () => {
     const reason: LoopRunReason = "hard_budget_exceeded";
     const status: LoopRunReportStatus = "budget_exceeded";
+    const localMaintenanceProfile: LoopToolProfileId = "loop_local_maintenance";
     const config: LoopConfig = {
       title: "PR watch",
       schedule: { kind: "manual" },
@@ -149,6 +150,7 @@ describe("loop protocol compatibility", () => {
     expect(report.status).toBe("budget_exceeded");
     expect(report.reason).toBe("hard_budget_exceeded");
     expect(report.toolProfileId).toBe("loop_github_pr_watch");
+    expect(localMaintenanceProfile).toBe("loop_local_maintenance");
   });
 });
 
