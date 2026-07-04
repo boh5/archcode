@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { z } from "zod/v4";
@@ -99,7 +99,9 @@ export class LoopKillStateManager {
   }
 
   private async killStatePath(): Promise<string> {
-    return await resolveContainedPath("kill-state.json", resolve(this.#workspaceRoot, ".archcode", "loops"));
+    const loopsRoot = resolve(this.#workspaceRoot, ".archcode", "loops");
+    await assertSafeLoopRoot(this.#workspaceRoot, loopsRoot);
+    return await resolveContainedPath("kill-state.json", loopsRoot);
   }
 }
 
@@ -155,6 +157,33 @@ async function resolveContainedPath(relative: string, root: string): Promise<str
     if (error instanceof SafeLoopKillPathError) throw error;
     return normalized;
   }
+}
+
+async function assertSafeLoopRoot(workspaceRoot: string, loopsRoot: string): Promise<void> {
+  const realWorkspaceRoot = await realpath(workspaceRoot);
+  await assertExistingPathContained(resolve(workspaceRoot, ".archcode"), realWorkspaceRoot);
+  await assertExistingPathContained(loopsRoot, realWorkspaceRoot);
+}
+
+async function assertExistingPathContained(path: string, realWorkspaceRoot: string): Promise<void> {
+  let stat;
+  try {
+    stat = await lstat(path);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+
+  if (!stat.isSymbolicLink()) return;
+
+  const realPath = await realpath(path);
+  if (!isContained(realPath, realWorkspaceRoot)) {
+    throw new SafeLoopKillPathError(path, "Symlink resolves outside the workspace");
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function isContained(resolvedPath: string, root: string): boolean {
