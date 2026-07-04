@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { DashboardGoal, DashboardHitlItem } from "../api/types";
+import type { DashboardGoal, DashboardHitlItem, DashboardLoop, LoopRunReport } from "../api/types";
 import { Dashboard } from "./dashboard";
 
 // ─── Test helpers ───
@@ -181,16 +181,50 @@ function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitl
   };
 }
 
+function makeLoopRun(overrides: Partial<LoopRunReport> = {}): LoopRunReport {
+  return {
+    runId: "run-1",
+    loopId: "loop-1",
+    status: "running",
+    trigger: "manual",
+    startedAt: 1700000000000,
+    ...overrides,
+  };
+}
+
+function makeLoop(overrides: Partial<DashboardLoop> = {}): DashboardLoop {
+  return {
+    loopId: "loop-1",
+    title: "Daily Triage Loop",
+    status: "active",
+    currentRun: makeLoopRun({ runId: "run-current", status: "running" }),
+    lastRun: makeLoopRun({ runId: "run-last", status: "succeeded", endedAt: 1700000060000 }),
+    nextRunAt: 1700000600000,
+    runKind: "session",
+    mode: "report",
+    projectSlug: "demo",
+    projectName: "Demo Project",
+    ...overrides,
+  };
+}
+
 function createDashboardHandler(input: {
   goals?: DashboardGoal[];
+  loops?: DashboardLoop[];
   hitl?: DashboardHitlItem[];
   delayGoals?: boolean;
+  delayLoops?: boolean;
   delayHitl?: boolean;
 }): (path: string) => Promise<Response> {
   return async (path: string) => {
     if (path === "/api/goals?status=active") {
       if (input.delayGoals) await new Promise((resolve) => setTimeout(resolve, 50));
       return Response.json({ goals: input.goals ?? [] });
+    }
+
+    if (path === "/api/loops?status=active") {
+      if (input.delayLoops) await new Promise((resolve) => setTimeout(resolve, 50));
+      return Response.json({ loops: input.loops ?? [] });
     }
 
     if (path === "/api/hitl?status=pending") {
@@ -266,6 +300,49 @@ describe("Dashboard", () => {
         expect(text).toContain("verifying");
         expect(text).toContain("Review");
       });
+    } finally {
+      await cleanupDashboard(ctx);
+    }
+  });
+
+  test("active loops section renders row current last next fields and detail link without forbidden UI", async () => {
+    const loop = makeLoop({
+      loopId: "loop-active-1",
+      title: "Nightly Loop Sweep",
+      projectSlug: "alpha",
+      projectName: "Alpha Project",
+      currentRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-current-alpha", status: "running" }),
+      lastRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-last-alpha", status: "succeeded", endedAt: 1700000100000 }),
+      nextRunAt: 1700000900000,
+      runKind: "goal",
+      mode: "act",
+    });
+    const ctx = await setupDashboard(createDashboardHandler({ loops: [loop] }));
+
+    try {
+      await renderDashboard(ctx.reactRoot, ctx.queryClient);
+
+      await waitFor(() => {
+        const loopsSection = ctx.container.querySelector('[data-testid="dashboard-active-loops"]');
+        expect(loopsSection).not.toBeNull();
+        const text = loopsSection?.textContent ?? "";
+        expect(text).toContain("Nightly Loop Sweep");
+        expect(text).toContain("Alpha Project");
+        expect(text).toContain("active");
+        expect(text).toContain("goal");
+        expect(text).toContain("act");
+        expect(text).toContain("current: running run-current-alpha");
+        expect(text).toContain("last: succeeded run-last-alpha");
+        expect(text).toContain("next: 2023-11-14T22:28:20.000Z");
+      });
+
+      const detailLink = ctx.container.querySelector('a[href="/projects/alpha/loops/loop-active-1"]');
+      expect(detailLink).not.toBeNull();
+
+      const lowerText = ctx.container.querySelector('[data-testid="dashboard-active-loops"]')?.textContent?.toLowerCase() ?? "";
+      expect(lowerText).not.toContain("readiness");
+      expect(lowerText).not.toContain("budget");
+      expect(lowerText).not.toContain("cron");
     } finally {
       await cleanupDashboard(ctx);
     }

@@ -1,7 +1,7 @@
 import { Target, Bell, Loader2, CircleDot, RotateCcw } from "lucide-react";
-import { useActiveGoals, useHitl } from "../api/queries";
+import { useActiveGoals, useActiveLoops, useHitl } from "../api/queries";
 import { HitlCard } from "../components/features/HitlCard";
-import type { DashboardGoal, GoalPhase, GoalStatus } from "../api/types";
+import type { DashboardGoal, DashboardLoop, GoalPhase, GoalStatus, LoopRunReport, LoopStatus } from "../api/types";
 
 const STATUS_BADGE: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-secondary",
@@ -21,8 +21,16 @@ const PHASE_LABEL: Record<GoalPhase, string> = {
   review: "Review",
 };
 
+const LOOP_STATUS_BADGE: Record<LoopStatus, string> = {
+  active: "bg-success-muted text-success",
+  paused: "bg-warning-muted text-warning",
+  disabled: "bg-bg-active text-text-muted",
+  error: "bg-error-muted text-error",
+};
+
 export function Dashboard() {
   const { data: goals, isLoading: goalsLoading } = useActiveGoals();
+  const { data: loops, isLoading: loopsLoading } = useActiveLoops();
   const { data: hitl, isLoading: hitlLoading } = useHitl();
 
   return (
@@ -62,6 +70,35 @@ export function Dashboard() {
           )}
         </section>
 
+        <section data-testid="dashboard-active-loops" className="flex flex-col gap-2.5">
+          <div className="flex items-center gap-2">
+            <RotateCcw size={15} className="text-accent" aria-hidden="true" />
+            <h2 className="text-[15px] font-semibold text-text-primary">Active Loops</h2>
+            {loops && loops.length > 0 && (
+              <span className="bg-accent-muted text-accent px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
+                {loops.length}
+              </span>
+            )}
+          </div>
+
+          {loopsLoading ? (
+            <div className="flex items-center gap-2 text-[13px] text-text-tertiary py-4">
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+              Loading active loops…
+            </div>
+          ) : !loops || loops.length === 0 ? (
+            <div className="text-[13px] text-text-tertiary py-4 border border-border-subtle rounded-md px-4 bg-bg-surface">
+              No active loops across projects
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {loops.map((loop) => (
+                <LoopRow key={`${loop.projectSlug}:${loop.loopId}`} loop={loop} />
+              ))}
+            </div>
+          )}
+        </section>
+
         <section data-testid="dashboard-approval-queue" className="flex flex-col gap-2.5">
           <div className="flex items-center gap-2">
             <Bell size={15} className="text-warning" aria-hidden="true" />
@@ -93,6 +130,48 @@ export function Dashboard() {
       </div>
     </div>
   );
+}
+
+function LoopRow({ loop }: { loop: DashboardLoop }) {
+  const current = formatDashboardRun(loop.currentRun);
+  const last = formatDashboardRun(loop.lastRun);
+  const next = formatDashboardDate(loop.nextRunAt);
+
+  return (
+    <div className="flex items-center gap-3 bg-bg-surface border border-border-default rounded-md px-3.5 py-2.5 hover:border-border-strong transition-colors duration-150">
+      <div className="flex flex-col min-w-0 flex-1 gap-0.5">
+        <div className="flex items-center gap-2">
+          <a
+            href={`/projects/${loop.projectSlug}/loops/${loop.loopId}`}
+            className="text-[13px] font-medium text-text-primary truncate hover:text-accent transition-colors duration-150"
+          >
+            {loop.title}
+          </a>
+          <span className="text-[11px] text-text-muted shrink-0">{loop.projectName}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${LOOP_STATUS_BADGE[loop.status] ?? "bg-bg-active text-text-secondary"}`}>
+            {loop.status}
+          </span>
+          <span className="text-[10.5px] text-text-tertiary">{loop.runKind}</span>
+          <span className="text-[10.5px] text-text-tertiary">{loop.mode}</span>
+          <span className="text-[10.5px] text-text-tertiary">current: {current}</span>
+          <span className="text-[10.5px] text-text-tertiary">last: {last}</span>
+          <span className="text-[10.5px] text-text-tertiary">next: {next}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatDashboardRun(run: LoopRunReport | undefined): string {
+  if (!run) return "none";
+  return `${run.status} ${run.runId}`;
+}
+
+function formatDashboardDate(value: number | undefined): string {
+  if (value === undefined || value === null) return "none";
+  return new Date(value).toISOString();
 }
 
 function GoalRow({ goal }: { goal: DashboardGoal }) {

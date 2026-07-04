@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useLoops } from "../api/queries";
 import { CreateLoopDialog } from "../components/features/CreateLoopDialog";
@@ -144,13 +144,17 @@ function formatNextRun(loop: LoopState): string | null {
 }
 
 function LoopListItem({ loop }: { loop: LoopState }) {
+  const { slug = "" } = useParams<{ slug: string }>();
   const nextRun = formatNextRun(loop);
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
       <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-text-primary truncate">
+        <Link
+          to={`/projects/${slug}/loops/${loop.loopId}`}
+          className="block text-[13px] font-medium text-text-primary truncate hover:text-accent transition-colors duration-150"
+        >
           {loop.config.title}
-        </div>
+        </Link>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
           <span className="font-mono">{loop.loopId.slice(0, 8)}</span>
           <span>schedule: {formatSchedule(loop)}</span>
