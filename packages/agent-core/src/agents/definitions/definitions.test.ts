@@ -55,6 +55,17 @@ const SOURCE_WRITE_TOOLS = [
   TOOL_AST_GREP_REPLACE,
 ] as const;
 
+const GITHUB_CONNECTOR_TOOLS = [
+  "github_get_pull_request",
+  "github_list_pull_requests",
+  "github_get_pull_request_checks",
+  "github_list_issue_comments",
+  "github_create_issue_comment",
+  "github_list_workflow_runs",
+  "github_get_workflow_run",
+  "github_rerun_workflow_run",
+] as const;
+
 function expectNoTools(tools: readonly string[], forbidden: readonly string[]) {
   for (const tool of forbidden) expect(tools).not.toContain(tool);
 }
@@ -78,6 +89,12 @@ describe("agentDefinitions", () => {
   test("all active definitions are free of Workflow and artifact tools", () => {
     for (const definition of agentDefinitions) {
       expectNoTools(definition.tools.tools, WORKFLOW_TOOLS);
+    }
+  });
+
+  test("default active definitions do not expose GitHub connector tools", () => {
+    for (const definition of agentDefinitions) {
+      expectNoTools(definition.tools.tools, GITHUB_CONNECTOR_TOOLS);
     }
   });
 

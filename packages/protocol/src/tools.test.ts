@@ -9,6 +9,14 @@ import {
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
   TOOL_GIT_DIFF,
+  TOOL_GITHUB_GET_PULL_REQUEST,
+  TOOL_GITHUB_LIST_PULL_REQUESTS,
+  TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
+  TOOL_GITHUB_LIST_ISSUE_COMMENTS,
+  TOOL_GITHUB_CREATE_ISSUE_COMMENT,
+  TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+  TOOL_GITHUB_GET_WORKFLOW_RUN,
+  TOOL_GITHUB_RERUN_WORKFLOW_RUN,
   TOOL_BASH,
   TOOL_TODO_WRITE,
   TOOL_ASK_USER,
@@ -48,6 +56,14 @@ const ALL_BUILTIN_NAMES = [
   TOOL_AST_GREP_REPLACE,
   TOOL_GIT_STATUS,
   TOOL_GIT_DIFF,
+  TOOL_GITHUB_GET_PULL_REQUEST,
+  TOOL_GITHUB_LIST_PULL_REQUESTS,
+  TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
+  TOOL_GITHUB_LIST_ISSUE_COMMENTS,
+  TOOL_GITHUB_CREATE_ISSUE_COMMENT,
+  TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+  TOOL_GITHUB_GET_WORKFLOW_RUN,
+  TOOL_GITHUB_RERUN_WORKFLOW_RUN,
   TOOL_BASH,
   TOOL_TODO_WRITE,
   TOOL_ASK_USER,
@@ -84,6 +100,14 @@ describe("tool name constants", () => {
     expect(TOOL_AST_GREP_REPLACE).toBe("ast_grep_replace");
     expect(TOOL_GIT_STATUS).toBe("git_status");
     expect(TOOL_GIT_DIFF).toBe("git_diff");
+    expect(TOOL_GITHUB_GET_PULL_REQUEST).toBe("github_get_pull_request");
+    expect(TOOL_GITHUB_LIST_PULL_REQUESTS).toBe("github_list_pull_requests");
+    expect(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS).toBe("github_get_pull_request_checks");
+    expect(TOOL_GITHUB_LIST_ISSUE_COMMENTS).toBe("github_list_issue_comments");
+    expect(TOOL_GITHUB_CREATE_ISSUE_COMMENT).toBe("github_create_issue_comment");
+    expect(TOOL_GITHUB_LIST_WORKFLOW_RUNS).toBe("github_list_workflow_runs");
+    expect(TOOL_GITHUB_GET_WORKFLOW_RUN).toBe("github_get_workflow_run");
+    expect(TOOL_GITHUB_RERUN_WORKFLOW_RUN).toBe("github_rerun_workflow_run");
     expect(TOOL_BASH).toBe("bash");
     expect(TOOL_TODO_WRITE).toBe("todo_write");
     expect(TOOL_ASK_USER).toBe("ask_user");
@@ -171,6 +195,9 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_GLOB]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_SEARCH]).toBe("search");
     expect(TOOL_CATEGORY_MAP[TOOL_AST_GREP_REPLACE]).toBe("fileWrite");
+    expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_GET_PULL_REQUEST]).toBe("git");
+    expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_CREATE_ISSUE_COMMENT]).toBe("git");
+    expect(TOOL_CATEGORY_MAP[TOOL_GITHUB_RERUN_WORKFLOW_RUN]).toBe("git");
     expect(TOOL_CATEGORY_MAP[TOOL_BASH]).toBe("shell");
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
@@ -207,6 +234,9 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("file_read")).toBe("fileRead");
     expect(getToolCategory("grep")).toBe("search");
     expect(getToolCategory("bash")).toBe("shell");
+    expect(getToolCategory("github_get_pull_request")).toBe("git");
+    expect(getToolCategory("github_create_issue_comment")).toBe("git");
+    expect(getToolCategory("github_rerun_workflow_run")).toBe("git");
     expect(getToolCategory("workflow_create")).toBe("other");
     expect(getToolCategory("workflow_update_stage")).toBe("other");
     expect(getToolCategory("artifact_read")).toBe("other");
@@ -228,6 +258,9 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("workflow_update_stage")).toBe(false);
     expect(isBuiltinToolName("artifact_read")).toBe(false);
     expect(isBuiltinToolName("ast_grep_replace")).toBe(true);
+    expect(isBuiltinToolName("github_get_pull_request")).toBe(true);
+    expect(isBuiltinToolName("github_create_issue_comment")).toBe(true);
+    expect(isBuiltinToolName("github_rerun_workflow_run")).toBe(true);
     expect(isBuiltinToolName("goal_create")).toBe(true);
     expect(isBuiltinToolName("goal_lock")).toBe(true);
     expect(isBuiltinToolName("goal_run")).toBe(true);

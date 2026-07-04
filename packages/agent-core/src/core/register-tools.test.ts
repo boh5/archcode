@@ -35,6 +35,14 @@ import {
   TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_ASK_USER,
   TOOL_BASH,
+  TOOL_GITHUB_CREATE_ISSUE_COMMENT,
+  TOOL_GITHUB_GET_PULL_REQUEST,
+  TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
+  TOOL_GITHUB_GET_WORKFLOW_RUN,
+  TOOL_GITHUB_LIST_ISSUE_COMMENTS,
+  TOOL_GITHUB_LIST_PULL_REQUESTS,
+  TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+  TOOL_GITHUB_RERUN_WORKFLOW_RUN,
 } from "@archcode/protocol";
 
 const tmpRoots: string[] = [];
@@ -146,6 +154,28 @@ describe("registerBuiltinTools", () => {
       "auditAfterHook",
       "executionLoggerAfterHook",
     ]);
+  });
+
+  it("registers GitHub connector-backed tools without adding them to builtin descriptor groups", () => {
+    const registry = new ToolRegistry();
+
+    registerBuiltinTools(registry, silentLogger);
+
+    for (const toolName of [
+      TOOL_GITHUB_GET_PULL_REQUEST,
+      TOOL_GITHUB_LIST_PULL_REQUESTS,
+      TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
+      TOOL_GITHUB_LIST_ISSUE_COMMENTS,
+      TOOL_GITHUB_CREATE_ISSUE_COMMENT,
+      TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+      TOOL_GITHUB_GET_WORKFLOW_RUN,
+      TOOL_GITHUB_RERUN_WORKFLOW_RUN,
+    ]) {
+      expect(registry.get(toolName)).toBeDefined();
+      expect(createBuiltinToolDescriptors().map((descriptor) => descriptor.name)).not.toContain(toolName);
+    }
+    expect(registry.get(TOOL_GITHUB_CREATE_ISSUE_COMMENT)?.traits.readOnly).toBe(false);
+    expect(registry.get(TOOL_GITHUB_RERUN_WORKFLOW_RUN)?.traits.readOnly).toBe(false);
   });
 
   it("does not register legacy workflow or artifact tools", () => {

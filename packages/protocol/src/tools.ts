@@ -17,6 +17,16 @@ export const TOOL_AST_GREP_REPLACE = "ast_grep_replace";
 export const TOOL_GIT_STATUS = "git_status";
 export const TOOL_GIT_DIFF = "git_diff";
 
+// GitHub connectors (Loop profile-only; not default agent tools)
+export const TOOL_GITHUB_GET_PULL_REQUEST = "github_get_pull_request";
+export const TOOL_GITHUB_LIST_PULL_REQUESTS = "github_list_pull_requests";
+export const TOOL_GITHUB_GET_PULL_REQUEST_CHECKS = "github_get_pull_request_checks";
+export const TOOL_GITHUB_LIST_ISSUE_COMMENTS = "github_list_issue_comments";
+export const TOOL_GITHUB_CREATE_ISSUE_COMMENT = "github_create_issue_comment";
+export const TOOL_GITHUB_LIST_WORKFLOW_RUNS = "github_list_workflow_runs";
+export const TOOL_GITHUB_GET_WORKFLOW_RUN = "github_get_workflow_run";
+export const TOOL_GITHUB_RERUN_WORKFLOW_RUN = "github_rerun_workflow_run";
+
 // Shell
 export const TOOL_BASH = "bash";
 
@@ -68,6 +78,14 @@ export type BuiltinToolName =
   | typeof TOOL_AST_GREP_REPLACE
   | typeof TOOL_GIT_STATUS
   | typeof TOOL_GIT_DIFF
+  | typeof TOOL_GITHUB_GET_PULL_REQUEST
+  | typeof TOOL_GITHUB_LIST_PULL_REQUESTS
+  | typeof TOOL_GITHUB_GET_PULL_REQUEST_CHECKS
+  | typeof TOOL_GITHUB_LIST_ISSUE_COMMENTS
+  | typeof TOOL_GITHUB_CREATE_ISSUE_COMMENT
+  | typeof TOOL_GITHUB_LIST_WORKFLOW_RUNS
+  | typeof TOOL_GITHUB_GET_WORKFLOW_RUN
+  | typeof TOOL_GITHUB_RERUN_WORKFLOW_RUN
   | typeof TOOL_BASH
   | typeof TOOL_TODO_WRITE
   | typeof TOOL_ASK_USER
@@ -121,6 +139,14 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_AST_GREP_REPLACE]: "fileWrite",
   [TOOL_GIT_STATUS]: "git",
   [TOOL_GIT_DIFF]: "git",
+  [TOOL_GITHUB_GET_PULL_REQUEST]: "git",
+  [TOOL_GITHUB_LIST_PULL_REQUESTS]: "git",
+  [TOOL_GITHUB_GET_PULL_REQUEST_CHECKS]: "git",
+  [TOOL_GITHUB_LIST_ISSUE_COMMENTS]: "git",
+  [TOOL_GITHUB_CREATE_ISSUE_COMMENT]: "git",
+  [TOOL_GITHUB_LIST_WORKFLOW_RUNS]: "git",
+  [TOOL_GITHUB_GET_WORKFLOW_RUN]: "git",
+  [TOOL_GITHUB_RERUN_WORKFLOW_RUN]: "git",
   [TOOL_BASH]: "shell",
   [TOOL_TODO_WRITE]: "interaction",
   [TOOL_ASK_USER]: "interaction",

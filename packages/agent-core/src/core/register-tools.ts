@@ -21,6 +21,7 @@ import {
   createGoalRetryTool,
   createGoalRunTool,
 } from "../tools/builtins/goal-tools";
+import { createGitHubToolDescriptors } from "../tools/github";
 
 export function registerBuiltinTools(
   registry: ToolRegistry,
@@ -39,6 +40,8 @@ export function registerBuiltinTools(
   registry.register(createGoalCheckDoneTool());
   registry.register(createGoalArtifactReadTool());
   registry.register(createGoalArtifactWriteTool());
+
+  registry.registerAll(createGitHubToolDescriptors());
 
   registry.globalPermissions.push(createGoalBootstrapPermission());
   registry.globalPermissions.push(createLoopCollisionToolPermission());

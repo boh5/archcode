@@ -104,6 +104,21 @@ describe("Loop tool profiles", () => {
     expect(allProfileTools.filter((toolName) => /merge|approve|rebase|force.?push/i.test(toolName))).toEqual([]);
   });
 
+  test("registered profile-only connector names remain limited to safe GitHub watch and rerun actions", () => {
+    const expectedConnectorTools = [
+      LOOP_GITHUB_GET_PULL_REQUEST_TOOL,
+      LOOP_GITHUB_LIST_PULL_REQUESTS_TOOL,
+      LOOP_GITHUB_GET_PULL_REQUEST_CHECKS_TOOL,
+      LOOP_GITHUB_LIST_ISSUE_COMMENTS_TOOL,
+      LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL,
+      LOOP_GITHUB_LIST_WORKFLOW_RUNS_TOOL,
+      LOOP_GITHUB_GET_WORKFLOW_RUN_TOOL,
+      LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL,
+    ] as const satisfies typeof LOOP_PROFILE_ONLY_CONNECTOR_TOOLS;
+
+    expect(LOOP_PROFILE_ONLY_CONNECTOR_TOOLS).toEqual(expectedConnectorTools);
+  });
+
   test("playbook ids are prompt-only metadata and do not grant tools", () => {
     const withoutAgentTools = resolveLoopToolProfile({
       agentAllowedTools: [],
