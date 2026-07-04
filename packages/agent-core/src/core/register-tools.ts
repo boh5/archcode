@@ -9,6 +9,7 @@ import {
 } from "../tools/hooks";
 import { createGoalBootstrapPermission } from "../tools/permission";
 import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
+import { createLoopCollisionToolPermission } from "../loops/collision-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
@@ -40,6 +41,7 @@ export function registerBuiltinTools(
   registry.register(createGoalArtifactWriteTool());
 
   registry.globalPermissions.push(createGoalBootstrapPermission());
+  registry.globalPermissions.push(createLoopCollisionToolPermission());
   registry.globalPermissions.push(createLoopBudgetToolPermission());
 
   registry.globalHooks.after.push(createRedactionHook());

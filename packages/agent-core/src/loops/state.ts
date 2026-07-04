@@ -457,6 +457,18 @@ export class LoopStateManager {
     return updated;
   }
 
+  async updateCollisionSnapshot(loopId: string, snapshot: LoopCollisionSnapshot): Promise<LoopState> {
+    const state = await this.read(loopId);
+    const parsed = LoopCollisionSnapshotSchema.parse(snapshot);
+    const updated = this.nextState({
+      ...state,
+      latestCollisions: parsed,
+    }, parsed.updatedAt);
+
+    await this.write(updated);
+    return updated;
+  }
+
   async appendRunReport(loopId: string, report: LoopRunReport): Promise<LoopRunReport> {
     this.assertLoopId(loopId);
     const parsed = this.parseRunReport(loopId, report);
