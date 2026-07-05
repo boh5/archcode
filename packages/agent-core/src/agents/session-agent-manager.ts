@@ -179,6 +179,29 @@ export class SessionAgentManager {
     this.#storeManager.delete(sessionId, workspaceRoot);
   }
 
+  release(workspaceRoot: string, sessionId: string): void {
+    const key = scopedKey(workspaceRoot, sessionId);
+    const agent = this.#agents.get(key);
+    agent?.dispose();
+    this.#agents.delete(key);
+    this.#pendingAgents.delete(key);
+    this.#storeManager.delete(sessionId, workspaceRoot);
+  }
+
+  releaseWorkspace(workspaceRoot: string): void {
+    const prefix = `${workspaceRoot}\0`;
+    for (const [key, agent] of [...this.#agents.entries()]) {
+      if (!key.startsWith(prefix)) continue;
+      agent.dispose();
+      this.#agents.delete(key);
+    }
+    for (const key of [...this.#pendingAgents.keys()]) {
+      if (key.startsWith(prefix)) this.#pendingAgents.delete(key);
+    }
+    this.#factories.delete(workspaceRoot);
+    this.#activeJobsByWorkspace.delete(workspaceRoot);
+  }
+
   isTombstoned(workspaceRoot: string, sessionId: string): boolean {
     return this.#isTombstonedKey(scopedKey(workspaceRoot, sessionId));
   }
