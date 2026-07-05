@@ -48,6 +48,8 @@ bun test             # Run tests
 | `ARCHCODE_HOST` | unset | Host value for deployments or clients that need an externally advertised host. |
 | `ARCHCODE_OPEN_BROWSER` | unset | Reserved for opening the Web UI automatically when the server boots. |
 | `ARCHCODE_PROJECTS_DIR` | unset | Base directory used by project-selection flows that need a projects root. |
+| `GITHUB_TOKEN` | unset | Fallback token for Phase 4 GitHub.com integration when `integrations.github` is present and `tokenEnv` is unset or unresolved. |
+| `GH_TOKEN` | unset | Second fallback token for Phase 4 GitHub.com integration. `GITHUB_TOKEN` wins when both are set. |
 
 ### Projects and Web UI
 
@@ -234,7 +236,7 @@ Pricing is optional passive metadata stored under each model config. It is not a
 | `reasoningUsdPerMillionTokens` | number | Reasoning token price in USD per 1M tokens, when the provider reports reasoning tokens separately |
 | `cachedInputUsdPerMillionTokens` | number | Cached-input token price in USD per 1M tokens, when the provider reports cache hits |
 
-All pricing fields are optional and non-negative. Unknown pricing fields are rejected by strict config validation.
+All pricing fields are optional and non-negative. Unknown pricing fields are rejected by strict config validation. Missing pricing means USD budget enforcement is unavailable for that model. It is never interpreted as free or zero-cost.
 
 ### Model Call Options (`options`)
 
@@ -329,7 +331,7 @@ The `variant` field is consumed during resolution — it is **never** passed to 
 
 ### GitHub Integration Configuration
 
-GitHub integration metadata is configured under `integrations.github`. Phase 4 scope supports GitHub.com only; GitHub Enterprise and custom API base URLs are intentionally rejected.
+GitHub integration metadata is configured under `integrations.github`. Missing `integrations.github` means the integration is disabled. A present empty block `{}` defaults to enabled and must resolve a token unless `enabled` is set to `false`. Phase 4 supports GitHub.com plus GitHub Actions only; GitHub Enterprise, GitLab, Bitbucket, CircleCI, and Jenkins are intentionally out of scope.
 
 ```json
 {
@@ -353,13 +355,17 @@ GitHub integration metadata is configured under `integrations.github`. Phase 4 s
 | `defaultOwner` | No | Optional default GitHub owner for later connector tasks |
 | `defaultRepo` | No | Optional default GitHub repository for later connector tasks |
 
+Authentication is env-only. Do not store a token value in `.archcode.json`; configure an environment variable name or an env-expanded reference through `tokenEnv`. OAuth, GitHub App installation flows, and browser-based auth are not supported in Phase 4.
+
+PR Babysitter uses this integration to watch PR status, read and post comments, and optionally hand off a fix Goal. It does not merge, rebase, approve, or force-push.
+
 Token resolution order is:
 
 1. `integrations.github.tokenEnv` if configured. Plain values such as `"ARCHCODE_GITHUB_TOKEN"` are treated as environment variable names. Env-expanded values such as `"${ARCHCODE_GITHUB_TOKEN}"` or `"${ARCHCODE_GITHUB_TOKEN:-fallback-token}"` use the shared `${VAR}` / `${VAR:-default}` semantics.
 2. `GITHUB_TOKEN`
 3. `GH_TOKEN`
 
-Resolved token values are process-local only: they are not persisted back into `.archcode.json`, logs, evidence files, memory, or UI state, and token-resolution errors report only env variable names and config paths.
+Resolved token values are process-local only: they are not persisted back into `.archcode.json`, Loop state, run logs, tool output, evidence files, memory, or UI state, and token-resolution errors report only env variable names and config paths.
 
 ### Memory Configuration
 
