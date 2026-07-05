@@ -128,7 +128,8 @@ function NewLoopButton({
 function formatSchedule(loop: LoopState): string {
   const { schedule } = loop.config;
   if (schedule.kind === "manual") return "manual";
-  return `interval ${schedule.everyMs}ms`;
+  if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
+  return `cron ${schedule.expression}`;
 }
 
 function formatLastRun(loop: LoopState): string {

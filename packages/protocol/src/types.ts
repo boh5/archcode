@@ -1026,7 +1026,23 @@ export type LoopStatus = "active" | "paused" | "disabled" | "error";
 
 export type LoopScheduleSpec =
   | { kind: "manual" }
-  | { kind: "interval"; everyMs: number };
+  | { kind: "interval"; everyMs: number }
+  | { kind: "cron"; expression: string };
+
+export type LoopPullRequestScope = "open" | "authored" | "assigned" | "review_requested";
+
+export type LoopTriggerSpec =
+  | { kind: "on_commit"; branch?: string; cadenceMs?: number }
+  | { kind: "on_pr"; branch?: string; baseBranch?: string; prScope?: LoopPullRequestScope; cadenceMs?: number }
+  | { kind: "on_ci_fail"; branch?: string; baseBranch?: string; checkName?: string; workflowName?: string; cadenceMs?: number };
+
+export interface LoopCoordinatorConfig {
+  maxConcurrent: number;
+}
+
+export interface LoopProjectConfig {
+  coordinator: LoopCoordinatorConfig;
+}
 
 export type LoopRunKind = "session" | "goal";
 
@@ -1160,11 +1176,73 @@ export interface LoopConfig {
   instructions?: string;
   goalTemplate?: LoopGoalTemplate;
   sourcePreset?: string;
+  triggers?: LoopTriggerSpec[];
+  cleanupPolicy?: LoopCleanupPolicy;
 }
 
 export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded";
 
-export type LoopRunTrigger = "manual" | "interval";
+export type LoopRunTrigger = "manual" | "interval" | "cron" | LoopTriggerSpec["kind"];
+
+export type LoopJobStatus =
+  | "pending"
+  | "queued"
+  | "running"
+  | "blocked"
+  | "needs_user"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped"
+  | "expired";
+
+export type LoopCleanupState = "not_started" | "in_progress" | "cleaned" | "preserved" | "failed" | "skipped";
+
+export interface LoopCleanupPolicy {
+  deleteUnchangedWorktrees?: boolean;
+  preserveChangedArtifacts?: true;
+  maxPreservedWorktrees?: number;
+}
+
+export interface LoopWorktreeArtifact {
+  path: string;
+  status: "observed" | "unchanged" | "created" | "modified" | "deleted";
+  sizeBytes?: number;
+  sha?: string;
+}
+
+export interface LoopJobSummary {
+  jobId: string;
+  loopId: string;
+  status: LoopJobStatus;
+  triggerKind: LoopRunTrigger;
+  subjectKey: string;
+  dedupeKey: string;
+  branchKey?: string;
+  queuedAt: number;
+  startedAt?: number;
+  endedAt?: number;
+  attempts: number;
+  rerunAfterCurrent?: boolean;
+  blockedReason?: string;
+  worktreePath?: string;
+  baseSha?: string;
+  resolvedHeadSha?: string;
+  missedCount?: number;
+  cleanupState?: LoopCleanupState;
+  observedArtifacts?: LoopWorktreeArtifact[];
+}
+
+export interface LoopTriggerHealth {
+  triggerKind: LoopTriggerSpec["kind"];
+  status: "healthy" | "degraded" | "blocked" | "disabled";
+  cadenceMs?: number;
+  lastCheckedAt?: number;
+  lastSuccessAt?: number;
+  lastError?: string;
+  retryAfterMs?: number;
+  missedCount?: number;
+}
 
 export interface LoopRunReport {
   runId: string;
@@ -1184,6 +1262,18 @@ export interface LoopRunReport {
   summary?: string;
   error?: string;
   skippedReason?: string;
+  jobId?: string;
+  triggerKind?: LoopRunTrigger;
+  subjectKey?: string;
+  dedupeKey?: string;
+  branchKey?: string;
+  worktreePath?: string;
+  baseSha?: string;
+  resolvedHeadSha?: string;
+  missedCount?: number;
+  blockedReason?: string;
+  cleanupState?: LoopCleanupState;
+  observedArtifacts?: LoopWorktreeArtifact[];
 }
 
 export interface LoopState {
@@ -1203,6 +1293,10 @@ export interface LoopState {
   latestBudget?: LoopBudgetSnapshot;
   latestCollisions?: LoopCollisionSnapshot;
   latestIntegrations?: LoopIntegrationSnapshot;
+  currentJob?: LoopJobSummary;
+  queuedJobs?: LoopJobSummary[];
+  triggerHealth?: LoopTriggerHealth[];
+  cleanupState?: LoopCleanupState;
 }
 
 // ─── Loop Stream Events ───

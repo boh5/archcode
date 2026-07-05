@@ -12,12 +12,19 @@ import type {
   CollisionLease as ProtocolCollisionLease,
   CollisionTarget as ProtocolCollisionTarget,
   LoopConfig as ProtocolLoopConfig,
+  LoopCleanupPolicy as ProtocolLoopCleanupPolicy,
+  LoopCleanupState as ProtocolLoopCleanupState,
+  LoopCoordinatorConfig as ProtocolLoopCoordinatorConfig,
   LoopGoalTemplate as ProtocolLoopGoalTemplate,
   LoopIntegrationError as ProtocolLoopIntegrationError,
   LoopIntegrationSnapshot as ProtocolLoopIntegrationSnapshot,
+  LoopJobStatus as ProtocolLoopJobStatus,
+  LoopJobSummary as ProtocolLoopJobSummary,
   LoopCollisionSnapshot as ProtocolLoopCollisionSnapshot,
   LoopLimits as ProtocolLoopLimits,
   LoopMode as ProtocolLoopMode,
+  LoopProjectConfig as ProtocolLoopProjectConfig,
+  LoopPullRequestScope as ProtocolLoopPullRequestScope,
   LoopRunKind as ProtocolLoopRunKind,
   LoopRunReason as ProtocolLoopRunReason,
   LoopRunReport as ProtocolLoopRunReport,
@@ -27,6 +34,9 @@ import type {
   LoopState as ProtocolLoopState,
   LoopStatus as ProtocolLoopStatus,
   LoopToolProfileId as ProtocolLoopToolProfileId,
+  LoopTriggerHealth as ProtocolLoopTriggerHealth,
+  LoopTriggerSpec as ProtocolLoopTriggerSpec,
+  LoopWorktreeArtifact as ProtocolLoopWorktreeArtifact,
 } from "@archcode/protocol";
 
 import { ApprovalPointSchema, DoneConditionSchema, RetryPolicySchema } from "../goals/state";
@@ -37,6 +47,11 @@ const LoopTitleSchema = z.string().trim().min(1).max(200);
 const LoopTextSchema = z.string().trim().min(1).max(10_000);
 const LoopIdentifierSchema = z.string().trim().min(1).max(200);
 const TimestampMsSchema = z.number().int().nonnegative();
+const ShaSchema = z.string().trim().min(1).max(128);
+const TriggerCadenceMsSchema = z.number().int().min(30_000).default(60_000);
+const CronExpressionSchema = z.string().trim().refine((value) => value.split(/\s+/).length === 5, {
+  message: "Cron expressions must use exactly 5 UTC fields",
+});
 
 export const LoopUuidSchema = z.uuid();
 
@@ -45,7 +60,51 @@ export const LoopStatusSchema = z.enum(["active", "paused", "disabled", "error"]
 export const LoopScheduleSpecSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("manual") }),
   z.strictObject({ kind: z.literal("interval"), everyMs: z.number().int().positive() }),
+  z.strictObject({ kind: z.literal("cron"), expression: CronExpressionSchema }),
 ]) satisfies z.ZodType<ProtocolLoopScheduleSpec>;
+
+export const LoopPullRequestScopeSchema = z.enum(["open", "authored", "assigned", "review_requested"]) satisfies z.ZodType<ProtocolLoopPullRequestScope>;
+
+export const LoopTriggerSpecSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("on_commit"),
+    branch: LoopIdentifierSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("on_pr"),
+    branch: LoopIdentifierSchema.optional(),
+    baseBranch: LoopIdentifierSchema.optional(),
+    prScope: LoopPullRequestScopeSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("on_ci_fail"),
+    branch: LoopIdentifierSchema.optional(),
+    baseBranch: LoopIdentifierSchema.optional(),
+    checkName: LoopIdentifierSchema.optional(),
+    workflowName: LoopIdentifierSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+]) satisfies z.ZodType<ProtocolLoopTriggerSpec>;
+
+export const LoopCoordinatorConfigSchema = z.preprocess((value) => {
+  if (value === undefined) return { maxConcurrent: 2 };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return { ...record, maxConcurrent: record.maxConcurrent ?? 2 };
+}, z.strictObject({
+  maxConcurrent: z.number().int().positive().default(2),
+})) satisfies z.ZodType<ProtocolLoopCoordinatorConfig>;
+
+export const LoopProjectConfigSchema = z.preprocess((value) => {
+  if (value === undefined) return { coordinator: { maxConcurrent: 2 } };
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return { ...record, coordinator: record.coordinator ?? { maxConcurrent: 2 } };
+}, z.strictObject({
+  coordinator: LoopCoordinatorConfigSchema,
+})) satisfies z.ZodType<ProtocolLoopProjectConfig>;
 
 export const LoopRunKindSchema = z.enum(["session", "goal"]);
 export const LoopModeSchema = z.enum(["report", "act"]);
@@ -173,6 +232,67 @@ export const LoopGoalTemplateSchema = z.strictObject({
   instructions: LoopTextSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopGoalTemplate>;
 
+export const LoopCleanupStateSchema = z.enum(["not_started", "in_progress", "cleaned", "preserved", "failed", "skipped"]) satisfies z.ZodType<ProtocolLoopCleanupState>;
+
+export const LoopCleanupPolicySchema = z.strictObject({
+  deleteUnchangedWorktrees: z.boolean().optional(),
+  preserveChangedArtifacts: z.literal(true).optional(),
+  maxPreservedWorktrees: z.number().int().nonnegative().optional(),
+}) satisfies z.ZodType<ProtocolLoopCleanupPolicy>;
+
+export const LoopWorktreeArtifactSchema = z.strictObject({
+  path: LoopTextSchema,
+  status: z.enum(["observed", "unchanged", "created", "modified", "deleted"]),
+  sizeBytes: z.number().int().nonnegative().optional(),
+  sha: ShaSchema.optional(),
+}) satisfies z.ZodType<ProtocolLoopWorktreeArtifact>;
+
+export const LoopJobStatusSchema = z.enum([
+  "pending",
+  "queued",
+  "running",
+  "blocked",
+  "needs_user",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "skipped",
+  "expired",
+]) satisfies z.ZodType<ProtocolLoopJobStatus>;
+
+export const LoopJobSummarySchema = z.strictObject({
+  jobId: LoopIdentifierSchema,
+  loopId: LoopIdentifierSchema,
+  status: LoopJobStatusSchema,
+  triggerKind: z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]),
+  subjectKey: LoopIdentifierSchema,
+  dedupeKey: LoopIdentifierSchema,
+  branchKey: LoopIdentifierSchema.optional(),
+  queuedAt: TimestampMsSchema,
+  startedAt: TimestampMsSchema.optional(),
+  endedAt: TimestampMsSchema.optional(),
+  attempts: z.number().int().nonnegative(),
+  rerunAfterCurrent: z.boolean().optional(),
+  blockedReason: LoopTextSchema.optional(),
+  worktreePath: LoopTextSchema.optional(),
+  baseSha: ShaSchema.optional(),
+  resolvedHeadSha: ShaSchema.optional(),
+  missedCount: z.number().int().nonnegative().optional(),
+  cleanupState: LoopCleanupStateSchema.optional(),
+  observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
+}) satisfies z.ZodType<ProtocolLoopJobSummary>;
+
+export const LoopTriggerHealthSchema = z.strictObject({
+  triggerKind: z.enum(["on_commit", "on_pr", "on_ci_fail"]),
+  status: z.enum(["healthy", "degraded", "blocked", "disabled"]),
+  cadenceMs: TriggerCadenceMsSchema.optional(),
+  lastCheckedAt: TimestampMsSchema.optional(),
+  lastSuccessAt: TimestampMsSchema.optional(),
+  lastError: z.string().max(20_000).optional(),
+  retryAfterMs: z.number().int().positive().optional(),
+  missedCount: z.number().int().nonnegative().optional(),
+}) satisfies z.ZodType<ProtocolLoopTriggerHealth>;
+
 export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   title: LoopTitleSchema,
   description: LoopTextSchema.optional(),
@@ -188,10 +308,12 @@ export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   instructions: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateSchema.optional(),
   sourcePreset: LoopIdentifierSchema.optional(),
+  triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
+  cleanupPolicy: LoopCleanupPolicySchema.optional(),
 });
 
 export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded"]);
-export const LoopRunTriggerSchema = z.enum(["manual", "interval"]);
+export const LoopRunTriggerSchema = z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]);
 
 export const LoopRunReportSchema = z.strictObject({
   runId: LoopIdentifierSchema,
@@ -211,6 +333,18 @@ export const LoopRunReportSchema = z.strictObject({
   summary: LoopTextSchema.optional(),
   error: z.string().max(20_000).optional(),
   skippedReason: LoopTextSchema.optional(),
+  jobId: LoopIdentifierSchema.optional(),
+  triggerKind: LoopRunTriggerSchema.optional(),
+  subjectKey: LoopIdentifierSchema.optional(),
+  dedupeKey: LoopIdentifierSchema.optional(),
+  branchKey: LoopIdentifierSchema.optional(),
+  worktreePath: LoopTextSchema.optional(),
+  baseSha: ShaSchema.optional(),
+  resolvedHeadSha: ShaSchema.optional(),
+  missedCount: z.number().int().nonnegative().optional(),
+  blockedReason: LoopTextSchema.optional(),
+  cleanupState: LoopCleanupStateSchema.optional(),
+  observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
 }) satisfies z.ZodType<ProtocolLoopRunReport>;
 
 export const LoopStateSchema = z.strictObject({
@@ -230,10 +364,18 @@ export const LoopStateSchema = z.strictObject({
   latestBudget: LoopBudgetSnapshotSchema.optional(),
   latestCollisions: LoopCollisionSnapshotSchema.optional(),
   latestIntegrations: LoopIntegrationSnapshotSchema.optional(),
+  currentJob: LoopJobSummarySchema.optional(),
+  queuedJobs: z.array(LoopJobSummarySchema).max(100).optional(),
+  triggerHealth: z.array(LoopTriggerHealthSchema).max(50).optional(),
+  cleanupState: LoopCleanupStateSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopState>;
 
 export type LoopStatus = ProtocolLoopStatus;
 export type LoopScheduleSpec = ProtocolLoopScheduleSpec;
+export type LoopPullRequestScope = ProtocolLoopPullRequestScope;
+export type LoopTriggerSpec = ProtocolLoopTriggerSpec;
+export type LoopCoordinatorConfig = ProtocolLoopCoordinatorConfig;
+export type LoopProjectConfig = ProtocolLoopProjectConfig;
 export type LoopRunKind = ProtocolLoopRunKind;
 export type LoopMode = ProtocolLoopMode;
 export type LoopApprovalPolicy = ProtocolLoopApprovalPolicy;
@@ -253,6 +395,12 @@ export type LoopGoalTemplate = ProtocolLoopGoalTemplate;
 export type LoopConfig = ProtocolLoopConfig;
 export type LoopRunReportStatus = ProtocolLoopRunReportStatus;
 export type LoopRunTrigger = ProtocolLoopRunTrigger;
+export type LoopJobStatus = ProtocolLoopJobStatus;
+export type LoopJobSummary = ProtocolLoopJobSummary;
+export type LoopTriggerHealth = ProtocolLoopTriggerHealth;
+export type LoopWorktreeArtifact = ProtocolLoopWorktreeArtifact;
+export type LoopCleanupState = ProtocolLoopCleanupState;
+export type LoopCleanupPolicy = ProtocolLoopCleanupPolicy;
 export type LoopRunReport = ProtocolLoopRunReport;
 export type LoopState = ProtocolLoopState;
 
@@ -689,16 +837,12 @@ function nextRunAtFrom(schedule: LoopScheduleSpec, now: number): number | undefi
 }
 
 function generateStateSummary(config: LoopConfig): string {
-  const schedule = config.schedule.kind === "manual"
-    ? "manual"
-    : `every ${config.schedule.everyMs}ms`;
+  const schedule = scheduleSummary(config.schedule);
   return `${config.title} (${config.runKind}, ${config.mode}) scheduled ${schedule}.`;
 }
 
 function renderGeneratedStateMarkdown(state: LoopState): string {
-  const schedule = state.config.schedule.kind === "manual"
-    ? "manual"
-    : `interval every ${state.config.schedule.everyMs}ms`;
+  const schedule = scheduleSummary(state.config.schedule);
   const lines = [
     "<!-- Generated by ArchCode. Do not edit; state.json is the source of truth. -->",
     `# ${state.config.title}`,
@@ -722,6 +866,12 @@ function renderGeneratedStateMarkdown(state: LoopState): string {
   if (state.generatedStateSummary) lines.push("", state.generatedStateSummary);
 
   return `${lines.join("\n")}\n`;
+}
+
+function scheduleSummary(schedule: LoopScheduleSpec): string {
+  if (schedule.kind === "manual") return "manual";
+  if (schedule.kind === "interval") return `interval every ${schedule.everyMs}ms`;
+  return `cron ${schedule.expression}`;
 }
 
 function logError(error: unknown): { name: string; message: string } {

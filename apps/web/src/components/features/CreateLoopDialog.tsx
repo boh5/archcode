@@ -465,7 +465,7 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
 
 function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
   const budget = config.budget ?? config.limits;
-  const scheduleKind = config.schedule.kind;
+  const scheduleKind: ScheduleKind = config.schedule.kind === "interval" ? "interval" : "manual";
   const wallClockMs = "maxWallClockMsPerRun" in budget ? budget.maxWallClockMsPerRun : undefined;
   const maxTokensPerRun = "maxTokensPerRun" in budget ? budget.maxTokensPerRun : undefined;
   const maxRunsPerDay = "maxRunsPerDay" in budget ? budget.maxRunsPerDay : undefined;

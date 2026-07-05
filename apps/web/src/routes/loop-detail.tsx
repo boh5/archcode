@@ -590,7 +590,8 @@ function LinkedRunResources({
 
 function formatSchedule(schedule: LoopScheduleSpec): string {
   if (schedule.kind === "manual") return "manual";
-  return `interval ${schedule.everyMs}ms`;
+  if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
+  return `cron ${schedule.expression}`;
 }
 
 function formatLimits(config: LoopConfig): string {

@@ -8,10 +8,12 @@ import {
   CollisionTargetSchema,
   LoopBudgetConfigSchema,
   LoopConfigSchema,
+  LoopCoordinatorConfigSchema,
   LoopInvalidIdError,
   LoopPathError,
   LoopRunLogError,
   LoopRunReportSchema,
+  LoopScheduleSpecSchema,
   LoopStateManager,
   LoopStateSchema,
   LoopToolProfileIdSchema,
@@ -86,9 +88,37 @@ describe("Loop schemas", () => {
     expect(state.readinessScore).toBeUndefined();
     expect(() => LoopStateSchema.parse({ ...state, extra: true })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, goalTemplateId: "goal-1" })).toThrow();
-    expect(() => LoopConfigSchema.parse({ ...manualConfig, schedule: { kind: "cron", expression: "* * * * *" } })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, tools: ["github_get_pull_request"] })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, allowedTools: ["github_get_pull_request"] })).toThrow();
+  });
+
+  test("accepts 5-field cron schedules and rejects seconds-field cron expressions", () => {
+    expect(LoopScheduleSpecSchema.parse({ kind: "cron", expression: "*/15 * * * *" })).toEqual({
+      kind: "cron",
+      expression: "*/15 * * * *",
+    });
+    expect(() => LoopScheduleSpecSchema.parse({ kind: "cron", expression: "*/15 * * * * *" })).toThrow();
+  });
+
+  test("accepts event triggers with default cadence and rejects too-fast polling", () => {
+    const parsed = LoopConfigSchema.parse({
+      ...manualConfig,
+      schedule: { kind: "manual" },
+      triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
+    });
+    const defaultCadence = LoopConfigSchema.parse({
+      ...manualConfig,
+      triggers: [{ kind: "on_commit", branch: "main" }],
+    });
+
+    expect(parsed.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(defaultCadence.triggers).toEqual([{ kind: "on_commit", branch: "main", cadenceMs: 60_000 }]);
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000 }] })).toThrow();
+  });
+
+  test("defaults coordinator max concurrency to two", () => {
+    expect(LoopCoordinatorConfigSchema.parse({})).toEqual({ maxConcurrent: 2 });
+    expect(LoopCoordinatorConfigSchema.parse({ maxConcurrent: 4 })).toEqual({ maxConcurrent: 4 });
   });
 
   test("normalizes legacy loop limits to phase 4 budget threshold defaults", () => {
@@ -144,7 +174,11 @@ describe("Loop schemas", () => {
 
     expect(() => LoopConfigSchema.parse({ ...manualConfig, graduation: { level: "L2" } })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, noiseRate: 0.1 })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, customPatternPath: ".archcode/loops/pattern.ts" })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, readinessSignals: ["tests"] })).toThrow();
+    expect(() => LoopConfigSchema.parse({ ...manualConfig, autoApprove: true })).toThrow();
     expect(() => LoopStateSchema.parse({ ...state, readinessScore: 0.9 })).toThrow();
+    expect(() => LoopStateSchema.parse({ ...state, readinessScore: 80 })).toThrow();
     expect(() => LoopStateSchema.parse({ ...state, noiseRate: 0.1 })).toThrow();
   });
 
@@ -226,6 +260,67 @@ describe("Loop schemas", () => {
     expect(report.reason).toBe("hard_budget_exceeded");
     expect(state.config.toolProfileId).toBe("loop_github_pr_watch");
     expect(state.latestCollisions?.activeLeases[0]?.targetKey).toBe("pr:arch/code#42");
+  });
+
+  test("accepts phase 5 job, worktree, trigger health, and cleanup metadata", () => {
+    const report = LoopRunReportSchema.parse({
+      runId: "run-1",
+      loopId: VALID_LOOP_ID,
+      status: "skipped",
+      trigger: "on_pr",
+      triggerKind: "on_pr",
+      startedAt: 1_000,
+      jobId: "job-1",
+      subjectKey: "pr:arch/code#42",
+      dedupeKey: "loop:on_pr:pr:arch/code#42",
+      branchKey: "arch/code:feature",
+      worktreePath: "/tmp/worktree",
+      baseSha: "base-sha",
+      resolvedHeadSha: "head-sha",
+      missedCount: 1,
+      blockedReason: "canonical checkout is dirty",
+      cleanupState: "preserved",
+      observedArtifacts: [{ path: "report.md", status: "modified", sizeBytes: 100, sha: "abc123" }],
+    });
+    const state = LoopStateSchema.parse({
+      loopId: VALID_LOOP_ID,
+      projectId: "project-a",
+      config: {
+        ...manualConfig,
+        schedule: { kind: "cron", expression: "*/15 * * * *" },
+        triggers: [{ kind: "on_ci_fail", cadenceMs: 60_000, baseBranch: "main", workflowName: "ci" }],
+        cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
+      },
+      status: "active",
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      lastRun: report,
+      currentJob: {
+        jobId: "job-1",
+        loopId: VALID_LOOP_ID,
+        status: "blocked",
+        triggerKind: "on_pr",
+        subjectKey: "pr:arch/code#42",
+        dedupeKey: "loop:on_pr:pr:arch/code#42",
+        queuedAt: 900,
+        startedAt: 1_000,
+        attempts: 1,
+        blockedReason: "canonical checkout is dirty",
+        cleanupState: "preserved",
+        observedArtifacts: report.observedArtifacts,
+      },
+      queuedJobs: [],
+      triggerHealth: [{ triggerKind: "on_ci_fail", status: "healthy", cadenceMs: 60_000, lastCheckedAt: 1_500 }],
+      cleanupState: "preserved",
+      runCount: 1,
+      stateVersion: 1,
+    });
+
+    expect(report.trigger).toBe("on_pr");
+    expect(report.observedArtifacts?.[0]?.path).toBe("report.md");
+    expect(state.config.triggers?.[0]?.kind).toBe("on_ci_fail");
+    expect(state.currentJob?.status).toBe("blocked");
+    expect(state.triggerHealth?.[0]?.status).toBe("healthy");
   });
 });
 

@@ -23,11 +23,17 @@ import type {
   ToolAttemptEvent,
   SessionEventPayload,
   LoopConfig,
+  LoopCleanupPolicy,
+  LoopJobSummary,
+  LoopProjectConfig,
   LoopStatus,
   LoopScheduleSpec,
   LoopRunReport,
   LoopRunReportStatus,
   LoopRunTrigger,
+  LoopTriggerHealth,
+  LoopTriggerSpec,
+  LoopWorktreeArtifact,
   LoopGoalTemplate,
   LoopState,
   LoopStreamEvent,
@@ -699,36 +705,98 @@ describe("Loop types", () => {
     expect(statuses).toContain("error");
   });
 
-  test("LoopScheduleSpec accepts manual and interval", () => {
+  test("LoopScheduleSpec accepts manual, interval, and cron", () => {
     const manual: LoopScheduleSpec = { kind: "manual" };
     const interval: LoopScheduleSpec = { kind: "interval", everyMs: 60000 };
+    const cron: LoopScheduleSpec = { kind: "cron", expression: "*/15 * * * *" };
 
     expect(serializeRoundTrip(manual)).toEqual(manual);
     expect(serializeRoundTrip(interval)).toEqual(interval);
+    expect(serializeRoundTrip(cron)).toEqual(cron);
     expect(interval.everyMs).toBe(60000);
+    expect(cron.expression).toBe("*/15 * * * *");
   });
 
-  test("LoopScheduleSpec rejects cron at type level", () => {
-    // @ts-expect-error - "cron" is not a valid Phase 3 schedule kind
-    const invalid: LoopScheduleSpec = { kind: "cron", expression: "* * * * *" };
-    expect(invalid).toBeDefined();
+  test("LoopTriggerSpec accepts Phase 5 trigger filters", () => {
+    const triggers: LoopTriggerSpec[] = [
+      { kind: "on_commit", branch: "main", cadenceMs: 60000 },
+      { kind: "on_pr", baseBranch: "main", prScope: "review_requested", cadenceMs: 60000 },
+      { kind: "on_ci_fail", baseBranch: "main", checkName: "test", workflowName: "ci", cadenceMs: 60000 },
+    ];
+
+    expect(serializeRoundTrip(triggers)).toEqual(triggers);
+    expect(triggers.map((trigger) => trigger.kind)).toEqual(["on_commit", "on_pr", "on_ci_fail"]);
   });
 
   test("LoopRunReportStatus values are correct", () => {
-    const statuses: LoopRunReportStatus[] = ["running", "succeeded", "failed", "skipped", "cancelled"];
-    expect(statuses).toHaveLength(5);
+    const statuses: LoopRunReportStatus[] = ["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded"];
+    expect(statuses).toHaveLength(6);
     expect(statuses).toContain("running");
     expect(statuses).toContain("succeeded");
     expect(statuses).toContain("failed");
     expect(statuses).toContain("skipped");
     expect(statuses).toContain("cancelled");
+    expect(statuses).toContain("budget_exceeded");
   });
 
   test("LoopRunTrigger values are correct", () => {
-    const triggers: LoopRunTrigger[] = ["manual", "interval"];
-    expect(triggers).toHaveLength(2);
+    const triggers: LoopRunTrigger[] = ["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"];
+    expect(triggers).toHaveLength(6);
     expect(triggers).toContain("manual");
     expect(triggers).toContain("interval");
+    expect(triggers).toContain("cron");
+    expect(triggers).toContain("on_commit");
+    expect(triggers).toContain("on_pr");
+    expect(triggers).toContain("on_ci_fail");
+  });
+
+  test("Loop project coordinator config carries maxConcurrent", () => {
+    const projectConfig: LoopProjectConfig = { coordinator: { maxConcurrent: 2 } };
+
+    expect(serializeRoundTrip(projectConfig)).toEqual(projectConfig);
+    expect(projectConfig.coordinator.maxConcurrent).toBe(2);
+  });
+
+  test("Loop cleanup and job metadata types serialize", () => {
+    const cleanupPolicy: LoopCleanupPolicy = {
+      deleteUnchangedWorktrees: true,
+      preserveChangedArtifacts: true,
+      maxPreservedWorktrees: 5,
+    };
+    const artifact: LoopWorktreeArtifact = {
+      path: "report.md",
+      status: "modified",
+      sizeBytes: 120,
+      sha: "abc123",
+    };
+    const job: LoopJobSummary = {
+      jobId: "job-1",
+      loopId: "loop-1",
+      status: "blocked",
+      triggerKind: "on_pr",
+      subjectKey: "pr:archcode/workbench#42",
+      dedupeKey: "loop-1:on_pr:pr:archcode/workbench#42",
+      branchKey: "archcode/workbench:feature",
+      queuedAt: 1000,
+      attempts: 1,
+      blockedReason: "needs_user",
+      worktreePath: "/tmp/worktree",
+      baseSha: "base",
+      resolvedHeadSha: "head",
+      cleanupState: "preserved",
+      observedArtifacts: [artifact],
+    };
+    const health: LoopTriggerHealth = {
+      triggerKind: "on_ci_fail",
+      status: "healthy",
+      cadenceMs: 60000,
+      lastCheckedAt: 2000,
+      missedCount: 0,
+    };
+
+    expect(serializeRoundTrip(cleanupPolicy)).toEqual(cleanupPolicy);
+    expect(serializeRoundTrip(job).observedArtifacts).toEqual([artifact]);
+    expect(serializeRoundTrip(health)).toEqual(health);
   });
 
   test("LoopRunReport serializes round-trip", () => {
@@ -741,6 +809,17 @@ describe("Loop types", () => {
       endedAt: 2000,
       sessionId: "session-1",
       summary: "Completed successfully",
+      jobId: "job-1",
+      triggerKind: "cron",
+      subjectKey: "cron:1000",
+      dedupeKey: "loop-1:cron:cron:1000",
+      branchKey: "archcode/workbench:main",
+      worktreePath: "/tmp/worktree",
+      baseSha: "base",
+      resolvedHeadSha: "head",
+      missedCount: 1,
+      cleanupState: "cleaned",
+      observedArtifacts: [{ path: "report.md", status: "observed" }],
     };
 
     const parsed = serializeRoundTrip(report);
@@ -748,6 +827,8 @@ describe("Loop types", () => {
     expect(parsed.status).toBe("succeeded");
     expect(parsed.trigger).toBe("manual");
     expect(parsed.sessionId).toBe("session-1");
+    expect(parsed.jobId).toBe("job-1");
+    expect(parsed.observedArtifacts).toEqual([{ path: "report.md", status: "observed" }]);
   });
 
   test("LoopRunReport with error and skippedReason serializes", () => {
@@ -843,10 +924,20 @@ describe("Loop types", () => {
     expect(parsed.goalTemplate!.title).toBe("Draft changelog");
   });
 
-  test("LoopConfig rejects cron schedule at type level", () => {
-    // @ts-expect-error - "cron" is not a valid Phase 3 schedule kind
-    const invalid: LoopConfig = { title: "t", schedule: { kind: "cron", expression: "* * * * *" }, runKind: "session", mode: "report", approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 } };
-    expect(invalid).toBeDefined();
+  test("LoopConfig accepts cron, triggers, and cleanup policy", () => {
+    const config: LoopConfig = {
+      title: "PR watcher",
+      schedule: { kind: "cron", expression: "*/15 * * * *" },
+      runKind: "session",
+      mode: "report",
+      approvalPolicy: "interactive",
+      limits: { maxIterationsPerRun: 1 },
+      triggers: [{ kind: "on_pr", cadenceMs: 60000, baseBranch: "main" }],
+      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
+    };
+
+    expect(serializeRoundTrip(config)).toEqual(config);
+    expect(config.triggers?.[0]?.kind).toBe("on_pr");
   });
 
   test("LoopConfig rejects goalTemplateId at type level", () => {
@@ -917,6 +1008,20 @@ describe("Loop types", () => {
       runCount: 1,
       stateVersion: 2,
       generatedStateSummary: "Loop has run 1 time(s). Last run: succeeded.",
+      currentJob: {
+        jobId: "job-2",
+        loopId: "loop-1",
+        status: "running",
+        triggerKind: "interval",
+        subjectKey: "interval:4000",
+        dedupeKey: "loop-1:interval:interval:4000",
+        queuedAt: 3500,
+        startedAt: 4000,
+        attempts: 1,
+      },
+      queuedJobs: [],
+      triggerHealth: [{ triggerKind: "on_pr", status: "healthy", cadenceMs: 60000 }],
+      cleanupState: "not_started",
     };
 
     const parsed = serializeRoundTrip(state);
@@ -926,6 +1031,8 @@ describe("Loop types", () => {
     expect(parsed.nextRunAt).toBe(10000);
     expect(parsed.runCount).toBe(1);
     expect(parsed.generatedStateSummary).toContain("succeeded");
+    expect(parsed.currentJob?.jobId).toBe("job-2");
+    expect(parsed.triggerHealth?.[0]?.triggerKind).toBe("on_pr");
   });
 
   test("LoopStreamEvent types are serializable", () => {
