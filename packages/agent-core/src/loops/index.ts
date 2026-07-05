@@ -7,3 +7,5 @@ export * from "./kill-state";
 export * from "./collision-ledger";
 export * from "./tool-target-extractors";
 export * from "./collision-tool-guard";
+export * from "./job-queue";
+export * from "./coordinator";

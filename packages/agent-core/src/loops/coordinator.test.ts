@@ -1,0 +1,124 @@
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { LoopJobCoordinator } from "./coordinator";
+import { LoopJobQueue, LoopJobQueueFileSchema } from "./job-queue";
+import { FakeClock } from "./test-utils";
+
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-coordinator");
+const LOOP_ID = "0a81a593-5d3f-4a6f-a286-f7e08a64a90d";
+
+beforeEach(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+  await mkdir(TMP_DIR, { recursive: true });
+});
+
+afterAll(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+});
+
+describe("LoopJobCoordinator", () => {
+  test("dispatches exactly maxConcurrent non-conflicting jobs", async () => {
+    const clock = new FakeClock(1_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    await enqueueBranch(queue, "one", 1);
+    await enqueueBranch(queue, "two", 2);
+    await enqueueBranch(queue, "three", 3);
+    const coordinator = new LoopJobCoordinator({ queue, clock });
+
+    const started = await coordinator.dispatchReady();
+    const statuses = (await queue.list()).map((job) => job.status);
+
+    expect(coordinator.maxConcurrent).toBe(2);
+    expect(started).toHaveLength(2);
+    expect(statuses.filter((status) => status === "running")).toHaveLength(2);
+    expect(statuses.filter((status) => status === "pending")).toHaveLength(1);
+  });
+
+  test("serializes jobs with the same branchKey even when capacity is free", async () => {
+    const clock = new FakeClock(2_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    await enqueueBranch(queue, "same", 1, "archcode/workbench:feature/shared");
+    clock.set(2_001);
+    await enqueueBranch(queue, "same-again", 2, "archcode/workbench:feature/shared");
+    clock.set(2_002);
+    await enqueueBranch(queue, "other", 3, "archcode/workbench:feature/other");
+    const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 3 } });
+
+    const started = await coordinator.dispatchReady();
+    const running = await queue.list(["running"]);
+
+    expect(started.map((job) => job.subjectKey)).toEqual(["branch:same", "branch:other"]);
+    expect(running.map((job) => job.branchKey)).toEqual(["archcode/workbench:feature/shared", "archcode/workbench:feature/other"]);
+    expect((await queue.list(["pending"])).map((job) => job.subjectKey)).toEqual(["branch:same-again"]);
+  });
+
+  test("preserves FIFO order within the same priority after higher priority jobs", async () => {
+    const clock = new FakeClock(3_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    await enqueueBranch(queue, "low", 1, undefined, 1);
+    clock.set(3_100);
+    await enqueueBranch(queue, "high-first", 2, undefined, 10);
+    clock.set(3_200);
+    await enqueueBranch(queue, "high-second", 3, undefined, 10);
+    const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 } });
+
+    expect((await coordinator.dispatchReady()).map((job) => job.subjectKey)).toEqual(["branch:high-first"]);
+    await coordinator.finish((await queue.list(["running"]))[0]!.jobId, { status: "succeeded" });
+    expect((await coordinator.dispatchReady()).map((job) => job.subjectKey)).toEqual(["branch:high-second"]);
+    await coordinator.finish((await queue.list(["running"]))[0]!.jobId, { status: "succeeded" });
+    expect((await coordinator.dispatchReady()).map((job) => job.subjectKey)).toEqual(["branch:low"]);
+  });
+
+  test("recovers stale running jobs on startup and clears stuck serialization", async () => {
+    const clock = new FakeClock(4_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    await enqueueBranch(queue, "stale", 1, "archcode/workbench:feature/stale");
+    const firstCoordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 }, leaseTtlMs: 100 });
+    const [started] = await firstCoordinator.dispatchReady();
+    expect(started?.status).toBe("running");
+
+    clock.set(4_101);
+    const restartedQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const restartedCoordinator = new LoopJobCoordinator({ queue: restartedQueue, clock, config: { maxConcurrent: 1 }, leaseTtlMs: 100 });
+
+    const recovered = await restartedCoordinator.start();
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ status: "pending", branchKey: "archcode/workbench:feature/stale" });
+    expect(recovered[0]?.leaseExpiresAt).toBeUndefined();
+
+    const [redispatched] = await restartedCoordinator.dispatchReady();
+    expect(redispatched).toMatchObject({ status: "running", branchKey: "archcode/workbench:feature/stale" });
+
+    const parsed = LoopJobQueueFileSchema.parse(JSON.parse(await Bun.file(await restartedQueue.queuePath()).text()));
+    expect(parsed.jobs[0]?.status).toBe("running");
+  });
+
+  test("finishes a running duplicate by creating one pending rerun", async () => {
+    const clock = new FakeClock(5_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    await enqueueBranch(queue, "rerun", 1);
+    const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 } });
+    const [running] = await coordinator.dispatchReady();
+    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_commit", subjectKey: "branch:rerun", eventSummary: { summary: "new commit while running" } });
+
+    await coordinator.finish(running!.jobId, { status: "succeeded" });
+
+    const jobs = await queue.list();
+    expect(jobs.map((job) => job.status)).toEqual(["succeeded", "pending"]);
+    expect(jobs[1]?.dedupeKey).toBe(jobs[0]?.dedupeKey);
+  });
+});
+
+async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, branchKey?: string, priority = 0): Promise<void> {
+  await queue.enqueue({
+    loopId: LOOP_ID,
+    triggerKind: "on_commit",
+    subjectKey: `branch:${name}`,
+    branchKey: branchKey ?? `archcode/workbench:feature/${name}`,
+    collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: `feature/${name}` },
+    priority,
+    eventSummary: { summary: `commit ${index}` },
+  });
+}
