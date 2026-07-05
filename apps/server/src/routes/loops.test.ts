@@ -10,7 +10,7 @@ import {
   type LoopConfig,
   type LoopRunReport,
 } from "@archcode/agent-core";
-import type { LoopState } from "@archcode/protocol";
+import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopState } from "@archcode/protocol";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "loops-routes");
@@ -234,6 +234,80 @@ describe("loops routes", () => {
     expect(resumed.loop.nextRunAt).toBe(81_000);
   });
 
+  test("cancels current run through project-scoped endpoint", async () => {
+    const { app, project, runtime } = await createTestApp("cancel-current-run", { holdRunsOpen: true });
+    const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
+
+    const firstTrigger = app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/trigger`, { method: "POST" });
+    await runtime.waitForActiveRun();
+
+    const cancelRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/runs/current/cancel`, { method: "POST" });
+    const cancelBody = await cancelRes.json() as { ok: true; loopId: string; runId: string; status: string; reason: string; report: LoopRunReport };
+
+    expect(cancelRes.status).toBe(200);
+    expect(cancelBody).toMatchObject({ ok: true, loopId: loop.loopId, runId: "run-1", status: "cancelled", reason: "cancelled_by_user" });
+    expect(cancelBody.report).toMatchObject({ runId: "run-1", loopId: loop.loopId, status: "cancelled", reason: "cancelled_by_user" });
+
+    runtime.releaseActiveRun();
+    expect((await (await firstTrigger).json() as { report: LoopRunReport }).report.status).toBe("cancelled");
+  });
+
+  test("reads and toggles global kill state and blocks manual trigger with structured reason", async () => {
+    const { app, project } = await createTestApp("global-kill-routes");
+    const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
+
+    const initialRes = await app.request(`/api/projects/${project.slug}/loops/kill-state`);
+    expect(initialRes.status).toBe(200);
+    expect(await initialRes.json()).toEqual({ killState: { globalKillActive: false } });
+
+    const activateRes = await app.request(`/api/projects/${project.slug}/loops/kill-all`, {
+      method: "POST",
+      body: JSON.stringify({ activatedBy: "tester", reason: "maintenance" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(activateRes.status).toBe(200);
+    expect(await activateRes.json()).toEqual({ killState: { globalKillActive: true, activatedAt: 1_000, activatedBy: "tester", reason: "maintenance" } });
+
+    const triggerRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/trigger`, { method: "POST" });
+    expect(triggerRes.status).toBe(409);
+    expect(await triggerRes.json()).toMatchObject({
+      error: {
+        code: "LOOP_ACTIVE_CONFLICT",
+        details: { loopId: loop.loopId, trigger: "manual", reason: "global_kill_active", report: { status: "skipped", reason: "global_kill_active" } },
+      },
+    });
+
+    const clearRes = await app.request(`/api/projects/${project.slug}/loops/kill-all`, { method: "DELETE" });
+    expect(clearRes.status).toBe(200);
+    expect(await clearRes.json()).toEqual({ killState: { globalKillActive: false } });
+  });
+
+  test("reads budget collision and integration snapshots without leaking secrets", async () => {
+    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-4-status-snapshots");
+    const loop = await createLoop(app, project.slug, {
+      ...manualSessionLoopConfig,
+      toolProfileId: "loop_github_pr_watch",
+      collisionTargets: [{ type: "pr", owner: "archcode", repo: "workbench", number: 42 }],
+    });
+    await runtime.seedLoopSnapshots(workspaceRoot, loop.loopId);
+
+    const budgetRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/budget`);
+    expect(budgetRes.status).toBe(200);
+    expect(await budgetRes.json()).toEqual({ loopId: loop.loopId, budget: seededBudgetSnapshot() });
+
+    const collisionsRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/collisions`);
+    expect(collisionsRes.status).toBe(200);
+    expect(await collisionsRes.json()).toEqual({ loopId: loop.loopId, collisions: seededCollisionSnapshot(loop.loopId) });
+
+    const integrationsRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/integrations`);
+    expect(integrationsRes.status).toBe(200);
+    const integrationsBody = await integrationsRes.json() as { loopId: string; integrations: { statuses: Array<{ status: string; message?: string }>; snapshot: LoopIntegrationSnapshot } };
+    expect(integrationsBody.loopId).toBe(loop.loopId);
+    expect(integrationsBody.integrations.statuses).toContainEqual(expect.objectContaining({ status: "auth_missing", reason: "integration_auth_missing" }));
+    expect(JSON.stringify(integrationsBody)).not.toContain("ghp_secret_route_token");
+    expect(integrationsBody.integrations.snapshot.errors[0]?.message).toContain("[REDACTED:SECRET]");
+  });
+
   test("patch update, run reports, generated state, and invalid paths use stable JSON shapes", async () => {
     const { app, project } = await createTestApp("patch-log-state");
     const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
@@ -285,6 +359,57 @@ async function createLoop(app: ReturnType<typeof createServerApp>["app"], slug: 
   return (await res.json() as { loop: LoopState }).loop;
 }
 
+function seededBudgetSnapshot(): LoopBudgetSnapshot {
+  return {
+    budget: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+    usage: {
+      iterations: 1,
+      inputTokens: 100,
+      outputTokens: 50,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 150,
+      wallClockMs: 500,
+      runsToday: 1,
+      resetDateUtc: "2026-07-05",
+      pricingUnavailable: true,
+    },
+    updatedAt: 2_000,
+  };
+}
+
+function seededCollisionSnapshot(loopId: string): LoopCollisionSnapshot {
+  const target = { type: "pr", owner: "archcode", repo: "workbench", number: 42 } as const;
+  const lease = {
+    targetKey: "github:archcode/workbench:pr:42",
+    target,
+    loopId,
+    runId: "run-collision",
+    actionId: "loop:manual",
+    priority: 0,
+    createdAt: 1_500,
+    expiresAt: 61_500,
+  };
+  return {
+    targets: [target],
+    activeLeases: [lease],
+    conflicts: [{ targetKey: lease.targetKey, target, conflictingLease: lease, detectedAt: 1_750 }],
+    updatedAt: 2_000,
+  };
+}
+
+function seededIntegrationSnapshot(): LoopIntegrationSnapshot {
+  return {
+    errors: [{
+      integrationId: "github",
+      reason: "integration_auth_missing",
+      message: "Missing token ghp_secret_route_token",
+      occurredAt: 2_000,
+    }],
+    updatedAt: 2_000,
+  };
+}
+
 async function createTestApp(testName: string, options: { now?: number; holdRunsOpen?: boolean } = {}) {
   const homeDir = resolve(tempRoot, "homes", testName);
   const workspaceRoot = resolve(tempRoot, "workspaces", testName);
@@ -307,6 +432,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   waitForActiveRun(): Promise<void>;
   releaseActiveRun(): void;
   createLoopRunCount(): number;
+  seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
 } {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
   let now = options.now ?? 1_000;
@@ -317,6 +443,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     activeRunStarted = resolveStarted;
   });
   let releaseActiveRun: (() => void) | undefined;
+  let killState: { globalKillActive: boolean; activatedAt?: number; activatedBy?: string; reason?: string } = { globalKillActive: false };
 
   const runtime = {
     projectRegistry,
@@ -374,6 +501,18 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     triggerLoopRun: mock(async (workspaceRoot: string, loopId: string) => {
       const context = await contextResolver.resolve(workspaceRoot);
       const loop = await context.loopState.read(loopId);
+      if (killState.globalKillActive) {
+        return await context.loopState.appendRunReport(loopId, {
+          runId: `run-${runSequence + 1}-skipped`,
+          loopId,
+          status: "skipped",
+          trigger: "manual",
+          startedAt: now,
+          endedAt: now,
+          reason: "global_kill_active",
+          skippedReason: "Global Loop kill switch is active; skipped trigger.",
+        });
+      }
       const existing = activeRuns.get(loopId);
       if (existing !== undefined) throw new LoopActiveConflictError(loopId, "manual", existing.runId, existing.sessionId);
 
@@ -393,6 +532,16 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       }
 
       now += 1;
+      const latest = await context.loopState.read(loopId);
+      if (latest.lastRun?.runId === runId && latest.lastRun.status === "cancelled") {
+        activeRuns.delete(loopId);
+        activeRunStartedPromise = new Promise<void>((resolveStarted) => {
+          activeRunStarted = resolveStarted;
+        });
+        releaseActiveRun = undefined;
+        return latest.lastRun;
+      }
+
       const finished: LoopRunReport = {
         ...runningReport,
         status: "succeeded",
@@ -411,6 +560,48 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         releaseActiveRun = undefined;
       }
     }),
+    readLoopKillState: mock(async () => killState),
+    cancelLoopCurrentRun: mock(async (workspaceRoot: string, loopId: string) => {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const loop = await context.loopState.read(loopId);
+      const running = loop.currentRun?.status === "running" ? loop.currentRun : undefined;
+      if (running === undefined) return undefined;
+      const report: LoopRunReport = { ...running, status: "cancelled", endedAt: now, reason: "cancelled_by_user" };
+      await context.loopState.recordRunFinish(loopId, report);
+      activeRuns.delete(loopId);
+      return report;
+    }),
+    cancelCurrentLoopRun: mock(async (workspaceRoot: string, loopId: string) => runtime.cancelLoopCurrentRun(workspaceRoot, loopId)),
+    activateLoopGlobalKill: mock(async (_workspaceRoot: string, input?: { activatedAt?: number; activatedBy?: string; reason?: string }) => {
+      killState = {
+        globalKillActive: true,
+        activatedAt: input?.activatedAt ?? now,
+        ...(input?.activatedBy === undefined ? {} : { activatedBy: input.activatedBy }),
+        ...(input?.reason === undefined ? {} : { reason: input.reason }),
+      };
+      return killState;
+    }),
+    clearLoopGlobalKill: mock(async () => {
+      killState = { globalKillActive: false };
+      return killState;
+    }),
+    readLoopBudget: mock(async (workspaceRoot: string, loopId: string) => (await contextResolver.resolve(workspaceRoot)).loopState.read(loopId).then((loop) => loop.latestBudget ?? null)),
+    readLoopCollisions: mock(async (workspaceRoot: string, loopId: string) => {
+      const loop = await (await contextResolver.resolve(workspaceRoot)).loopState.read(loopId);
+      return loop.latestCollisions ?? { targets: loop.config.collisionTargets ?? [], activeLeases: [], conflicts: [], updatedAt: loop.updatedAt };
+    }),
+    readLoopIntegrationStatus: mock(async (workspaceRoot: string, loopId: string) => {
+      const loop = await (await contextResolver.resolve(workspaceRoot)).loopState.read(loopId);
+      const snapshot = loop.latestIntegrations ?? null;
+      return {
+        statuses: [{ integrationId: "github", status: "auth_missing", reason: "integration_auth_missing", message: "Missing GitHub token", updatedAt: loop.updatedAt }],
+        snapshot: snapshot === null ? null : {
+          ...snapshot,
+          errors: snapshot.errors.map((error) => ({ ...error, message: error.message.replace("ghp_secret_route_token", "[REDACTED:SECRET]") })),
+        },
+        updatedAt: Math.max(loop.updatedAt, snapshot?.updatedAt ?? 0),
+      };
+    }),
     readLoopRunLog: mock(async (workspaceRoot: string, loopId: string, limit?: number) => (await contextResolver.resolve(workspaceRoot)).loopState.readRunLog(loopId, limit)),
     readLoopStateMarkdown: mock(async (workspaceRoot: string, loopId: string) => (await contextResolver.resolve(workspaceRoot)).loopState.readGeneratedStateMarkdown(loopId)),
     startLoopSchedulers: mock(async () => undefined),
@@ -423,11 +614,18 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       releaseActiveRun?.();
     },
     createLoopRunCount: () => runSequence,
+    async seedLoopSnapshots(workspaceRoot: string, loopId: string) {
+      const context = await contextResolver.resolve(workspaceRoot);
+      await context.loopState.updateBudgetSnapshot(loopId, seededBudgetSnapshot());
+      await context.loopState.updateCollisionSnapshot(loopId, seededCollisionSnapshot(loopId));
+      await context.loopState.updateIntegrationSnapshot(loopId, seededIntegrationSnapshot());
+    },
   } as unknown as AgentRuntime & {
     setNow(value: number): void;
     waitForActiveRun(): Promise<void>;
     releaseActiveRun(): void;
     createLoopRunCount(): number;
+    seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
   };
 
   return runtime;

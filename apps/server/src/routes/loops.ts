@@ -33,6 +33,11 @@ const PatchLoopBodySchema = z.strictObject({
   status: z.enum(["active", "paused", "disabled", "error"]).optional(),
 });
 
+const ActivateKillBodySchema = z.strictObject({
+  activatedBy: z.string().trim().min(1).max(200).optional(),
+  reason: z.string().trim().min(1).max(20_000).optional(),
+});
+
 type CreateLoopBody = z.infer<typeof CreateLoopBodySchema>;
 type PatchLoopBody = z.infer<typeof PatchLoopBodySchema>;
 
@@ -56,6 +61,37 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     try {
       const loop = await runtime.createLoop(project.workspaceRoot, config, body.author);
       return c.json({ loop }, 201);
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.get("/:slug/loops/kill-state", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+
+    try {
+      return c.json({ killState: await runtime.readLoopKillState(project.workspaceRoot) });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.post("/:slug/loops/kill-all", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const body = await readOptionalJsonBody(c.req.text(), ActivateKillBodySchema);
+
+    try {
+      return c.json({ killState: await runtime.activateLoopGlobalKill(project.workspaceRoot, body) });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.delete("/:slug/loops/kill-all", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+
+    try {
+      return c.json({ killState: await runtime.clearLoopGlobalKill(project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -94,7 +130,28 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 
     try {
       const report = await runtime.triggerLoopRun(project.workspaceRoot, loopId);
+      if (report?.reason === "global_kill_active") {
+        throw new ServerError("LOOP_ACTIVE_CONFLICT", "Global Loop kill switch is active; manual trigger blocked.", 409, {
+          loopId,
+          trigger: "manual",
+          reason: "global_kill_active",
+          report,
+        });
+      }
       return c.json({ report: report ?? null });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.post("/:slug/loops/:loopId/runs/current/cancel", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const loopId = requiredLoopId(c.req.param("loopId"));
+
+    try {
+      const report = await runtime.cancelLoopCurrentRun(project.workspaceRoot, loopId);
+      if (report === undefined) return c.json({ ok: true, loopId, runId: null, status: "not_running" });
+      return c.json({ ok: true, loopId, runId: report.runId, status: report.status, reason: report.reason, report });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -129,6 +186,39 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 
     try {
       return c.json({ runs: await runtime.readLoopRunLog(project.workspaceRoot, loopId, limit) });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.get("/:slug/loops/:loopId/budget", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const loopId = requiredLoopId(c.req.param("loopId"));
+
+    try {
+      return c.json({ loopId, budget: await runtime.readLoopBudget(project.workspaceRoot, loopId) });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.get("/:slug/loops/:loopId/collisions", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const loopId = requiredLoopId(c.req.param("loopId"));
+
+    try {
+      return c.json({ loopId, collisions: await runtime.readLoopCollisions(project.workspaceRoot, loopId) });
+    } catch (error) {
+      throw mapLoopError(error);
+    }
+  });
+
+  app.get("/:slug/loops/:loopId/integrations", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const loopId = requiredLoopId(c.req.param("loopId"));
+
+    try {
+      return c.json({ loopId, integrations: await runtime.readLoopIntegrationStatus(project.workspaceRoot, loopId) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -201,6 +291,24 @@ async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unkno
   let body: unknown;
   try {
     body = await bodyPromise;
+  } catch {
+    throw new BadRequestError("Request body must be valid JSON");
+  }
+
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
+  }
+  return result.data;
+}
+
+async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<string>, schema: Schema): Promise<z.infer<Schema>> {
+  const text = await bodyPromise;
+  if (text.trim().length === 0) return schema.parse({});
+
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
   } catch {
     throw new BadRequestError("Request body must be valid JSON");
   }
