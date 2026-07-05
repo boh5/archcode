@@ -13,3 +13,4 @@ export * from "./worktree-manager";
 export * from "./cron-adapter";
 export * from "./poll-state";
 export * from "./triggers";
+export * from "./cleanup";
