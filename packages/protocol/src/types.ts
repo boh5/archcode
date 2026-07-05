@@ -1234,7 +1234,7 @@ export interface LoopJobSummary {
 }
 
 export interface LoopTriggerHealth {
-  triggerKind: LoopTriggerSpec["kind"];
+  triggerKind: LoopRunTrigger;
   status: "healthy" | "degraded" | "blocked" | "disabled";
   cadenceMs?: number;
   lastCheckedAt?: number;
@@ -1286,6 +1286,10 @@ export interface LoopState {
   lastRun?: LoopRunReport;
   currentRun?: LoopRunReport;
   nextRunAt?: number;
+  lastScheduledAt?: number;
+  nextScheduledAt?: number;
+  lastEnqueuedAt?: number;
+  missedCount?: number;
   runCount: number;
   stateVersion: number;
   generatedStateSummary?: string;

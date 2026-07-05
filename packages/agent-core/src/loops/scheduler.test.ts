@@ -2,6 +2,8 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import { FakeCronAdapter } from "./cron-adapter";
+import { LoopJobQueue } from "./job-queue";
 import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
@@ -26,6 +28,12 @@ const intervalConfig: LoopConfig = {
   ...manualConfig,
   title: "Interval loop",
   schedule: { kind: "interval", everyMs: 100 },
+};
+
+const cronConfig: LoopConfig = {
+  ...manualConfig,
+  title: "Cron loop",
+  schedule: { kind: "cron", expression: "*/15 * * * *" },
 };
 
 beforeEach(async () => {
@@ -491,13 +499,106 @@ describe("LoopScheduler", () => {
 
     expect(fixture.runs).toEqual([]);
   });
+
+  test("schedules cron loops through durable queue without running loop work in callback", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0));
+    const loop = await fixture.manager.create("project-a", cronConfig);
+
+    await fixture.scheduler.start("project-a");
+
+    expect(fixture.cron.size()).toBe(1);
+    expect((await fixture.manager.read(loop.loopId)).nextScheduledAt).toBe(Date.UTC(2026, 0, 1, 0, 15, 0));
+
+    await fixture.cron.fire(fixture.cron.handles()[0]!, Date.UTC(2026, 0, 1, 0, 15, 0));
+
+    const jobs = await fixture.jobQueue.list();
+    const state = await fixture.manager.read(loop.loopId);
+    expect(fixture.runs).toEqual([]);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      loopId: loop.loopId,
+      status: "pending",
+      triggerKind: "cron",
+      subjectKey: `cron:${Date.UTC(2026, 0, 1, 0, 15, 0)}`,
+      missedCount: 0,
+    });
+    expect(state).toMatchObject({
+      lastScheduledAt: Date.UTC(2026, 0, 1, 0, 15, 0),
+      lastEnqueuedAt: Date.UTC(2026, 0, 1, 0, 15, 0),
+      nextScheduledAt: Date.UTC(2026, 0, 1, 0, 30, 0),
+      missedCount: 0,
+    });
+    expect(state.triggerHealth?.find((entry) => entry.triggerKind === "cron")).toMatchObject({ status: "healthy" });
+  });
+
+  test("cron restart catch-up enqueues only the latest missed scheduled time", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 1, 1, 0));
+    const loop = await fixture.manager.create("project-a", cronConfig);
+    await fixture.manager.update(loop.loopId, {
+      nextScheduledAt: Date.UTC(2026, 0, 1, 0, 15, 0),
+      nextRunAt: Date.UTC(2026, 0, 1, 0, 15, 0),
+    });
+
+    await fixture.scheduler.start("project-a");
+
+    const jobs = await fixture.jobQueue.list();
+    const state = await fixture.manager.read(loop.loopId);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      status: "pending",
+      triggerKind: "cron",
+      subjectKey: `cron:${Date.UTC(2026, 0, 1, 1, 0, 0)}`,
+      missedCount: 4,
+    });
+    expect(state).toMatchObject({
+      lastScheduledAt: Date.UTC(2026, 0, 1, 1, 0, 0),
+      lastEnqueuedAt: Date.UTC(2026, 0, 1, 1, 0, 0),
+      nextScheduledAt: Date.UTC(2026, 0, 1, 1, 15, 0),
+      missedCount: 4,
+    });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("invalid cron expression records disabled trigger health and does not register cron", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0));
+    const loop = await fixture.manager.create("project-a", {
+      ...cronConfig,
+      schedule: { kind: "cron", expression: "0 0 30 2 *" },
+    });
+
+    await fixture.scheduler.start("project-a");
+
+    const state = await fixture.manager.read(loop.loopId);
+    expect(fixture.cron.size()).toBe(0);
+    expect(state.triggerHealth?.find((entry) => entry.triggerKind === "cron")).toMatchObject({
+      status: "disabled",
+      lastError: expect.stringMatching(/no future UTC occurrence/i),
+    });
+  });
+
+  test("cron handler rejection is caught and recorded as scheduler health", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0), { maxJobs: 0 });
+    const loop = await fixture.manager.create("project-a", cronConfig);
+
+    await fixture.scheduler.start("project-a");
+    await fixture.cron.fire(fixture.cron.handles()[0]!, Date.UTC(2026, 0, 1, 0, 15, 0));
+
+    const state = await fixture.manager.read(loop.loopId);
+    expect(fixture.runs).toEqual([]);
+    expect(state.triggerHealth?.find((entry) => entry.triggerKind === "cron")).toMatchObject({
+      status: "degraded",
+      lastError: expect.stringMatching(/maxJobs/i),
+    });
+  });
 });
 
-async function createFixture(now: number = 0): Promise<{
+async function createFixture(now: number = 0, options: { maxJobs?: number } = {}): Promise<{
   manager: LoopStateManager;
   scheduler: LoopScheduler;
   clock: FakeClock;
   timer: FakeTimer;
+  cron: FakeCronAdapter;
+  jobQueue: LoopJobQueue;
   killStateManager: LoopKillStateManager;
   budgetLedger: LoopBudgetLedger;
   collisionLedger: CollisionLedger;
@@ -508,6 +609,8 @@ async function createFixture(now: number = 0): Promise<{
   const manager = new LoopStateManager(TMP_DIR);
   const clock = new FakeClock(now);
   const timer = new FakeTimer(clock);
+  const cron = new FakeCronAdapter();
+  const jobQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock, maxJobs: options.maxJobs });
   const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
   const budgetLedger = new LoopBudgetLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock });
   const collisionLedger = new CollisionLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
@@ -518,6 +621,8 @@ async function createFixture(now: number = 0): Promise<{
     scheduler: undefined as unknown as LoopScheduler,
     clock,
     timer,
+    cron,
+    jobQueue,
     killStateManager,
     budgetLedger,
     collisionLedger,
@@ -529,6 +634,8 @@ async function createFixture(now: number = 0): Promise<{
     stateManager: manager,
         clock,
         timer,
+        cronAdapter: cron,
+        jobQueue,
         budgetLedger,
         collisionLedger,
         killStateManager,

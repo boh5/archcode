@@ -283,7 +283,7 @@ export const LoopJobSummarySchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolLoopJobSummary>;
 
 export const LoopTriggerHealthSchema = z.strictObject({
-  triggerKind: z.enum(["on_commit", "on_pr", "on_ci_fail"]),
+  triggerKind: z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]),
   status: z.enum(["healthy", "degraded", "blocked", "disabled"]),
   cadenceMs: TriggerCadenceMsSchema.optional(),
   lastCheckedAt: TimestampMsSchema.optional(),
@@ -357,6 +357,10 @@ export const LoopStateSchema = z.strictObject({
   lastRun: LoopRunReportSchema.optional(),
   currentRun: LoopRunReportSchema.optional(),
   nextRunAt: TimestampMsSchema.optional(),
+  lastScheduledAt: TimestampMsSchema.optional(),
+  nextScheduledAt: TimestampMsSchema.optional(),
+  lastEnqueuedAt: TimestampMsSchema.optional(),
+  missedCount: z.number().int().nonnegative().optional(),
   runCount: z.number().int().nonnegative(),
   stateVersion: z.number().int().positive(),
   generatedStateSummary: z.string().max(20_000).optional(),
@@ -408,6 +412,11 @@ export type LoopUpdateInput = Partial<Pick<LoopState,
   | "config"
   | "status"
   | "nextRunAt"
+  | "lastScheduledAt"
+  | "nextScheduledAt"
+  | "lastEnqueuedAt"
+  | "missedCount"
+  | "triggerHealth"
   | "generatedStateSummary"
 >>;
 
@@ -832,6 +841,13 @@ function isContained(resolvedPath: string, root: string): boolean {
 }
 
 function nextRunAtFrom(schedule: LoopScheduleSpec, now: number): number | undefined {
+  if (schedule.kind === "cron") {
+    try {
+      return Bun.cron.parse(schedule.expression, new Date(now))?.getTime();
+    } catch {
+      return undefined;
+    }
+  }
   if (schedule.kind !== "interval") return undefined;
   return now + schedule.everyMs;
 }

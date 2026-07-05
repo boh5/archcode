@@ -45,6 +45,7 @@ import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
 import { CollisionLedger } from "./loops/collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
+import { LoopJobQueue } from "./loops/job-queue";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
@@ -360,6 +361,10 @@ export async function createRuntime(
         workspaceRoot,
         clock: schedulerClock,
       });
+      const jobQueue = new LoopJobQueue({
+        workspaceRoot,
+        clock: schedulerClock,
+      });
       const runner = await createLoopRunner(workspaceRoot, collisionLedger);
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
@@ -368,6 +373,7 @@ export async function createRuntime(
         ...(options.loopSchedulerTimer === undefined ? {} : { timer: options.loopSchedulerTimer }),
         budgetLedger,
         collisionLedger,
+        jobQueue,
         killStateManager: new LoopKillStateManager(workspaceRoot, {
           clock: schedulerClock,
           logger: runtimeLogger.child({ module: "loops.kill-state" }),

@@ -2,9 +2,11 @@ import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
+import { BunCronAdapter, type CronAdapter, type CronAdapterHandle } from "./cron-adapter";
+import { LoopJobQueue } from "./job-queue";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
-import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopIntegrationError, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState } from "./state";
+import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopIntegrationError, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopTriggerHealth } from "./state";
 import { LoopStateManager } from "./state";
 
 export interface LoopSchedulerClock {
@@ -54,9 +56,11 @@ export interface LoopSchedulerOptions {
   readonly timer?: LoopSchedulerTimer;
   readonly budgetLedger?: LoopBudgetLedger;
   readonly collisionLedger?: CollisionLedger;
+  readonly jobQueue?: LoopJobQueue;
   readonly killStateManager?: LoopKillStateManager;
   readonly abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly logger?: Logger;
+  readonly cronAdapter?: CronAdapter;
 }
 
 const systemClock: LoopSchedulerClock = {
@@ -81,12 +85,15 @@ export class LoopScheduler {
   readonly #runner: LoopSchedulerRunner;
   readonly #clock: LoopSchedulerClock;
   readonly #timer: LoopSchedulerTimer;
+  readonly #cronAdapter: CronAdapter;
   readonly #budgetLedger?: LoopBudgetLedger;
   readonly #collisionLedger?: CollisionLedger;
+  readonly #jobQueue?: LoopJobQueue;
   readonly #killStateManager?: LoopKillStateManager;
   readonly #abortSessionExecutionAndWait?: (sessionId: string) => Promise<void>;
   readonly #logger: Logger;
   readonly #timers = new Map<string, LoopSchedulerTimerHandle>();
+  readonly #cronHandles = new Map<string, CronAdapterHandle>();
   readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
   #disposed = false;
 
@@ -95,8 +102,10 @@ export class LoopScheduler {
     this.#runner = options.runner;
     this.#clock = options.clock ?? systemClock;
     this.#timer = options.timer ?? systemTimer;
+    this.#cronAdapter = options.cronAdapter ?? new BunCronAdapter();
     this.#budgetLedger = options.budgetLedger;
     this.#collisionLedger = options.collisionLedger;
+    this.#jobQueue = options.jobQueue;
     this.#killStateManager = options.killStateManager;
     this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
@@ -178,8 +187,15 @@ export class LoopScheduler {
   private async scheduleLoopState(loop: LoopState, options: { restart: boolean }): Promise<void> {
     this.clearTimer(loop.loopId);
     if (this.#disposed) return;
-    if (loop.status !== "active" || loop.config.schedule.kind !== "interval") return;
+    if (loop.status !== "active") return;
     if (await this.isGlobalKillActive()) return;
+
+    if (loop.config.schedule.kind === "cron") {
+      await this.scheduleCronLoopState(loop);
+      return;
+    }
+
+    if (loop.config.schedule.kind !== "interval") return;
 
     const now = this.#clock.now();
     if (!options.restart && this.#activeRuns.has(loop.loopId) && (loop.nextRunAt ?? now) <= now) {
@@ -207,6 +223,134 @@ export class LoopScheduler {
     const loop = await this.#stateManager.read(loopId);
     if (loop.status !== "active" || loop.config.schedule.kind !== "interval") return;
     await this.runLoop(loop, "interval");
+  }
+
+  private async scheduleCronLoopState(loop: LoopState): Promise<void> {
+    const expression = loop.config.schedule.kind === "cron" ? loop.config.schedule.expression : undefined;
+    if (expression === undefined) return;
+
+    const now = this.#clock.now();
+    const validation = this.#cronAdapter.validate(expression, now);
+    if (!validation.valid || validation.nextFireAt === undefined) {
+      await this.recordTriggerHealth(loop.loopId, {
+        status: "disabled",
+        lastCheckedAt: now,
+        lastError: validation.error ?? "Invalid cron expression.",
+      });
+      this.#logger.warn("loops.scheduler.cron.invalid", {
+        meta: { loopId: loop.loopId, expression, error: validation.error },
+      });
+      return;
+    }
+
+    const catchUp = this.computeCronCatchUp(expression, loop.nextScheduledAt ?? loop.nextRunAt, now);
+    let nextScheduledAt = validation.nextFireAt;
+    if (catchUp !== undefined) {
+      await this.enqueueCronJob(loop.loopId, catchUp.latestMissedAt, catchUp.missedCount);
+      nextScheduledAt = catchUp.nextFutureAt;
+    }
+
+    await this.#stateManager.update(loop.loopId, {
+      ...(catchUp === undefined ? {} : { lastScheduledAt: catchUp.latestMissedAt }),
+      nextScheduledAt,
+      nextRunAt: nextScheduledAt,
+      ...(catchUp === undefined ? {} : { lastEnqueuedAt: catchUp.latestMissedAt }),
+      missedCount: catchUp?.missedCount ?? loop.missedCount,
+      triggerHealth: upsertCronHealth(loop.triggerHealth, {
+        triggerKind: "cron",
+        status: "healthy",
+        lastCheckedAt: now,
+        lastSuccessAt: now,
+        missedCount: catchUp?.missedCount ?? loop.missedCount,
+      }),
+    });
+
+    const handle = this.#cronAdapter.schedule(expression, (scheduledAt) => this.handleCronFire(loop.loopId, scheduledAt));
+    this.#cronHandles.set(loop.loopId, handle);
+  }
+
+  private computeCronCatchUp(expression: string, persistedNextScheduledAt: number | undefined, now: number): { latestMissedAt: number; missedCount: number; nextFutureAt: number } | undefined {
+    if (persistedNextScheduledAt === undefined || persistedNextScheduledAt > now) return undefined;
+
+    let missedCount = 0;
+    let latestMissedAt = persistedNextScheduledAt;
+    let cursor = persistedNextScheduledAt;
+    while (cursor <= now) {
+      missedCount += 1;
+      latestMissedAt = cursor;
+      const next = this.#cronAdapter.nextFire(expression, cursor);
+      if (next === undefined) break;
+      cursor = next;
+    }
+
+    const nextFutureAt = cursor > now ? cursor : this.#cronAdapter.nextFire(expression, now);
+    if (nextFutureAt === undefined) return undefined;
+    return { latestMissedAt, missedCount, nextFutureAt };
+  }
+
+  private async handleCronFire(loopId: string, scheduledAt: number): Promise<void> {
+    try {
+      if (this.#disposed) return;
+      const loop = await this.#stateManager.read(loopId);
+      if (loop.status !== "active" || loop.config.schedule.kind !== "cron") return;
+      if (await this.isGlobalKillActive()) return;
+
+      const nextScheduledAt = this.#cronAdapter.nextFire(loop.config.schedule.expression, scheduledAt);
+      await this.enqueueCronJob(loopId, scheduledAt, 0);
+      await this.#stateManager.update(loopId, {
+        lastScheduledAt: scheduledAt,
+        nextScheduledAt,
+        nextRunAt: nextScheduledAt,
+        lastEnqueuedAt: scheduledAt,
+        missedCount: 0,
+        triggerHealth: upsertCronHealth(loop.triggerHealth, {
+          triggerKind: "cron",
+          status: "healthy",
+          lastCheckedAt: this.#clock.now(),
+          lastSuccessAt: this.#clock.now(),
+          missedCount: 0,
+        }),
+      });
+    } catch (error) {
+      await this.recordCronError(loopId, error);
+    }
+  }
+
+  private async enqueueCronJob(loopId: string, scheduledAt: number, missedCount: number): Promise<void> {
+    if (this.#jobQueue === undefined) {
+      throw new Error("LoopScheduler requires LoopJobQueue to enqueue cron jobs.");
+    }
+
+    await this.#jobQueue.enqueue({
+      loopId,
+      triggerKind: "cron",
+      subjectKey: `cron:${scheduledAt}`,
+      queuedAt: this.#clock.now(),
+      missedCount,
+      eventSummary: {
+        summary: missedCount > 0
+          ? `Queued latest missed cron fire at ${new Date(scheduledAt).toISOString()} after ${missedCount} missed schedules`
+          : `Queued cron fire at ${new Date(scheduledAt).toISOString()}`,
+        source: "loop-scheduler-cron",
+      },
+    });
+  }
+
+  private async recordCronError(loopId: string, error: unknown): Promise<void> {
+    const message = errorToMessage(error);
+    this.#logger.warn("loops.scheduler.cron.failed", { error, meta: { loopId } });
+    await this.recordTriggerHealth(loopId, {
+      status: "degraded",
+      lastCheckedAt: this.#clock.now(),
+      lastError: message,
+    });
+  }
+
+  private async recordTriggerHealth(loopId: string, health: Omit<LoopTriggerHealth, "triggerKind">): Promise<void> {
+    const state = await this.#stateManager.read(loopId);
+    await this.#stateManager.update(loopId, {
+      triggerHealth: upsertCronHealth(state.triggerHealth, { triggerKind: "cron", ...health }),
+    });
   }
 
   private async runLoop(loop: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport | undefined> {
@@ -442,17 +586,29 @@ export class LoopScheduler {
 
   private clearTimer(loopId: string): void {
     const handle = this.#timers.get(loopId);
-    if (!handle) return;
+    if (handle !== undefined) {
+      this.#timer.cancel(handle);
+      this.#timers.delete(loopId);
+    }
 
-    this.#timer.cancel(handle);
-    this.#timers.delete(loopId);
+    const cronHandle = this.#cronHandles.get(loopId);
+    if (cronHandle === undefined) return;
+    this.#cronAdapter.cancel(cronHandle);
+    this.#cronHandles.delete(loopId);
   }
 
   private clearAllTimers(): void {
-    for (const loopId of this.#timers.keys()) {
+    for (const loopId of new Set([...this.#timers.keys(), ...this.#cronHandles.keys()])) {
       this.clearTimer(loopId);
     }
   }
+}
+
+function upsertCronHealth(existing: LoopState["triggerHealth"], next: NonNullable<LoopState["triggerHealth"]>[number]): NonNullable<LoopState["triggerHealth"]> {
+  return [
+    ...(existing ?? []).filter((entry) => entry.triggerKind !== "cron"),
+    next,
+  ];
 }
 
 function errorToMessage(error: unknown): string {
