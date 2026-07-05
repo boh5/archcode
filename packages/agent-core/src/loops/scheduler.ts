@@ -7,7 +7,7 @@ import { BunCronAdapter, type CronAdapter, type CronAdapterHandle } from "./cron
 import { LoopJobQueue, type EnqueueLoopJobInput, type EnqueueLoopJobResult, type LoopJobRecord } from "./job-queue";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
-import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopCoordinatorConfig, LoopIntegrationError, LoopJobStatus, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopTriggerHealth } from "./state";
+import type { CollisionConflict, CollisionTarget, LoopBudgetUsage, LoopCleanupState, LoopCoordinatorConfig, LoopIntegrationError, LoopJobStatus, LoopRunReason, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopTriggerHealth, LoopWorktreeArtifact } from "./state";
 import { LoopStateManager } from "./state";
 import { LoopTriggerPoller } from "./triggers";
 
@@ -29,19 +29,42 @@ export interface LoopSchedulerRunInput {
   readonly trigger: LoopRunTrigger;
   readonly runId: string;
   readonly startedAt: number;
+  readonly job?: LoopSchedulerRunJob;
+}
+
+export interface LoopSchedulerRunJob {
+  readonly jobId: string;
+  readonly triggerKind: LoopRunTrigger;
+  readonly subjectKey: string;
+  readonly dedupeKey: string;
+  readonly branchKey?: string;
+  readonly blockedReason?: string;
+  readonly worktreePath?: string;
+  readonly baseSha?: string;
+  readonly resolvedHeadSha?: string;
+  readonly missedCount?: number;
+  readonly cleanupState?: LoopCleanupState;
+  readonly observedArtifacts?: LoopWorktreeArtifact[];
 }
 
 export interface LoopSchedulerRunResult {
-  readonly status?: Exclude<LoopRunReportStatus, "running" | "skipped">;
+  readonly status?: Exclude<LoopRunReportStatus, "running">;
   readonly sessionId?: string;
   readonly goalId?: string;
   readonly summary?: string;
   readonly error?: string;
   readonly reason?: LoopRunReason;
+  readonly skippedReason?: string;
   readonly budgetUsage?: LoopBudgetUsage;
   readonly collisionTargets?: CollisionTarget[];
   readonly collisionConflicts?: CollisionConflict[];
   readonly integrationErrors?: LoopIntegrationError[];
+  readonly blockedReason?: string;
+  readonly worktreePath?: string;
+  readonly baseSha?: string;
+  readonly resolvedHeadSha?: string;
+  readonly cleanupState?: LoopCleanupState;
+  readonly observedArtifacts?: LoopWorktreeArtifact[];
 }
 
 export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
@@ -72,6 +95,8 @@ export interface LoopSchedulerOptions {
   readonly cronAdapter?: CronAdapter;
   readonly triggerPoller?: LoopTriggerPoller;
 }
+
+type LoopSchedulerFinishedRunResult = Required<Pick<LoopSchedulerRunResult, "status">> & Omit<LoopSchedulerRunResult, "status">;
 
 const systemClock: LoopSchedulerClock = {
   now: () => Date.now(),
@@ -529,6 +554,11 @@ export class LoopScheduler {
       status: jobStatusFromRunReport(report),
       summary: report.summary ?? report.skippedReason ?? report.error,
       blockedReason: report.blockedReason ?? report.reason,
+      worktreePath: report.worktreePath,
+      baseSha: report.baseSha,
+      resolvedHeadSha: report.resolvedHeadSha,
+      cleanupState: report.cleanupState,
+      observedArtifacts: report.observedArtifacts,
     });
   }
 
@@ -625,6 +655,7 @@ export class LoopScheduler {
         trigger,
         runId,
         startedAt,
+        job,
       });
       const report = await this.finishRun(startedState, runningReport, {
         status: result?.status ?? "succeeded",
@@ -633,10 +664,17 @@ export class LoopScheduler {
         summary: result?.summary,
         error: result?.error,
         reason: result?.reason,
+        skippedReason: result?.skippedReason,
         budgetUsage: result?.budgetUsage,
         collisionTargets: result?.collisionTargets,
         collisionConflicts: result?.collisionConflicts,
         integrationErrors: result?.integrationErrors,
+        blockedReason: result?.blockedReason,
+        worktreePath: result?.worktreePath,
+        baseSha: result?.baseSha,
+        resolvedHeadSha: result?.resolvedHeadSha,
+        cleanupState: result?.cleanupState,
+        observedArtifacts: result?.observedArtifacts,
       });
       this.rememberActiveSession(loop.loopId, report);
       return report;
@@ -666,7 +704,7 @@ export class LoopScheduler {
   private async finishRun(
     loop: LoopState,
     runningReport: LoopRunReport,
-    result: Required<Pick<LoopSchedulerRunResult, "status">> & Omit<LoopSchedulerRunResult, "status">,
+    result: LoopSchedulerFinishedRunResult,
   ): Promise<LoopRunReport> {
     const latest = await this.#stateManager.read(loop.loopId);
     if (latest.lastRun?.runId === runningReport.runId && latest.lastRun.status !== "running") {
@@ -684,11 +722,18 @@ export class LoopScheduler {
       summary: result.summary,
       error: result.error,
       reason: result.reason,
+      skippedReason: result.skippedReason,
       budgetUsage: result.budgetUsage,
       collisionTargets: result.collisionTargets ?? runningReport.collisionTargets,
       collisionConflicts: result.collisionConflicts,
       integrationErrors: result.integrationErrors,
       toolProfileId: loop.config.toolProfileId,
+      blockedReason: result.blockedReason,
+      worktreePath: result.worktreePath ?? runningReport.worktreePath,
+      baseSha: result.baseSha ?? runningReport.baseSha,
+      resolvedHeadSha: result.resolvedHeadSha ?? runningReport.resolvedHeadSha,
+      cleanupState: result.cleanupState ?? runningReport.cleanupState,
+      observedArtifacts: result.observedArtifacts ?? runningReport.observedArtifacts,
     };
     const finishedState = await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
     await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
@@ -1026,6 +1071,7 @@ function attachJobFields(report: LoopRunReport, job: LoopJobRecord): LoopRunRepo
 }
 
 function jobStatusFromRunReport(report: LoopRunReport): Exclude<LoopJobStatus, "pending" | "queued" | "running"> {
+  if (report.blockedReason === "needs_user" || report.blockedReason === "dirty-canonical") return "blocked";
   if (report.status === "succeeded") return "succeeded";
   if (report.status === "failed") return "failed";
   if (report.status === "cancelled") return "cancelled";

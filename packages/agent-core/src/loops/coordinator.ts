@@ -1,4 +1,4 @@
-import { LoopCoordinatorConfigSchema, type LoopCoordinatorConfig, type LoopJobStatus } from "./state";
+import { LoopCoordinatorConfigSchema, type LoopCleanupState, type LoopCoordinatorConfig, type LoopJobStatus, type LoopWorktreeArtifact } from "./state";
 import { isTerminalStatus, LoopJobQueue, type LoopJobQueueClock, type LoopJobRecord } from "./job-queue";
 
 export interface LoopJobCoordinatorOptions {
@@ -12,6 +12,11 @@ export interface LoopJobFinishInput {
   readonly status: Exclude<LoopJobStatus, "pending" | "queued" | "running">;
   readonly summary?: string;
   readonly blockedReason?: string;
+  readonly worktreePath?: string;
+  readonly baseSha?: string;
+  readonly resolvedHeadSha?: string;
+  readonly cleanupState?: LoopCleanupState;
+  readonly observedArtifacts?: LoopWorktreeArtifact[];
 }
 
 const DEFAULT_LEASE_TTL_MS = 30 * 60 * 1000;
@@ -82,6 +87,11 @@ export class LoopJobCoordinator {
     const finished = await this.#queue.update(jobId, {
       status: input.status,
       blockedReason: input.blockedReason,
+      worktreePath: input.worktreePath ?? existing.worktreePath,
+      baseSha: input.baseSha ?? existing.baseSha,
+      resolvedHeadSha: input.resolvedHeadSha ?? existing.resolvedHeadSha,
+      cleanupState: input.cleanupState ?? existing.cleanupState,
+      observedArtifacts: input.observedArtifacts ?? existing.observedArtifacts,
       endedAt: this.#clock.now(),
       leaseExpiresAt: undefined,
       updatedAt: this.#clock.now(),
