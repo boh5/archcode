@@ -232,12 +232,28 @@ export const LoopGoalTemplateSchema = z.strictObject({
   instructions: LoopTextSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopGoalTemplate>;
 
-export const LoopCleanupStateSchema = z.enum(["not_started", "in_progress", "cleaned", "preserved", "failed", "skipped"]) satisfies z.ZodType<ProtocolLoopCleanupState>;
+export const LoopCleanupStateSchema = z.enum([
+  "not_started",
+  "in_progress",
+  "cleaned",
+  "preserved",
+  "failed",
+  "skipped",
+  "cleanup_candidate",
+  "auto_paused",
+  "cleanup_failed",
+  "expired_needs_review",
+]) satisfies z.ZodType<ProtocolLoopCleanupState>;
 
 export const LoopCleanupPolicySchema = z.strictObject({
+  enabled: z.boolean().optional(),
+  action: z.enum(["mark", "pause"]).optional(),
   deleteUnchangedWorktrees: z.boolean().optional(),
   preserveChangedArtifacts: z.literal(true).optional(),
   maxPreservedWorktrees: z.number().int().nonnegative().optional(),
+  noFindingRuns: z.number().int().nonnegative().optional(),
+  quietDays: z.number().nonnegative().optional(),
+  requiresNoPendingQueue: z.boolean().optional(),
 }) satisfies z.ZodType<ProtocolLoopCleanupPolicy>;
 
 export const LoopWorktreeArtifactSchema = z.strictObject({
@@ -417,6 +433,7 @@ export type LoopUpdateInput = Partial<Pick<LoopState,
   | "lastEnqueuedAt"
   | "missedCount"
   | "triggerHealth"
+  | "cleanupState"
   | "generatedStateSummary"
 >>;
 
