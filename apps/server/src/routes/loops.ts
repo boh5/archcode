@@ -57,6 +57,7 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const body = await readJsonBody(c.req.json(), CreateLoopBodySchema);
     const config = createConfigFromBody(body);
+    assertPhase4ApiLoopConfig(config);
 
     try {
       const loop = await runtime.createLoop(project.workspaceRoot, config, body.author);
@@ -115,6 +116,7 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     if (Object.keys(body).length === 0) {
       throw new BadRequestError("At least one patch field is required");
     }
+    if (body.config !== undefined) assertPhase4ApiLoopConfig(body.config);
 
     try {
       const loop = await runtime.updateLoop(project.workspaceRoot, loopId, toLoopUpdates(body));
@@ -263,6 +265,20 @@ function toLoopUpdates(body: PatchLoopBody): LoopUpdateInput {
     ...(body.config === undefined ? {} : { config: body.config }),
     ...(body.status === undefined ? {} : { status: body.status }),
   };
+}
+
+function assertPhase4ApiLoopConfig(config: LoopConfig): void {
+  const unsupportedFields: string[] = [];
+  if (config.schedule.kind === "cron") unsupportedFields.push("schedule.kind=cron");
+  if (config.triggers !== undefined) unsupportedFields.push("triggers");
+  if (config.cleanupPolicy !== undefined) unsupportedFields.push("cleanupPolicy");
+
+  if (unsupportedFields.length > 0) {
+    throw new BadRequestError("Request body is invalid", {
+      unsupportedFields,
+      reason: "Phase 5 Loop API fields are not enabled on server routes yet",
+    });
+  }
 }
 
 function requiredParam(value: string | undefined, name: string): string {

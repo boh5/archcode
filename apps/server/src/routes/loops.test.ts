@@ -183,10 +183,15 @@ describe("loops routes", () => {
     runtime.releaseActiveRun();
     expect((await (await firstTrigger).json() as { report: LoopRunReport }).report).toMatchObject({ runId: "run-1", sessionId: "session-1", status: "succeeded" });
 
-    for (const schedule of [{ kind: "cron", expression: "* * * * *" }, { kind: "event", event: "pull_request" }]) {
+    for (const config of [
+      { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "* * * * *" } },
+      { ...manualSessionLoopConfig, schedule: { kind: "event", event: "pull_request" } },
+      { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", baseBranch: "main", cadenceMs: 60_000 }] },
+      { ...manualSessionLoopConfig, cleanupPolicy: { deleteUnchangedWorktrees: true } },
+    ]) {
       const res = await app.request(`/api/projects/${project.slug}/loops`, {
         method: "POST",
-        body: JSON.stringify({ config: { ...manualSessionLoopConfig, schedule } }),
+        body: JSON.stringify({ config }),
         headers: { "content-type": "application/json" },
       });
       expect(res.status).toBe(400);
