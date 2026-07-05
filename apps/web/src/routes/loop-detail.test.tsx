@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { LoopKillState, LoopRunReport, LoopState } from "../api/types";
+import type { LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
 import { LoopDetailRoute } from "./loop-detail";
 import { EditLoopForm } from "../components/features/CreateLoopDialog";
 
@@ -222,7 +222,7 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       updatedAt: 1700000120000,
     },
     latestCollisions: {
-      targets: [{ type: "pr", owner: "archcode", repo: "workbench", number: 42 }],
+      targets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
       activeLeases: [],
       conflicts: [],
       updatedAt: 1700000120000,
@@ -257,7 +257,7 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
         resetDateUtc: "2026-07-05",
         pricingUnavailable: true,
       },
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "workbench", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
       integrationErrors: [],
       toolProfileId: "loop_github_pr_watch",
     }),
@@ -280,6 +280,7 @@ function setupLoopDetailFetch(input: {
   stateMarkdown?: string;
   triggerConflict?: boolean;
   killState?: LoopKillState;
+  integrationStatuses?: LoopIntegrationStatusItem[];
 } = {}): { paths: string[]; fetchMock: ReturnType<typeof mock>; setLoop: (loop: LoopState) => void; getPatchBody: () => Record<string, unknown> | undefined } {
   let currentLoop = input.loop ?? makeLoop();
   let killState: LoopKillState = input.killState ?? { globalKillActive: true, activatedAt: 1700000110000, activatedBy: "web", reason: "maintenance stop" };
@@ -304,14 +305,14 @@ function setupLoopDetailFetch(input: {
         resetDateUtc: "2026-07-05",
         estimatedUsd: 0.0123,
       },
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "workbench", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
       collisionConflicts: [
         {
-          targetKey: "github:archcode/workbench:pr:42",
-          target: { type: "pr", owner: "archcode", repo: "workbench", number: 42 },
+          targetKey: "github:archcode/archcode:pr:42",
+          target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
           conflictingLease: {
-            targetKey: "github:archcode/workbench:pr:42",
-            target: { type: "pr", owner: "archcode", repo: "workbench", number: 42 },
+            targetKey: "github:archcode/archcode:pr:42",
+            target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
             loopId: "other-loop",
             runId: "other-run",
             priority: 1,
@@ -415,7 +416,7 @@ function setupLoopDetailFetch(input: {
       return Response.json({
         loopId: "loop-1",
         integrations: {
-          statuses: [
+          statuses: input.integrationStatuses ?? [
             {
               integrationId: "github",
               status: "auth_missing",
@@ -540,13 +541,13 @@ describe("LoopDetailRoute", () => {
       expect(container.querySelector('[data-testid="loop-cancel-current-run-button"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("maintenance stop");
-      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/workbench:pr:42");
+      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/archcode:pr:42");
       expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("GitHub token configured: no");
       expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("60000ms retry-after");
       const historyRow = container.querySelector('[data-testid="loop-run-history-row-run-history-1"]');
       expect(historyRow?.textContent).toContain("reason: execution_failed");
       expect(historyRow?.textContent).toContain("budget: 3 iterations");
-      expect(historyRow?.textContent).toContain("collision conflicts: github:archcode/workbench:pr:42");
+      expect(historyRow?.textContent).toContain("collision conflicts: github:archcode/archcode:pr:42");
       expect(historyRow?.textContent).toContain("integration: github integration_auth_missing");
 
       expect(container.querySelector('a[href="/projects/demo/sessions/session-current"]')).not.toBeNull();
@@ -626,6 +627,89 @@ describe("LoopDetailRoute", () => {
         expect(paths).toContain("POST /api/projects/demo/loops/loop-1/resume");
         expect(container.querySelector('[data-testid="loop-status-badge"]')?.textContent).toContain("active");
         expect(container.textContent).toContain("2023-11-14T22:21:40.000Z");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("renders seeded Phase 4 guardrail evidence selectors with collision and integration states", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    setupLoopDetailFetch({
+      killState: { globalKillActive: true, activatedAt: 1700000110000, activatedBy: "task-17", reason: "Task 17 seeded kill switch" },
+      runs: [
+        makeRun({
+          runId: "run-1",
+          status: "skipped",
+          trigger: "manual",
+          reason: "collision_conflict",
+          skippedReason: "PR target is already leased by another Loop run.",
+          collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+          collisionConflicts: [
+            {
+              targetKey: "github:archcode/archcode:pr:42",
+              target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+              conflictingLease: {
+                targetKey: "github:archcode/archcode:pr:42",
+                target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+                loopId: "other-loop",
+                runId: "other-run",
+                priority: 10,
+                createdAt: 1700000000000,
+                expiresAt: 1700003600000,
+              },
+              detectedAt: 1700000010000,
+            },
+          ],
+          toolProfileId: "loop_github_pr_watch",
+        }),
+      ],
+      integrationStatuses: [
+        {
+          integrationId: "github",
+          status: "auth_missing",
+          reason: "integration_auth_missing",
+          message: "GitHub token not configured",
+          updatedAt: 1700000120000,
+        },
+        {
+          integrationId: "github_actions",
+          status: "ready",
+          message: "GitHub Actions configured",
+          updatedAt: 1700000120000,
+        },
+      ],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderLoopDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-detail-page"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
+        expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Task 17 seeded kill switch");
+        expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/archcode:pr:42");
+        const integrationStatus = container.querySelector('[data-testid="loop-integration-status"]')?.textContent ?? "";
+        expect(integrationStatus).toContain("github");
+        expect(integrationStatus).toContain("auth_missing");
+        expect(integrationStatus).toContain("GitHub token configured: no");
+        expect(integrationStatus).toContain("github_actions");
+        expect(integrationStatus).toContain("ready");
+        expect(integrationStatus).toContain("GitHub token configured: yes");
+        const runRow = container.querySelector('[data-testid="loop-run-history-row-run-1"]');
+        expect(runRow?.textContent).toContain("reason: collision_conflict");
+        expect(runRow?.textContent).toContain("collision conflicts: github:archcode/archcode:pr:42");
       });
     } finally {
       await act(async () => {

@@ -132,6 +132,9 @@ describe("loops routes", () => {
       title: "PR Babysitter",
     });
     expect(prBabysitterBody.loop.config.description).toContain("PR watch/status/comment");
+    expect(prBabysitterBody.loop.config.taskPrompt).toContain("Draft a short issue comment only when a clear status update is useful");
+    expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("merge");
+    expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("rebase");
     expect(prBabysitterBody.loop.readinessScore ?? null).toBeNull();
   });
 
@@ -308,6 +311,29 @@ describe("loops routes", () => {
     expect(integrationsBody.integrations.snapshot.errors[0]?.message).toContain("[REDACTED:SECRET]");
   });
 
+  test("persists collision_conflict run history for canonical PR target", async () => {
+    const { app, project, runtime, workspaceRoot } = await createTestApp("collision-run-history");
+    const loop = await createLoop(app, project.slug, {
+      ...manualSessionLoopConfig,
+      title: "PR collision loop",
+      toolProfileId: "loop_github_pr_watch",
+      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+    });
+    await runtime.seedCollisionRunHistory(workspaceRoot, loop.loopId);
+
+    const runsRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/runs`);
+    const runsBody = await runsRes.json() as { runs: LoopRunReport[] };
+
+    expect(runsRes.status).toBe(200);
+    expect(runsBody.runs[0]).toMatchObject({
+      runId: "run-1",
+      status: "skipped",
+      reason: "collision_conflict",
+      toolProfileId: "loop_github_pr_watch",
+      collisionConflicts: [expect.objectContaining({ targetKey: "github:archcode/archcode:pr:42" })],
+    });
+  });
+
   test("patch update, run reports, generated state, and invalid paths use stable JSON shapes", async () => {
     const { app, project } = await createTestApp("patch-log-state");
     const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
@@ -379,9 +405,9 @@ function seededBudgetSnapshot(): LoopBudgetSnapshot {
 }
 
 function seededCollisionSnapshot(loopId: string): LoopCollisionSnapshot {
-  const target = { type: "pr", owner: "archcode", repo: "workbench", number: 42 } as const;
+  const target = { type: "pr", owner: "archcode", repo: "archcode", number: 42 } as const;
   const lease = {
-    targetKey: "github:archcode/workbench:pr:42",
+    targetKey: "github:archcode/archcode:pr:42",
     target,
     loopId,
     runId: "run-collision",
@@ -433,6 +459,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   releaseActiveRun(): void;
   createLoopRunCount(): number;
   seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
+  seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
 } {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
   let now = options.now ?? 1_000;
@@ -620,12 +647,39 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       await context.loopState.updateCollisionSnapshot(loopId, seededCollisionSnapshot(loopId));
       await context.loopState.updateIntegrationSnapshot(loopId, seededIntegrationSnapshot());
     },
+    async seedCollisionRunHistory(workspaceRoot: string, loopId: string) {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const target = { type: "pr", owner: "archcode", repo: "archcode", number: 42 } as const;
+      const conflictingLease = {
+        targetKey: "github:archcode/archcode:pr:42",
+        target,
+        loopId: "00000000-0000-4000-8000-000000000042",
+        runId: "other-run",
+        priority: 10,
+        createdAt: now - 100,
+        expiresAt: now + 60_000,
+      };
+      await context.loopState.appendRunReport(loopId, {
+        runId: "run-1",
+        loopId,
+        status: "skipped",
+        trigger: "manual",
+        startedAt: now,
+        endedAt: now,
+        reason: "collision_conflict",
+        skippedReason: "Loop static collision targets conflict with an active run; skipped trigger.",
+        collisionTargets: [target],
+        collisionConflicts: [{ targetKey: conflictingLease.targetKey, target, conflictingLease, detectedAt: now }],
+        toolProfileId: "loop_github_pr_watch",
+      });
+    },
   } as unknown as AgentRuntime & {
     setNow(value: number): void;
     waitForActiveRun(): Promise<void>;
     releaseActiveRun(): void;
     createLoopRunCount(): number;
     seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
+    seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
   };
 
   return runtime;
