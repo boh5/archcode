@@ -81,6 +81,10 @@ export class ProjectContextResolver {
     return await pending;
   }
 
+  alias(workspaceRoot: string, context: ProjectContext): void {
+    this.#contexts.set(workspaceRoot, Promise.resolve(context));
+  }
+
   dispose(workspaceRoot: string): void {
     this.#contexts.delete(workspaceRoot);
   }

@@ -49,6 +49,7 @@ import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } 
 import { LoopJobQueue } from "./loops/job-queue";
 import { LoopTriggerPoller } from "./loops/triggers";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
+import { LoopWorktreeManager } from "./loops/worktree-manager";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
@@ -336,14 +337,31 @@ export async function createRuntime(
           createSession: (sessionWorkspaceRoot, createOptions) => sessionStoreManager.createSessionFile(sessionWorkspaceRoot, createOptions),
           getSessionFile: (sessionWorkspaceRoot, sessionId) => sessionStoreManager.getSessionFile(sessionWorkspaceRoot, sessionId),
           startSessionExecution: (input) => executionManager.startExecution(input),
+          prepareSessionWorkspace: async (sessionWorkspaceRoot, canonicalWorkspaceRoot) => {
+            const canonicalContext = await contextResolver.resolve(canonicalWorkspaceRoot);
+            contextResolver.alias(sessionWorkspaceRoot, {
+              ...canonicalContext,
+              project: {
+                ...canonicalContext.project,
+                workspaceRoot: sessionWorkspaceRoot,
+              },
+            });
+          },
+          releaseSessionWorkspace: (sessionWorkspaceRoot, sessionId) => {
+            if (sessionId !== undefined) sessionAgentManager.release(sessionWorkspaceRoot, sessionId);
+            sessionAgentManager.releaseWorkspace(sessionWorkspaceRoot);
+            sessionStoreManager.releaseWorkspace(sessionWorkspaceRoot);
+            contextResolver.dispose(sessionWorkspaceRoot);
+          },
         },
         goalStateManager: projectContext.goalState,
         goalRunner: {
-          start: async (goalId, startOptions) => (await createGoalRunnerForLoop(workspaceRoot, startOptions?.loopId)).start(goalId, startOptions),
+          start: async (goalId, startOptions) => (await createGoalRunnerForLoop(startOptions?.workspaceRoot ?? workspaceRoot, startOptions?.loopId)).start(goalId, startOptions),
         },
         workspaceRoot,
         projectSlug: projectContext.project.slug,
         ...(collisionLedger === undefined ? {} : { collisionLedger }),
+        worktreeManager: new LoopWorktreeManager({ canonicalRoot: workspaceRoot }),
       });
     }
 
