@@ -443,13 +443,25 @@ export class SessionExecutionManager {
       agent.store.getState().append({ type: "execution-start" });
       if (execution.abortController.signal.aborted) return;
 
+      const loopOrigin = isToolExecutionOrigin(input.origin) ? input.origin : undefined;
       await agent.run(input.userMessage, {
         abort: execution.abortController.signal,
-        confirmPermission: (request, abortSignal) =>
-          this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal),
-        askUser: (request) => this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request),
+        confirmPermission: (request, abortSignal) => {
+          if (loopOrigin !== undefined) {
+            void this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal).catch(() => undefined);
+            return Promise.resolve("timeout");
+          }
+          return this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal);
+        },
+        askUser: (request) => {
+          if (loopOrigin !== undefined) {
+            void this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request).catch(() => undefined);
+            return Promise.resolve({ isError: true, reason: "Loop run is waiting for user input" });
+          }
+          return this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request);
+        },
         ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-        ...(isToolExecutionOrigin(input.origin) ? { origin: input.origin } : {}),
+        ...(loopOrigin === undefined ? {} : { origin: loopOrigin }),
       });
     } catch (error) {
       if (!execution.abortController.signal.aborted) {

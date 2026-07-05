@@ -1,0 +1,372 @@
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { createEmptySessionStats, type PendingInteraction, type SessionEventEnvelope, type SessionExecutionRecord } from "@archcode/protocol";
+
+import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
+import type { SessionFile } from "../store/helpers";
+import { LoopJobCoordinator } from "./coordinator";
+import { LoopJobQueue } from "./job-queue";
+import { LoopRunner, type LoopRunnerWorktreeManager } from "./runner";
+import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
+import { LoopStateManager, type LoopConfig, type LoopWorktreeArtifact } from "./state";
+import { LoopWorktreeManagerError, type LoopWorktreeInspection } from "./worktree-manager";
+
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-blocked-run");
+const COMPLETED_EXECUTION: SessionExecutionRecord = { id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 };
+
+const sessionLoopConfig: LoopConfig = {
+  title: "Blocked loop",
+  schedule: { kind: "manual" },
+  runKind: "session",
+  mode: "act",
+  approvalPolicy: "interactive",
+  limits: { maxIterationsPerRun: 3 },
+  taskPrompt: "Run safely unless user input is needed.",
+};
+
+beforeEach(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+  await mkdir(TMP_DIR, { recursive: true });
+});
+
+afterAll(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
+});
+
+describe("blocked queued loop runs", () => {
+  test("pending permission request maps to needs_user instead of failure", async () => {
+    const fixture = await createRunnerFixture({ events: [permissionRequestEvent("permission-1")] });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "permission-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "skipped",
+      sessionId: "session-1",
+      blockedReason: "needs_user",
+    });
+    expect(result.error).toBeUndefined();
+    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("pending ask_user question request maps to needs_user instead of failure", async () => {
+    const fixture = await createRunnerFixture({ events: [questionRequestEvent("question-1")] });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "question-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+    expect(result.error).toBeUndefined();
+  });
+
+  test("pending interaction state maps to needs_user without relying only on event replay", async () => {
+    const pending: PendingInteraction = {
+      id: "interaction-1",
+      type: "clarification",
+      question: "Need input?",
+      askedAt: new Date(0).toISOString(),
+      status: "pending",
+    };
+    const fixture = await createRunnerFixture({ pendingInteractions: [pending] });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "pending-interaction-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+  });
+
+  test("pending HITL Goal confirmation request maps to needs_user", async () => {
+    const fixture = await createRunnerFixture({ events: [hitlRequestEvent("hitl-1")] });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "hitl-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+    expect(result.summary).toContain("blocked waiting for user input");
+  });
+
+  test("dirty canonical blocks before worktree creation completes and before session execution", async () => {
+    const worktreeManager = new DirtyCanonicalWorktreeManager();
+    const fixture = await createRunnerFixture({ worktreeManager });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "dirty-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({ status: "skipped", blockedReason: "dirty-canonical" });
+    expect(worktreeManager.createMock).toHaveBeenCalledTimes(1);
+    expect(fixture.runtime.createSessionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.prepareSessionWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  test("scheduler writes canonical run-log and blocked job metadata from worktree result", async () => {
+    const workspaceRoot = join(TMP_DIR, "canonical-scheduler");
+    await mkdir(workspaceRoot, { recursive: true });
+    const stateManager = new LoopStateManager(workspaceRoot);
+    const loop = await stateManager.create("project-a", sessionLoopConfig);
+    const clock = new FakeClock(1_000);
+    const jobQueue = new LoopJobQueue({ workspaceRoot, clock });
+    const coordinator = new LoopJobCoordinator({ queue: jobQueue, clock, leaseTtlMs: 60_000 });
+    const observedArtifacts: LoopWorktreeArtifact[] = [{ path: "evidence/report.md", status: "created" }];
+    const runnerMock = mock(async (_input: LoopSchedulerRunInput) => ({
+      status: "skipped" as const,
+      sessionId: "session-worktree",
+      blockedReason: "needs_user",
+      worktreePath: "/tmp/archcode-loop-worktree",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+      cleanupState: "preserved" as const,
+      observedArtifacts,
+      summary: "waiting for user",
+    }));
+    const scheduler = new LoopScheduler({
+      stateManager,
+      jobQueue,
+      coordinator,
+      clock,
+      timer: new FakeTimer(),
+      runner: runnerMock,
+    });
+
+    const report = await scheduler.runManual(loop.loopId);
+
+    expect(runnerMock).toHaveBeenCalledTimes(1);
+    expect(report).toMatchObject({
+      status: "skipped",
+      blockedReason: "needs_user",
+      worktreePath: "/tmp/archcode-loop-worktree",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+      cleanupState: "preserved",
+      observedArtifacts,
+    });
+    const log = await stateManager.readRunLog(loop.loopId);
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ loopId: loop.loopId, worktreePath: "/tmp/archcode-loop-worktree", blockedReason: "needs_user" });
+    expect(await Bun.file(join(workspaceRoot, ".archcode", "loops", loop.loopId, "run-log.jsonl")).exists()).toBe(true);
+    expect(await Bun.file(join("/tmp/archcode-loop-worktree", ".archcode", "loops", loop.loopId, "run-log.jsonl")).exists()).toBe(false);
+    const jobs = await jobQueue.list();
+    expect(jobs[0]).toMatchObject({
+      status: "blocked",
+      blockedReason: "needs_user",
+      worktreePath: "/tmp/archcode-loop-worktree",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+      cleanupState: "preserved",
+      observedArtifacts,
+    });
+  });
+});
+
+async function createRunnerFixture(options: {
+  events?: SessionEventEnvelope[];
+  pendingInteractions?: PendingInteraction[];
+  worktreeManager?: LoopRunnerWorktreeManager;
+} = {}): Promise<{
+  stateManager: LoopStateManager;
+  runtime: FakeLoopRuntime;
+  runner: LoopRunner;
+  workspaceRoot: string;
+}> {
+  const workspaceRoot = join(TMP_DIR, `workspace-${crypto.randomUUID()}`);
+  await mkdir(workspaceRoot, { recursive: true });
+  const stateManager = new LoopStateManager(workspaceRoot);
+  const runtime = new FakeLoopRuntime(options.events ?? [], options.pendingInteractions ?? []);
+  const runner = new LoopRunner({
+    stateManager,
+    runtime,
+    workspaceRoot,
+    projectSlug: "project-a",
+    now: () => 1_000,
+    ...(options.worktreeManager === undefined ? {} : { worktreeManager: options.worktreeManager }),
+  });
+  return { stateManager, runtime, runner, workspaceRoot };
+}
+
+class FakeLoopRuntime {
+  #nextSession = 1;
+  readonly #sessions = new Map<string, SessionFile>();
+  readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
+    const sessionId = `session-${this.#nextSession++}`;
+    const session = makeSession(sessionId, this.events, this.pendingInteractions, options);
+    this.#sessions.set(sessionId, session);
+    return session;
+  });
+  readonly startSessionExecutionMock = mock((input: StartSessionExecutionInput): ActiveSessionExecution => ({
+    sessionId: input.sessionId,
+    workspaceRoot: input.workspaceRoot,
+    agentName: input.agentName ?? "orchestrator",
+    origin: "user_message",
+    abortController: new AbortController(),
+    promise: Promise.resolve(),
+    executionToken: Symbol(`test:${input.sessionId}`),
+    startedAt: Date.now(),
+  }));
+  readonly getSessionFileMock = mock(async (_workspaceRoot: string, sessionId: string): Promise<SessionFile> => {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined) throw new Error(`Missing fake session ${sessionId}`);
+    return session;
+  });
+  readonly prepareSessionWorkspaceMock = mock(async (_workspaceRoot: string, _canonicalWorkspaceRoot: string): Promise<void> => {});
+  readonly releaseSessionWorkspaceMock = mock((_workspaceRoot: string, _sessionId?: string): void => {});
+
+  constructor(
+    private readonly events: SessionEventEnvelope[],
+    private readonly pendingInteractions: PendingInteraction[],
+  ) {}
+
+  async createSession(workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
+    return await this.createSessionMock(workspaceRoot, options);
+  }
+
+  async getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile> {
+    return await this.getSessionFileMock(workspaceRoot, sessionId);
+  }
+
+  startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
+    return this.startSessionExecutionMock(input);
+  }
+
+  async prepareSessionWorkspace(workspaceRoot: string, canonicalWorkspaceRoot: string): Promise<void> {
+    await this.prepareSessionWorkspaceMock(workspaceRoot, canonicalWorkspaceRoot);
+  }
+
+  releaseSessionWorkspace(workspaceRoot: string, sessionId?: string): void {
+    this.releaseSessionWorkspaceMock(workspaceRoot, sessionId);
+  }
+}
+
+class DirtyCanonicalWorktreeManager implements LoopRunnerWorktreeManager {
+  readonly createMock = mock(async (_input: Parameters<LoopRunnerWorktreeManager["create"]>[0]): Promise<never> => {
+    throw new LoopWorktreeManagerError("CANONICAL_DIRTY", "Canonical checkout must be clean before creating a loop worktree", {
+      entries: [{ path: "dirty.txt", index: "?", worktree: "?", raw: "?? dirty.txt" }],
+    });
+  });
+
+  async create(input: Parameters<LoopRunnerWorktreeManager["create"]>[0]): ReturnType<LoopRunnerWorktreeManager["create"]> {
+    return await this.createMock(input);
+  }
+
+  async inspect(_input: Parameters<LoopRunnerWorktreeManager["inspect"]>[0]): Promise<LoopWorktreeInspection> {
+    throw new Error("dirty canonical should block before inspect");
+  }
+
+  async cleanup(_input: Parameters<LoopRunnerWorktreeManager["cleanup"]>[0]): ReturnType<LoopRunnerWorktreeManager["cleanup"]> {
+    throw new Error("dirty canonical should block before cleanup");
+  }
+}
+
+class FakeClock {
+  constructor(private value: number) {}
+  now(): number { return this.value; }
+}
+
+class FakeTimer implements LoopSchedulerTimer {
+  schedule(_delayMs: number, callback: () => void | Promise<void>): { id: ReturnType<typeof setTimeout> } {
+    const timer = setTimeout(() => { void callback(); }, 0);
+    return { id: timer };
+  }
+  cancel(handle: { id?: unknown }): void {
+    if (handle.id !== undefined) clearTimeout(handle.id as ReturnType<typeof setTimeout>);
+  }
+}
+
+function makeSession(
+  sessionId: string,
+  events: SessionEventEnvelope[],
+  pendingInteractions: PendingInteraction[],
+  options?: { loopId?: string; sessionRole?: "main"; title?: string },
+): SessionFile {
+  return {
+    sessionId,
+    createdAt: Date.now(),
+    agentName: "orchestrator",
+    title: options?.title ?? null,
+    messages: [],
+    steps: [],
+    stats: createEmptySessionStats(),
+    executions: [COMPLETED_EXECUTION],
+    events,
+    todos: [],
+    pendingInteractions,
+    reminders: [],
+    childSessionLinks: [],
+    rootSessionId: sessionId,
+    ...(options?.loopId === undefined ? {} : { loopId: options.loopId }),
+    ...(options?.sessionRole === undefined ? {} : { sessionRole: options.sessionRole }),
+  };
+}
+
+function testJob(loopId: string, overrides: Partial<NonNullable<LoopSchedulerRunInput["job"]>> = {}): NonNullable<LoopSchedulerRunInput["job"]> {
+  return {
+    jobId: "job-blocked-123",
+    triggerKind: "manual",
+    subjectKey: `manual:${loopId}`,
+    dedupeKey: `loop:${loopId}:manual`,
+    ...overrides,
+  };
+}
+
+function permissionRequestEvent(permissionId: string): SessionEventEnvelope {
+  return envelope(1, { type: "permission.request", permissionId, toolName: "file_write", args: {}, description: "write file" });
+}
+
+function questionRequestEvent(questionId: string): SessionEventEnvelope {
+  return envelope(1, { type: "question.request", questionId, question: "{}" });
+}
+
+function hitlRequestEvent(hitlId: string): SessionEventEnvelope {
+  return envelope(1, {
+    type: "hitl.request",
+    request: {
+      id: hitlId,
+      sessionId: "session-1",
+      kind: "approval",
+      prompt: "Approve goal?",
+      payload: { kind: "approval", action: "goal.approval.before_complete", context: {} },
+      trigger: "approval_point",
+      status: "pending",
+      createdAt: new Date(0).toISOString(),
+    },
+  });
+}
+
+function envelope(id: number, payload: SessionEventEnvelope["payload"]): SessionEventEnvelope {
+  return { id, createdAt: Date.now(), kind: payload.type, payload };
+}

@@ -8,7 +8,9 @@ import type { GoalState } from "../goals/state";
 import type { SessionFile } from "../store/helpers";
 import { CollisionLedger } from "./collision-ledger";
 import { LoopActiveConflictError, LoopRunner } from "./runner";
+import type { LoopSchedulerRunInput } from "./scheduler";
 import { LoopConfigSchema, LoopStateManager, type CollisionTarget, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
+import type { LoopWorktreeInspection } from "./worktree-manager";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-runner");
 const RUN_DIR = join(TMP_DIR, `run-${crypto.randomUUID()}`);
@@ -248,6 +250,115 @@ describe("session loop runner", () => {
     });
   });
 
+  test("scheduler-compatible callback executes queued jobs in worktree workspace and returns artifact summary", async () => {
+    const fixture = await createFixture({ worktreePath: "/tmp/archcode-loop-worktree" });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const job = testJob(loop.loopId, { baseSha: "a".repeat(40), resolvedHeadSha: "a".repeat(40) });
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "queued-worktree-run",
+      startedAt: 4_000,
+      job,
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "succeeded",
+      sessionId: "session-1",
+      worktreePath: "/tmp/archcode-loop-worktree",
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+      cleanupState: "preserved",
+    });
+    expect(result.observedArtifacts).toContainEqual({ path: "evidence/report.md", status: "created" });
+    expect(result.observedArtifacts).toContainEqual({ path: "git:branch:archcode/loop/test/job", status: "observed" });
+    expect(fixture.runtime.prepareSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/archcode-loop-worktree", fixture.workspaceRoot);
+    expect(fixture.runtime.createSessionMock).toHaveBeenCalledWith("/tmp/archcode-loop-worktree", expect.objectContaining({ loopId: loop.loopId }));
+    expect(fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0]).toMatchObject({ workspaceRoot: "/tmp/archcode-loop-worktree" });
+    expect(fixture.runtime.getSessionFileMock).toHaveBeenCalledWith("/tmp/archcode-loop-worktree", "session-1");
+    expect(fixture.runtime.releaseSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/archcode-loop-worktree", "session-1");
+    expect(fixture.runtime.releaseSessionWorkspaceMock).toHaveBeenCalledTimes(1);
+    expect(fixture.worktreeManager?.createMock).toHaveBeenCalledWith(expect.objectContaining({
+      loopSlug: "Daily triage",
+      subjectSlug: job.subjectKey,
+      jobId: job.jobId,
+      baseSha: "a".repeat(40),
+      jobClass: "local",
+    }));
+    expect(await fixture.stateManager.readRunLog(loop.loopId)).toEqual([]);
+  });
+
+  test("scheduler-compatible callback releases prepared worktree when session creation fails before execution", async () => {
+    const fixture = await createFixture({
+      worktreePath: "/tmp/session-create-fail-worktree",
+      createSessionError: new Error("create session failed"),
+    });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "session-create-fail-run",
+      startedAt: 4_500,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      error: "create session failed",
+      worktreePath: "/tmp/session-create-fail-worktree",
+    });
+    expect(fixture.runtime.prepareSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/session-create-fail-worktree", fixture.workspaceRoot);
+    expect(fixture.runtime.createSessionMock).toHaveBeenCalledWith("/tmp/session-create-fail-worktree", expect.objectContaining({ loopId: loop.loopId }));
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.releaseSessionWorkspaceMock.mock.calls).toEqual([["/tmp/session-create-fail-worktree", undefined]]);
+    expect(fixture.worktreeManager?.inspectMock).toHaveBeenCalledTimes(1);
+    expect(fixture.worktreeManager?.cleanupMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("scheduler-compatible callback keeps plain manual queued jobs without git base in canonical workspace", async () => {
+    const fixture = await createFixture({ worktreePath: "/tmp/plain-manual-unused-worktree" });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "plain-manual-run",
+      startedAt: 4_550,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
+    expect(result.worktreePath).toBeUndefined();
+    expect(fixture.worktreeManager?.createMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.prepareSessionWorkspaceMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.createSessionMock).toHaveBeenCalledWith(fixture.workspaceRoot, expect.objectContaining({ loopId: loop.loopId }));
+    expect(fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0]).toMatchObject({ workspaceRoot: fixture.workspaceRoot });
+    expect(fixture.runtime.releaseSessionWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  test("scheduler-compatible callback skips superseded queued jobs without creating worktree or session", async () => {
+    const fixture = await createFixture({ worktreePath: "/tmp/superseded-worktree" });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "on_pr",
+      runId: "superseded-run",
+      startedAt: 5_000,
+      job: testJob(loop.loopId, { triggerKind: "on_pr", blockedReason: "superseded", subjectKey: "pr:1" }),
+    });
+
+    expect(result).toMatchObject({ status: "skipped", blockedReason: "superseded" });
+    expect(fixture.runtime.createSessionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.releaseSessionWorkspaceMock).not.toHaveBeenCalled();
+    expect(fixture.worktreeManager?.createMock).not.toHaveBeenCalled();
+  });
+
   test("scheduler-compatible callback does not start a session after the run was cancelled before session creation", async () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
@@ -395,6 +506,7 @@ describe("goal loop runner", () => {
     expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", {
       loopId: loop.loopId,
       sessionTitle: "Loop Goal: Goal loop",
+      workspaceRoot: fixture.workspaceRoot,
     });
     expect(fixture.goalRunner.doneEvaluationCount).toBe(0);
   });
@@ -493,6 +605,67 @@ describe("goal loop runner", () => {
     expect(await fixture.stateManager.readRunLog(loop.loopId)).toEqual([]);
   });
 
+  test("scheduler-compatible callback releases prepared worktree when goal start fails before session execution", async () => {
+    const fixture = await createFixture({
+      worktreePath: "/tmp/goal-start-fail-worktree",
+      goalStartError: new Error("goal start failed"),
+    });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "goal-start-fail-run",
+      startedAt: 4_600,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      goalId: "goal-1",
+      error: "goal start failed",
+      worktreePath: "/tmp/goal-start-fail-worktree",
+    });
+    expect(fixture.runtime.prepareSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/goal-start-fail-worktree", fixture.workspaceRoot);
+    expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(1);
+    expect(fixture.goalStateManager.lockMock).toHaveBeenCalledWith("goal-1", goalTemplate.author);
+    expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", expect.objectContaining({ workspaceRoot: "/tmp/goal-start-fail-worktree" }));
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.releaseSessionWorkspaceMock.mock.calls).toEqual([["/tmp/goal-start-fail-worktree", undefined]]);
+    expect(fixture.worktreeManager?.inspectMock).toHaveBeenCalledTimes(1);
+    expect(fixture.worktreeManager?.cleanupMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("scheduler-compatible callback releases prepared worktree when started goal has no main session", async () => {
+    const worktreePath = "/tmp/goal-missing-session-worktree";
+    const fixture = await createFixture({
+      worktreePath,
+      goalStartWithoutMainSession: true,
+    });
+    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "goal-missing-session-run",
+      startedAt: 4_700,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      goalId: "goal-1",
+      error: "Goal goal-1 started without a main session.",
+      worktreePath,
+    });
+    expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
+    expect(fixture.runtime.releaseSessionWorkspaceMock.mock.calls).toEqual([[worktreePath, undefined]]);
+    expect(fixture.worktreeManager?.inspectMock).toHaveBeenCalledTimes(1);
+    expect(fixture.worktreeManager?.cleanupMock).toHaveBeenCalledTimes(1);
+  });
+
   test("scheduler-compatible callback does not start goal session execution when cancellation wins after goal start", async () => {
     let stateManager!: LoopStateManager;
     let loopId = "";
@@ -539,9 +712,12 @@ describe("goal loop runner", () => {
 async function createFixture(options: {
   executionPromise?: Promise<void>;
   sessionExecutions?: SessionExecutionRecord[];
+  createSessionError?: Error;
   goalStartError?: Error;
+  goalStartWithoutMainSession?: boolean;
   afterCreateSession?: (sessionId: string) => Promise<void>;
   afterGoalStart?: (goal: GoalState) => Promise<void>;
+  worktreePath?: string;
 } = {}): Promise<{
   stateManager: LoopStateManager;
   runtime: FakeLoopRuntime;
@@ -549,15 +725,17 @@ async function createFixture(options: {
   goalRunner: FakeGoalRunner;
   runner: LoopRunner;
   collisionLedger: CollisionLedger;
+  worktreeManager?: FakeWorktreeManager;
   workspaceRoot: string;
 }> {
   const workspaceRoot = join(RUN_DIR, `workspace-${nextWorkspaceId++}-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
-  const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions, options.afterCreateSession);
+  const runtime = new FakeLoopRuntime(options.executionPromise ?? Promise.resolve(), options.sessionExecutions, options.afterCreateSession, options.createSessionError);
   const goalStateManager = new FakeGoalStateManager();
-  const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart);
+  const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart, options.goalStartWithoutMainSession ?? false);
   const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot, clock: { now: () => 1_000 } });
+  const worktreeManager = options.worktreePath === undefined ? undefined : new FakeWorktreeManager(options.worktreePath);
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -567,14 +745,18 @@ async function createFixture(options: {
     projectSlug: "project-a",
     now: () => 1_000,
     collisionLedger,
+    ...(worktreeManager === undefined ? {} : { worktreeManager }),
   });
-  return { stateManager, runtime, goalStateManager, goalRunner, runner, collisionLedger, workspaceRoot };
+  return { stateManager, runtime, goalStateManager, goalRunner, runner, collisionLedger, worktreeManager, workspaceRoot };
 }
 
 class FakeLoopRuntime {
   #nextSession = 1;
   readonly #sessions = new Map<string, SessionFile>();
+  readonly prepareSessionWorkspaceMock = mock(async (_workspaceRoot: string, _canonicalWorkspaceRoot: string): Promise<void> => {});
+  readonly releaseSessionWorkspaceMock = mock((_workspaceRoot: string, _sessionId?: string): void => {});
   readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
+    if (this.createSessionError !== undefined) throw this.createSessionError;
     const sessionId = `session-${this.#nextSession++}`;
     const session = this.#makeSession(sessionId, options);
     this.#sessions.set(sessionId, session);
@@ -595,6 +777,11 @@ class FakeLoopRuntime {
       executionToken: Symbol(`test:${input.sessionId}`),
       startedAt: Date.now(),
     };
+  });
+  readonly getSessionFileMock = mock(async (_workspaceRoot: string, sessionId: string): Promise<SessionFile> => {
+    const session = this.#sessions.get(sessionId);
+    if (session === undefined) throw new Error(`Missing fake session ${sessionId}`);
+    return session;
   });
 
   #makeSession(sessionId: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): SessionFile {
@@ -622,6 +809,7 @@ class FakeLoopRuntime {
     private readonly executionPromise: Promise<void>,
     private readonly sessionExecutions: SessionExecutionRecord[] = [{ id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 }],
     private readonly afterCreateSession?: (sessionId: string) => Promise<void>,
+    private readonly createSessionError?: Error,
   ) {}
 
   async createSession(workspaceRoot: string, options?: { goalId?: string; loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
@@ -629,13 +817,66 @@ class FakeLoopRuntime {
   }
 
   async getSessionFile(_workspaceRoot: string, sessionId: string): Promise<SessionFile> {
-    const session = this.#sessions.get(sessionId);
-    if (session === undefined) throw new Error(`Missing fake session ${sessionId}`);
-    return session;
+    return await this.getSessionFileMock(_workspaceRoot, sessionId);
   }
 
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution {
     return this.startSessionExecutionMock(input);
+  }
+
+  async prepareSessionWorkspace(workspaceRoot: string, canonicalWorkspaceRoot: string): Promise<void> {
+    await this.prepareSessionWorkspaceMock(workspaceRoot, canonicalWorkspaceRoot);
+  }
+
+  releaseSessionWorkspace(workspaceRoot: string, sessionId?: string): void {
+    this.releaseSessionWorkspaceMock(workspaceRoot, sessionId);
+  }
+}
+
+class FakeWorktreeManager {
+  readonly createMock = mock(async (input: { loopSlug: string; subjectSlug: string; jobId: string; baseSha: string; jobClass?: "local" | "remote" }) => ({
+    canonicalRoot: "/tmp/canonical",
+    managedRoot: "/tmp/canonical.worktrees",
+    worktreePath: this.worktreePath,
+    worktreeName: "worktree-name",
+    branchName: "archcode/loop/test/job",
+    baseSha: input.baseSha,
+    resolvedHeadSha: input.baseSha,
+    canonicalStatus: { dirty: false, entries: [] },
+  }));
+  readonly inspectMock = mock(async (input: { worktreePath: string; branchName: string; baseSha: string }): Promise<LoopWorktreeInspection> => ({
+    worktreePath: input.worktreePath,
+    branchName: input.branchName,
+    baseSha: input.baseSha,
+    headSha: "b".repeat(40),
+    status: { dirty: true, entries: [{ path: "evidence/report.md", index: "?", worktree: "?", raw: "?? evidence/report.md" }] },
+    untrackedFiles: ["evidence/report.md"],
+    localCommitsAhead: 1,
+    changedRefs: [{ ref: `refs/heads/${input.branchName}`, before: input.baseSha, after: "b".repeat(40) }],
+    diffStats: { committed: " README.md | 1 +", workingTree: " evidence/report.md | 1 +" },
+    evidenceArtifacts: [{ path: "evidence/report.md", status: "created" }],
+    hasChanges: true,
+  }));
+  readonly cleanupMock = mock(async (input: { inspection: LoopWorktreeInspection }) => ({
+    cleanupState: "preserved" as const,
+    removed: false,
+    reviewRequired: true,
+    reason: "worktree contains changes",
+    worktreePath: input.inspection.worktreePath,
+  }));
+
+  constructor(private readonly worktreePath: string) {}
+
+  async create(input: Parameters<FakeWorktreeManager["createMock"]>[0]): ReturnType<FakeWorktreeManager["createMock"]> {
+    return await this.createMock(input);
+  }
+
+  async inspect(input: Parameters<FakeWorktreeManager["inspectMock"]>[0]): ReturnType<FakeWorktreeManager["inspectMock"]> {
+    return await this.inspectMock(input);
+  }
+
+  async cleanup(input: Parameters<FakeWorktreeManager["cleanupMock"]>[0]): ReturnType<FakeWorktreeManager["cleanupMock"]> {
+    return await this.cleanupMock(input);
   }
 }
 
@@ -699,11 +940,15 @@ class FakeGoalStateManager {
 }
 
 class FakeGoalRunner {
-  readonly startMock = mock(async (goalId: string, _options?: { loopId?: string; sessionTitle?: string }): Promise<GoalState> => {
+  readonly startMock = mock(async (goalId: string, _options?: { loopId?: string; sessionTitle?: string; workspaceRoot?: string }): Promise<GoalState> => {
     if (this.startError) throw this.startError;
     const goal = this.goalStateManager.goals.get(goalId);
     if (goal === undefined) throw new Error(`Missing fake goal ${goalId}`);
-    const running: GoalState = { ...goal, status: "running", mainSessionId: `goal-session-${this.startMock.mock.calls.length}` };
+    const running: GoalState = {
+      ...goal,
+      status: "running",
+      ...(this.startWithoutMainSession ? {} : { mainSessionId: `goal-session-${this.startMock.mock.calls.length}` }),
+    };
     this.goalStateManager.goals.set(goalId, running);
     await this.afterGoalStart?.(running);
     return running;
@@ -714,9 +959,10 @@ class FakeGoalRunner {
     private readonly goalStateManager: FakeGoalStateManager,
     private readonly startError?: Error,
     private readonly afterGoalStart?: (goal: GoalState) => Promise<void>,
+    private readonly startWithoutMainSession = false,
   ) {}
 
-  async start(goalId: string, options?: { loopId?: string; sessionTitle?: string }): Promise<GoalState> {
+  async start(goalId: string, options?: { loopId?: string; sessionTitle?: string; workspaceRoot?: string }): Promise<GoalState> {
     return await this.startMock(goalId, options);
   }
 }
@@ -735,6 +981,16 @@ function loopRunId(input: StartSessionExecutionInput | undefined): string | unde
   const origin = input?.origin;
   if (origin === undefined || typeof origin !== "object") return undefined;
   return origin.kind === "loop" ? origin.runId : undefined;
+}
+
+function testJob(loopId: string, overrides: Partial<NonNullable<LoopSchedulerRunInput["job"]>> = {}): NonNullable<LoopSchedulerRunInput["job"]> {
+  return {
+    jobId: "job-1234567890",
+    triggerKind: "manual",
+    subjectKey: `manual:${loopId}`,
+    dedupeKey: `loop:${loopId}:manual`,
+    ...overrides,
+  };
 }
 
 function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
