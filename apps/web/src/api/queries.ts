@@ -1,6 +1,10 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
+  LoopBudgetSnapshot,
+  LoopCollisionSnapshot,
+} from "@archcode/protocol";
+import type {
   DashboardGoal,
   DashboardHitlItem,
   DashboardLoop,
@@ -10,6 +14,8 @@ import type {
   GoalArtifactReadResponse,
   GoalArtifactsListResponse,
   GoalState,
+  LoopIntegrationStatusSnapshot,
+  LoopKillState,
   LoopRunReport,
   LoopState,
   LoopStateResponse,
@@ -44,6 +50,10 @@ export const queryKeys = {
   loop: (slug: string, loopId: string) => ["projects", slug, "loops", loopId] as const,
   loopRuns: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "runs"] as const,
   loopState: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "state"] as const,
+  loopBudget: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "budget"] as const,
+  loopCollisions: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "collisions"] as const,
+  loopIntegrations: (slug: string, loopId: string) => ["projects", slug, "loops", loopId, "integrations"] as const,
+  loopKillState: (slug: string) => ["projects", slug, "loops", "kill-state"] as const,
   activeLoops: ["loops", "active"] as const,
 };
 
@@ -349,6 +359,58 @@ export function activeLoopsQueryOptions() {
   });
 }
 
+export function loopBudgetQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopBudget(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<{ loopId: string; budget: LoopBudgetSnapshot | null }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/budget`,
+      );
+      return response.budget;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function loopCollisionsQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopCollisions(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<{ loopId: string; collisions: LoopCollisionSnapshot }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/collisions`,
+      );
+      return response.collisions;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function loopIntegrationsQueryOptions(slug: string, loopId: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopIntegrations(slug, loopId),
+    queryFn: async () => {
+      const response = await apiFetch<{ loopId: string; integrations: LoopIntegrationStatusSnapshot }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/integrations`,
+      );
+      return response.integrations;
+    },
+    enabled: slug.length > 0 && loopId.length > 0,
+  });
+}
+
+export function loopKillStateQueryOptions(slug: string) {
+  return queryOptions({
+    queryKey: queryKeys.loopKillState(slug),
+    queryFn: async () => {
+      const response = await apiFetch<{ killState: LoopKillState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/kill-state`,
+      );
+      return response.killState;
+    },
+    enabled: slug.length > 0,
+  });
+}
+
 // ─── Loop hooks ───
 
 export function useLoops(slug: string) {
@@ -369,6 +431,22 @@ export function useLoopState(slug: string, loopId: string) {
 
 export function useActiveLoops() {
   return useQuery(activeLoopsQueryOptions());
+}
+
+export function useLoopBudget(slug: string, loopId: string) {
+  return useQuery(loopBudgetQueryOptions(slug, loopId));
+}
+
+export function useLoopCollisions(slug: string, loopId: string) {
+  return useQuery(loopCollisionsQueryOptions(slug, loopId));
+}
+
+export function useLoopIntegrations(slug: string, loopId: string) {
+  return useQuery(loopIntegrationsQueryOptions(slug, loopId));
+}
+
+export function useLoopKillState(slug: string) {
+  return useQuery(loopKillStateQueryOptions(slug));
 }
 
 interface SessionResponse extends Omit<Session, "id"> {

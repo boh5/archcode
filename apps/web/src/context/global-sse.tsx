@@ -105,6 +105,15 @@ export function handleSSEEvent(
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
       }
+
+      if (isLoopPayload(envelope.payload)) {
+        invalidateLoopGuardrailQueries(deps, envelope.slug, envelope.payload.loopId, envelope.sessionId);
+      } else {
+        const loopId = extractLoopIdFromPayload(envelope.payload);
+        if (loopId) {
+          invalidateLoopGuardrailQueries(deps, envelope.slug, loopId, envelope.sessionId);
+        }
+      }
       break;
     }
     case "heartbeat": {
@@ -143,6 +152,42 @@ function isHitlPayload(
   payload: SessionEventPayload,
 ): payload is Extract<SessionEventPayload, { type: "hitl.request" | "hitl.resolved" }> {
   return payload.type === "hitl.request" || payload.type === "hitl.resolved";
+}
+
+function isLoopPayload(
+  payload: SessionEventPayload,
+): payload is Extract<SessionEventPayload, { type: "loop.state_change" | "loop.run_appended" }> {
+  return payload.type === "loop.state_change" || payload.type === "loop.run_appended";
+}
+
+/** Extract loopId from any session payload that carries it (e.g. hitl.request, loop stream events). */
+function extractLoopIdFromPayload(payload: SessionEventPayload): string | undefined {
+  if ("loopId" in payload && typeof (payload as Record<string, unknown>).loopId === "string") {
+    return (payload as Record<string, unknown>).loopId as string;
+  }
+  // hitl.request nests loopId inside the request object
+  if (payload.type === "hitl.request" && typeof payload.request.loopId === "string") {
+    return payload.request.loopId;
+  }
+  return undefined;
+}
+
+/** Invalidate all loop guardrail query keys for a given slug + loopId. */
+function invalidateLoopGuardrailQueries(
+  deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+  loopId: string,
+  sessionId: string,
+): void {
+  deps.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) });
+  deps.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) });
+  deps.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) });
+  deps.invalidateQueries({ queryKey: queryKeys.loopCollisions(slug, loopId) });
+  deps.invalidateQueries({ queryKey: queryKeys.loopIntegrations(slug, loopId) });
+  deps.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) });
+  deps.invalidateQueries({ queryKey: queryKeys.activeLoops });
+  deps.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) });
+  deps.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) });
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {

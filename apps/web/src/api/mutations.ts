@@ -3,10 +3,12 @@ import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
 import type {
   ApprovalPoint,
+  CancelCurrentRunResponse,
   CommandResult,
   DoneCondition,
   GoalState,
   LoopConfig,
+  LoopKillState,
   LoopRunReport,
   LoopState,
   PermissionDecision,
@@ -344,7 +346,7 @@ export function invalidateLoopAfterUpdate(
 
 /** Pure invalidation helper for triggerLoop onSuccess. */
 export function invalidateLoopAfterTrigger(
-  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
   slug: string,
   loopId: string,
 ): Promise<void[]> {
@@ -352,13 +354,17 @@ export function invalidateLoopAfterTrigger(
     qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
     qc.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) }),
     qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopCollisions(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopIntegrations(slug, loopId) }),
     qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) }),
   ]);
 }
 
 /** Pure invalidation helper for pauseLoop / resumeLoop onSuccess. */
 export function invalidateLoopAfterPauseResume(
-  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
   slug: string,
   loopId: string,
 ): Promise<void[]> {
@@ -366,7 +372,11 @@ export function invalidateLoopAfterPauseResume(
     qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
     qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
     qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopCollisions(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopIntegrations(slug, loopId) }),
     qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) }),
   ]);
 }
 
@@ -469,6 +479,99 @@ export function useResumeLoop() {
       ),
     onSuccess: async (_data, variables) => {
       await invalidateLoopAfterPauseResume(queryClient, variables.slug, variables.loopId);
+    },
+  });
+}
+
+// ─── Loop guardrail mutations ───
+
+/** Pure invalidation helper for cancelCurrentRun onSuccess. */
+export function invalidateLoopAfterCancelCurrentRun(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
+  slug: string,
+  loopId: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopState(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopCollisions(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopIntegrations(slug, loopId) }),
+    qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+    qc.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) }),
+  ]);
+}
+
+/** Pure invalidation helper for global kill activate/clear onSuccess. */
+export function invalidateLoopAfterGlobalKill(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
+  slug: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) }),
+    qc.invalidateQueries({ queryKey: queryKeys.activeLoops }),
+    // Invalidate all per-loop guardrail caches (budget, collisions, integrations)
+    // across every loop in the project via prefix match.
+    qc.invalidateQueries({ queryKey: ["projects", slug, "loops"], exact: false }),
+  ]);
+}
+
+export function useCancelLoopCurrentRun() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug, loopId }: { slug: string; loopId: string }) =>
+      apiFetch<CancelCurrentRunResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}/runs/current/cancel`,
+        { method: "POST" },
+      ),
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterCancelCurrentRun(queryClient, variables.slug, variables.loopId);
+    },
+  });
+}
+
+export function useActivateLoopGlobalKill() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      slug,
+      activatedBy,
+      reason,
+    }: {
+      slug: string;
+      activatedBy?: string;
+      reason?: string;
+    }) => {
+      const body: Record<string, unknown> = {};
+      if (activatedBy !== undefined) body.activatedBy = activatedBy;
+      if (reason !== undefined) body.reason = reason;
+      return apiFetch<{ killState: LoopKillState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/kill-all`,
+        { method: "POST", body },
+      );
+    },
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterGlobalKill(queryClient, variables.slug);
+    },
+  });
+}
+
+export function useClearLoopGlobalKill() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ slug }: { slug: string }) =>
+      apiFetch<{ killState: LoopKillState }>(
+        `/api/projects/${encodeURIComponent(slug)}/loops/kill-all`,
+        { method: "DELETE" },
+      ),
+    onSuccess: async (_data, variables) => {
+      await invalidateLoopAfterGlobalKill(queryClient, variables.slug);
     },
   });
 }

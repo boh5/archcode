@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { GoalState, HitlRequest, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal, DashboardLoop } from "./types";
-import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -487,6 +487,114 @@ describe("web loop query contracts", () => {
     expect(queryKeys.loop("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc"]);
     expect(queryKeys.loopRuns("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "runs"]);
     expect(queryKeys.loopState("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "state"]);
+    expect(queryKeys.loopBudget("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "budget"]);
+    expect(queryKeys.loopCollisions("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "collisions"]);
+    expect(queryKeys.loopIntegrations("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "integrations"]);
+    expect(queryKeys.loopKillState("archcode")).toEqual(["projects", "archcode", "loops", "kill-state"]);
     expect(queryKeys.activeLoops).toEqual(["loops", "active"]);
+  });
+});
+
+describe("web loop guardrail query contracts", () => {
+  test("loopBudgetQueryOptions fetches budget snapshot", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const budget = {
+      usage: { iterations: 5, inputTokens: 1000, outputTokens: 500, totalTokens: 1500, wallClockMs: 60000, runsToday: 1, resetDateUtc: "2026-07-05" },
+      updatedAt: 1_000,
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/budget");
+      return jsonResponse({ loopId: "loop-1", budget });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopBudgetQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "budget"]);
+    expect(result).toEqual(budget);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopBudgetQueryOptions returns null when no budget exists", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/budget");
+      return jsonResponse({ loopId: "loop-1", budget: null });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopBudgetQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect(result).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopCollisionsQueryOptions fetches collision snapshot", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const collisions = {
+      targets: [],
+      activeLeases: [],
+      conflicts: [],
+      updatedAt: 1_000,
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/collisions");
+      return jsonResponse({ loopId: "loop-1", collisions });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopCollisionsQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "collisions"]);
+    expect(result).toEqual(collisions);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopIntegrationsQueryOptions fetches integration status snapshot", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const integrations = {
+      statuses: [
+        { integrationId: "github", status: "ready", updatedAt: 1_000 },
+      ],
+      snapshot: null,
+      updatedAt: 1_000,
+    };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/integrations");
+      return jsonResponse({ loopId: "loop-1", integrations });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopIntegrationsQueryOptions("archcode", "loop-1");
+    const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "integrations"]);
+    expect(result).toEqual(integrations);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopKillStateQueryOptions fetches kill state", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const killState = { globalKillActive: false };
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/kill-state");
+      return jsonResponse({ killState });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = loopKillStateQueryOptions("archcode");
+    const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
+
+    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "kill-state"]);
+    expect(result).toEqual(killState);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("loopKillStateQueryOptions is disabled when slug is empty", () => {
+    const opts = loopKillStateQueryOptions("");
+    expect(opts.enabled).toBe(false);
   });
 });

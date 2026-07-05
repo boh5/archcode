@@ -202,9 +202,9 @@ describe("web HITL mutation API calls", () => {
 
 describe("web loop mutation invalidation helpers", () => {
   function createFakeQc() {
-    const calls: Array<{ queryKey: readonly unknown[] }> = [];
+    const calls: Array<{ queryKey: readonly unknown[]; exact?: boolean }> = [];
     return {
-      invalidateQueries: mock((opts: { queryKey: readonly unknown[] }) => {
+      invalidateQueries: mock((opts: { queryKey: readonly unknown[]; exact?: boolean }) => {
         calls.push(opts);
         return Promise.resolve();
       }),
@@ -225,7 +225,7 @@ describe("web loop mutation invalidation helpers", () => {
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
   });
 
-  test("loop trigger mutation invalidates run-log, generated state, and dashboard keys", async () => {
+  test("loop trigger mutation invalidates run-log, generated state, guardrail keys, and dashboard keys", async () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterTrigger } = await import("./mutations");
 
@@ -235,9 +235,13 @@ describe("web loop mutation invalidation helpers", () => {
       { queryKey: ["projects", "archcode", "loops", "loop-1"] },
       { queryKey: ["projects", "archcode", "loops", "loop-1", "runs"] },
       { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
       { queryKey: ["loops", "active"] },
+      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
     ]);
-    expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(8);
   });
 
   test("invalidateLoopAfterUpdate invalidates list, detail, generated state, and dashboard keys", async () => {
@@ -255,7 +259,7 @@ describe("web loop mutation invalidation helpers", () => {
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
   });
 
-  test("invalidateLoopAfterPauseResume invalidates list, detail, generated state, and dashboard keys", async () => {
+  test("invalidateLoopAfterPauseResume invalidates list, detail, generated state, guardrail keys, and dashboard keys", async () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterPauseResume } = await import("./mutations");
 
@@ -265,7 +269,46 @@ describe("web loop mutation invalidation helpers", () => {
       { queryKey: ["projects", "archcode", "loops"] },
       { queryKey: ["projects", "archcode", "loops", "loop-1"] },
       { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
       { queryKey: ["loops", "active"] },
+      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(8);
+  });
+
+  test("invalidateLoopAfterCancelCurrentRun invalidates detail, runs, state, budget, collisions, integrations, project loops, active loops, and kill state", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterCancelCurrentRun } = await import("./mutations");
+
+    await invalidateLoopAfterCancelCurrentRun(qc, "archcode", "loop-1");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "runs"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
+      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["loops", "active"] },
+      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+    ]);
+    expect(qc.invalidateQueries).toHaveBeenCalledTimes(9);
+  });
+
+  test("invalidateLoopAfterGlobalKill invalidates kill state, project loops, active loops, and all per-loop guardrail caches via prefix", async () => {
+    const qc = createFakeQc();
+    const { invalidateLoopAfterGlobalKill } = await import("./mutations");
+
+    await invalidateLoopAfterGlobalKill(qc, "archcode");
+
+    expect(qc.getCalls()).toEqual([
+      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["loops", "active"] },
+      { queryKey: ["projects", "archcode", "loops"], exact: false },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
   });
@@ -386,6 +429,53 @@ describe("web loop mutation URL contracts", () => {
       body: { status: "paused" },
     });
     expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "paused" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("useCancelLoopCurrentRun posts to /api/projects/:slug/loops/:loopId/runs/current/cancel", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/runs/current/cancel");
+      expect(init?.method).toBe("POST");
+      return jsonResponse({ ok: true, loopId: "loop-1", runId: "run-1", status: "cancelled" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/loop-1/runs/current/cancel", { method: "POST" });
+    expect(result).toMatchObject({ ok: true, loopId: "loop-1", runId: "run-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("useActivateLoopGlobalKill posts to /api/projects/:slug/loops/kill-all with optional body", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/kill-all");
+      expect(init?.method).toBe("POST");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      expect(body.activatedBy).toBe("user");
+      return jsonResponse({ killState: { globalKillActive: true, activatedBy: "user" } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/kill-all", {
+      method: "POST",
+      body: { activatedBy: "user" },
+    });
+    expect(result).toMatchObject({ killState: { globalKillActive: true } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("useClearLoopGlobalKill deletes /api/projects/:slug/loops/kill-all", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/projects/archcode/loops/kill-all");
+      expect(init?.method).toBe("DELETE");
+      return jsonResponse({ killState: { globalKillActive: false } });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/archcode/loops/kill-all", { method: "DELETE" });
+    expect(result).toMatchObject({ killState: { globalKillActive: false } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
