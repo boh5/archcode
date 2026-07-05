@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   LoopActiveConflictError,
   ProjectContextResolver,
@@ -10,7 +10,7 @@ import {
   type LoopConfig,
   type LoopRunReport,
 } from "@archcode/agent-core";
-import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopState } from "@archcode/protocol";
+import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopJobSummary, LoopState } from "@archcode/protocol";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "loops-routes");
@@ -35,6 +35,19 @@ const intervalSessionLoopConfig: LoopConfig = {
   ...manualSessionLoopConfig,
   title: "Interval session loop",
   schedule: { kind: "interval", everyMs: 1_000 },
+};
+
+const cronSessionLoopConfig: LoopConfig = {
+  ...manualSessionLoopConfig,
+  title: "Cron session loop",
+  schedule: { kind: "cron", expression: "*/15 * * * *" },
+};
+
+const prTriggerSessionLoopConfig: LoopConfig = {
+  ...manualSessionLoopConfig,
+  title: "PR trigger session loop",
+  schedule: { kind: "manual" },
+  triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
 };
 
 const goalLoopConfig: LoopConfig = {
@@ -138,6 +151,104 @@ describe("loops routes", () => {
     expect(prBabysitterBody.loop.readinessScore ?? null).toBeNull();
   });
 
+  test("creates cron loops and persists UTC cron metadata", async () => {
+    const { app, project, runtime } = await createTestApp("cron-loop-create", { now: 10_000 });
+
+    const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
+      method: "POST",
+      body: JSON.stringify({ config: cronSessionLoopConfig, author: "cron-user" }),
+      headers: { "content-type": "application/json" },
+    });
+    const createBody = await createRes.json() as { loop: LoopState };
+
+    expect(createRes.status).toBe(201);
+    expect(createBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+    expect(createBody.loop.generatedStateSummary).toContain("cron */15 * * * *");
+    expect(JSON.stringify(createBody.loop)).not.toContain("readinessScore");
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, {
+      ...cronSessionLoopConfig,
+      limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
+    }, "cron-user");
+
+    const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
+    const readBody = await readRes.json() as { loop: LoopState };
+    expect(readRes.status).toBe(200);
+    expect(readBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+  });
+
+  test("creates manual loops with PR triggers and cleanup policy separate from schedule", async () => {
+    const { app, project } = await createTestApp("manual-pr-trigger-create");
+    const config: LoopConfig = {
+      ...prTriggerSessionLoopConfig,
+      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 },
+    };
+
+    const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
+      method: "POST",
+      body: JSON.stringify({ config }),
+      headers: { "content-type": "application/json" },
+    });
+    const createBody = await createRes.json() as { loop: LoopState };
+
+    expect(createRes.status).toBe(201);
+    expect(createBody.loop.config.schedule).toEqual({ kind: "manual" });
+    expect(createBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(createBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 });
+
+    const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
+    const readBody = await readRes.json() as { loop: LoopState };
+    expect(readRes.status).toBe(200);
+    expect(readBody.loop.config.schedule.kind).toBe("manual");
+    expect(readBody.loop.config.triggers?.[0]).toMatchObject({ kind: "on_pr", baseBranch: "main", cadenceMs: 60_000 });
+  });
+
+  test("rejects invalid cron cadence and unsupported coordinator config with stable messages", async () => {
+    const { app, project } = await createTestApp("phase-5-create-rejections");
+    const cases: Array<{ name: string; body: unknown; message: string; patch?: boolean }> = [
+      {
+        name: "invalid cron",
+        body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "60 * * * *" } } },
+        message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+      },
+      {
+        name: "too-fast trigger cadence",
+        body: { config: { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000, baseBranch: "main" }] } },
+        message: "config.triggers.0.cadenceMs must be at least 30000",
+      },
+      {
+        name: "zero maxConcurrent",
+        body: { config: manualSessionLoopConfig, projectConfig: { coordinator: { maxConcurrent: 0 } } },
+        message: "projectConfig.coordinator.maxConcurrent must be greater than 0",
+      },
+      {
+        name: "unsupported nonzero maxConcurrent",
+        body: { config: manualSessionLoopConfig, projectConfig: { coordinator: { maxConcurrent: 2 } } },
+        message: "projectConfig is not currently supported by server loop routes",
+      },
+      {
+        name: "unsupported patch projectConfig",
+        body: { projectConfig: { coordinator: { maxConcurrent: 3 } } },
+        message: "projectConfig is not currently supported by server loop routes",
+        patch: true,
+      },
+    ];
+
+    const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
+
+    for (const { body, message, patch } of cases) {
+      const res = await app.request(patch ? `/api/projects/${project.slug}/loops/${loop.loopId}` : `/api/projects/${project.slug}/loops`, {
+        method: patch ? "PATCH" : "POST",
+        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+      });
+      const json = await res.json() as { error: { code: string; message: string; details?: { validationMessages?: string[] } } };
+
+      expect(res.status).toBe(400);
+      expect(json.error).toMatchObject({ code: "BAD_REQUEST", message: "Request body is invalid" });
+      expect(json.error.details?.validationMessages).toContain(message);
+    }
+  });
+
   test("creates a goal loop with inline goalTemplate and rejects goalTemplateId", async () => {
     const { app, project } = await createTestApp("goal-loop-inline-template");
 
@@ -162,8 +273,8 @@ describe("loops routes", () => {
     expect(await invalidRes.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
   });
 
-  test("rejects active duplicate or cron and event trigger schedules", async () => {
-    const { app, project, runtime } = await createTestApp("rejects-active-duplicate-or-cron", { holdRunsOpen: true });
+  test("rejects active duplicate and out-of-scope loop API fields", async () => {
+    const { app, project, runtime } = await createTestApp("rejects-active-duplicate-or-out-of-scope", { holdRunsOpen: true });
     const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
 
     const firstTrigger = app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/trigger`, { method: "POST" });
@@ -184,10 +295,9 @@ describe("loops routes", () => {
     expect((await (await firstTrigger).json() as { report: LoopRunReport }).report).toMatchObject({ runId: "run-1", sessionId: "session-1", status: "succeeded" });
 
     for (const config of [
-      { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "* * * * *" } },
       { ...manualSessionLoopConfig, schedule: { kind: "event", event: "pull_request" } },
-      { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", baseBranch: "main", cadenceMs: 60_000 }] },
-      { ...manualSessionLoopConfig, cleanupPolicy: { deleteUnchangedWorktrees: true } },
+      { ...manualSessionLoopConfig, autoApprove: true },
+      { ...manualSessionLoopConfig, customPatternPath: ".archcode/loops/patterns.ts" },
     ]) {
       const res = await app.request(`/api/projects/${project.slug}/loops`, {
         method: "POST",
@@ -313,6 +423,8 @@ describe("loops routes", () => {
     expect(integrationsBody.loopId).toBe(loop.loopId);
     expect(integrationsBody.integrations.statuses).toContainEqual(expect.objectContaining({ status: "auth_missing", reason: "integration_auth_missing" }));
     expect(JSON.stringify(integrationsBody)).not.toContain("ghp_secret_route_token");
+    expect(JSON.stringify(integrationsBody)).not.toContain("ghr_route_refresh_secret");
+    expect(JSON.stringify(integrationsBody)).not.toContain("github_pat_route_secret_value");
     expect(integrationsBody.integrations.snapshot.errors[0]?.message).toContain("[REDACTED:SECRET]");
   });
 
@@ -339,6 +451,97 @@ describe("loops routes", () => {
     });
   });
 
+  test("run history exposes Phase 5 job metadata and sanitizes worktree paths", async () => {
+    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-5-run-history-metadata");
+    const loop = await createLoop(app, project.slug, prTriggerSessionLoopConfig);
+    const seeded = await runtime.seedPhase5RunHistory(workspaceRoot, loop.loopId);
+
+    const runsRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/runs`);
+    const runsBody = await runsRes.json() as { runs: LoopRunReport[] };
+
+    expect(runsRes.status).toBe(200);
+    const safeRun = runsBody.runs.find((run) => run.runId === "run-safe-worktree");
+    expect(safeRun).toMatchObject({
+      jobId: "job-safe",
+      trigger: "on_pr",
+      triggerKind: "on_pr",
+      subjectKey: "pr:archcode/archcode#42",
+      dedupeKey: `${loop.loopId}:on_pr:pr:archcode/archcode#42`,
+      branchKey: "github:archcode/archcode:main",
+      worktreePath: seeded.safeWorktreePath,
+      baseSha: "a".repeat(40),
+      resolvedHeadSha: "b".repeat(40),
+      cleanupState: "preserved",
+      observedArtifacts: [{ path: "evidence/report.md", status: "created", sizeBytes: 128, sha: "artifact-sha" }],
+    });
+    expect(safeRun?.blockedReason).toContain("[REDACTED:SECRET]");
+
+    const unsafeRun = runsBody.runs.find((run) => run.runId === "run-unsafe-worktree");
+    expect(unsafeRun).toMatchObject({
+      jobId: "job-unsafe",
+      triggerKind: "on_commit",
+      subjectKey: "branch:feature/leaky",
+      dedupeKey: `${loop.loopId}:on_commit:branch:feature/leaky`,
+      branchKey: "github:archcode/archcode:feature/leaky",
+      cleanupState: "cleanup_failed",
+    });
+    expect(unsafeRun?.worktreePath).toBeUndefined();
+    expect(JSON.stringify(runsBody)).not.toContain(seeded.unsafeWorktreePath);
+    expect(JSON.stringify(runsBody)).not.toContain("ghr_run_report_secret");
+    expect(JSON.stringify(runsBody)).not.toContain("github_pat_run_report_secret");
+
+    const persisted = await runtime.readLoopRunLog(workspaceRoot, loop.loopId);
+    expect(persisted.find((run) => run.runId === "run-unsafe-worktree")?.worktreePath).toBe(seeded.unsafeWorktreePath);
+  });
+
+  test("read list and state routes expose trigger queue and cleanup metadata safely", async () => {
+    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-5-state-metadata");
+    const loop = await createLoop(app, project.slug, prTriggerSessionLoopConfig);
+    const seeded = await runtime.seedPhase5LoopState(workspaceRoot, loop.loopId);
+
+    const listRes = await app.request(`/api/projects/${project.slug}/loops`);
+    const listBody = await listRes.json() as { loops: LoopState[] };
+    expect(listRes.status).toBe(200);
+    expect(listBody.loops[0]).toMatchObject({
+      loopId: loop.loopId,
+      cleanupState: "cleanup_candidate",
+      currentJob: {
+        jobId: "job-current",
+        status: "blocked",
+        triggerKind: "on_pr",
+        worktreePath: seeded.safeWorktreePath,
+        cleanupState: "preserved",
+        observedArtifacts: [{ path: "evidence/current.md", status: "modified" }],
+      },
+      queuedJobs: [{
+        jobId: "job-queued",
+        status: "queued",
+        triggerKind: "on_ci_fail",
+        cleanupState: "expired_needs_review",
+      }],
+      triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000 }],
+    });
+    expect(listBody.loops[0]?.queuedJobs?.[0]?.worktreePath).toBeUndefined();
+    expect(JSON.stringify(listBody)).not.toContain(seeded.unsafeWorktreePath);
+    expect(JSON.stringify(listBody)).not.toContain("ghp_secret_route_token");
+    expect(JSON.stringify(listBody)).not.toContain("ghr_trigger_health_secret");
+    expect(JSON.stringify(listBody)).not.toContain("github_pat_job_blocked_secret");
+    expect(listBody.loops[0]?.triggerHealth?.[0]?.lastError).toContain("[REDACTED:SECRET]");
+
+    const readRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`);
+    const readBody = await readRes.json() as { loop: LoopState };
+    expect(readRes.status).toBe(200);
+    expect(readBody.loop.currentJob?.worktreePath).toBe(seeded.safeWorktreePath);
+    expect(readBody.loop.queuedJobs?.[0]?.worktreePath).toBeUndefined();
+
+    const stateRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/state`);
+    const stateBody = await stateRes.json() as { markdown: string; state: LoopState };
+    expect(stateRes.status).toBe(200);
+    expect(stateBody.state.currentJob?.worktreePath).toBe(seeded.safeWorktreePath);
+    expect(stateBody.state.cleanupState).toBe("cleanup_candidate");
+    expect(JSON.stringify(stateBody)).not.toContain(seeded.unsafeWorktreePath);
+  });
+
   test("patch update, run reports, generated state, and invalid paths use stable JSON shapes", async () => {
     const { app, project } = await createTestApp("patch-log-state");
     const loop = await createLoop(app, project.slug, manualSessionLoopConfig);
@@ -350,6 +553,22 @@ describe("loops routes", () => {
     });
     expect(patchRes.status).toBe(200);
     expect(await patchRes.json()).toMatchObject({ loop: { loopId: loop.loopId, status: "paused" } });
+
+    const phase5PatchConfig: LoopConfig = {
+      ...prTriggerSessionLoopConfig,
+      schedule: { kind: "cron", expression: "*/15 * * * *" },
+      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
+    };
+    const phase5PatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ config: phase5PatchConfig }),
+      headers: { "content-type": "application/json" },
+    });
+    const phase5PatchBody = await phase5PatchRes.json() as { loop: LoopState };
+    expect(phase5PatchRes.status).toBe(200);
+    expect(phase5PatchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+    expect(phase5PatchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(phase5PatchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true });
 
     for (const internalPatch of [{ nextRunAt: 123_456 }, { generatedStateSummary: "server generated only" }, { runCount: 99 }]) {
       const internalPatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
@@ -434,7 +653,7 @@ function seededIntegrationSnapshot(): LoopIntegrationSnapshot {
     errors: [{
       integrationId: "github",
       reason: "integration_auth_missing",
-      message: "Missing token ghp_secret_route_token",
+      message: "Missing token ghp_secret_route_token plus ghr_route_refresh_secret and github_pat_route_secret_value",
       occurredAt: 2_000,
     }],
     updatedAt: 2_000,
@@ -465,6 +684,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   createLoopRunCount(): number;
   seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
   seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
+  seedPhase5RunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+  seedPhase5LoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
 } {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
   let now = options.now ?? 1_000;
@@ -678,6 +899,96 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         toolProfileId: "loop_github_pr_watch",
       });
     },
+    async seedPhase5RunHistory(workspaceRoot: string, loopId: string) {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const { safeWorktreePath, unsafeWorktreePath } = phase5WorktreePaths(workspaceRoot);
+      await context.loopState.appendRunReport(loopId, {
+        runId: "run-safe-worktree",
+        loopId,
+        status: "skipped",
+        trigger: "on_pr",
+        triggerKind: "on_pr",
+        startedAt: now,
+        endedAt: now,
+        reason: "execution_failed",
+        jobId: "job-safe",
+        subjectKey: "pr:archcode/archcode#42",
+        dedupeKey: `${loopId}:on_pr:pr:archcode/archcode#42`,
+        branchKey: "github:archcode/archcode:main",
+        worktreePath: safeWorktreePath,
+        baseSha: "a".repeat(40),
+        resolvedHeadSha: "b".repeat(40),
+        blockedReason: "needs_user ghr_run_report_secret github_pat_run_report_secret",
+        cleanupState: "preserved",
+        observedArtifacts: [{ path: "evidence/report.md", status: "created", sizeBytes: 128, sha: "artifact-sha" }],
+      });
+      await context.loopState.appendRunReport(loopId, {
+        runId: "run-unsafe-worktree",
+        loopId,
+        status: "skipped",
+        trigger: "on_commit",
+        triggerKind: "on_commit",
+        startedAt: now + 1,
+        endedAt: now + 1,
+        reason: "execution_failed",
+        jobId: "job-unsafe",
+        subjectKey: "branch:feature/leaky",
+        dedupeKey: `${loopId}:on_commit:branch:feature/leaky`,
+        branchKey: "github:archcode/archcode:feature/leaky",
+        worktreePath: unsafeWorktreePath,
+        baseSha: "c".repeat(40),
+        resolvedHeadSha: "d".repeat(40),
+        blockedReason: "failed_with_changes",
+        cleanupState: "cleanup_failed",
+      });
+      return { safeWorktreePath, unsafeWorktreePath };
+    },
+    async seedPhase5LoopState(workspaceRoot: string, loopId: string) {
+      const context = await contextResolver.resolve(workspaceRoot);
+      const { safeWorktreePath, unsafeWorktreePath } = phase5WorktreePaths(workspaceRoot);
+      const currentJob: LoopJobSummary = {
+        jobId: "job-current",
+        loopId,
+        status: "blocked",
+        triggerKind: "on_pr",
+        subjectKey: "pr:archcode/archcode#42",
+        dedupeKey: `${loopId}:on_pr:pr:archcode/archcode#42`,
+        branchKey: "github:archcode/archcode:main",
+        queuedAt: now,
+        startedAt: now + 1,
+        attempts: 1,
+        blockedReason: "needs_user token=ghp_secret_route_token github_pat_job_blocked_secret",
+        worktreePath: safeWorktreePath,
+        baseSha: "a".repeat(40),
+        resolvedHeadSha: "b".repeat(40),
+        cleanupState: "preserved",
+        observedArtifacts: [{ path: "evidence/current.md", status: "modified" }],
+      };
+      const queuedJob: LoopJobSummary = {
+        jobId: "job-queued",
+        loopId,
+        status: "queued",
+        triggerKind: "on_ci_fail",
+        subjectKey: "ci:archcode/archcode:ci:deadbeef",
+        dedupeKey: `${loopId}:on_ci_fail:ci:archcode/archcode:ci:deadbeef`,
+        branchKey: "github:archcode/archcode:feature/leaky",
+        queuedAt: now + 2,
+        attempts: 0,
+        worktreePath: unsafeWorktreePath,
+        cleanupState: "expired_needs_review",
+      };
+      await context.loopState.update(loopId, {
+        cleanupState: "cleanup_candidate",
+        triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000, lastCheckedAt: now + 3, lastError: "token=ghp_secret_route_token ghr_trigger_health_secret", missedCount: 1 }],
+      });
+      const state = await context.loopState.read(loopId);
+      await Bun.write(resolve(workspaceRoot, ".archcode", "loops", loopId, "state.json"), `${JSON.stringify({
+        ...state,
+        currentJob,
+        queuedJobs: [queuedJob],
+      }, null, 2)}\n`);
+      return { safeWorktreePath, unsafeWorktreePath };
+    },
   } as unknown as AgentRuntime & {
     setNow(value: number): void;
     waitForActiveRun(): Promise<void>;
@@ -685,7 +996,17 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     createLoopRunCount(): number;
     seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
     seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
+    seedPhase5RunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+    seedPhase5LoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
   };
 
   return runtime;
+}
+
+function phase5WorktreePaths(workspaceRoot: string): { safeWorktreePath: string; unsafeWorktreePath: string } {
+  const managedRoot = resolve(dirname(workspaceRoot), `${basename(workspaceRoot)}.worktrees`);
+  return {
+    safeWorktreePath: join(managedRoot, "loop-safe-worktree"),
+    unsafeWorktreePath: resolve(dirname(workspaceRoot), "not-managed", "loop-unsafe-worktree"),
+  };
 }

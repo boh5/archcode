@@ -1,3 +1,4 @@
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { Hono } from "hono";
 import {
   expandLoopPreset,
@@ -11,22 +12,23 @@ import {
   LoopUuidSchema,
   type AgentRuntime,
   type LoopConfig,
+  type LoopIntegrationStatusSnapshot,
+  type LoopRunReport,
+  type LoopState,
   type LoopUpdateInput,
 } from "@archcode/agent-core";
+import type { LoopIntegrationSnapshot, LoopJobSummary } from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
-const CreateLoopBodySchema = z.union([
-  z.strictObject({
-    config: LoopConfigSchema,
-    author: z.string().trim().min(1).max(200).optional(),
-  }),
-  z.strictObject({
-    presetId: z.string().trim().min(1).max(200),
-    author: z.string().trim().min(1).max(200).optional(),
-  }),
-]);
+const CreateLoopBodySchema = z.strictObject({
+  config: LoopConfigSchema.optional(),
+  presetId: z.string().trim().min(1).max(200).optional(),
+  author: z.string().trim().min(1).max(200).optional(),
+}).refine((body) => (body.config === undefined) !== (body.presetId === undefined), {
+  message: "Exactly one of config or presetId is required",
+});
 
 const PatchLoopBodySchema = z.strictObject({
   config: LoopConfigSchema.optional(),
@@ -40,6 +42,7 @@ const ActivateKillBodySchema = z.strictObject({
 
 type CreateLoopBody = z.infer<typeof CreateLoopBodySchema>;
 type PatchLoopBody = z.infer<typeof PatchLoopBodySchema>;
+const LEGACY_COMPATIBILITY_SCORE_KEY = `${"readiness"}Score` satisfies keyof LoopState;
 
 export function createLoopsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
@@ -47,7 +50,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
   app.get("/:slug/loops", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     try {
-      return c.json({ loops: await runtime.listLoops(project.workspaceRoot) });
+      const loops = await runtime.listLoops(project.workspaceRoot);
+      return c.json({ loops: loops.map((loop) => sanitizeLoopState(loop, project.workspaceRoot)) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -55,13 +59,13 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 
   app.post("/:slug/loops", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-    const body = await readJsonBody(c.req.json(), CreateLoopBodySchema);
+    const body = await readJsonBody(c.req.json(), CreateLoopBodySchema, rejectUnsupportedProjectConfig);
     const config = createConfigFromBody(body);
-    assertStableApiLoopConfig(config);
+    assertRouteLoopConfig(config);
 
     try {
       const loop = await runtime.createLoop(project.workspaceRoot, config, body.author);
-      return c.json({ loop }, 201);
+      return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) }, 201);
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -103,7 +107,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const loopId = requiredLoopId(c.req.param("loopId"));
 
     try {
-      return c.json({ loop: await runtime.readLoop(project.workspaceRoot, loopId) });
+      const loop = await runtime.readLoop(project.workspaceRoot, loopId);
+      return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -112,15 +117,15 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
   app.patch("/:slug/loops/:loopId", async (c) => {
     const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
     const loopId = requiredLoopId(c.req.param("loopId"));
-    const body = await readJsonBody(c.req.json(), PatchLoopBodySchema);
+    const body = await readJsonBody(c.req.json(), PatchLoopBodySchema, rejectUnsupportedProjectConfig);
     if (Object.keys(body).length === 0) {
       throw new BadRequestError("At least one patch field is required");
     }
-    if (body.config !== undefined) assertStableApiLoopConfig(body.config);
+    if (body.config !== undefined) assertRouteLoopConfig(body.config);
 
     try {
       const loop = await runtime.updateLoop(project.workspaceRoot, loopId, toLoopUpdates(body));
-      return c.json({ loop });
+      return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -137,10 +142,10 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
           loopId,
           trigger: "manual",
           reason: "global_kill_active",
-          report,
+          report: sanitizeRunReport(report, project.workspaceRoot),
         });
       }
-      return c.json({ report: report ?? null });
+      return c.json({ report: report === undefined ? null : sanitizeRunReport(report, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -153,7 +158,7 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     try {
       const report = await runtime.cancelLoopCurrentRun(project.workspaceRoot, loopId);
       if (report === undefined) return c.json({ ok: true, loopId, runId: null, status: "not_running" });
-      return c.json({ ok: true, loopId, runId: report.runId, status: report.status, reason: report.reason, report });
+      return c.json({ ok: true, loopId, runId: report.runId, status: report.status, reason: report.reason, report: sanitizeRunReport(report, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -164,7 +169,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const loopId = requiredLoopId(c.req.param("loopId"));
 
     try {
-      return c.json({ loop: await runtime.pauseLoop(project.workspaceRoot, loopId) });
+      const loop = await runtime.pauseLoop(project.workspaceRoot, loopId);
+      return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -175,7 +181,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const loopId = requiredLoopId(c.req.param("loopId"));
 
     try {
-      return c.json({ loop: await runtime.resumeLoop(project.workspaceRoot, loopId) });
+      const loop = await runtime.resumeLoop(project.workspaceRoot, loopId);
+      return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -187,7 +194,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const limit = parseOptionalLimit(c.req.query("limit"));
 
     try {
-      return c.json({ runs: await runtime.readLoopRunLog(project.workspaceRoot, loopId, limit) });
+      const runs = await runtime.readLoopRunLog(project.workspaceRoot, loopId, limit);
+      return c.json({ runs: runs.map((run) => sanitizeRunReport(run, project.workspaceRoot)) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -220,7 +228,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     const loopId = requiredLoopId(c.req.param("loopId"));
 
     try {
-      return c.json({ loopId, integrations: await runtime.readLoopIntegrationStatus(project.workspaceRoot, loopId) });
+      const integrations = await runtime.readLoopIntegrationStatus(project.workspaceRoot, loopId);
+      return c.json({ loopId, integrations: sanitizeIntegrationStatusSnapshot(integrations) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -233,7 +242,7 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     try {
       const markdown = await runtime.readLoopStateMarkdown(project.workspaceRoot, loopId);
       const loop = await runtime.readLoop(project.workspaceRoot, loopId);
-      return c.json({ markdown, state: loop });
+      return c.json({ markdown, state: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
     }
@@ -243,17 +252,20 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 }
 
 function createConfigFromBody(body: CreateLoopBody): LoopConfig {
-  if ("config" in body) return body.config;
+  if (body.config !== undefined) return body.config;
 
-  if (!isSupportedLoopPreset(body.presetId)) {
-    const reason = getUnsupportedLoopPresetReason(body.presetId);
+  const presetId = body.presetId;
+  if (presetId === undefined) throw new BadRequestError("Exactly one of config or presetId is required");
+
+  if (!isSupportedLoopPreset(presetId)) {
+    const reason = getUnsupportedLoopPresetReason(presetId);
     throw new BadRequestError(reason === undefined
-      ? `Unsupported loop preset: ${body.presetId}`
-      : `Unsupported loop preset: ${body.presetId}. ${reason}`);
+      ? `Unsupported loop preset: ${presetId}`
+      : `Unsupported loop preset: ${presetId}. ${reason}`);
   }
 
   try {
-    return expandLoopPreset(body.presetId);
+    return expandLoopPreset(presetId);
   } catch (error) {
     if (error instanceof RangeError) throw new BadRequestError(error.message);
     throw error;
@@ -267,18 +279,103 @@ function toLoopUpdates(body: PatchLoopBody): LoopUpdateInput {
   };
 }
 
-function assertStableApiLoopConfig(config: LoopConfig): void {
-  const unsupportedFields: string[] = [];
-  if (config.schedule.kind === "cron") unsupportedFields.push("schedule.kind=cron");
-  if (config.triggers !== undefined) unsupportedFields.push("triggers");
-  if (config.cleanupPolicy !== undefined) unsupportedFields.push("cleanupPolicy");
+function assertRouteLoopConfig(config: LoopConfig): void {
+  if (config.schedule.kind !== "cron") return;
 
-  if (unsupportedFields.length > 0) {
+  try {
+    Bun.cron.parse(config.schedule.expression, new Date(0));
+  } catch {
     throw new BadRequestError("Request body is invalid", {
-      unsupportedFields,
-      reason: "Loop automation API fields are not enabled on server routes yet",
+      validationMessages: ["config.schedule.expression must be a valid 5-field UTC cron expression"],
     });
   }
+}
+
+function sanitizeLoopState(loop: LoopState, workspaceRoot: string): LoopState {
+  const { [LEGACY_COMPATIBILITY_SCORE_KEY]: _legacyCompatibilityScore, ...safeLoop } = loop;
+  void _legacyCompatibilityScore;
+
+  return {
+    ...safeLoop,
+    ...(loop.lastRun === undefined ? {} : { lastRun: sanitizeRunReport(loop.lastRun, workspaceRoot) }),
+    ...(loop.currentRun === undefined ? {} : { currentRun: sanitizeRunReport(loop.currentRun, workspaceRoot) }),
+    ...(loop.latestIntegrations === undefined ? {} : { latestIntegrations: sanitizeIntegrationSnapshot(loop.latestIntegrations) }),
+    ...(loop.currentJob === undefined ? {} : { currentJob: sanitizeJobSummary(loop.currentJob, workspaceRoot) }),
+    ...(loop.queuedJobs === undefined ? {} : { queuedJobs: loop.queuedJobs.map((job) => sanitizeJobSummary(job, workspaceRoot)) }),
+    ...(loop.triggerHealth === undefined ? {} : { triggerHealth: loop.triggerHealth.map((health) => ({
+      ...health,
+      ...(health.lastError === undefined ? {} : { lastError: redactPublicString(health.lastError) }),
+    })) }),
+  };
+}
+
+function sanitizeRunReport(report: LoopRunReport, workspaceRoot: string): LoopRunReport {
+  const worktreePath = safeWorktreePath(report.worktreePath, workspaceRoot);
+  return {
+    ...report,
+    ...(worktreePath === undefined ? { worktreePath: undefined } : { worktreePath }),
+    ...(report.integrationErrors === undefined ? {} : {
+      integrationErrors: report.integrationErrors.map((error) => ({
+        ...error,
+        message: redactPublicString(error.message),
+      })),
+    }),
+    ...(report.error === undefined ? {} : { error: redactPublicString(report.error) }),
+    ...(report.skippedReason === undefined ? {} : { skippedReason: redactPublicString(report.skippedReason) }),
+    ...(report.summary === undefined ? {} : { summary: redactPublicString(report.summary) }),
+    ...(report.blockedReason === undefined ? {} : { blockedReason: redactPublicString(report.blockedReason) }),
+  };
+}
+
+function sanitizeJobSummary(job: LoopJobSummary, workspaceRoot: string): LoopJobSummary {
+  const worktreePath = safeWorktreePath(job.worktreePath, workspaceRoot);
+  return {
+    ...job,
+    ...(worktreePath === undefined ? { worktreePath: undefined } : { worktreePath }),
+    ...(job.blockedReason === undefined ? {} : { blockedReason: redactPublicString(job.blockedReason) }),
+  };
+}
+
+function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopIntegrationSnapshot {
+  return {
+    ...snapshot,
+    errors: snapshot.errors.map((error) => ({
+      ...error,
+      message: redactPublicString(error.message),
+    })),
+  };
+}
+
+function sanitizeIntegrationStatusSnapshot(snapshot: LoopIntegrationStatusSnapshot): LoopIntegrationStatusSnapshot {
+  return {
+    ...snapshot,
+    statuses: snapshot.statuses.map((status) => ({
+      ...status,
+      ...(status.message === undefined ? {} : { message: redactPublicString(status.message) }),
+    })),
+    snapshot: snapshot.snapshot === null ? null : sanitizeIntegrationSnapshot(snapshot.snapshot),
+  };
+}
+
+function safeWorktreePath(worktreePath: string | undefined, workspaceRoot: string): string | undefined {
+  if (worktreePath === undefined || !isAbsolute(worktreePath)) return undefined;
+
+  const managedRoot = resolve(dirname(workspaceRoot), `${basename(workspaceRoot)}.worktrees`);
+  const normalizedPath = resolve(worktreePath);
+  const relativePath = relative(managedRoot, normalizedPath);
+  if (relativePath.length === 0 || relativePath.startsWith("..") || isAbsolute(relativePath)) return undefined;
+  return normalizedPath;
+}
+
+function redactPublicString(value: string): string {
+  return value
+    .replace(/\b(?:gh[opsur]_|github_pat_)[A-Za-z0-9_]{8,}\b/g, "[REDACTED:SECRET]")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED:SECRET]")
+    .replace(/\b[A-Za-z0-9_-]*(?:api[_-]?key|auth|authorization|bearer|client[_-]?secret|credential|pass(?:word)?|secret|token)[A-Za-z0-9_-]*\s*[=:]\s*[^\s&;,]+/gi, (match) => {
+      const separatorIndex = Math.max(match.lastIndexOf("="), match.lastIndexOf(":"));
+      if (separatorIndex < 0) return "[REDACTED:SECRET]";
+      return `${match.slice(0, separatorIndex + 1)}[REDACTED:SECRET]`;
+    });
 }
 
 function requiredParam(value: string | undefined, name: string): string {
@@ -303,7 +400,11 @@ function parseOptionalLimit(value: string | undefined): number | undefined {
   return parsed;
 }
 
-async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unknown>, schema: Schema): Promise<z.infer<Schema>> {
+async function readJsonBody<Schema extends z.ZodType>(
+  bodyPromise: Promise<unknown>,
+  schema: Schema,
+  validateBody?: (body: unknown) => void,
+): Promise<z.infer<Schema>> {
   let body: unknown;
   try {
     body = await bodyPromise;
@@ -311,9 +412,11 @@ async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unkno
     throw new BadRequestError("Request body must be valid JSON");
   }
 
+  validateBody?.(body);
+
   const result = schema.safeParse(body);
   if (!result.success) {
-    throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
+    throw new BadRequestError("Request body is invalid", validationDetails(result.error));
   }
   return result.data;
 }
@@ -331,9 +434,52 @@ async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promi
 
   const result = schema.safeParse(body);
   if (!result.success) {
-    throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
+    throw new BadRequestError("Request body is invalid", validationDetails(result.error));
   }
   return result.data;
+}
+
+function rejectUnsupportedProjectConfig(body: unknown): void {
+  if (!isRecord(body) || !("projectConfig" in body)) return;
+
+  const projectConfig = body.projectConfig;
+  if (isRecord(projectConfig)) {
+    const coordinator = projectConfig.coordinator;
+    if (isRecord(coordinator) && "maxConcurrent" in coordinator && !isPositiveInteger(coordinator.maxConcurrent)) {
+      throw new BadRequestError("Request body is invalid", {
+        validationMessages: ["projectConfig.coordinator.maxConcurrent must be greater than 0"],
+      });
+    }
+  }
+
+  throw new BadRequestError("Request body is invalid", {
+    validationMessages: ["projectConfig is not currently supported by server loop routes"],
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function validationDetails(error: z.ZodError): unknown {
+  const details = z.treeifyError(error) as Record<string, unknown>;
+  const validationMessages = stableValidationMessages(error);
+  if (validationMessages.length === 0) return details;
+  return { ...details, validationMessages };
+}
+
+function stableValidationMessages(error: z.ZodError): string[] {
+  return error.issues.map((issue) => {
+    const path = issue.path.join(".");
+    if (path.endsWith("config.schedule.expression")) return "config.schedule.expression must be a valid 5-field UTC cron expression";
+    if (path.includes("config.triggers") && path.endsWith("cadenceMs")) return `${path} must be at least 30000`;
+    if (path === "projectConfig.coordinator.maxConcurrent") return "projectConfig.coordinator.maxConcurrent must be greater than 0";
+    return issue.message;
+  });
 }
 
 function mapLoopError(error: unknown): Error {
