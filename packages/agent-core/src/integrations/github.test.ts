@@ -6,6 +6,7 @@ import {
   IntegrationError,
   REDACTION_MARKER,
   createGitHubConnector,
+  normalizeGitHubCiFailures,
   redactGitHubTokenValue,
   type GitHubFetchAdapter,
 } from "./github";
@@ -197,6 +198,28 @@ describe("GitHubConnector REST methods", () => {
     expect(url.searchParams.get("head")).toBe("archcode:feature");
   });
 
+  test("listOpenPullRequests scopes polling to open PR filters", async () => {
+    const fetcher = new MockGitHubFetch();
+    fetcher.queueJson([{ number: 7, state: "open", base: { ref: "main" } }]);
+    const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_open_pr_secret" }, fetchAdapter: fetcher.createFetch() });
+
+    const result = await connector.listOpenPullRequests("archcode", "workbench", {
+      base: "main",
+      head: "archcode:feature",
+      sort: "updated",
+      direction: "desc",
+      perPage: 25,
+    });
+
+    expect(result.data[0].number).toBe(7);
+    const url = new URL(fetcher.requests[0].url);
+    expect(url.pathname).toBe("/repos/archcode/workbench/pulls");
+    expect(url.searchParams.get("state")).toBe("open");
+    expect(url.searchParams.get("base")).toBe("main");
+    expect(url.searchParams.get("head")).toBe("archcode:feature");
+    expect(url.searchParams.get("per_page")).toBe("25");
+  });
+
   test("getPullRequestFiles returns diff summary file metadata", async () => {
     const fetcher = new MockGitHubFetch();
     fetcher.queueJson([{ filename: "src/index.ts", additions: 10, deletions: 2, changes: 12 }]);
@@ -246,6 +269,208 @@ describe("GitHubConnector REST methods", () => {
       url: "https://api.github.com/repos/archcode/workbench/actions/runs/2001/rerun",
       method: "POST",
     });
+  });
+
+  test("lists check runs for a ref and gets combined status for a ref", async () => {
+    const fetcher = new MockGitHubFetch();
+    fetcher.queueJson({
+      total_count: 1,
+      check_runs: [
+        {
+          id: 501,
+          name: "ci/build",
+          head_sha: "abc123",
+          status: "completed",
+          conclusion: "failure",
+          check_suite: { id: 99 },
+        },
+      ],
+    });
+    fetcher.queueJson({
+      state: "failure",
+      sha: "abc123",
+      total_count: 1,
+      statuses: [{ id: 701, state: "failure", context: "ci/build", description: "failed" }],
+    });
+    const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_ci_secret" }, fetchAdapter: fetcher.createFetch() });
+
+    const checkRuns = await connector.listCheckRunsForRef("archcode", "workbench", "feature/ci", {
+      checkName: "ci/build",
+      status: "completed",
+      filter: "latest",
+      perPage: 50,
+    });
+    const combinedStatus = await connector.getCombinedStatusForRef("archcode", "workbench", "feature/ci");
+
+    expect(checkRuns.data.check_runs[0].id).toBe(501);
+    expect(combinedStatus.data.statuses[0].context).toBe("ci/build");
+    const checksUrl = new URL(fetcher.requests[0].url);
+    expect(checksUrl.pathname).toBe("/repos/archcode/workbench/commits/feature%2Fci/check-runs");
+    expect(checksUrl.searchParams.get("check_name")).toBe("ci/build");
+    expect(checksUrl.searchParams.get("status")).toBe("completed");
+    expect(checksUrl.searchParams.get("filter")).toBe("latest");
+    expect(checksUrl.searchParams.get("per_page")).toBe("50");
+    expect(new URL(fetcher.requests[1].url).pathname).toBe("/repos/archcode/workbench/commits/feature%2Fci/status");
+  });
+
+  test("reads CI failures for a scoped ref without queuing on rate limits", async () => {
+    const fetcher = new MockGitHubFetch();
+    fetcher.queueJson(
+      { message: "API rate limit exceeded for token ghp_rate_ci_secret" },
+      {
+        status: 403,
+        headers: {
+          "retry-after": "30",
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-reset": "1783296000",
+        },
+      },
+    );
+    fetcher.queueJson({ state: "success", sha: "abc123", total_count: 0, statuses: [] });
+    const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_rate_ci_secret" }, fetchAdapter: fetcher.createFetch() });
+    const enqueue = mock(() => undefined);
+
+    const result = await connector.readCiFailuresForRef("archcode", "workbench", "abc123", {
+      branch: "main",
+      lastPollAt: 123_000,
+      lastSuccessAt: 100_000,
+    });
+    if (result.shouldEnqueue) enqueue();
+
+    expect(result.failures).toEqual([]);
+    expect(result.shouldEnqueue).toBe(false);
+    expect(result.health).toMatchObject({
+      triggerKind: "on_ci_fail",
+      status: "degraded",
+      lastPollAt: 123_000,
+      lastSuccessAt: 100_000,
+      retryAfterMs: 30_000,
+      rateLimitRemaining: 0,
+    });
+    expect(enqueue.mock.calls).toHaveLength(0);
+    expect(JSON.stringify(result)).not.toContain("ghp_rate_ci_secret");
+    expect(JSON.stringify(result)).not.toContain("Authorization");
+  });
+});
+
+describe("GitHub CI failure normalization", () => {
+  test("dedupes equivalent Checks and Combined Status failures for the same SHA and context", () => {
+    const failures = normalizeGitHubCiFailures({
+      owner: "archcode",
+      repo: "workbench",
+      branch: "feature/ci",
+      checks: {
+        total_count: 1,
+        check_runs: [
+          {
+            id: 501,
+            name: "CI/Build",
+            head_sha: "abc123",
+            status: "completed",
+            conclusion: "failure",
+            check_suite: { id: 99 },
+            app: { id: 2, slug: "github-actions" },
+            output: { title: "Build failed", summary: "token=ghp_normalize_secret" },
+            pull_requests: [{ number: 7, head: { ref: "feature/ci", sha: "abc123" }, base: { ref: "main" } }],
+            run_attempt: 2,
+          },
+          {
+            id: 502,
+            name: "lint",
+            head_sha: "abc123",
+            status: "completed",
+            conclusion: "success",
+          },
+        ],
+      },
+      combinedStatus: {
+        state: "failure",
+        sha: "abc123",
+        total_count: 2,
+        statuses: [
+          { id: 701, state: "failure", context: "ci/build", description: "Build failed", target_url: "https://ci.example/run/701" },
+          { id: 702, state: "success", context: "lint" },
+        ],
+      },
+    });
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      owner: "archcode",
+      repo: "workbench",
+      repoId: "archcode/workbench",
+      branch: "feature/ci",
+      pullRequestNumber: 7,
+      pullRequestHeadRef: "feature/ci",
+      pullRequestBaseRef: "main",
+      sha: "abc123",
+      context: "ci/build",
+      source: "checks+statuses",
+      conclusion: "failure",
+      state: "failure",
+      dedupeInputs: {
+        owner: "archcode",
+        repo: "workbench",
+        sha: "abc123",
+        context: "ci/build",
+      },
+    });
+    expect(failures[0].subjectKey).toBe("ci:archcode/workbench:ci/build:abc123");
+    expect(failures[0].checkRunIds).toEqual([501]);
+    expect(failures[0].statusIds).toEqual([701]);
+    expect(failures[0].checkSuiteIds).toEqual([99]);
+    expect(failures[0].runAttempts).toEqual([2]);
+    expect(failures[0].sourceSummaries.map((summary) => summary.source)).toEqual(["checks", "statuses"]);
+    expect(JSON.stringify(failures)).not.toContain("ghp_normalize_secret");
+    expect(JSON.stringify(failures)).toContain(REDACTION_MARKER);
+  });
+
+  test("redacts all known GitHub token prefixes from CI audit summaries", () => {
+    const failures = normalizeGitHubCiFailures({
+      owner: "archcode",
+      repo: "workbench",
+      checks: {
+        check_runs: [
+          {
+            id: 801,
+            name: "ci/secrets",
+            head_sha: "def456",
+            status: "completed",
+            conclusion: "failure",
+            output: {
+              title: "found gho_output_secret123",
+              summary: "ghu_summary_secret123 ghs_status_secret123 github_pat_audit_secret123",
+            },
+          },
+        ],
+      },
+      combinedStatus: {
+        state: "failure",
+        sha: "def456",
+        statuses: [
+          {
+            id: 901,
+            state: "failure",
+            context: "ci/secrets",
+            description: "failed with ghr_description_secret123",
+            target_url: "https://ci.example/run?token=gho_query_secret123",
+          },
+        ],
+      },
+    });
+
+    const serialized = JSON.stringify(failures);
+    for (const leaked of [
+      "gho_output_secret123",
+      "ghu_summary_secret123",
+      "ghs_status_secret123",
+      "github_pat_audit_secret123",
+      "ghr_description_secret123",
+      "gho_query_secret123",
+    ]) {
+      expect(serialized).not.toContain(leaked);
+    }
+    expect(serialized).toContain(REDACTION_MARKER);
   });
 });
 
