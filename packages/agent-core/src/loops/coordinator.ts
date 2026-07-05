@@ -42,8 +42,6 @@ export class LoopJobCoordinator {
   }
 
   async dispatchReady(): Promise<LoopJobRecord[]> {
-    await this.recoverStaleRunning();
-
     const jobs = await this.#queue.list();
     const running = jobs.filter((job) => job.status === "running");
     let remainingSlots = Math.max(0, this.#config.maxConcurrent - running.length);

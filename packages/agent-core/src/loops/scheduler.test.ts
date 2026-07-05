@@ -1,16 +1,18 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { FakeCronAdapter } from "./cron-adapter";
+import { LoopJobCoordinator } from "./coordinator";
 import { LoopJobQueue } from "./job-queue";
-import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerTimer } from "./scheduler";
+import { LoopScheduler, type LoopSchedulerRunInput, type LoopSchedulerRunResult, type LoopSchedulerTimer } from "./scheduler";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
 import { LoopKillStateManager } from "./kill-state";
 import { LoopActiveConflictError } from "./runner";
 import { LoopStateManager, type LoopConfig } from "./state";
 import { FakeSessionExecutionManager } from "./test-utils";
+import { LoopTriggerPoller, type LoopLocalGitReader } from "./triggers";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
 
@@ -36,6 +38,12 @@ const cronConfig: LoopConfig = {
   schedule: { kind: "cron", expression: "*/15 * * * *" },
 };
 
+const triggerConfig: LoopConfig = {
+  ...manualConfig,
+  title: "Commit trigger loop",
+  triggers: [{ kind: "on_commit", branch: "main", cadenceMs: 30_000 }],
+};
+
 beforeEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
   await mkdir(TMP_DIR, { recursive: true });
@@ -56,7 +64,7 @@ describe("LoopScheduler", () => {
     expect(fixture.runs).toEqual([]);
   });
 
-  test("schedules interval loops with fixed delay after completion", async () => {
+  test("schedules interval loops through durable queue with fixed delay after completion", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
     await fixture.manager.update(loop.loopId, { nextRunAt: 100 });
@@ -69,8 +77,12 @@ describe("LoopScheduler", () => {
     await fixture.timer.advanceTo(100);
 
     const state = await fixture.manager.read(loop.loopId);
+    const jobs = await fixture.jobQueue.list();
     expect(fixture.runs).toHaveLength(1);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ status: "succeeded", triggerKind: "interval", subjectKey: `interval:${loop.loopId}` });
     expect(state.lastRun?.status).toBe("succeeded");
+    expect(state.lastRun).toMatchObject({ jobId: jobs[0]?.jobId, triggerKind: "interval", subjectKey: `interval:${loop.loopId}` });
     expect(state.lastRun?.endedAt).toBe(150);
     expect(state.nextRunAt).toBe(250);
     expect(fixture.timer.nextDue()).toBe(250);
@@ -105,7 +117,7 @@ describe("LoopScheduler", () => {
     expect(fixture.timer.nextDue()).toBe(1_500);
   });
 
-  test("records skipped report for same-loop active interval tick without queuing another run", async () => {
+  test("coalesces same-loop active interval tick without directly starting another runner", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
     await fixture.manager.update(loop.loopId, { nextRunAt: 100 });
@@ -118,16 +130,15 @@ describe("LoopScheduler", () => {
     };
 
     await fixture.scheduler.start("project-a");
+    await fixture.timer.fireNextDue(100);
     const firstTick = fixture.timer.fireNextDue(100);
     await runnerStarted.promise;
     expect(fixture.runs).toHaveLength(1);
 
     await fixture.scheduler.scheduleLoop(loop.loopId);
 
-    const skipped = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
-    expect(skipped?.status).toBe("skipped");
-    expect(skipped?.trigger).toBe("interval");
-    expect(skipped?.skippedReason).toMatch(/active run/i);
+    const runningJob = (await fixture.jobQueue.list())[0];
+    expect(runningJob).toMatchObject({ status: "running", triggerKind: "interval", rerunAfterCurrent: true });
     expect(fixture.timer.size()).toBe(0);
 
     fixture.clock.set(180);
@@ -135,8 +146,8 @@ describe("LoopScheduler", () => {
     await firstTick;
 
     const reports = await fixture.manager.readRunLog(loop.loopId);
-    expect(reports.map((report) => report.status)).toEqual(["succeeded", "skipped"]);
-    expect(fixture.runs).toHaveLength(1);
+    expect(reports.map((report) => report.status)).toEqual(["succeeded", "succeeded"]);
+    expect(fixture.runs).toHaveLength(2);
     expect(fixture.timer.nextDue()).toBe(280);
   });
 
@@ -153,6 +164,7 @@ describe("LoopScheduler", () => {
 
     const firstRun = fixture.scheduler.runManual(loop.loopId);
     await runnerStarted.promise;
+    expect((await fixture.jobQueue.list())[0]).toMatchObject({ status: "running", triggerKind: "manual", subjectKey: `manual:${loop.loopId}` });
 
     const conflict = await captureAsyncError(() => fixture.scheduler.runManual(loop.loopId));
     expect(conflict).toBeInstanceOf(LoopActiveConflictError);
@@ -170,6 +182,7 @@ describe("LoopScheduler", () => {
     const report = await firstRun;
 
     expect(report).toMatchObject({ status: "succeeded", trigger: "manual", sessionId: "session-1" });
+    expect(report?.jobId).toBeString();
     const reports = await fixture.manager.readRunLog(loop.loopId);
     expect(reports.map((entry) => entry.status)).toEqual(["succeeded"]);
   });
@@ -200,6 +213,268 @@ describe("LoopScheduler", () => {
     expect(await fixture.manager.readRunLog(loop.loopId)).toEqual([]);
   });
 
+  test("multiple manual callers waiting on the same queued job settle with one job-specific cancel report", async () => {
+    const fixture = await createFixture(100);
+    const singleSlotCoordinator = new LoopJobCoordinator({ queue: fixture.jobQueue, clock: fixture.clock, leaseTtlMs: 60_000, config: { maxConcurrent: 1 } });
+    fixture.scheduler = fixture.createScheduler(undefined, singleSlotCoordinator);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    const blocker = await fixture.manager.create("project-a", { ...manualConfig, title: "Blocking loop" });
+    await fixture.manager.appendRunReport(loop.loopId, {
+      runId: "old-run",
+      loopId: loop.loopId,
+      status: "succeeded",
+      trigger: "manual",
+      startedAt: 1,
+      endedAt: 2,
+      summary: "old unrelated report",
+    });
+    const { job: blockingJob } = await fixture.jobQueue.enqueue({
+      loopId: blocker.loopId,
+      triggerKind: "manual",
+      subjectKey: "manual:blocker",
+      eventSummary: { summary: "occupy coordinator slot" },
+    });
+    await fixture.jobQueue.update(blockingJob.jobId, {
+      status: "running",
+      startedAt: 50,
+      leaseExpiresAt: 10_000,
+      attempts: 1,
+    });
+
+    const first = fixture.scheduler.runManual(loop.loopId);
+    const second = fixture.scheduler.runManual(loop.loopId);
+    await waitFor(() => fixture.jobQueue.list().then((jobs) => jobs.some((job) => job.loopId === loop.loopId && job.status === "pending")));
+    const queued = (await fixture.jobQueue.list()).find((job) => job.loopId === loop.loopId && job.subjectKey === `manual:${loop.loopId}`)!;
+
+    await fixture.scheduler.pause(loop.loopId);
+    const reports = await Promise.all([first, second]);
+
+    expect(reports[0]).toEqual(reports[1]);
+    expect(reports[0]).toMatchObject({
+      status: "cancelled",
+      trigger: "manual",
+      reason: "loop_paused",
+      jobId: queued.jobId,
+      triggerKind: "manual",
+      subjectKey: `manual:${loop.loopId}`,
+      dedupeKey: queued.dedupeKey,
+    });
+    expect(reports[0]?.runId).not.toBe("old-run");
+    expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ jobId: queued.jobId, status: "cancelled", reason: "loop_paused" });
+    expect((await fixture.jobQueue.read(queued.jobId))).toMatchObject({ status: "cancelled", blockedReason: "loop_paused" });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("cancelCurrentRun cancels queued manual job and settles waiter with job-specific report", async () => {
+    const fixture = await createFixture(125);
+    const singleSlotCoordinator = new LoopJobCoordinator({ queue: fixture.jobQueue, clock: fixture.clock, leaseTtlMs: 60_000, config: { maxConcurrent: 1 } });
+    fixture.scheduler = fixture.createScheduler(undefined, singleSlotCoordinator);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    const blocker = await fixture.manager.create("project-a", { ...manualConfig, title: "Blocking loop" });
+    await fixture.manager.appendRunReport(loop.loopId, {
+      runId: "old-run",
+      loopId: loop.loopId,
+      status: "succeeded",
+      trigger: "manual",
+      startedAt: 1,
+      endedAt: 2,
+      summary: "old unrelated report",
+    });
+    const { job: blockingJob } = await fixture.jobQueue.enqueue({
+      loopId: blocker.loopId,
+      triggerKind: "manual",
+      subjectKey: "manual:blocker",
+      eventSummary: { summary: "occupy coordinator slot" },
+    });
+    await fixture.jobQueue.update(blockingJob.jobId, {
+      status: "running",
+      startedAt: 50,
+      leaseExpiresAt: 10_000,
+      attempts: 1,
+    });
+
+    const waiter = fixture.scheduler.runManual(loop.loopId);
+    await waitFor(() => fixture.jobQueue.list().then((jobs) => jobs.some((job) => job.loopId === loop.loopId && job.status === "pending")));
+    const queued = (await fixture.jobQueue.list()).find((job) => job.loopId === loop.loopId && job.subjectKey === `manual:${loop.loopId}`)!;
+
+    const cancelled = await fixture.scheduler.cancelCurrentRun(loop.loopId);
+    const waited = await waiter;
+
+    expect(waited).toEqual(cancelled);
+    expect(cancelled).toMatchObject({
+      status: "cancelled",
+      trigger: "manual",
+      reason: "cancelled_by_user",
+      jobId: queued.jobId,
+      triggerKind: "manual",
+      subjectKey: `manual:${loop.loopId}`,
+      dedupeKey: queued.dedupeKey,
+    });
+    expect(cancelled?.runId).not.toBe("old-run");
+    expect((await fixture.jobQueue.read(queued.jobId))).toMatchObject({ status: "cancelled", blockedReason: "cancelled_by_user" });
+    expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ jobId: queued.jobId, status: "cancelled", reason: "cancelled_by_user" });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("claimed manual job stopped before runLoop starts settles waiter and clears lease", async () => {
+    const fixture = await createFixture(200);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    const realCoordinator = fixture.coordinator;
+    let stoppedDuringDispatch = false;
+    const coordinator = {
+      get maxConcurrent() {
+        return realCoordinator.maxConcurrent;
+      },
+      recoverStaleRunning: () => realCoordinator.recoverStaleRunning(),
+      start: () => realCoordinator.start(),
+      finish: (jobId: string, input: Parameters<LoopJobCoordinator["finish"]>[1]) => realCoordinator.finish(jobId, input),
+      dispatchReady: async () => {
+        const jobs = await realCoordinator.dispatchReady();
+        if (!stoppedDuringDispatch && jobs.length > 0) {
+          stoppedDuringDispatch = true;
+          await fixture.scheduler.stop();
+        }
+        return jobs;
+      },
+    } as unknown as LoopJobCoordinator;
+    fixture.scheduler = fixture.createScheduler(undefined, coordinator);
+
+    const report = await fixture.scheduler.runManual(loop.loopId);
+    const job = (await fixture.jobQueue.list())[0]!;
+
+    expect(report).toMatchObject({
+      status: "cancelled",
+      reason: "cancelled_by_user",
+      jobId: job.jobId,
+      triggerKind: "manual",
+      subjectKey: `manual:${loop.loopId}`,
+      dedupeKey: job.dedupeKey,
+    });
+    expect(job).toMatchObject({ status: "cancelled", blockedReason: "cancelled_by_user" });
+    expect(job.leaseExpiresAt).toBeUndefined();
+    expect((await fixture.manager.readRunLog(loop.loopId, 1))[0]).toMatchObject({ jobId: job.jobId, status: "cancelled", reason: "cancelled_by_user" });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("queued job skipped by global kill after claim keeps queue metadata", async () => {
+    const fixture = await createFixture(200);
+    const loop = await fixture.manager.create("project-a", intervalConfig);
+    await fixture.manager.update(loop.loopId, { nextRunAt: 225 });
+    const realCoordinator = fixture.coordinator;
+    const coordinator = {
+      get maxConcurrent() {
+        return realCoordinator.maxConcurrent;
+      },
+      recoverStaleRunning: () => realCoordinator.recoverStaleRunning(),
+      start: () => realCoordinator.start(),
+      finish: (jobId: string, input: Parameters<LoopJobCoordinator["finish"]>[1]) => realCoordinator.finish(jobId, input),
+      dispatchReady: async () => {
+        const jobs = await realCoordinator.dispatchReady();
+        if (jobs.length > 0) await fixture.scheduler.activateGlobalKill({ reason: "kill after claim" });
+        return jobs;
+      },
+    } as unknown as LoopJobCoordinator;
+    fixture.scheduler = fixture.createScheduler(undefined, coordinator);
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(225);
+
+    const job = (await fixture.jobQueue.list())[0]!;
+    const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
+    expect(report).toMatchObject({
+      status: "skipped",
+      reason: "global_kill_active",
+      jobId: job.jobId,
+      triggerKind: "interval",
+      subjectKey: `interval:${loop.loopId}`,
+      dedupeKey: job.dedupeKey,
+    });
+    expect(job).toMatchObject({ status: "skipped", blockedReason: "global_kill_active" });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("queued job skipped by paused loop after claim keeps queue metadata", async () => {
+    const fixture = await createFixture(200);
+    const loop = await fixture.manager.create("project-a", intervalConfig);
+    await fixture.manager.update(loop.loopId, { nextRunAt: 250 });
+    const realCoordinator = fixture.coordinator;
+    const coordinator = {
+      get maxConcurrent() {
+        return realCoordinator.maxConcurrent;
+      },
+      recoverStaleRunning: () => realCoordinator.recoverStaleRunning(),
+      start: () => realCoordinator.start(),
+      finish: (jobId: string, input: Parameters<LoopJobCoordinator["finish"]>[1]) => realCoordinator.finish(jobId, input),
+      dispatchReady: async () => {
+        const jobs = await realCoordinator.dispatchReady();
+        if (jobs.length > 0) await fixture.manager.pause(loop.loopId);
+        return jobs;
+      },
+    } as unknown as LoopJobCoordinator;
+    fixture.scheduler = fixture.createScheduler(undefined, coordinator);
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(250);
+
+    const job = (await fixture.jobQueue.list())[0]!;
+    const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
+    expect(report).toMatchObject({
+      status: "skipped",
+      reason: "loop_paused",
+      jobId: job.jobId,
+      triggerKind: "interval",
+      subjectKey: `interval:${loop.loopId}`,
+      dedupeKey: job.dedupeKey,
+    });
+    expect(job).toMatchObject({ status: "skipped", blockedReason: "loop_paused" });
+    expect(fixture.runs).toEqual([]);
+  });
+
+  test("queued interval overlap skipped after claim keeps queue metadata", async () => {
+    const fixture = await createFixture(200);
+    const loop = await fixture.manager.create("project-a", intervalConfig);
+    await fixture.manager.update(loop.loopId, { nextRunAt: 275 });
+    const realCoordinator = fixture.coordinator;
+    const coordinator = {
+      get maxConcurrent() {
+        return realCoordinator.maxConcurrent;
+      },
+      recoverStaleRunning: () => realCoordinator.recoverStaleRunning(),
+      start: () => realCoordinator.start(),
+      finish: (jobId: string, input: Parameters<LoopJobCoordinator["finish"]>[1]) => realCoordinator.finish(jobId, input),
+      dispatchReady: async () => {
+        const jobs = await realCoordinator.dispatchReady();
+        if (jobs.length > 0) {
+          await fixture.manager.recordRunStart(loop.loopId, {
+            runId: "persisted-active-run",
+            loopId: loop.loopId,
+            status: "running",
+            trigger: "interval",
+            startedAt: 270,
+          });
+        }
+        return jobs;
+      },
+    } as unknown as LoopJobCoordinator;
+    fixture.scheduler = fixture.createScheduler(undefined, coordinator);
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(275);
+
+    const job = (await fixture.jobQueue.list())[0]!;
+    const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
+    expect(report).toMatchObject({
+      status: "skipped",
+      reason: "scheduler_overlap",
+      jobId: job.jobId,
+      triggerKind: "interval",
+      subjectKey: `interval:${loop.loopId}`,
+      dedupeKey: job.dedupeKey,
+    });
+    expect(job).toMatchObject({ status: "skipped", blockedReason: "scheduler_overlap" });
+    expect(fixture.runs).toEqual([]);
+  });
+
   test("pause clears future timer without cancelling an active run", async () => {
     const fixture = await createFixture();
     const loop = await fixture.manager.create("project-a", intervalConfig);
@@ -213,6 +488,7 @@ describe("LoopScheduler", () => {
     };
 
     await fixture.scheduler.start("project-a");
+    await fixture.timer.fireNextDue(100);
     const activeTick = fixture.timer.fireNextDue(100);
     await runnerStarted.promise;
 
@@ -491,7 +767,7 @@ describe("LoopScheduler", () => {
     await fixture.scheduler.start("project-a");
     expect(fixture.timer.size()).toBe(1);
 
-    fixture.scheduler.stop();
+    await fixture.scheduler.stop();
     expect(fixture.timer.size()).toBe(0);
 
     await fixture.timer.advanceTo(100);
@@ -500,7 +776,82 @@ describe("LoopScheduler", () => {
     expect(fixture.runs).toEqual([]);
   });
 
-  test("schedules cron loops through durable queue without running loop work in callback", async () => {
+  test("startup cancels stale currentRun that has no durable running job", async () => {
+    const fixture = await createFixture(1_000);
+    const loop = await fixture.manager.create("project-a", manualConfig);
+    await fixture.manager.recordRunStart(loop.loopId, {
+      runId: "stale-run",
+      loopId: loop.loopId,
+      status: "running",
+      trigger: "manual",
+      startedAt: 500,
+      sessionId: "stale-session",
+    });
+
+    await fixture.scheduler.start("project-a");
+    const report = await fixture.scheduler.runManual(loop.loopId);
+
+    const reports = await fixture.manager.readRunLog(loop.loopId);
+    expect(reports[1]).toMatchObject({ runId: "stale-run", status: "cancelled", summary: "Recovered stale running loop state on scheduler startup." });
+    expect(report).toMatchObject({ status: "succeeded", trigger: "manual" });
+    expect(fixture.runs).toHaveLength(1);
+  });
+
+  test("trigger polling cancels jobs if global kill activates during poll", async () => {
+    const fixture = await createFixture(0, { localHead: { repoId: "archcode/workbench", branch: "main", sha: "before" } });
+    await fixture.manager.create("project-a", triggerConfig);
+    const poller = {
+      pollLoopState: async (loop: Awaited<ReturnType<LoopStateManager["read"]>>) => {
+        await fixture.jobQueue.enqueue({
+          loopId: loop.loopId,
+          triggerKind: "on_commit",
+          subjectKey: "commit:after",
+          eventSummary: { summary: "commit arrived while kill activated" },
+          collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+        });
+        await fixture.scheduler.activateGlobalKill({ reason: "stop during poll" });
+      },
+    } as unknown as LoopTriggerPoller;
+    fixture.scheduler = fixture.createScheduler(poller);
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(30_000);
+
+    expect(fixture.runs).toEqual([]);
+    expect((await fixture.jobQueue.list())[0]).toMatchObject({ status: "cancelled", blockedReason: "global_kill_active" });
+  });
+
+  test("dynamic trigger collision target blocks run before runner starts", async () => {
+    const fixture = await createFixture(0, { localHead: { repoId: "archcode/workbench", branch: "main", sha: "abc123" } });
+    const loop = await fixture.manager.create("project-a", triggerConfig);
+    const other = await fixture.manager.create("project-a", { ...manualConfig, title: "Other loop" });
+    await fixture.collisionLedger.acquire({
+      target: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      loopId: other.loopId,
+      runId: "other-run",
+      priority: 10,
+    });
+
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(30_000);
+
+    expect(fixture.runs).toEqual([]);
+    const report = (await fixture.manager.readRunLog(loop.loopId, 1))[0];
+    const job = (await fixture.jobQueue.list())[0]!;
+    expect(report).toMatchObject({
+      status: "skipped",
+      reason: "collision_conflict",
+      jobId: job.jobId,
+      triggerKind: "on_commit",
+      subjectKey: job.subjectKey,
+      dedupeKey: job.dedupeKey,
+      resolvedHeadSha: "abc123",
+      collisionTargets: [{ type: "branch", owner: "archcode", repo: "workbench", branch: "main" }],
+    });
+    expect(job).toMatchObject({ status: "skipped", blockedReason: "collision_conflict" });
+  });
+
+  test("schedules cron loops through durable queue before running loop work", async () => {
     const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0));
     const loop = await fixture.manager.create("project-a", cronConfig);
 
@@ -511,9 +862,8 @@ describe("LoopScheduler", () => {
 
     await fixture.cron.fire(fixture.cron.handles()[0]!, Date.UTC(2026, 0, 1, 0, 15, 0));
 
-    const jobs = await fixture.jobQueue.list();
-    const state = await fixture.manager.read(loop.loopId);
-    expect(fixture.runs).toEqual([]);
+    let jobs = await fixture.jobQueue.list();
+    let state = await fixture.manager.read(loop.loopId);
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({
       loopId: loop.loopId,
@@ -522,12 +872,22 @@ describe("LoopScheduler", () => {
       subjectKey: `cron:${Date.UTC(2026, 0, 1, 0, 15, 0)}`,
       missedCount: 0,
     });
+    expect(fixture.runs).toEqual([]);
     expect(state).toMatchObject({
       lastScheduledAt: Date.UTC(2026, 0, 1, 0, 15, 0),
       lastEnqueuedAt: Date.UTC(2026, 0, 1, 0, 15, 0),
       nextScheduledAt: Date.UTC(2026, 0, 1, 0, 30, 0),
       missedCount: 0,
     });
+
+    await fixture.timer.advanceTo(fixture.clock.now());
+
+    jobs = await fixture.jobQueue.list();
+    state = await fixture.manager.read(loop.loopId);
+    expect(jobs[0]).toMatchObject({ status: "succeeded", triggerKind: "cron" });
+    expect(fixture.runs).toHaveLength(1);
+    expect(fixture.runs[0]).toMatchObject({ trigger: "cron" });
+    expect(state).toMatchObject({ nextScheduledAt: Date.UTC(2026, 0, 1, 0, 30, 0) });
     expect(state.triggerHealth?.find((entry) => entry.triggerKind === "cron")).toMatchObject({ status: "healthy" });
   });
 
@@ -545,7 +905,7 @@ describe("LoopScheduler", () => {
     const state = await fixture.manager.read(loop.loopId);
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({
-      status: "pending",
+      status: "succeeded",
       triggerKind: "cron",
       subjectKey: `cron:${Date.UTC(2026, 0, 1, 1, 0, 0)}`,
       missedCount: 4,
@@ -556,7 +916,68 @@ describe("LoopScheduler", () => {
       nextScheduledAt: Date.UTC(2026, 0, 1, 1, 15, 0),
       missedCount: 4,
     });
-    expect(fixture.runs).toEqual([]);
+    expect(fixture.runs).toHaveLength(1);
+  });
+
+  test("manual, interval, cron, and trigger polling all create durable jobs before runner invocation", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0), {
+      localHead: { repoId: "archcode/workbench", branch: "main", sha: "abc123" },
+    });
+    const manual = await fixture.manager.create("project-a", manualConfig);
+    const interval = await fixture.manager.create("project-a", {
+      ...intervalConfig,
+      schedule: { kind: "interval", everyMs: 3_600_000 },
+    });
+    const cron = await fixture.manager.create("project-a", cronConfig);
+    await fixture.manager.create("project-a", triggerConfig);
+    await fixture.manager.update(interval.loopId, { nextRunAt: fixture.clock.now() + 100 });
+    const durableSeenBeforeRun: string[] = [];
+    fixture.runner = async (input) => {
+      const running = await fixture.jobQueue.list(["running"]);
+      expect(running.some((job) => job.loopId === input.loop.loopId && job.triggerKind === input.trigger)).toBe(true);
+      durableSeenBeforeRun.push(input.trigger);
+      return { summary: "done" };
+    };
+
+    await fixture.scheduler.runManual(manual.loopId);
+    await fixture.scheduler.start("project-a");
+    await fixture.timer.advanceTo(Date.UTC(2026, 0, 1, 0, 0, 0) + 100);
+    await fixture.cron.fire(fixture.cron.handles()[0]!, Date.UTC(2026, 0, 1, 0, 15, 0));
+    await fixture.timer.advanceTo(fixture.clock.now());
+    await fixture.timer.advanceTo(Date.UTC(2026, 0, 1, 0, 15, 30));
+
+    expect(cron.loopId).toBeString();
+    expect(durableSeenBeforeRun.sort()).toEqual(["cron", "interval", "manual", "on_commit"]);
+    expect((await fixture.jobQueue.list()).map((job) => job.triggerKind).sort()).toEqual(["cron", "interval", "manual", "on_commit"]);
+  });
+
+  test("restart recovery requeues stale running jobs once and registers exactly one cron handle", async () => {
+    const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 20, 0));
+    const loop = await fixture.manager.create("project-a", cronConfig);
+    const { job } = await fixture.jobQueue.enqueue({
+      loopId: loop.loopId,
+      triggerKind: "manual",
+      subjectKey: "manual:restart",
+      queuedAt: fixture.clock.now(),
+      eventSummary: { summary: "stale running job" },
+    });
+    await fixture.jobQueue.update(job.jobId, {
+      status: "running",
+      startedAt: fixture.clock.now() - 1_000,
+      leaseExpiresAt: fixture.clock.now() - 1,
+      attempts: 1,
+      updatedAt: fixture.clock.now() - 1_000,
+    });
+    const recoveredSpy = mock(fixture.jobQueue.recoverStaleRunning.bind(fixture.jobQueue));
+    fixture.coordinator.recoverStaleRunning = recoveredSpy;
+
+    await fixture.scheduler.start("project-a");
+    await fixture.scheduler.start("project-a");
+
+    expect(recoveredSpy).toHaveBeenCalledTimes(1);
+    expect(fixture.cron.size()).toBe(1);
+    expect((await fixture.jobQueue.list()).find((entry) => entry.jobId === job.jobId)).toMatchObject({ status: "succeeded", attempts: 2 });
+    expect(fixture.runs).toHaveLength(1);
   });
 
   test("invalid cron expression records disabled trigger health and does not register cron", async () => {
@@ -592,19 +1013,21 @@ describe("LoopScheduler", () => {
   });
 });
 
-async function createFixture(now: number = 0, options: { maxJobs?: number } = {}): Promise<{
+async function createFixture(now: number = 0, options: { maxJobs?: number; localHead?: { repoId: string; branch: string; sha: string } } = {}): Promise<{
   manager: LoopStateManager;
   scheduler: LoopScheduler;
   clock: FakeClock;
   timer: FakeTimer;
   cron: FakeCronAdapter;
   jobQueue: LoopJobQueue;
+  coordinator: LoopJobCoordinator;
   killStateManager: LoopKillStateManager;
   budgetLedger: LoopBudgetLedger;
   collisionLedger: CollisionLedger;
   executionManager: FakeSessionExecutionManager;
   runs: LoopSchedulerRunInput[];
-  runner: (input: LoopSchedulerRunInput) => Promise<{ summary: string } | void>;
+  runner: (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
+  createScheduler: (triggerPoller?: LoopTriggerPoller, coordinatorOverride?: LoopJobCoordinator) => LoopScheduler;
 }> {
   const manager = new LoopStateManager(TMP_DIR);
   const clock = new FakeClock(now);
@@ -614,38 +1037,59 @@ async function createFixture(now: number = 0, options: { maxJobs?: number } = {}
   const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
   const budgetLedger = new LoopBudgetLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock });
   const collisionLedger = new CollisionLedger({ stateManager: manager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
+  const coordinator = new LoopJobCoordinator({ queue: jobQueue, clock, leaseTtlMs: 60_000 });
   const executionManager = new FakeSessionExecutionManager();
+  const triggerPoller = new LoopTriggerPoller({
+    workspaceRoot: TMP_DIR,
+    stateManager: manager,
+    queue: jobQueue,
+    localGit: options.localHead === undefined ? undefined : new FakeLocalGit(options.localHead),
+    clock,
+  });
   const runs: LoopSchedulerRunInput[] = [];
   const fixture = {
     manager,
     scheduler: undefined as unknown as LoopScheduler,
     clock,
     timer,
-    cron,
-    jobQueue,
-    killStateManager,
-    budgetLedger,
+     cron,
+     jobQueue,
+     coordinator,
+     killStateManager,
+     budgetLedger,
     collisionLedger,
     executionManager,
     runs,
     runner: async (_input: LoopSchedulerRunInput) => ({ summary: "done" }),
+    createScheduler: undefined as unknown as (triggerPoller?: LoopTriggerPoller, coordinatorOverride?: LoopJobCoordinator) => LoopScheduler,
   };
-  fixture.scheduler = new LoopScheduler({
+  fixture.createScheduler = (nextTriggerPoller = triggerPoller, coordinatorOverride = coordinator) => new LoopScheduler({
     stateManager: manager,
-        clock,
-        timer,
-        cronAdapter: cron,
-        jobQueue,
-        budgetLedger,
-        collisionLedger,
-        killStateManager,
+    clock,
+    timer,
+    cronAdapter: cron,
+    jobQueue,
+    coordinator: coordinatorOverride,
+    budgetLedger,
+    collisionLedger,
+    killStateManager,
+    triggerPoller: nextTriggerPoller,
     abortSessionExecutionAndWait: (sessionId) => executionManager.abortAndWait(TMP_DIR, sessionId),
     runner: async (input) => {
       runs.push(input);
       return await fixture.runner(input);
     },
   });
+  fixture.scheduler = fixture.createScheduler();
   return fixture;
+}
+
+class FakeLocalGit implements LoopLocalGitReader {
+  constructor(private readonly head: { repoId: string; branch: string; sha: string }) {}
+
+  async readBranchHead(branch?: string): Promise<{ repoId: string; branch: string; sha: string }> {
+    return { ...this.head, branch: branch ?? this.head.branch };
+  }
 }
 
 class FakeClock {
@@ -734,4 +1178,12 @@ async function captureAsyncError(action: () => Promise<unknown>): Promise<unknow
     return error;
   }
   throw new Error("Expected action to throw");
+}
+
+async function waitFor(predicate: () => Promise<boolean>, attempts: number = 20): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    if (await predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error("Condition was not met before timeout");
 }

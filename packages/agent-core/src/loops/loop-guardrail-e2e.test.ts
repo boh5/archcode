@@ -18,6 +18,8 @@ import {
 } from "../tools/names";
 import { createLoopBudgetToolPermission } from "./budget-tool-guard";
 import { CollisionLedger } from "./collision-ledger";
+import { LoopJobCoordinator } from "./coordinator";
+import { LoopJobQueue } from "./job-queue";
 import { createLoopCollisionToolPermission, createLoopCollisionToolReleaseHook } from "./collision-tool-guard";
 import { LoopKillStateManager } from "./kill-state";
 import { LoopBudgetLedger } from "./budget-ledger";
@@ -43,6 +45,7 @@ describe("Loop end-to-end guardrail flows", () => {
   test("PR Babysitter preset watches mocked GitHub reads and records soft-budget comment block", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 5, 12, 0, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
+    const jobQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
     const connector = makeConnector();
     const registry = createRegistry(createGitHubToolDescriptors({ connector }));
     registry.globalPermissions.push(createLoopBudgetToolPermission());
@@ -58,6 +61,8 @@ describe("Loop end-to-end guardrail flows", () => {
     const scheduler = new LoopScheduler({
       stateManager,
       clock,
+      jobQueue,
+      coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       runner: async ({ loop, runId }) => {
         expect(loop.config.sourcePreset).toBe("pr_babysitter");
@@ -144,6 +149,7 @@ describe("Loop end-to-end guardrail flows", () => {
   test("collision conflict persists in run history with canonical GitHub PR target", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 5, 12, 30, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
+    const jobQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
     const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, clock, leaseTtlMs: 60_000 });
     const holder = await stateManager.create("project-a", prBabysitterConfig());
     const contender = await stateManager.create("project-a", {
@@ -161,6 +167,8 @@ describe("Loop end-to-end guardrail flows", () => {
     const scheduler = new LoopScheduler({
       stateManager,
       clock,
+      jobQueue,
+      coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       collisionLedger,
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       runner,
@@ -184,12 +192,15 @@ describe("Loop end-to-end guardrail flows", () => {
   test("global kill blocks new runs and clear enables the next manual run", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 5, 13, 0, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
+    const jobQueue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
     const killStateManager = new LoopKillStateManager(TMP_DIR, { clock });
     const loop = await stateManager.create("project-a", prBabysitterConfig());
     const runner = mock(async () => ({ summary: "manual run accepted after clear" }));
     const scheduler = new LoopScheduler({
       stateManager,
       clock,
+      jobQueue,
+      coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       killStateManager,
       budgetLedger: new LoopBudgetLedger({ stateManager, workspaceRoot: TMP_DIR, clock }),
       runner,
