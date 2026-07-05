@@ -58,7 +58,7 @@ export const TOOL_SKILL_READ = "skill_read";
 export const TOOL_MEMORY_READ = "memory_read";
 export const TOOL_MEMORY_WRITE = "memory_write";
 
-// Goal (replaces Workflow in Phase 2 cutover)
+// Goal lifecycle tools
 export const TOOL_GOAL_CREATE = "goal_create";
 export const TOOL_GOAL_LOCK = "goal_lock";
 export const TOOL_GOAL_RUN = "goal_run";

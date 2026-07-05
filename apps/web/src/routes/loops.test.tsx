@@ -582,7 +582,7 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("Phase 4 preset quick starts can be selected and submit editable config with budget and tool profile", async () => {
+  test("preset quick starts can be selected and submit editable config with budget and tool profile", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");

@@ -135,7 +135,7 @@ describe("tool name constants", () => {
 });
 
 describe("loop protocol compatibility", () => {
-  test("phase 4 loop reason and budget status compile through protocol imports", () => {
+  test("loop guardrail reason and budget status compile through protocol imports", () => {
     const reason: LoopRunReason = "hard_budget_exceeded";
     const status: LoopRunReportStatus = "budget_exceeded";
     const localMaintenanceProfile: LoopToolProfileId = "loop_local_maintenance";

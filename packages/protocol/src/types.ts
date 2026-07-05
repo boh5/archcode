@@ -959,7 +959,7 @@ export interface HitlRequest {
   id: string;
   sessionId: string;   // originating session
   goalId?: string;
-  loopId?: string;     // Phase 2: loop integration
+  loopId?: string;     // optional loop integration source
   kind: HitlKind;
   prompt: string;
   payload: HitlPayload;  // kind-specific

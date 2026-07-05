@@ -859,7 +859,7 @@ describe("GoalDetailRoute", () => {
     ];
     const contents: Record<string, string> = {
       "plan.md": "# Plan\n\nPlan artifact locked after Plan Agent.",
-      "build.md": "# Build\n\nBuild artifact for Task 18.",
+      "build.md": "# Build\n\nBuild artifact for implementation evidence.",
       "review.md": "# Review\n\nReviewer verdict: DONE.",
       "spec-compliance.md": "# Spec Compliance\n\nAC-001 satisfied. AC-002 satisfied.",
       "approvals.md": "# Approval History\n\nafter_plan approved.",

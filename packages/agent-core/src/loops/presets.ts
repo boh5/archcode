@@ -4,7 +4,7 @@ import type { LoopBudgetConfig, LoopConfig, LoopGoalTemplate } from "./state";
 // Preset ID constants
 // ---------------------------------------------------------------------------
 
-/** All 7 loop presets defined for Phase 4 editable templates. */
+/** All 7 loop presets defined for editable quick-start templates. */
 export const LOOP_PRESET_IDS = [
   "daily_triage",
   "changelog_drafter",
@@ -15,7 +15,7 @@ export const LOOP_PRESET_IDS = [
   "issue_triage",
 ] as const;
 
-/** Phase 4 supports every preset id as a create-time editable template. */
+/** Stable Loop API supports every preset id as a create-time editable template. */
 export const SUPPORTED_LOOP_PRESET_IDS = LOOP_PRESET_IDS;
 
 export type LoopPresetId = (typeof LOOP_PRESET_IDS)[number];
@@ -28,14 +28,14 @@ const MINUTE_MS = 60_000;
 // ---------------------------------------------------------------------------
 
 /**
- * Returns `true` if the preset id is one of the Phase 4 editable templates.
+ * Returns `true` if the preset id is one of the editable quick-start templates.
  */
 export function isSupportedLoopPreset(id: string): id is SupportedLoopPresetId {
   return (SUPPORTED_LOOP_PRESET_IDS as readonly string[]).includes(id);
 }
 
 /**
- * Phase 4 presets are templates rather than unsupported runtime categories.
+ * Presets are templates rather than unsupported runtime categories.
  * This API remains for server compatibility and only returns a reason if a
  * future recognised id is intentionally gated.
  */

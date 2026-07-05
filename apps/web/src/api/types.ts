@@ -99,7 +99,7 @@ export interface DashboardHitlItem {
 }
 
 // ─── Goal artifact API response types ───
-// Match the read-only project-scoped artifact routes from Task 11.
+// Match the read-only project-scoped artifact routes.
 
 /** Response of GET /api/projects/:slug/goals/:goalId/artifacts. */
 export interface GoalArtifactsListResponse {
@@ -114,7 +114,7 @@ export interface GoalArtifactReadResponse {
 
 // ─── Loop API response types ───
 
-/** Dashboard loop summary matching Task 11 minimal fields. */
+/** Dashboard loop summary with minimal list fields. */
 export interface DashboardLoop {
   loopId: string;
   title: string;

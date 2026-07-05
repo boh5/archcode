@@ -815,7 +815,7 @@ function LoopForm({
                 ))}
               </div>
               <p className="mt-2 text-[11px] text-text-muted">
-                Presets are editable Phase 4 templates. Stored runKind, mode, tool profile, budget, and task or Goal fields drive runtime behavior.
+                Presets are editable quick-start templates. Stored runKind, mode, tool profile, budget, and task or Goal fields drive runtime behavior.
               </p>
           </section>
         )}

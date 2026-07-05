@@ -1,5 +1,5 @@
 /**
- * Shared Phase 4 Loop test fixtures, fake services, and assertion utilities.
+ * Shared Loop test fixtures, fake services, and assertion utilities.
  *
  * These helpers are test-only. Production code must not import from this module.
  *
@@ -54,7 +54,7 @@ export function resetSequenceCounter(): void {
 }
 
 /**
- * Returns a normalized Phase 4 LoopBudgetConfig with sensible defaults.
+ * Returns a normalized LoopBudgetConfig with sensible defaults.
  *
  * All values can be overridden. Defaults match conservative local-report budgets:
  *   maxIterationsPerRun: 8

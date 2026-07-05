@@ -637,12 +637,12 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("renders seeded Phase 4 guardrail evidence selectors with collision and integration states", async () => {
+  test("renders seeded guardrail evidence selectors with collision and integration states", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
     setupLoopDetailFetch({
-      killState: { globalKillActive: true, activatedAt: 1700000110000, activatedBy: "task-17", reason: "Task 17 seeded kill switch" },
+      killState: { globalKillActive: true, activatedAt: 1700000110000, activatedBy: "seeded-kill-switch", reason: "Seeded kill switch" },
       runs: [
         makeRun({
           runId: "run-1",
@@ -698,7 +698,7 @@ describe("LoopDetailRoute", () => {
         expect(container.querySelector('[data-testid="loop-detail-page"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
         expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
-        expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Task 17 seeded kill switch");
+        expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Seeded kill switch");
         expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/archcode:pr:42");
         const integrationStatus = container.querySelector('[data-testid="loop-integration-status"]')?.textContent ?? "";
         expect(integrationStatus).toContain("github");
@@ -772,7 +772,7 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("edit loop dialog pre-fills config and patches Phase 4 config", async () => {
+  test("edit loop dialog pre-fills config and patches automation config", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");

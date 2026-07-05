@@ -121,7 +121,7 @@ describe("Loop schemas", () => {
     expect(LoopCoordinatorConfigSchema.parse({ maxConcurrent: 4 })).toEqual({ maxConcurrent: 4 });
   });
 
-  test("normalizes legacy loop limits to phase 4 budget threshold defaults", () => {
+  test("normalizes legacy loop limits to budget threshold defaults", () => {
     const parsedBudget = LoopBudgetConfigSchema.parse({ maxIterationsPerRun: 8 });
     const parsedConfig = LoopConfigSchema.parse(manualConfig);
 
@@ -182,7 +182,7 @@ describe("Loop schemas", () => {
     expect(() => LoopStateSchema.parse({ ...state, noiseRate: 0.1 })).toThrow();
   });
 
-  test("accepts phase 4 budget, collision, integration, profile, and run reason fields", () => {
+  test("accepts guardrail budget, collision, integration, profile, and run reason fields", () => {
     const budget = LoopBudgetConfigSchema.parse({
       maxIterationsPerRun: 8,
       maxTokensPerRun: 100_000,
@@ -262,7 +262,7 @@ describe("Loop schemas", () => {
     expect(state.latestCollisions?.activeLeases[0]?.targetKey).toBe("pr:arch/code#42");
   });
 
-  test("accepts phase 5 job, worktree, trigger health, and cleanup metadata", () => {
+  test("accepts queue/worktree automation fields and cleanup metadata", () => {
     const report = LoopRunReportSchema.parse({
       runId: "run-1",
       loopId: VALID_LOOP_ID,

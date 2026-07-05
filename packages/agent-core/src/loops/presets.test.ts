@@ -127,7 +127,7 @@ const EXPECTED_PRESETS = {
 }>;
 
 describe("isSupportedLoopPreset", () => {
-  test("returns true for every Phase 4 preset template", () => {
+  test("returns true for every editable preset template", () => {
     for (const id of LOOP_PRESET_IDS) {
       expect(isSupportedLoopPreset(id)).toBe(true);
     }
@@ -140,7 +140,7 @@ describe("isSupportedLoopPreset", () => {
 });
 
 describe("getUnsupportedLoopPresetReason", () => {
-  test("returns undefined for all Phase 4 preset templates", () => {
+  test("returns undefined for all editable preset templates", () => {
     for (const id of LOOP_PRESET_IDS) {
       expect(getUnsupportedLoopPresetReason(id)).toBeUndefined();
     }
@@ -152,7 +152,7 @@ describe("getUnsupportedLoopPresetReason", () => {
 });
 
 describe("expandLoopPreset", () => {
-  test("all Phase 4 preset ids expand to valid editable LoopConfig templates", () => {
+  test("all preset ids expand to valid editable LoopConfig templates", () => {
     for (const id of LOOP_PRESET_IDS) {
       const config = expandLoopPreset(id);
       const parsed = LoopConfigSchema.parse(config);
@@ -271,7 +271,7 @@ describe("preset id constants", () => {
     ]);
   });
 
-  test("SUPPORTED_LOOP_PRESET_IDS contains every editable Phase 4 template", () => {
+  test("SUPPORTED_LOOP_PRESET_IDS contains every editable template", () => {
     expect(SUPPORTED_LOOP_PRESET_IDS).toEqual(LOOP_PRESET_IDS);
   });
 

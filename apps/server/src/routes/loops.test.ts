@@ -291,7 +291,7 @@ describe("loops routes", () => {
   });
 
   test("reads budget collision and integration snapshots without leaking secrets", async () => {
-    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-4-status-snapshots");
+    const { app, project, runtime, workspaceRoot } = await createTestApp("guardrail-status-snapshots");
     const loop = await createLoop(app, project.slug, {
       ...manualSessionLoopConfig,
       toolProfileId: "loop_github_pr_watch",

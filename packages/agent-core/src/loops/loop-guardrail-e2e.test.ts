@@ -27,7 +27,7 @@ import { LoopBudgetConfigSchema, LoopStateManager, type LoopConfig } from "./sta
 import { FakeClock } from "./test-utils";
 import { resolveLoopToolProfile } from "./tool-profiles";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "phase4-e2e");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-guardrail-e2e");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 beforeEach(async () => {
@@ -39,7 +39,7 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
-describe("Phase 4 Loop end-to-end guardrail flows", () => {
+describe("Loop end-to-end guardrail flows", () => {
   test("PR Babysitter preset watches mocked GitHub reads and records soft-budget comment block", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 5, 12, 0, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
@@ -84,7 +84,7 @@ describe("Phase 4 Loop end-to-end guardrail flows", () => {
         expect(checks.isError).toBe(false);
         expect(JSON.parse(checks.output)).toMatchObject({
           type: "github.pull_request_checks",
-          data: { headBranch: "phase-4/task-17", headSha: "abc123" },
+          data: { headBranch: "automation/guardrail-evidence", headSha: "abc123" },
         });
         executedReadTools.push(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS);
 
@@ -130,7 +130,7 @@ describe("Phase 4 Loop end-to-end guardrail flows", () => {
     expect(executedReadTools).toEqual([TOOL_GITHUB_GET_PULL_REQUEST, TOOL_GITHUB_GET_PULL_REQUEST_CHECKS]);
     expect(connector.getPullRequest).toHaveBeenCalledTimes(2);
     expect(connector.listWorkflowRuns).toHaveBeenCalledWith("archcode", "archcode", {
-      branch: "phase-4/task-17",
+      branch: "automation/guardrail-evidence",
       headSha: "abc123",
       perPage: 10,
     });
@@ -195,7 +195,7 @@ describe("Phase 4 Loop end-to-end guardrail flows", () => {
       runner,
     });
 
-    await scheduler.activateGlobalKill({ activatedBy: "task-17", reason: "freeze automation" });
+    await scheduler.activateGlobalKill({ activatedBy: "seeded-kill-switch", reason: "freeze automation" });
     const blocked = await scheduler.runManual(loop.loopId);
     const cleared = await scheduler.clearGlobalKill();
     const accepted = await scheduler.runManual(loop.loopId);
@@ -227,7 +227,7 @@ function toolContext(
   overrides: Partial<ToolExecutionContext> = {},
 ): ToolExecutionContext {
   return createToolExecutionContext({
-    store: createSessionStore("phase4-session-1"),
+    store: createSessionStore("loop-guardrail-session-1"),
     storeManager,
     toolName,
     toolCallId: `${toolName}-call`,
@@ -248,16 +248,16 @@ function makeConnector(): GitHubConnectorApi & Record<string, ReturnType<typeof 
   return {
     getPullRequest: mock(async (_owner: string, _repo: string, number: number) => response({
       number,
-      title: "Phase 4 Task 17",
-      head: { ref: "phase-4/task-17", sha: "abc123" },
+      title: "Guardrail evidence fixture",
+      head: { ref: "automation/guardrail-evidence", sha: "abc123" },
     })),
     listPullRequests: mock(async () => response([{ number: 42 }])),
-    getPullRequestFiles: mock(async () => response([{ filename: "packages/agent-core/src/loops/phase4-e2e.test.ts" }])),
+    getPullRequestFiles: mock(async () => response([{ filename: "packages/agent-core/src/loops/loop-guardrail-e2e.test.ts" }])),
     listIssueComments: mock(async () => response([{ id: 100, body: "waiting for checks" }])),
     createIssueComment: mock(async () => response({ id: 101, body: "created" }, 201)),
     listWorkflowRuns: mock(async () => response<GitHubWorkflowRunsPage>({
       total_count: 1,
-      workflow_runs: [{ id: 9001, head_branch: "phase-4/task-17", head_sha: "abc123", status: "completed", conclusion: "success" }],
+      workflow_runs: [{ id: 9001, head_branch: "automation/guardrail-evidence", head_sha: "abc123", status: "completed", conclusion: "success" }],
     })),
     getWorkflowRun: mock(async (_owner: string, _repo: string, runId: number) => response({ id: runId, status: "completed", conclusion: "success" })),
     rerunWorkflowRun: mock(async () => response(undefined, 201)),

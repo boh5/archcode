@@ -215,7 +215,7 @@ describe("Goal types", () => {
 
     expect(specCheck.kind).toBe("spec_compliance");
     expect(specCheck.params.specPath).toBe("docs/spec.md");
-    // Task 8: spec_compliance is implemented by Reviewer-owned structured per-criterion evidence.
+    // spec_compliance is implemented by Reviewer-owned structured per-criterion evidence.
   });
 
   test("serializes and deserializes GoalState round-trip", () => {
@@ -247,7 +247,7 @@ describe("Goal types", () => {
     expect((parsed.doneConditions[0] as DoneCondition).kind).toBe("tests_pass");
   });
 
-  test("round-trips Phase 2 Goal contracts without raw LLM transcript fields", () => {
+  test("round-trips Goal contracts without raw LLM transcript fields", () => {
     const reviewReport: GoalReviewReport = {
       reviewerAgent: "reviewer",
       outcome: "NOT_DONE",
@@ -266,7 +266,7 @@ describe("Goal types", () => {
     const state: GoalState = {
       id: "goal_test_123",
       projectId: "my-project",
-      title: "Ship Phase 2 Goal contracts",
+      title: "Ship Goal contracts",
       status: "verifying",
       phase: "review",
       doneConditions: [
@@ -717,7 +717,7 @@ describe("Loop types", () => {
     expect(cron.expression).toBe("*/15 * * * *");
   });
 
-  test("LoopTriggerSpec accepts Phase 5 trigger filters", () => {
+  test("LoopTriggerSpec accepts automation trigger filters", () => {
     const triggers: LoopTriggerSpec[] = [
       { kind: "on_commit", branch: "main", cadenceMs: 60000 },
       { kind: "on_pr", baseBranch: "main", prScope: "review_requested", cadenceMs: 60000 },
@@ -1151,7 +1151,7 @@ describe("Loop types", () => {
     expect(parsed.loopId).toBeUndefined();
   });
 
-  test("readinessScore is absent in Phase 3 LoopState fixtures", () => {
+  test("readinessScore remains absent from legacy LoopState fixtures", () => {
     const state: LoopState = {
       loopId: "loop-1",
       projectId: "p",
