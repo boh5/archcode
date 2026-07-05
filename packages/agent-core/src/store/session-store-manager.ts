@@ -473,6 +473,18 @@ export class SessionStoreManager {
     return removed;
   }
 
+  releaseWorkspace(workspaceRoot: string): void {
+    const prefix = `${workspaceRoot}\0`;
+    for (const key of [...this.#registry.keys()]) {
+      if (key.startsWith(prefix)) this.#registry.delete(key);
+    }
+    for (const key of [...this.#pendingLoads.keys()]) {
+      if (key.startsWith(prefix)) this.#pendingLoads.delete(key);
+    }
+    this.#forgetWorkspaceIndex(workspaceRoot);
+    this.#scanPromiseByWorkspace.delete(workspaceRoot);
+  }
+
   clearAll(): void {
     this.#registry.clear();
     this.#rootIdIndex.clear();
