@@ -1,10 +1,22 @@
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Loader2, Pause, Play, RotateCcw } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { useLoop, useLoopRuns, useLoopState } from "../api/queries";
-import { usePauseLoop, useResumeLoop, useTriggerLoop } from "../api/mutations";
-import type { LoopConfig, LoopRunReport, LoopScheduleSpec, LoopState, LoopStatus } from "../api/types";
+import { useLoop, useLoopBudget, useLoopCollisions, useLoopIntegrations, useLoopKillState, useLoopRuns, useLoopState } from "../api/queries";
+import { useActivateLoopGlobalKill, useCancelLoopCurrentRun, useClearLoopGlobalKill, usePauseLoop, useResumeLoop, useTriggerLoop } from "../api/mutations";
+import { EditLoopDialog } from "../components/features/CreateLoopDialog";
+import type {
+  LoopBudgetSnapshot,
+  LoopCollisionSnapshot,
+  LoopConfig,
+  LoopIntegrationError,
+  LoopIntegrationStatusSnapshot,
+  LoopKillState,
+  LoopRunReport,
+  LoopScheduleSpec,
+  LoopState,
+  LoopStatus,
+} from "../api/types";
 
 const STATUS_BADGE_CLASS: Record<LoopStatus, string> = {
   active: "bg-success-muted text-success",
@@ -18,10 +30,25 @@ export function LoopDetailRoute() {
   const { data: loop, isLoading: loopLoading, error: loopError } = useLoop(slug, loopId);
   const { data: runs, isLoading: runsLoading, error: runsError } = useLoopRuns(slug, loopId);
   const { data: loopState, isLoading: stateLoading, error: stateError } = useLoopState(slug, loopId);
+  const { data: budget, isLoading: budgetLoading } = useLoopBudget(slug, loopId);
+  const { data: collisions, isLoading: collisionsLoading } = useLoopCollisions(slug, loopId);
+  const { data: integrations, isLoading: integrationsLoading } = useLoopIntegrations(slug, loopId);
+  const { data: killState } = useLoopKillState(slug);
   const triggerLoop = useTriggerLoop();
   const pauseLoop = usePauseLoop();
   const resumeLoop = useResumeLoop();
-  const mutationError = formatMutationError(triggerLoop.error, pauseLoop.error, resumeLoop.error);
+  const cancelCurrentRun = useCancelLoopCurrentRun();
+  const activateGlobalKill = useActivateLoopGlobalKill();
+  const clearGlobalKill = useClearLoopGlobalKill();
+  const [editOpen, setEditOpen] = useState(false);
+  const mutationError = formatMutationError(
+    triggerLoop.error,
+    pauseLoop.error,
+    resumeLoop.error,
+    cancelCurrentRun.error,
+    activateGlobalKill.error,
+    clearGlobalKill.error,
+  );
 
   if (!slug || !loopId) {
     return (
@@ -56,6 +83,18 @@ export function LoopDetailRoute() {
     triggerLoop.mutate({ slug, loopId });
   };
 
+  const handleCancelCurrentRun = () => {
+    cancelCurrentRun.mutate({ slug, loopId });
+  };
+
+  const handleActivateGlobalKill = () => {
+    activateGlobalKill.mutate({ slug, activatedBy: "web", reason: "Activated from Loop detail guardrail controls" });
+  };
+
+  const handleClearGlobalKill = () => {
+    clearGlobalKill.mutate({ slug });
+  };
+
   const handlePause = () => {
     pauseLoop.mutate({ slug, loopId });
   };
@@ -64,8 +103,16 @@ export function LoopDetailRoute() {
     resumeLoop.mutate({ slug, loopId });
   };
 
+  const globalKillActive = killState?.globalKillActive === true;
+  const hardBudgetBlocked = isHardBudgetBlocked(budget ?? loop.latestBudget, loop);
+  const triggerBlockedReason = globalKillActive
+    ? "Global kill is active for this project. Clear it before triggering runs."
+    : hardBudgetBlocked
+      ? "Hard budget guardrail has paused execution. Adjust budget or clear the runtime pause before triggering."
+      : null;
+
   return (
-    <div className="flex h-full flex-col">
+    <div data-testid="loop-detail-page" className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
         <Link
           to={`/projects/${slug}/loops`}
@@ -79,8 +126,17 @@ export function LoopDetailRoute() {
         <div className="flex items-center gap-2 ml-auto">
           <button
             type="button"
+            data-testid="loop-edit-button"
+            onClick={() => setEditOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
+          >
+            Edit Loop
+          </button>
+          <button
+            type="button"
             onClick={handleTrigger}
-            disabled={triggerLoop.isPending}
+            disabled={triggerLoop.isPending || triggerBlockedReason !== null}
+            title={triggerBlockedReason ?? undefined}
             className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play size={13} />
@@ -119,10 +175,32 @@ export function LoopDetailRoute() {
         </div>
       )}
 
+      {triggerBlockedReason && (
+        <div className="border-b border-border-subtle bg-warning-muted px-4 py-2 text-xs text-warning" role="status">
+          {triggerBlockedReason}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto bg-bg-base">
         <div className="max-w-5xl mx-auto w-full px-4 py-4 flex flex-col gap-4">
           <ConfigSection loop={loop} />
           <LiveStatusSection slug={slug} loop={loop} />
+          <GuardrailSection
+            budget={budget ?? loop.latestBudget ?? null}
+            budgetLoading={budgetLoading}
+            collisions={collisions ?? loop.latestCollisions}
+            collisionsLoading={collisionsLoading}
+            integrations={integrations ?? integrationSnapshotFromLoop(loop)}
+            integrationsLoading={integrationsLoading}
+            killState={killState}
+            loop={loop}
+            onCancelCurrentRun={handleCancelCurrentRun}
+            onActivateGlobalKill={handleActivateGlobalKill}
+            onClearGlobalKill={handleClearGlobalKill}
+            cancelPending={cancelCurrentRun.isPending}
+            activateKillPending={activateGlobalKill.isPending}
+            clearKillPending={clearGlobalKill.isPending}
+          />
           <RunHistorySection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
           <StateSection
             loop={loop}
@@ -133,6 +211,7 @@ export function LoopDetailRoute() {
           />
         </div>
       </div>
+      <EditLoopDialog open={editOpen} onClose={() => setEditOpen(false)} slug={slug} loop={loop} />
     </div>
   );
 }
@@ -160,8 +239,9 @@ function ConfigSection({ loop }: { loop: LoopState }) {
         <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
         <FieldRow label="run kind" value={config.runKind} />
         <FieldRow label="mode" value={config.mode} />
+        <FieldRow label="tool profile" value={config.toolProfileId ?? "none"} />
         <FieldRow label="approval policy" value={config.approvalPolicy} />
-        <FieldRow label="max iterations" value={String(config.limits.maxIterationsPerRun)} />
+        <FieldRow label="budget defaults" value={formatLimits(config)} wide />
         <FieldRow label="task prompt" value={config.taskPrompt ?? "No task prompt configured"} wide />
         <FieldRow label="goal template" value={formatGoalTemplate(config)} wide />
       </div>
@@ -182,6 +262,155 @@ function LiveStatusSection({ slug, loop }: { slug: string; loop: LoopState }) {
       </div>
       <LinkedRunResources slug={slug} run={loop.currentRun} label="current linked resources" />
       <LinkedRunResources slug={slug} run={loop.lastRun} label="last linked resources" />
+    </DetailSection>
+  );
+}
+
+function GuardrailSection({
+  budget,
+  budgetLoading,
+  collisions,
+  collisionsLoading,
+  integrations,
+  integrationsLoading,
+  killState,
+  loop,
+  onCancelCurrentRun,
+  onActivateGlobalKill,
+  onClearGlobalKill,
+  cancelPending,
+  activateKillPending,
+  clearKillPending,
+}: {
+  budget: LoopBudgetSnapshot | null;
+  budgetLoading: boolean;
+  collisions: LoopCollisionSnapshot | undefined;
+  collisionsLoading: boolean;
+  integrations: LoopIntegrationStatusSnapshot | undefined;
+  integrationsLoading: boolean;
+  killState: LoopKillState | undefined;
+  loop: LoopState;
+  onCancelCurrentRun: () => void;
+  onActivateGlobalKill: () => void;
+  onClearGlobalKill: () => void;
+  cancelPending: boolean;
+  activateKillPending: boolean;
+  clearKillPending: boolean;
+}) {
+  const globalKillActive = killState?.globalKillActive === true;
+  const running = loop.currentRun?.status === "running";
+
+  return (
+    <DetailSection title="Guardrails" testId="loop-guardrails-section">
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div data-testid="loop-budget-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-text-primary">Budget</h3>
+            <span className="text-[11px] text-text-muted">runtime guardrail</span>
+          </div>
+          {budgetLoading ? (
+            <LoadingTiny label="Loading budget…" />
+          ) : budget ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <FieldRow label="soft / hard ratio" value={`${formatRatio(budget.budget?.softThresholdRatio)} / ${formatRatio(budget.budget?.hardThresholdRatio)}`} />
+              <FieldRow label="token availability" value={formatAvailability(budget.usage.totalTokens, budget.budget?.maxTokensPerRun, "tokens")} />
+              <FieldRow label="time availability" value={formatAvailability(budget.usage.wallClockMs, budget.budget?.maxWallClockMsPerRun, "ms")} />
+              <FieldRow label="daily-run availability" value={formatAvailability(budget.usage.runsToday, budget.budget?.maxRunsPerDay, "runs")} />
+              <FieldRow label="USD availability" value={formatUsdAvailability(budget)} />
+              <FieldRow label="current usage" value={formatBudgetUsage(budget)} wide />
+            </div>
+          ) : (
+            <div className="text-[12.5px] text-text-tertiary">
+              Budget snapshot unavailable. USD availability is unknown unless model pricing metadata exists.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-md border border-border-subtle bg-bg-base p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-text-primary">Kill Controls</h3>
+            <span className="text-[11px] text-text-muted">project scoped</span>
+          </div>
+          {globalKillActive && (
+            <div data-testid="loop-global-kill-banner" className="mb-3 rounded-sm border border-error-muted bg-error-muted px-2.5 py-2 text-[12px] text-error">
+              Global kill is active{killState?.reason ? `: ${killState.reason}` : ""}. Scheduled and manual Loop execution stays blocked until cleared.
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              data-testid="loop-cancel-current-run-button"
+              type="button"
+              onClick={onCancelCurrentRun}
+              disabled={!running || cancelPending}
+              className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {cancelPending ? "Cancelling…" : "Cancel current run"}
+            </button>
+            <button
+              data-testid="loop-global-kill-button"
+              type="button"
+              onClick={onActivateGlobalKill}
+              disabled={globalKillActive || activateKillPending}
+              className="rounded-sm bg-error-muted px-3 py-1.5 text-[12.5px] font-medium text-error transition-colors duration-150 hover:bg-error-muted-opaque disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {activateKillPending ? "Activating…" : "Activate global kill"}
+            </button>
+            <button
+              type="button"
+              onClick={onClearGlobalKill}
+              disabled={!globalKillActive || clearKillPending}
+              className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {clearKillPending ? "Clearing…" : "Clear global kill"}
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-text-muted">
+            Kill and cancel controls are guardrails around Loop scheduling/runs; normal tool permissions and HITL remain authoritative for side effects.
+          </p>
+        </div>
+
+        <div data-testid="loop-collision-log" className="rounded-md border border-border-subtle bg-bg-base p-3">
+          <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Collision Log</h3>
+          {collisionsLoading ? (
+            <LoadingTiny label="Loading collisions…" />
+          ) : collisions ? (
+            <div className="space-y-2 text-[12.5px] text-text-secondary">
+              <FieldRow label="target keys" value={formatTargets(collisions.targets)} />
+              <FieldRow label="active leases" value={collisions.activeLeases.map((lease) => `${lease.targetKey} held by ${lease.loopId}/${lease.runId}`).join("; ") || "none"} />
+              <FieldRow label="conflicts" value={collisions.conflicts.map((conflict) => `${conflict.targetKey} conflicts with ${conflict.conflictingLease.loopId}/${conflict.conflictingLease.runId}`).join("; ") || "none"} />
+            </div>
+          ) : (
+            <div className="text-[12.5px] text-text-tertiary">No collision snapshot yet</div>
+          )}
+        </div>
+
+        <div data-testid="loop-integration-status" className="rounded-md border border-border-subtle bg-bg-base p-3">
+          <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Integration Status</h3>
+          {integrationsLoading ? (
+            <LoadingTiny label="Loading integrations…" />
+          ) : integrations ? (
+            <div className="space-y-2">
+              {integrations.statuses.length === 0 ? (
+                <div className="text-[12.5px] text-text-tertiary">No integration status reported</div>
+              ) : (
+                integrations.statuses.map((status) => (
+                  <div key={status.integrationId} className="rounded-sm border border-border-subtle px-2.5 py-2 text-[12.5px]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-text-primary">{status.integrationId}</span>
+                      <span className={status.status === "ready" ? "text-success" : status.status === "disabled" ? "text-text-tertiary" : "text-warning"}>{status.status}</span>
+                      <span className="text-text-muted">GitHub token configured: {status.status === "ready" ? "yes" : "no"}</span>
+                    </div>
+                    <div className="mt-1 text-text-tertiary">last error: {status.message ?? formatLatestIntegrationError(integrations.snapshot?.errors, status.integrationId)}</div>
+                    <div className="text-text-tertiary">rate-limit: {status.retryAfterMs !== undefined ? `${status.retryAfterMs}ms retry-after` : "none reported"}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="text-[12.5px] text-text-tertiary">Integration status unavailable</div>
+          )}
+        </div>
+      </div>
     </DetailSection>
   );
 }
@@ -213,15 +442,27 @@ function RunHistorySection({
       ) : (
         <div className="flex flex-col gap-2">
           {runs.map((run) => (
-            <div key={run.runId} className="rounded-md border border-border-subtle bg-bg-base px-3 py-2">
+            <div
+              key={run.runId}
+              data-testid={`loop-run-history-row-${run.runId}`}
+              className="rounded-md border border-border-subtle bg-bg-base px-3 py-2"
+            >
               <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
                 <span className="font-mono text-text-muted">{run.runId}</span>
                 <span className="text-text-primary font-medium">{run.status}</span>
                 <span className="text-text-tertiary">trigger: {run.trigger}</span>
+                <span className="text-text-tertiary">reason: {run.reason ?? "none"}</span>
+                <span className="text-text-tertiary">profile: {run.toolProfileId ?? "none"}</span>
                 <span className="text-text-tertiary">started: {formatDateTime(run.startedAt)}</span>
                 <span className="text-text-tertiary">ended: {formatDateTime(run.endedAt)}</span>
               </div>
               <LinkedRunResources slug={slug} run={run} label="run resources" compact />
+              <div className="mt-1 grid gap-1 text-[12px] text-text-tertiary sm:grid-cols-2">
+                <span>budget: {run.budgetUsage ? formatRunBudgetUsage(run.budgetUsage) : "none"}</span>
+                <span>collision targets: {formatTargets(run.collisionTargets)}</span>
+                <span>collision conflicts: {run.collisionConflicts?.map((conflict) => conflict.targetKey).join(", ") || "none"}</span>
+                <span>integration: {formatRunIntegrationErrors(run.integrationErrors)}</span>
+              </div>
               {run.summary && <p className="mt-1 text-[12.5px] text-text-secondary">summary: {run.summary}</p>}
               {run.error && <p className="mt-1 text-[12.5px] text-error">error: {run.error}</p>}
               {run.skippedReason && <p className="mt-1 text-[12.5px] text-warning">skipped: {run.skippedReason}</p>}
@@ -296,6 +537,15 @@ function FieldRow({ label, value, wide = false }: { label: string; value: string
   );
 }
 
+function LoadingTiny({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[12.5px] text-text-tertiary py-1">
+      <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+      {label}
+    </div>
+  );
+}
+
 function LinkedRunResources({
   slug,
   run,
@@ -343,6 +593,16 @@ function formatSchedule(schedule: LoopScheduleSpec): string {
   return `interval ${schedule.everyMs}ms`;
 }
 
+function formatLimits(config: LoopConfig): string {
+  const budget = config.budget ?? config.limits;
+  return [
+    `iterations ${budget.maxIterationsPerRun}`,
+    "maxTokensPerRun" in budget && budget.maxTokensPerRun !== undefined ? `tokens ${budget.maxTokensPerRun}` : undefined,
+    "maxWallClockMsPerRun" in budget && budget.maxWallClockMsPerRun !== undefined ? `time ${budget.maxWallClockMsPerRun}ms` : undefined,
+    "maxRunsPerDay" in budget && budget.maxRunsPerDay !== undefined ? `runs/day ${budget.maxRunsPerDay}` : undefined,
+  ].filter(Boolean).join("; ");
+}
+
 function formatGoalTemplate(config: LoopConfig): string {
   const template = config.goalTemplate;
   if (!template) return "none";
@@ -356,7 +616,7 @@ function formatGoalTemplate(config: LoopConfig): string {
 
 function formatRunSummary(run: LoopRunReport | undefined): string {
   if (!run) return "none";
-  return `${run.runId} ${run.status} ${run.trigger} started ${formatDateTime(run.startedAt)}`;
+  return `${run.runId} ${run.status} ${run.trigger} reason ${run.reason ?? "none"} started ${formatDateTime(run.startedAt)}`;
 }
 
 function formatDateTime(value: number | undefined): string {
@@ -364,12 +624,91 @@ function formatDateTime(value: number | undefined): string {
   return new Date(value).toISOString();
 }
 
-function formatMutationError(triggerError: unknown, pauseError: unknown, resumeError: unknown): string | null {
+function formatMutationError(...errors: unknown[]): string | null {
+  const [triggerError] = errors;
   if (triggerError instanceof ApiError && triggerError.status === 409) {
     return `Loop is already running: ${triggerError.message}`;
   }
 
-  const error = triggerError ?? pauseError ?? resumeError;
+  const error = errors.find(Boolean);
   if (!error) return null;
   return error instanceof Error ? error.message : "Loop action failed";
+}
+
+function formatRatio(value: number | undefined): string {
+  return value === undefined ? "unknown" : `${Math.round(value * 100)}%`;
+}
+
+function formatAvailability(used: number, max: number | undefined, unit: string): string {
+  if (max === undefined) return `unavailable (${used} ${unit} used)`;
+  const remaining = Math.max(max - used, 0);
+  return `${remaining} ${unit} remaining of ${max}; used ${used}`;
+}
+
+function formatUsdAvailability(snapshot: LoopBudgetSnapshot): string {
+  const used = snapshot.usage.estimatedUsd;
+  const max = snapshot.budget?.maxEstimatedUsdPerRun;
+  if (snapshot.usage.pricingUnavailable || used === undefined || max === undefined) {
+    return "unavailable (pricing metadata missing or USD limit unset)";
+  }
+  return `$${Math.max(max - used, 0).toFixed(4)} remaining of $${max.toFixed(4)}; used $${used.toFixed(4)}`;
+}
+
+function formatBudgetUsage(snapshot: LoopBudgetSnapshot): string {
+  return formatRunBudgetUsage(snapshot.usage);
+}
+
+function formatRunBudgetUsage(usage: NonNullable<LoopRunReport["budgetUsage"]>): string {
+  const usd = usage.estimatedUsd === undefined ? "USD unavailable" : `$${usage.estimatedUsd.toFixed(4)}`;
+  return `${usage.iterations} iterations; ${usage.totalTokens} tokens (${usage.inputTokens} in / ${usage.outputTokens} out); ${usage.wallClockMs}ms; ${usage.runsToday} runs today; ${usd}`;
+}
+
+function formatTargets(targets: LoopRunReport["collisionTargets"]): string {
+  if (!targets || targets.length === 0) return "none";
+  return targets.map(formatTarget).join(", ");
+}
+
+function formatTarget(target: NonNullable<LoopRunReport["collisionTargets"]>[number]): string {
+  switch (target.type) {
+    case "pr":
+      return `github:${target.owner}/${target.repo}:pr:${target.number}`;
+    case "issue":
+      return `github:${target.owner}/${target.repo}:issue:${target.number}`;
+    case "branch":
+      return `git:${target.owner}/${target.repo}:branch:${target.branch}`;
+    case "file":
+      return `file:${target.path}`;
+  }
+}
+
+function formatRunIntegrationErrors(errors: LoopRunReport["integrationErrors"]): string {
+  if (!errors || errors.length === 0) return "none";
+  return errors.map((error) => `${error.integrationId} ${error.reason}: ${error.message}`).join("; ");
+}
+
+function formatLatestIntegrationError(errors: LoopIntegrationError[] | undefined, integrationId: string): string {
+  const latest = errors?.filter((error) => error.integrationId === integrationId).at(-1);
+  return latest ? `${latest.reason}: ${latest.message}` : "none";
+}
+
+function integrationSnapshotFromLoop(loop: LoopState): LoopIntegrationStatusSnapshot | undefined {
+  if (!loop.latestIntegrations) return undefined;
+  return {
+    statuses: [],
+    snapshot: loop.latestIntegrations,
+    updatedAt: loop.latestIntegrations.updatedAt,
+  };
+}
+
+function isHardBudgetBlocked(snapshot: LoopBudgetSnapshot | null | undefined, loop: LoopState): boolean {
+  if (loop.status !== "paused" || loop.lastRun?.reason !== "hard_budget_exceeded") return false;
+  if (!snapshot?.budget) return true;
+  const hardRatio = snapshot.budget.hardThresholdRatio;
+  const maxTokens = snapshot.budget.maxTokensPerRun;
+  if (maxTokens !== undefined && snapshot.usage.totalTokens >= maxTokens * hardRatio) return true;
+  const maxTime = snapshot.budget.maxWallClockMsPerRun;
+  if (maxTime !== undefined && snapshot.usage.wallClockMs >= maxTime * hardRatio) return true;
+  const maxRuns = snapshot.budget.maxRunsPerDay;
+  if (maxRuns !== undefined && snapshot.usage.runsToday >= maxRuns * hardRatio) return true;
+  return loop.lastRun?.reason === "hard_budget_exceeded";
 }
