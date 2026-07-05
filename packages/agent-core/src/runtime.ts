@@ -9,6 +9,7 @@ import { configureDefaultBinaryManagerLogger } from "./binary/manager";
 import { configureDefaultProcessRunnerLogger } from "./process/runner";
 import { configureDefaultLspToolLogger } from "./tools/builtins/lsp/tool-logger";
 import { configureDefaultWebFetchLogger } from "./tools/builtins/web-fetch";
+import { GithubIntegrationTokenError, resolveGithubIntegrationConfig } from "./config";
 import {
   resolveMcpConfig,
   type ResolvedMcpConfig,
@@ -45,11 +46,12 @@ import { LoopBudgetLedger } from "./loops/budget-ledger";
 import { CollisionLedger } from "./loops/collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
-import type { LoopConfig, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
+import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
+import { redactString } from "./tools/security";
 import type { SessionRole } from "./store/types";
 
 const DEFAULT_CONFIG_PATH = ".archcode.json";
@@ -69,6 +71,21 @@ export interface CreateRuntimeSessionOptions {
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly title?: string;
+}
+
+export interface LoopIntegrationStatus {
+  readonly integrationId: "github" | "github_actions";
+  readonly status: "disabled" | "ready" | "auth_missing" | "rate_limited" | "error";
+  readonly reason?: "integration_auth_missing" | "integration_rate_limited";
+  readonly message?: string;
+  readonly retryAfterMs?: number;
+  readonly updatedAt: number;
+}
+
+export interface LoopIntegrationStatusSnapshot {
+  readonly statuses: LoopIntegrationStatus[];
+  readonly snapshot: LoopIntegrationSnapshot | null;
+  readonly updatedAt: number;
 }
 
 export interface AgentRuntime {
@@ -106,9 +123,13 @@ export interface AgentRuntime {
   resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
   triggerLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
   readLoopKillState(workspaceRoot: string): Promise<LoopKillState>;
+  cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
   cancelCurrentLoopRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined>;
   activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState>;
   clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState>;
+  readLoopBudget(workspaceRoot: string, loopId: string): Promise<LoopBudgetSnapshot | null>;
+  readLoopCollisions(workspaceRoot: string, loopId: string): Promise<LoopCollisionSnapshot>;
+  readLoopIntegrationStatus(workspaceRoot: string, loopId: string): Promise<LoopIntegrationStatusSnapshot>;
   readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]>;
   readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
   startLoopSchedulers(): Promise<void>;
@@ -411,12 +432,51 @@ export async function createRuntime(
       return await (await getLoopScheduler(workspaceRoot)).cancelCurrentRun(loopId);
     }
 
+    async function cancelLoopCurrentRun(workspaceRoot: string, loopId: string): Promise<LoopRunReport | undefined> {
+      return await cancelCurrentLoopRun(workspaceRoot, loopId);
+    }
+
     async function activateLoopGlobalKill(workspaceRoot: string, input?: LoopKillActivateInput): Promise<LoopKillState> {
       return await (await getLoopScheduler(workspaceRoot)).activateGlobalKill(input);
     }
 
     async function clearLoopGlobalKill(workspaceRoot: string): Promise<LoopKillState> {
       return await (await getLoopScheduler(workspaceRoot)).clearGlobalKill();
+    }
+
+    async function readLoopBudget(workspaceRoot: string, loopId: string): Promise<LoopBudgetSnapshot | null> {
+      const loop = await readLoop(workspaceRoot, loopId);
+      return loop.latestBudget ?? null;
+    }
+
+    async function readLoopCollisions(workspaceRoot: string, loopId: string): Promise<LoopCollisionSnapshot> {
+      const loop = await readLoop(workspaceRoot, loopId);
+      return loop.latestCollisions ?? {
+        targets: loop.config.collisionTargets ?? [],
+        activeLeases: [],
+        conflicts: [],
+        updatedAt: loop.updatedAt,
+      };
+    }
+
+    async function readLoopIntegrationStatus(workspaceRoot: string, loopId: string): Promise<LoopIntegrationStatusSnapshot> {
+      const loop = await readLoop(workspaceRoot, loopId);
+      const snapshot = loop.latestIntegrations ?? null;
+      const statusById = new Map<LoopIntegrationStatus["integrationId"], LoopIntegrationStatus>();
+
+      const githubStatus = githubIntegrationStatus(config.integrations?.github, loop.updatedAt);
+      statusById.set(githubStatus.integrationId, githubStatus);
+
+      for (const error of snapshot?.errors ?? []) {
+        statusById.set(error.integrationId, statusFromIntegrationError(error));
+      }
+
+      const updatedAt = Math.max(loop.updatedAt, snapshot?.updatedAt ?? 0, ...[...statusById.values()].map((status) => status.updatedAt));
+      return {
+        statuses: [...statusById.values()].sort((left, right) => left.integrationId.localeCompare(right.integrationId)),
+        snapshot: snapshot === null ? null : sanitizeIntegrationSnapshot(snapshot),
+        updatedAt,
+      };
     }
 
     async function readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]> {
@@ -490,9 +550,13 @@ export async function createRuntime(
       resumeLoop,
       triggerLoopRun,
       readLoopKillState,
+      cancelLoopCurrentRun,
       cancelCurrentLoopRun,
       activateLoopGlobalKill,
       clearLoopGlobalKill,
+      readLoopBudget,
+      readLoopCollisions,
+      readLoopIntegrationStatus,
       readLoopRunLog,
       readLoopStateMarkdown,
       startLoopSchedulers,
@@ -539,6 +603,61 @@ function toProtocolHitlEvent(event: HitlEvent): HitlStreamEvent | undefined {
     hitlId: event.hitlId,
     status: event.status,
     ...(event.status === "resolved" ? { response: protocolHitlResponse(event.kind, event.response) } : {}),
+  };
+}
+
+function githubIntegrationStatus(githubConfig: Parameters<typeof resolveGithubIntegrationConfig>[0], updatedAt: number): LoopIntegrationStatus {
+  try {
+    const resolved = resolveGithubIntegrationConfig(githubConfig);
+    if (!resolved.enabled) {
+      return {
+        integrationId: "github",
+        status: "disabled",
+        updatedAt,
+      };
+    }
+    return {
+      integrationId: "github",
+      status: "ready",
+      updatedAt,
+    };
+  } catch (error) {
+    if (error instanceof GithubIntegrationTokenError) {
+      return {
+        integrationId: "github",
+        status: "auth_missing",
+        reason: "integration_auth_missing",
+        message: redactString(error.message),
+        updatedAt,
+      };
+    }
+    return {
+      integrationId: "github",
+      status: "error",
+      message: error instanceof Error ? redactString(error.message) : redactString(String(error)),
+      updatedAt,
+    };
+  }
+}
+
+function statusFromIntegrationError(error: LoopIntegrationError): LoopIntegrationStatus {
+  return {
+    integrationId: error.integrationId,
+    status: error.reason === "integration_auth_missing" ? "auth_missing" : "rate_limited",
+    reason: error.reason,
+    message: redactString(error.message),
+    retryAfterMs: error.retryAfterMs,
+    updatedAt: error.occurredAt,
+  };
+}
+
+function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopIntegrationSnapshot {
+  return {
+    ...snapshot,
+    errors: snapshot.errors.map((error) => ({
+      ...error,
+      message: redactString(error.message),
+    })),
   };
 }
 

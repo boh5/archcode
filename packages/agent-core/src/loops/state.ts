@@ -438,6 +438,10 @@ export class LoopStateManager {
       currentRun: state.currentRun?.runId === report.runId ? undefined : state.currentRun,
       nextRunAt: state.status === "active" ? nextRunAtFrom(state.config.schedule, finishedAt) : undefined,
       runCount: state.runCount + 1,
+      latestIntegrations: report.integrationErrors === undefined ? state.latestIntegrations : LoopIntegrationSnapshotSchema.parse({
+        errors: report.integrationErrors,
+        updatedAt: finishedAt,
+      }),
     }, finishedAt);
 
     await this.appendRunReport(loopId, report);
@@ -463,6 +467,18 @@ export class LoopStateManager {
     const updated = this.nextState({
       ...state,
       latestCollisions: parsed,
+    }, parsed.updatedAt);
+
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateIntegrationSnapshot(loopId: string, snapshot: LoopIntegrationSnapshot): Promise<LoopState> {
+    const state = await this.read(loopId);
+    const parsed = LoopIntegrationSnapshotSchema.parse(snapshot);
+    const updated = this.nextState({
+      ...state,
+      latestIntegrations: parsed,
     }, parsed.updatedAt);
 
     await this.write(updated);
