@@ -62,7 +62,9 @@ describe("server lifecycle", () => {
       order.push("abort");
       order.push("wait");
     }));
-    runtime.stopLoopSchedulers = mock(() => order.push("stop-schedulers"));
+    runtime.stopLoopSchedulers = mock(async () => {
+      order.push("stop-schedulers");
+    });
     const globalEvents: unknown[] = [];
     const unsubscribeGlobalEvents = globalEventBus.subscribe((event) => globalEvents.push(event));
     const server = { stop: mock(() => order.push("stop")) };

@@ -75,12 +75,14 @@ async function runShutdown(
 ): Promise<number> {
   log("Shutting down gracefully...");
   pushShutdownEvents(runtime);
-  runtime.stopLoopSchedulers();
 
   const timeout = new Promise<"timeout">((resolve) => {
     setTimeout(() => resolve("timeout"), timeoutMs);
   });
-  const result = await Promise.race([runtime.abortAllSessionExecutions().then(() => "completed" as const), timeout]);
+  const result = await Promise.race([
+    Promise.all([runtime.stopLoopSchedulers(), runtime.abortAllSessionExecutions()]).then(() => "completed" as const),
+    timeout,
+  ]);
   const exitCode = result === "timeout" ? 1 : 0;
 
   if (result === "timeout") {
