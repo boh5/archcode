@@ -47,6 +47,11 @@ export type {
   LoopScheduleSpec,
   LoopRunReportStatus,
   LoopRunTrigger,
+  LoopBudgetConfig,
+  LoopBudgetSnapshot,
+  LoopCollisionSnapshot,
+  LoopIntegrationError,
+  LoopToolProfileId,
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───

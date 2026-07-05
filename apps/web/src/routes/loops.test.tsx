@@ -108,7 +108,24 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       runKind: "session",
       mode: "report",
       approvalPolicy: "interactive",
-      limits: { maxIterationsPerRun: 8 },
+      limits: {
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMsPerRun: 900000,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+      },
+      budget: {
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMsPerRun: 900000,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+      },
+      toolProfileId: "loop_local_report",
+      taskPrompt: "Run a local report.",
     },
     status: "active",
     createdAt: 1700000000000,
@@ -155,6 +172,25 @@ async function renderCreateLoopForm(
 
 function makeTestsPassCondition(): DoneCondition {
   return { id: crypto.randomUUID(), kind: "tests_pass", params: { command: "bun test" }, required: true };
+}
+
+function submitCreateLoopForm(container: Element): void {
+  const form = container.querySelector("form");
+  if (!form) throw new Error("Missing create loop form");
+  form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+}
+
+function expectRatioInputsNativelyValid(container: Element, soft: string, hard: string): void {
+  const softInput = container.querySelector("#new-loop-soft-ratio") as HTMLInputElement | null;
+  const hardInput = container.querySelector("#new-loop-hard-ratio") as HTMLInputElement | null;
+  if (!softInput || !hardInput) throw new Error("Missing ratio inputs");
+
+  expect(softInput.step).toBe("0.01");
+  expect(hardInput.step).toBe("0.01");
+  expect(softInput.value).toBe(soft);
+  expect(hardInput.value).toBe(hard);
+  expect(softInput.checkValidity()).toBe(true);
+  expect(hardInput.checkValidity()).toBe(true);
 }
 
 // ─── Tests ───
@@ -320,14 +356,22 @@ describe("LoopsRoute", () => {
         mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_local_report",
+        taskPrompt: "Summarize local project health.",
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
+      expectRatioInputsNativelyValid(container, "0.8", "1");
 
       await act(async () => {
-        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        submitCreateLoopForm(container);
       });
 
       await waitFor(() => {
@@ -340,7 +384,17 @@ describe("LoopsRoute", () => {
       expect(config.runKind).toBe("session");
       expect(config.mode).toBe("report");
       expect(config.approvalPolicy).toBe("interactive");
-      expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
+      expect(config.limits).toEqual({
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMsPerRun: 900000,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+      });
+      expect(config.budget).toEqual(config.limits);
+      expect(config.toolProfileId).toBe("loop_local_report");
+      expect(config.taskPrompt).toBe("Summarize local project health.");
       expect(config.goalTemplate).toBeUndefined();
       expect("goalTemplateId" in config).toBe(false);
     } finally {
@@ -383,14 +437,22 @@ describe("LoopsRoute", () => {
         mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_local_report",
+        taskPrompt: "Draft the interval report.",
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
+      expectRatioInputsNativelyValid(container, "0.8", "1");
 
       await act(async () => {
-        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        submitCreateLoopForm(container);
       });
 
       await waitFor(() => {
@@ -403,7 +465,16 @@ describe("LoopsRoute", () => {
       expect(config.runKind).toBe("session");
       expect(config.mode).toBe("report");
       expect(config.approvalPolicy).toBe("interactive");
-      expect(config.limits).toEqual({ maxIterationsPerRun: 8 });
+      expect(config.limits).toEqual({
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMsPerRun: 900000,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+      });
+      expect(config.budget).toEqual(config.limits);
+      expect(config.toolProfileId).toBe("loop_local_report");
       expect(config.goalTemplate).toBeUndefined();
       expect("goalTemplateId" in config).toBe(false);
     } finally {
@@ -446,6 +517,12 @@ describe("LoopsRoute", () => {
         mode: "act",
         approvalPolicy: "explicit_per_run",
         maxIterationsPerRun: 4,
+        maxTokensPerRun: 160000,
+        maxWallClockMinutesPerRun: 20,
+        maxRunsPerDay: 3,
+        softThresholdRatio: 0.75,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_goal_action",
         goalTitle: "Inline Goal Title",
         goalAuthor: "architect",
         goalConditions: [condition],
@@ -458,9 +535,10 @@ describe("LoopsRoute", () => {
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
+      expectRatioInputsNativelyValid(container, "0.75", "1");
 
       await act(async () => {
-        submitButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        submitCreateLoopForm(container);
       });
 
       await waitFor(() => {
@@ -472,7 +550,16 @@ describe("LoopsRoute", () => {
       expect(config.runKind).toBe("goal");
       expect(config.mode).toBe("act");
       expect(config.approvalPolicy).toBe("explicit_per_run");
-      expect(config.limits).toEqual({ maxIterationsPerRun: 4 });
+      expect(config.limits).toEqual({
+        maxIterationsPerRun: 4,
+        maxTokensPerRun: 160000,
+        maxWallClockMsPerRun: 1200000,
+        maxRunsPerDay: 3,
+        softThresholdRatio: 0.75,
+        hardThresholdRatio: 1,
+      });
+      expect(config.budget).toEqual(config.limits);
+      expect(config.toolProfileId).toBe("loop_goal_action");
       expect(config.goalTemplate).toBeDefined();
       const gt = config.goalTemplate as Record<string, unknown>;
       expect(gt.title).toBe("Inline Goal Title");
@@ -495,17 +582,17 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("preset quick starts show only daily_triage and changelog_drafter as enabled", async () => {
+  test("Phase 4 preset quick starts can be selected and submit editable config with budget and tool profile", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
 
-    let presetBody: Record<string, unknown> | undefined;
+    let postedBody: Record<string, unknown> | undefined;
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
       if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
-        presetBody = init.body ? JSON.parse(init.body as string) : undefined;
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
         const loop = makeLoop({ loopId: "loop-preset" });
         return Response.json({ loop });
       }
@@ -535,34 +622,59 @@ describe("LoopsRoute", () => {
 
       const prBabysitterButton = container.querySelector('button[aria-label="Preset PR Babysitter"]') as HTMLButtonElement;
       expect(prBabysitterButton).not.toBeNull();
-      expect(prBabysitterButton.disabled).toBe(true);
+      expect(prBabysitterButton.disabled).toBe(false);
 
       const ciSweeperButton = container.querySelector('button[aria-label="Preset CI Sweeper"]') as HTMLButtonElement;
       expect(ciSweeperButton).not.toBeNull();
-      expect(ciSweeperButton.disabled).toBe(true);
+      expect(ciSweeperButton.disabled).toBe(false);
 
       const dependencySweeperButton = container.querySelector('button[aria-label="Preset Dependency Sweeper"]') as HTMLButtonElement;
       expect(dependencySweeperButton).not.toBeNull();
-      expect(dependencySweeperButton.disabled).toBe(true);
+      expect(dependencySweeperButton.disabled).toBe(false);
 
-      const postMergeButton = container.querySelector('button[aria-label="Preset Post-Merge Cleanup"]') as HTMLButtonElement;
+      const postMergeButton = container.querySelector('button[aria-label="Preset Post-Land Cleanup"]') as HTMLButtonElement;
       expect(postMergeButton).not.toBeNull();
-      expect(postMergeButton.disabled).toBe(true);
+      expect(postMergeButton.disabled).toBe(false);
 
       const issueTriageButton = container.querySelector('button[aria-label="Preset Issue Triage"]') as HTMLButtonElement;
       expect(issueTriageButton).not.toBeNull();
-      expect(issueTriageButton.disabled).toBe(true);
+      expect(issueTriageButton.disabled).toBe(false);
 
       await act(async () => {
-        dailyTriageButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        prBabysitterButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       });
 
       await waitFor(() => {
-        expect(presetBody).toBeDefined();
+        expect(container.textContent).toContain("GitHub.com integration with an env token");
+        expect(container.textContent).toContain("PR Babysitter does not merge, rebase, approve, or force-push");
       });
 
-      expect(presetBody!.presetId).toBe("daily_triage");
-      expect(presetBody!.config).toBeUndefined();
+      const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
+      expect(submitButton).not.toBeNull();
+      expect(submitButton.disabled).toBe(false);
+      expectRatioInputsNativelyValid(container, "0.8", "1");
+
+      await act(async () => {
+        submitCreateLoopForm(container);
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      expect(postedBody!.presetId).toBeUndefined();
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.title).toBe("PR Babysitter");
+      expect(config.runKind).toBe("session");
+      expect(config.mode).toBe("report");
+      expect(config.toolProfileId).toBe("loop_github_pr_watch");
+      expect(config.taskPrompt).toString();
+      expect(String(config.taskPrompt)).toContain("optional fix Goal");
+      const budget = config.budget as Record<string, unknown>;
+      expect(budget.maxIterationsPerRun).toBe(12);
+      expect(budget.maxTokensPerRun).toBe(160000);
+      expect(budget.softThresholdRatio).toBe(0.8);
+      expect(config.limits).toEqual(config.budget);
     } finally {
       await act(async () => {
         reactRoot.unmount();

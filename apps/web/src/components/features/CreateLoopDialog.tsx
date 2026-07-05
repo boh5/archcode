@@ -5,35 +5,192 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../ui/Dialog";
-import { useCreateLoop } from "../../api/mutations";
+import { useCreateLoop, useUpdateLoop } from "../../api/mutations";
 import type {
   ApprovalPoint,
   DoneCondition,
   LoopApprovalPolicy,
+  LoopBudgetConfig,
   LoopConfig,
   LoopMode,
   LoopRunKind,
   LoopScheduleSpec,
+  LoopState,
+  LoopToolProfileId,
   RetryPolicy,
 } from "../../api/types";
 
-// Only Phase 3 runnable presets are enabled; unsupported connector presets
-// are shown disabled with a Phase 4+ label. Server validation is authoritative.
 interface PresetQuickStart {
   id: string;
   label: string;
-  enabled: boolean;
-  phaseLabel?: string;
+  template: Partial<LoopFormState>;
+  note: string;
+}
+
+interface ToolProfileOption {
+  id: LoopToolProfileId;
+  label: string;
+  description: string;
+  externalRequirement?: string;
+}
+
+const DEFAULT_BUDGET: LoopBudgetConfig = {
+  maxIterationsPerRun: 8,
+  maxTokensPerRun: 120000,
+  maxWallClockMsPerRun: 15 * 60_000,
+  maxRunsPerDay: 2,
+  softThresholdRatio: 0.8,
+  hardThresholdRatio: 1,
+};
+
+const TOOL_PROFILE_OPTIONS: ToolProfileOption[] = [
+  {
+    id: "loop_local_report",
+    label: "Local report",
+    description: "Read local project state and produce a report without repository-changing actions.",
+  },
+  {
+    id: "loop_local_maintenance",
+    label: "Local maintenance",
+    description: "Local file edits and verification through the normal tool permission flow.",
+  },
+  {
+    id: "loop_github_pr_watch",
+    label: "GitHub PR watch",
+    description: "Watch PR status, checks, comments, and optionally hand off a scoped fix Goal.",
+    externalRequirement: "Requires GitHub.com integration with an env token. It can watch, report, comment when allowed, and propose fix Goals only.",
+  },
+  {
+    id: "loop_ci_watch",
+    label: "GitHub Actions watch",
+    description: "Inspect GitHub Actions runs, failure groups, and safe retry candidates.",
+    externalRequirement: "Requires GitHub.com plus GitHub Actions access through the configured env token.",
+  },
+  {
+    id: "loop_goal_action",
+    label: "Goal action",
+    description: "Create and run scoped Goals with configured done conditions and reviewer checks.",
+  },
+];
+
+function budgetTemplate(overrides: Partial<LoopBudgetConfig> = {}): Partial<LoopFormState> {
+  const budget = { ...DEFAULT_BUDGET, ...overrides };
+  return {
+    maxIterationsPerRun: budget.maxIterationsPerRun,
+    maxTokensPerRun: budget.maxTokensPerRun ?? DEFAULT_BUDGET.maxTokensPerRun,
+    maxWallClockMinutesPerRun: Math.round((budget.maxWallClockMsPerRun ?? DEFAULT_BUDGET.maxWallClockMsPerRun ?? 0) / 60_000),
+    maxRunsPerDay: budget.maxRunsPerDay ?? DEFAULT_BUDGET.maxRunsPerDay,
+    maxEstimatedUsdPerRun: budget.maxEstimatedUsdPerRun,
+    softThresholdRatio: budget.softThresholdRatio,
+    hardThresholdRatio: budget.hardThresholdRatio,
+  };
 }
 
 const PRESET_QUICK_STARTS: PresetQuickStart[] = [
-  { id: "daily_triage", label: "Daily Triage", enabled: true },
-  { id: "changelog_drafter", label: "Changelog Drafter", enabled: true },
-  { id: "pr_babysitter", label: "PR Babysitter", enabled: false, phaseLabel: "Phase 4+" },
-  { id: "ci_sweeper", label: "CI Sweeper", enabled: false, phaseLabel: "Phase 4+" },
-  { id: "dependency_sweeper", label: "Dependency Sweeper", enabled: false, phaseLabel: "Phase 4+" },
-  { id: "post_merge_cleanup", label: "Post-Merge Cleanup", enabled: false, phaseLabel: "Phase 4+" },
-  { id: "issue_triage", label: "Issue Triage", enabled: false, phaseLabel: "Phase 4+" },
+  {
+    id: "daily_triage",
+    label: "Daily Triage",
+    note: "Local report template",
+    template: {
+      title: "Daily Triage",
+      description: "Inspect local project health and summarize issues.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_local_report",
+      taskPrompt: "Run local project triage and summarize status, failures, stale work, and next steps.",
+      ...budgetTemplate(),
+    },
+  },
+  {
+    id: "changelog_drafter",
+    label: "Changelog Drafter",
+    note: "Local report template",
+    template: {
+      title: "Changelog Drafter",
+      description: "Draft changelog text from local history and diffs.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_local_report",
+      taskPrompt: "Review recent local git history and draft a categorized changelog entry.",
+      ...budgetTemplate(),
+    },
+  },
+  {
+    id: "pr_babysitter",
+    label: "PR Babysitter",
+    note: "GitHub.com PR watch/status/comment + optional fix Goal handoff",
+    template: {
+      title: "PR Babysitter",
+      description: "Watch PR status, comments, and checks, then report useful next steps.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_github_pr_watch",
+      taskPrompt: "Watch configured PRs, summarize status and comments, draft a status comment only when useful and allowed, and propose an optional fix Goal for small scoped repairs.",
+      ...budgetTemplate({ maxIterationsPerRun: 12, maxTokensPerRun: 160000, maxWallClockMsPerRun: 20 * 60_000, maxRunsPerDay: 4 }),
+    },
+  },
+  {
+    id: "ci_sweeper",
+    label: "CI Sweeper",
+    note: "GitHub Actions watch template",
+    template: {
+      title: "CI Sweeper",
+      description: "Inspect workflow runs and summarize failure groups.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_ci_watch",
+      taskPrompt: "Inspect recent GitHub Actions workflow runs, group failures, and suggest the next safe check.",
+      ...budgetTemplate({ maxIterationsPerRun: 16, maxTokensPerRun: 200000, maxWallClockMsPerRun: 30 * 60_000, maxRunsPerDay: 4 }),
+    },
+  },
+  {
+    id: "dependency_sweeper",
+    label: "Dependency Sweeper",
+    note: "Goal action template",
+    template: {
+      title: "Dependency Sweeper",
+      description: "Create a scoped Goal for dependency maintenance.",
+      runKind: "goal",
+      mode: "act",
+      approvalPolicy: "explicit_per_run",
+      toolProfileId: "loop_goal_action",
+      goalTitle: "Dependency Sweeper Goal",
+      goalPrompt: "Inspect dependency manifests, choose a scoped update or report, verify, and record evidence.",
+      goalConditions: [
+        { id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" }, required: true },
+        { id: "tests", kind: "tests_pass", params: { command: "bun test" }, required: true },
+      ],
+      ...budgetTemplate({ maxIterationsPerRun: 20, maxTokensPerRun: 240000, maxWallClockMsPerRun: 45 * 60_000, maxRunsPerDay: 2 }),
+    },
+  },
+  {
+    id: "post_merge_cleanup",
+    label: "Post-Land Cleanup",
+    note: "GitHub.com follow-up report template",
+    template: {
+      title: "Post-Land Cleanup",
+      description: "Summarize linked issues, comments, and follow-up cleanup status.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_github_pr_watch",
+      taskPrompt: "Inspect the relevant PR and linked issues, summarize leftover follow-ups, and draft a concise status comment only when useful and allowed.",
+      ...budgetTemplate({ maxIterationsPerRun: 10, maxTokensPerRun: 140000, maxWallClockMsPerRun: 20 * 60_000, maxRunsPerDay: 3 }),
+    },
+  },
+  {
+    id: "issue_triage",
+    label: "Issue Triage",
+    note: "GitHub.com issue report template",
+    template: {
+      title: "Issue Triage",
+      description: "Inspect open issues and suggest labels, owners, or next questions.",
+      runKind: "session",
+      mode: "report",
+      toolProfileId: "loop_github_pr_watch",
+      taskPrompt: "Inspect configured issues, group duplicates or stale reports, and suggest labels, owners, and next questions.",
+      ...budgetTemplate({ maxIterationsPerRun: 10, maxTokensPerRun: 140000, maxWallClockMsPerRun: 20 * 60_000, maxRunsPerDay: 3 }),
+    },
+  },
 ];
 
 const APPROVAL_POINTS: ApprovalPoint[] = ["after_plan", "before_complete"];
@@ -62,6 +219,27 @@ interface CreateLoopFormProps {
   onClose?: () => void;
   /** Testability hook: pre-fill form state without driving controlled inputs. */
   initialState?: Partial<LoopFormState>;
+}
+
+interface LoopFormProps {
+  slug: string;
+  title: string;
+  description: string;
+  submitLabel: string;
+  pendingLabel: string;
+  pending: boolean;
+  error: unknown;
+  onClose?: () => void;
+  onSubmitConfig: (config: LoopConfig, author: string | undefined) => void;
+  initialState?: Partial<LoopFormState>;
+  showQuickStarts?: boolean;
+}
+
+interface EditLoopDialogProps {
+  open: boolean;
+  onClose: () => void;
+  slug: string;
+  loop: LoopState;
 }
 
 function isNonEmpty(value: unknown): value is string {
@@ -208,6 +386,13 @@ export interface LoopFormState {
   mode: LoopMode;
   approvalPolicy: LoopApprovalPolicy;
   maxIterationsPerRun: number;
+  maxTokensPerRun: number;
+  maxWallClockMinutesPerRun: number;
+  maxRunsPerDay: number;
+  maxEstimatedUsdPerRun?: number;
+  softThresholdRatio: number;
+  hardThresholdRatio: number;
+  toolProfileId: LoopToolProfileId;
   taskPrompt: string;
   instructions: string;
   author: string;
@@ -222,10 +407,27 @@ export interface LoopFormState {
   goalReviewerAgent: string;
 }
 
+function buildBudgetConfig(state: LoopFormState): LoopBudgetConfig {
+  return {
+    maxIterationsPerRun: state.maxIterationsPerRun,
+    ...(isPositiveInt(state.maxTokensPerRun) ? { maxTokensPerRun: state.maxTokensPerRun } : {}),
+    ...(state.maxEstimatedUsdPerRun !== undefined && state.maxEstimatedUsdPerRun > 0
+      ? { maxEstimatedUsdPerRun: state.maxEstimatedUsdPerRun }
+      : {}),
+    ...(isPositiveInt(state.maxWallClockMinutesPerRun)
+      ? { maxWallClockMsPerRun: state.maxWallClockMinutesPerRun * 60_000 }
+      : {}),
+    ...(isPositiveInt(state.maxRunsPerDay) ? { maxRunsPerDay: state.maxRunsPerDay } : {}),
+    softThresholdRatio: state.softThresholdRatio,
+    hardThresholdRatio: state.hardThresholdRatio,
+  };
+}
+
 export function buildLoopConfig(state: LoopFormState): LoopConfig {
   const trimmedTitle = state.title.trim();
   const schedule: LoopScheduleSpec =
     state.scheduleKind === "interval" ? { kind: "interval", everyMs: state.everyMs } : { kind: "manual" };
+  const budget = buildBudgetConfig(state);
 
   const config: LoopConfig = {
     title: trimmedTitle,
@@ -234,7 +436,9 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
     runKind: state.runKind,
     mode: state.mode,
     approvalPolicy: state.approvalPolicy,
-    limits: { maxIterationsPerRun: state.maxIterationsPerRun },
+    limits: budget,
+    budget,
+    toolProfileId: state.toolProfileId,
     ...(isNonEmpty(state.taskPrompt) ? { taskPrompt: state.taskPrompt.trim() } : {}),
     ...(isNonEmpty(state.instructions) ? { instructions: state.instructions.trim() } : {}),
   };
@@ -259,8 +463,142 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
   return config;
 }
 
+function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
+  const budget = config.budget ?? config.limits;
+  const scheduleKind = config.schedule.kind;
+  const wallClockMs = "maxWallClockMsPerRun" in budget ? budget.maxWallClockMsPerRun : undefined;
+  const maxTokensPerRun = "maxTokensPerRun" in budget ? budget.maxTokensPerRun : undefined;
+  const maxRunsPerDay = "maxRunsPerDay" in budget ? budget.maxRunsPerDay : undefined;
+  const maxEstimatedUsdPerRun = "maxEstimatedUsdPerRun" in budget ? budget.maxEstimatedUsdPerRun : undefined;
+  const softThresholdRatio = "softThresholdRatio" in budget ? budget.softThresholdRatio : DEFAULT_BUDGET.softThresholdRatio;
+  const hardThresholdRatio = "hardThresholdRatio" in budget ? budget.hardThresholdRatio : DEFAULT_BUDGET.hardThresholdRatio;
+  const goalTemplate = config.goalTemplate;
+
+  return {
+    title: config.title,
+    description: config.description ?? "",
+    scheduleKind,
+    everyMs: config.schedule.kind === "interval" ? config.schedule.everyMs : 60000,
+    runKind: config.runKind,
+    mode: config.mode,
+    approvalPolicy: config.approvalPolicy,
+    maxIterationsPerRun: budget.maxIterationsPerRun,
+    maxTokensPerRun: maxTokensPerRun ?? DEFAULT_BUDGET.maxTokensPerRun ?? 120000,
+    maxWallClockMinutesPerRun: wallClockMs === undefined ? 15 : Math.max(1, Math.round(wallClockMs / 60_000)),
+    maxRunsPerDay: maxRunsPerDay ?? DEFAULT_BUDGET.maxRunsPerDay ?? 2,
+    maxEstimatedUsdPerRun,
+    softThresholdRatio,
+    hardThresholdRatio,
+    toolProfileId: config.toolProfileId ?? "loop_local_report",
+    taskPrompt: config.taskPrompt ?? "",
+    instructions: config.instructions ?? "",
+    goalTitle: goalTemplate?.title ?? "",
+    goalAuthor: goalTemplate?.author ?? "architect",
+    goalPrompt: goalTemplate?.prompt ?? "",
+    goalInstructions: goalTemplate?.instructions ?? "",
+    goalConditions: goalTemplate?.doneConditions ?? [],
+    goalMaxRetries: goalTemplate?.retryPolicy.maxRetries ?? 2,
+    goalEscalateOnFailure: goalTemplate?.retryPolicy.escalateOnFailure ?? true,
+    goalApprovalPoints: goalTemplate?.approvalPoints ?? ["after_plan", "before_complete"],
+    goalReviewerAgent: goalTemplate?.reviewerAgent ?? "reviewer",
+  };
+}
+
+function applyPresetState(
+  preset: PresetQuickStart,
+  setters: {
+    setTitle: (value: string) => void;
+    setDescription: (value: string) => void;
+    setRunKind: (value: LoopRunKind) => void;
+    setMode: (value: LoopMode) => void;
+    setApprovalPolicy: (value: LoopApprovalPolicy) => void;
+    setMaxIterationsPerRun: (value: number) => void;
+    setMaxTokensPerRun: (value: number) => void;
+    setMaxWallClockMinutesPerRun: (value: number) => void;
+    setMaxRunsPerDay: (value: number) => void;
+    setMaxEstimatedUsdPerRun: (value: number | undefined) => void;
+    setSoftThresholdRatio: (value: number) => void;
+    setHardThresholdRatio: (value: number) => void;
+    setToolProfileId: (value: LoopToolProfileId) => void;
+    setTaskPrompt: (value: string) => void;
+    setInstructions: (value: string) => void;
+    setGoalTitle: (value: string) => void;
+    setGoalPrompt: (value: string) => void;
+    setGoalConditions: (value: DoneCondition[]) => void;
+  },
+): void {
+  const template = preset.template;
+  setters.setTitle(template.title ?? preset.label);
+  setters.setDescription(template.description ?? "");
+  setters.setRunKind(template.runKind ?? "session");
+  setters.setMode(template.mode ?? "report");
+  setters.setApprovalPolicy(template.approvalPolicy ?? (template.mode === "act" ? "explicit_per_run" : "interactive"));
+  setters.setMaxIterationsPerRun(template.maxIterationsPerRun ?? DEFAULT_BUDGET.maxIterationsPerRun);
+  setters.setMaxTokensPerRun(template.maxTokensPerRun ?? DEFAULT_BUDGET.maxTokensPerRun ?? 0);
+  setters.setMaxWallClockMinutesPerRun(template.maxWallClockMinutesPerRun ?? 15);
+  setters.setMaxRunsPerDay(template.maxRunsPerDay ?? DEFAULT_BUDGET.maxRunsPerDay ?? 0);
+  setters.setMaxEstimatedUsdPerRun(template.maxEstimatedUsdPerRun);
+  setters.setSoftThresholdRatio(template.softThresholdRatio ?? DEFAULT_BUDGET.softThresholdRatio);
+  setters.setHardThresholdRatio(template.hardThresholdRatio ?? DEFAULT_BUDGET.hardThresholdRatio);
+  setters.setToolProfileId(template.toolProfileId ?? "loop_local_report");
+  setters.setTaskPrompt(template.taskPrompt ?? "");
+  setters.setInstructions(template.instructions ?? "");
+  setters.setGoalTitle(template.goalTitle ?? "");
+  setters.setGoalPrompt(template.goalPrompt ?? "");
+  setters.setGoalConditions(template.goalConditions ?? []);
+}
+
 export function CreateLoopForm({ slug, onCreated, onClose, initialState }: CreateLoopFormProps) {
   const createLoop = useCreateLoop();
+
+  const handleSubmitConfig = useCallback(
+    (config: LoopConfig, author: string | undefined) => {
+      createLoop.mutate(
+        {
+          slug,
+          config,
+          ...(author ? { author } : {}),
+        },
+        {
+          onSuccess: (response) => {
+            onCreated(response.loop.loopId);
+          },
+        },
+      );
+    },
+    [createLoop, slug, onCreated],
+  );
+
+  return (
+    <LoopForm
+      slug={slug}
+      title="New Loop"
+      description="Create a new Loop with schedule, run kind, mode, tool profile, budget, and task or Goal fields"
+      submitLabel="Create Loop"
+      pendingLabel="Creating…"
+      pending={createLoop.isPending}
+      error={createLoop.error}
+      onClose={onClose}
+      onSubmitConfig={handleSubmitConfig}
+      initialState={initialState}
+      showQuickStarts
+    />
+  );
+}
+
+function LoopForm({
+  title: formTitle,
+  description: formDescription,
+  submitLabel,
+  pendingLabel,
+  pending,
+  error,
+  onClose,
+  onSubmitConfig,
+  initialState,
+  showQuickStarts = false,
+}: LoopFormProps) {
+  void formDescription;
 
   const [title, setTitle] = useState(initialState?.title ?? "");
   const [description, setDescription] = useState(initialState?.description ?? "");
@@ -270,6 +608,13 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
   const [mode, setMode] = useState<LoopMode>(initialState?.mode ?? "report");
   const [approvalPolicy, setApprovalPolicy] = useState<LoopApprovalPolicy>(initialState?.approvalPolicy ?? "interactive");
   const [maxIterationsPerRun, setMaxIterationsPerRun] = useState(initialState?.maxIterationsPerRun ?? 8);
+  const [maxTokensPerRun, setMaxTokensPerRun] = useState(initialState?.maxTokensPerRun ?? 120000);
+  const [maxWallClockMinutesPerRun, setMaxWallClockMinutesPerRun] = useState(initialState?.maxWallClockMinutesPerRun ?? 15);
+  const [maxRunsPerDay, setMaxRunsPerDay] = useState(initialState?.maxRunsPerDay ?? 2);
+  const [maxEstimatedUsdPerRun, setMaxEstimatedUsdPerRun] = useState<number | undefined>(initialState?.maxEstimatedUsdPerRun);
+  const [softThresholdRatio, setSoftThresholdRatio] = useState(initialState?.softThresholdRatio ?? 0.8);
+  const [hardThresholdRatio, setHardThresholdRatio] = useState(initialState?.hardThresholdRatio ?? 1);
+  const [toolProfileId, setToolProfileId] = useState<LoopToolProfileId>(initialState?.toolProfileId ?? "loop_local_report");
   const [taskPrompt, setTaskPrompt] = useState(initialState?.taskPrompt ?? "");
   const [instructions, setInstructions] = useState(initialState?.instructions ?? "");
   const [author, setAuthor] = useState(initialState?.author ?? "architect");
@@ -288,6 +633,16 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
 
   const trimmedTitle = title.trim();
   const intervalValid = scheduleKind !== "interval" || (Number.isInteger(everyMs) && everyMs >= MIN_INTERVAL_MS);
+  const budgetValid =
+    isPositiveInt(maxIterationsPerRun) &&
+    isPositiveInt(maxTokensPerRun) &&
+    isPositiveInt(maxWallClockMinutesPerRun) &&
+    isPositiveInt(maxRunsPerDay) &&
+    softThresholdRatio > 0 &&
+    softThresholdRatio <= 1 &&
+    hardThresholdRatio >= softThresholdRatio &&
+    hardThresholdRatio <= 1;
+  const sessionValid = runKind !== "session" || isNonEmpty(taskPrompt);
   const goalConditionsValid =
     runKind !== "goal" ||
     (goalConditions.length > 0 && goalConditions.every((c) => validateCondition(c).length === 0));
@@ -295,9 +650,11 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
   const canSubmit =
     isNonEmpty(trimmedTitle) &&
     intervalValid &&
+    budgetValid &&
+    sessionValid &&
     goalConditionsValid &&
     goalTitleValid &&
-    !createLoop.isPending;
+    !pending;
 
   const addCondition = useCallback((kind: ConditionKind) => {
     setGoalConditions((prev) => [...prev, makeCondition(kind)]);
@@ -332,6 +689,13 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
       mode,
       approvalPolicy,
       maxIterationsPerRun,
+      maxTokensPerRun,
+      maxWallClockMinutesPerRun,
+      maxRunsPerDay,
+      maxEstimatedUsdPerRun,
+      softThresholdRatio,
+      hardThresholdRatio,
+      toolProfileId,
       taskPrompt,
       instructions,
       author,
@@ -354,6 +718,13 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
     mode,
     approvalPolicy,
     maxIterationsPerRun,
+    maxTokensPerRun,
+    maxWallClockMinutesPerRun,
+    maxRunsPerDay,
+    maxEstimatedUsdPerRun,
+    softThresholdRatio,
+    hardThresholdRatio,
+    toolProfileId,
     taskPrompt,
     instructions,
     author,
@@ -374,53 +745,57 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
       if (!canSubmit) return;
 
       const config = buildConfig();
-      createLoop.mutate(
-        {
-          slug,
-          config,
-          ...(isNonEmpty(author) ? { author: author.trim() } : {}),
-        },
-        {
-          onSuccess: (response) => {
-            onCreated(response.loop.loopId);
-          },
-        },
-      );
+      onSubmitConfig(config, isNonEmpty(author) ? author.trim() : undefined);
     },
-    [canSubmit, buildConfig, createLoop, slug, author, onCreated],
+    [canSubmit, buildConfig, author, onSubmitConfig],
   );
 
   const handlePresetClick = useCallback(
     (preset: PresetQuickStart) => {
-      if (!preset.enabled || createLoop.isPending) return;
-      createLoop.mutate(
-        { slug, presetId: preset.id, ...(isNonEmpty(author) ? { author: author.trim() } : {}) },
-        {
-          onSuccess: (response) => {
-            onCreated(response.loop.loopId);
-          },
-        },
-      );
+      if (pending) return;
+      applyPresetState(preset, {
+        setTitle,
+        setDescription,
+        setRunKind,
+        setMode,
+        setApprovalPolicy,
+        setMaxIterationsPerRun,
+        setMaxTokensPerRun,
+        setMaxWallClockMinutesPerRun,
+        setMaxRunsPerDay,
+        setMaxEstimatedUsdPerRun,
+        setSoftThresholdRatio,
+        setHardThresholdRatio,
+        setToolProfileId,
+        setTaskPrompt,
+        setInstructions,
+        setGoalTitle,
+        setGoalPrompt,
+        setGoalConditions,
+      });
     },
-    [createLoop, slug, author, onCreated],
+    [pending],
   );
 
-  const errorMessage = createLoop.error
-    ? createLoop.error instanceof Error
-      ? createLoop.error.message
-      : "Failed to create loop"
+  const selectedToolProfile = TOOL_PROFILE_OPTIONS.find((profile) => profile.id === toolProfileId) ?? TOOL_PROFILE_OPTIONS[0];
+
+  const errorMessage = error
+    ? error instanceof Error
+      ? error.message
+      : "Loop form action failed"
     : null;
 
   return (
     <form onSubmit={handleSubmit} className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4 shrink-0">
         <span className="text-base font-semibold text-text-primary">
-          New Loop
+          {formTitle}
         </span>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            <section>
+        {showQuickStarts && (
+          <section>
               <span className="mb-2 block text-[13px] font-medium text-text-secondary">
                 Quick Starts
               </span>
@@ -430,18 +805,20 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     key={preset.id}
                     type="button"
                     onClick={() => handlePresetClick(preset)}
-                    disabled={!preset.enabled || createLoop.isPending}
+                    disabled={pending}
                     aria-label={`Preset ${preset.label}`}
-                    className="inline-flex items-center gap-1 rounded-sm border border-border-subtle bg-bg-base px-2.5 py-1.5 text-[12px] text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="inline-flex flex-col items-start gap-0.5 rounded-sm border border-border-subtle bg-bg-base px-2.5 py-1.5 text-left text-[12px] text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    {preset.label}
-                    {!preset.enabled && preset.phaseLabel ? (
-                      <span className="text-[10px] text-text-muted">{preset.phaseLabel}</span>
-                    ) : null}
+                    <span>{preset.label}</span>
+                    <span className="text-[10px] text-text-muted">{preset.note}</span>
                   </button>
                 ))}
               </div>
-            </section>
+              <p className="mt-2 text-[11px] text-text-muted">
+                Presets are editable Phase 4 templates. Stored runKind, mode, tool profile, budget, and task or Goal fields drive runtime behavior.
+              </p>
+          </section>
+        )}
 
             <div>
               <label
@@ -458,7 +835,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                 placeholder="Loop title"
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
                 autoFocus
-                disabled={createLoop.isPending}
+                disabled={pending}
               />
             </div>
 
@@ -476,7 +853,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Short description"
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-                disabled={createLoop.isPending}
+                disabled={pending}
               />
             </div>
 
@@ -492,7 +869,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="session"
                     checked={runKind === "session"}
                     onChange={() => setRunKind("session")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>session</span>
@@ -504,7 +881,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="goal"
                     checked={runKind === "goal"}
                     onChange={() => setRunKind("goal")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>goal</span>
@@ -524,7 +901,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="manual"
                     checked={scheduleKind === "manual"}
                     onChange={() => setScheduleKind("manual")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>manual</span>
@@ -536,7 +913,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="interval"
                     checked={scheduleKind === "interval"}
                     onChange={() => setScheduleKind("interval")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>interval</span>
@@ -550,7 +927,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                       min={MIN_INTERVAL_MS}
                       value={everyMs}
                       onChange={(e) => setEveryMs(Number(e.target.value) || 0)}
-                      disabled={createLoop.isPending}
+                      disabled={pending}
                       className="w-28 rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
                     />
                   </label>
@@ -575,7 +952,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="report"
                     checked={mode === "report"}
                     onChange={() => setMode("report")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>report</span>
@@ -587,7 +964,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="act"
                     checked={mode === "act"}
                     onChange={() => setMode("act")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>act</span>
@@ -612,7 +989,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="interactive"
                     checked={approvalPolicy === "interactive"}
                     onChange={() => setApprovalPolicy("interactive")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>interactive</span>
@@ -624,7 +1001,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     value="explicit_per_run"
                     checked={approvalPolicy === "explicit_per_run"}
                     onChange={() => setApprovalPolicy("explicit_per_run")}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="accent-accent"
                   />
                   <span>explicit_per_run</span>
@@ -637,23 +1014,139 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
               </p>
             </div>
 
-            <div>
-              <label
-                htmlFor="new-loop-max-iterations"
-                className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-              >
-                Max Iterations Per Run
-              </label>
-              <input
-                id="new-loop-max-iterations"
-                type="number"
-                min={1}
-                value={maxIterationsPerRun}
-                onChange={(e) => setMaxIterationsPerRun(Number(e.target.value) || 0)}
-                disabled={createLoop.isPending}
-                className="w-28 rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
-              />
-            </div>
+            <section className="rounded-sm border border-border-subtle bg-bg-base p-3 space-y-3">
+              <div>
+                <span className="mb-2 block text-[13px] font-medium text-text-secondary">
+                  Tool Profile
+                </span>
+                <select
+                  id="new-loop-tool-profile"
+                  value={toolProfileId}
+                  onChange={(e) => setToolProfileId(e.target.value as LoopToolProfileId)}
+                  disabled={pending}
+                  className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none"
+                >
+                  {TOOL_PROFILE_OPTIONS.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-text-muted">{selectedToolProfile.description}</p>
+                {selectedToolProfile.externalRequirement && (
+                  <div className="mt-2 rounded-sm border border-warning-muted bg-warning-muted px-2.5 py-2 text-[11px] text-warning">
+                    {selectedToolProfile.externalRequirement} PR Babysitter does not merge, rebase, approve, or force-push.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-sm border border-border-subtle bg-bg-base p-3 space-y-3">
+              <div>
+                <span className="mb-1.5 block text-[13px] font-medium text-text-secondary">
+                  Budget Defaults
+                </span>
+                <p className="text-[11px] text-text-muted">
+                  These are Loop runtime guardrails. Missing USD pricing makes USD availability unknown, never free.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>maxIterationsPerRun</span>
+                  <input
+                    id="new-loop-max-iterations"
+                    type="number"
+                    min={1}
+                    value={maxIterationsPerRun}
+                    onChange={(e) => setMaxIterationsPerRun(Number(e.target.value) || 0)}
+                    disabled={pending}
+                    className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>maxTokensPerRun</span>
+                  <input
+                    id="new-loop-max-tokens"
+                    type="number"
+                    min={1}
+                    value={maxTokensPerRun}
+                    onChange={(e) => setMaxTokensPerRun(Number(e.target.value) || 0)}
+                    disabled={pending}
+                    className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>maxWallClockMinutesPerRun</span>
+                  <input
+                    id="new-loop-max-wall-clock"
+                    type="number"
+                    min={1}
+                    value={maxWallClockMinutesPerRun}
+                    onChange={(e) => setMaxWallClockMinutesPerRun(Number(e.target.value) || 0)}
+                    disabled={pending}
+                    className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>maxRunsPerDay</span>
+                  <input
+                    id="new-loop-max-runs-day"
+                    type="number"
+                    min={1}
+                    value={maxRunsPerDay}
+                    onChange={(e) => setMaxRunsPerDay(Number(e.target.value) || 0)}
+                    disabled={pending}
+                    className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>maxEstimatedUsdPerRun <span className="text-text-muted">(optional)</span></span>
+                  <input
+                    id="new-loop-max-usd"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={maxEstimatedUsdPerRun ?? ""}
+                    onChange={(e) => setMaxEstimatedUsdPerRun(e.target.value.trim().length === 0 ? undefined : Number(e.target.value) || 0)}
+                    disabled={pending}
+                    className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                    <span>soft ratio</span>
+                    <input
+                      id="new-loop-soft-ratio"
+                      type="number"
+                      min={0.01}
+                      max={1}
+                      step="0.01"
+                      value={softThresholdRatio}
+                      onChange={(e) => setSoftThresholdRatio(Number(e.target.value) || 0)}
+                      disabled={pending}
+                      className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                    <span>hard ratio</span>
+                    <input
+                      id="new-loop-hard-ratio"
+                      type="number"
+                      min={0.01}
+                      max={1}
+                      step="0.01"
+                      value={hardThresholdRatio}
+                      onChange={(e) => setHardThresholdRatio(Number(e.target.value) || 0)}
+                      disabled={pending}
+                      className="rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
+                    />
+                  </label>
+                </div>
+              </div>
+              {!budgetValid && (
+                <p className="text-[11px] text-error">
+                  Budget values must be positive, and hard ratio must be at least the soft ratio and no more than 1.
+                </p>
+              )}
+            </section>
 
             {runKind === "session" && (
               <div>
@@ -661,7 +1154,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                   htmlFor="new-loop-task-prompt"
                   className="mb-1.5 block text-[13px] font-medium text-text-secondary"
                 >
-                  Task Prompt <span className="text-text-muted">(optional)</span>
+                  Task Prompt
                 </label>
                 <textarea
                   id="new-loop-task-prompt"
@@ -669,9 +1162,14 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                   onChange={(e) => setTaskPrompt(e.target.value)}
                   placeholder="Instructions for each session run"
                   rows={3}
-                  disabled={createLoop.isPending}
+                  disabled={pending}
                   className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
                 />
+                {!sessionValid && (
+                  <p className="mt-1 text-[11px] text-error">
+                    Session loops need a task prompt before submit.
+                  </p>
+                )}
               </div>
             )}
 
@@ -689,7 +1187,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                 onChange={(e) => setInstructions(e.target.value)}
                 placeholder="Extra run instructions"
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-                disabled={createLoop.isPending}
+                disabled={pending}
               />
             </div>
 
@@ -716,8 +1214,11 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     onChange={(e) => setGoalTitle(e.target.value)}
                     placeholder="Goal title"
                     className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                   />
+                  {!goalTitleValid && (
+                    <p className="mt-1 text-[11px] text-error">Goal loops need a Goal title before submit.</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -733,7 +1234,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                       type="text"
                       value={goalAuthor}
                       onChange={(e) => setGoalAuthor(e.target.value)}
-                      disabled={createLoop.isPending}
+                      disabled={pending}
                       className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
                     />
                   </div>
@@ -749,7 +1250,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                       type="text"
                       value={goalReviewerAgent}
                       onChange={(e) => setGoalReviewerAgent(e.target.value)}
-                      disabled={createLoop.isPending}
+                      disabled={pending}
                       className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
                     />
                   </div>
@@ -768,7 +1269,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     onChange={(e) => setGoalPrompt(e.target.value)}
                     placeholder="Bootstrap prompt for each Goal run"
                     rows={2}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
                   />
                 </div>
@@ -785,7 +1286,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                     type="text"
                     value={goalInstructions}
                     onChange={(e) => setGoalInstructions(e.target.value)}
-                    disabled={createLoop.isPending}
+                    disabled={pending}
                     className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
                   />
                 </div>
@@ -806,7 +1307,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                         key={kind}
                         type="button"
                         onClick={() => addCondition(kind)}
-                        disabled={createLoop.isPending}
+                        disabled={pending}
                         className="inline-flex items-center gap-1 rounded-sm border border-border-subtle bg-bg-base px-2 py-1 text-[11.5px] text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {label}
@@ -827,7 +1328,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                             key={condition.id}
                             condition={condition}
                             errors={errors}
-                            disabled={createLoop.isPending}
+                            disabled={pending}
                             onRemove={() => removeCondition(condition.id)}
                             onParamChange={(key, value) =>
                               updateConditionParam(condition.id, key, value)
@@ -836,6 +1337,11 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                         );
                       })}
                     </ul>
+                  )}
+                  {!goalConditionsValid && (
+                    <p className="mt-2 text-[11px] text-error">
+                      Goal loops need at least one valid done condition before submit.
+                    </p>
                   )}
                 </div>
 
@@ -852,7 +1358,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                         max={10}
                         value={goalMaxRetries}
                         onChange={(e) => setGoalMaxRetries(Number(e.target.value) || 0)}
-                        disabled={createLoop.isPending}
+                        disabled={pending}
                         className="w-20 rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
                       />
                     </label>
@@ -861,7 +1367,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                         type="checkbox"
                         checked={goalEscalateOnFailure}
                         onChange={(e) => setGoalEscalateOnFailure(e.target.checked)}
-                        disabled={createLoop.isPending}
+                        disabled={pending}
                         className="accent-accent"
                       />
                       <span>escalate on failure</span>
@@ -883,7 +1389,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                           type="checkbox"
                           checked={goalApprovalPoints.includes(point)}
                           onChange={() => toggleApprovalPoint(point)}
-                          disabled={createLoop.isPending}
+                          disabled={pending}
                           className="accent-accent"
                         />
                         <span className="font-mono">{point}</span>
@@ -906,7 +1412,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
                 type="text"
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
-                disabled={createLoop.isPending}
+                disabled={pending}
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
               />
             </div>
@@ -921,7 +1427,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
               type="button"
               onClick={onClose}
               className="rounded-sm bg-bg-active px-4 py-2 text-[13px] font-medium text-text-primary transition-colors duration-150 hover:bg-bg-hover"
-              disabled={createLoop.isPending}
+              disabled={pending}
             >
               Cancel
             </button>
@@ -930,7 +1436,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
               className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canSubmit}
             >
-              {createLoop.isPending ? "Creating…" : "Create Loop"}
+              {pending ? pendingLabel : submitLabel}
             </button>
           </div>
         </form>
@@ -955,6 +1461,57 @@ export function CreateLoopDialog({ open, onClose, slug, onCreated }: CreateLoopD
         <CreateLoopForm slug={slug} onCreated={onCreated} onClose={onClose} />
       </DialogContent>
     </DialogRoot>
+  );
+}
+
+export function EditLoopDialog({ open, onClose, slug, loop }: EditLoopDialogProps) {
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) onClose();
+    },
+    [onClose],
+  );
+
+  return (
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
+      <DialogContent size="x-large">
+        <DialogTitle className="sr-only">Edit Loop</DialogTitle>
+        <DialogDescription className="sr-only">
+          Edit Loop schedule, run kind, mode, tool profile, budget, and task or Goal fields
+        </DialogDescription>
+        {open && <EditLoopForm slug={slug} loop={loop} onClose={onClose} />}
+      </DialogContent>
+    </DialogRoot>
+  );
+}
+
+export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: LoopState; onClose?: () => void }) {
+  const updateLoop = useUpdateLoop();
+  const initialState = loopConfigToFormState(loop.config);
+
+  const handleSubmitConfig = useCallback(
+    (config: LoopConfig) => {
+      updateLoop.mutate(
+        { slug, loopId: loop.loopId, config },
+        { onSuccess: () => onClose?.() },
+      );
+    },
+    [updateLoop, slug, loop.loopId, onClose],
+  );
+
+  return (
+    <LoopForm
+      slug={slug}
+      title="Edit Loop"
+      description="Update this Loop's schedule, run kind, mode, tool profile, budget, and task or Goal fields"
+      submitLabel="Save Loop"
+      pendingLabel="Saving…"
+      pending={updateLoop.isPending}
+      error={updateLoop.error}
+      onClose={onClose}
+      onSubmitConfig={handleSubmitConfig}
+      initialState={initialState}
+    />
   );
 }
 
