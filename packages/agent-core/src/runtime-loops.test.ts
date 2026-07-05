@@ -115,7 +115,7 @@ describe("AgentRuntime Loop wiring", () => {
     await fixture.runtime.startLoopSchedulers();
     expect(fixture.timer.size()).toBe(1);
 
-    fixture.runtime.stopLoopSchedulers();
+    await fixture.runtime.stopLoopSchedulers();
     expect(fixture.timer.size()).toBe(0);
 
     await fixture.timer.advanceTo(100);

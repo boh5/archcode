@@ -41,11 +41,13 @@ import { SessionExecutionManager } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
+import { createGitHubConnector } from "./integrations/github";
 import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
 import { CollisionLedger } from "./loops/collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
 import { LoopJobQueue } from "./loops/job-queue";
+import { LoopTriggerPoller } from "./loops/triggers";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
 import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
@@ -134,7 +136,7 @@ export interface AgentRuntime {
   readLoopRunLog(workspaceRoot: string, loopId: string, limit?: number): Promise<LoopRunReport[]>;
   readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
   startLoopSchedulers(): Promise<void>;
-  stopLoopSchedulers(): void;
+  stopLoopSchedulers(): Promise<void>;
   requestPermission(
     workspaceRoot: string,
     sessionId: string,
@@ -365,6 +367,17 @@ export async function createRuntime(
         workspaceRoot,
         clock: schedulerClock,
       });
+      const github = createGitHubConnector({ config: config.integrations?.github });
+      const triggerPoller = new LoopTriggerPoller({
+        workspaceRoot,
+        stateManager: projectContext.loopState,
+        queue: jobQueue,
+        github,
+        repository: config.integrations?.github?.defaultOwner === undefined || config.integrations.github.defaultRepo === undefined
+          ? undefined
+          : { owner: config.integrations.github.defaultOwner, repo: config.integrations.github.defaultRepo },
+        clock: schedulerClock,
+      });
       const runner = await createLoopRunner(workspaceRoot, collisionLedger);
       const scheduler = new LoopScheduler({
         stateManager: projectContext.loopState,
@@ -374,6 +387,7 @@ export async function createRuntime(
         budgetLedger,
         collisionLedger,
         jobQueue,
+        triggerPoller,
         killStateManager: new LoopKillStateManager(workspaceRoot, {
           clock: schedulerClock,
           logger: runtimeLogger.child({ module: "loops.kill-state" }),
@@ -502,9 +516,9 @@ export async function createRuntime(
       }
     }
 
-    function stopLoopSchedulers(): void {
+    async function stopLoopSchedulers(): Promise<void> {
       loopSchedulersStarted = false;
-      for (const scheduler of loopSchedulers.values()) scheduler.stop();
+      await Promise.all([...loopSchedulers.values()].map((scheduler) => scheduler.stop()));
       loopSchedulers.clear();
     }
 
