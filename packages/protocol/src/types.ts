@@ -1196,12 +1196,27 @@ export type LoopJobStatus =
   | "skipped"
   | "expired";
 
-export type LoopCleanupState = "not_started" | "in_progress" | "cleaned" | "preserved" | "failed" | "skipped";
+export type LoopCleanupState =
+  | "not_started"
+  | "in_progress"
+  | "cleaned"
+  | "preserved"
+  | "failed"
+  | "skipped"
+  | "cleanup_candidate"
+  | "auto_paused"
+  | "cleanup_failed"
+  | "expired_needs_review";
 
 export interface LoopCleanupPolicy {
+  enabled?: boolean;
+  action?: "mark" | "pause";
   deleteUnchangedWorktrees?: boolean;
   preserveChangedArtifacts?: true;
   maxPreservedWorktrees?: number;
+  noFindingRuns?: number;
+  quietDays?: number;
+  requiresNoPendingQueue?: boolean;
 }
 
 export interface LoopWorktreeArtifact {
