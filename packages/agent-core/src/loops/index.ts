@@ -9,3 +9,4 @@ export * from "./tool-target-extractors";
 export * from "./collision-tool-guard";
 export * from "./job-queue";
 export * from "./coordinator";
+export * from "./worktree-manager";
