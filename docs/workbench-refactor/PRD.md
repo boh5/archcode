@@ -232,14 +232,14 @@
 
 7 个预设作为快捷起点,不是硬编码分类:
 - `daily_triage` —— 每日 CI/issue/commit triage,报告为主
-- `pr_babysitter` —— PR review/rebase/merge babysit
+- `pr_babysitter` —— PR watch/status/comment,可选交给 fix Goal;不 merge/rebase/approve/force-push
 - `ci_sweeper` —— CI 失败最小修复
 - `dependency_sweeper` —— 依赖/漏洞更新带人审门
 - `post_merge_cleanup` —— merge 后清理
 - `changelog_drafter` —— changelog 自动起草
 - `issue_triage` —— issue 去重/打分/建议标签
 
-用户可选预设(加载默认 phases/gates/cost)或完全自定义。Runtime 不依赖预设 enum 做代码分支。
+用户可选预设(加载默认 phases/gates/budget)或完全自定义。Runtime 不依赖预设 enum 做代码分支。
 
 ### 4.7 Web UI:Mission Control
 
@@ -312,7 +312,9 @@
 - Budget 护栏:throttle/hardStop 早退 + stagnation circuit breaker
 - kill switch(全局 + per-loop)
 - 碰撞检测(acting_on 字段 + 优先级)
-- L1→L2 毕业条件(L1 跑 2 周 noise <20% + readiness score ≥58)
+- Superseded/current Phase 4 简化:旧稿里的 L1→L2 毕业、noise <20%、readiness score 只保留为未来 advisory 参考,不是当前 runtime gate
+- Phase 4 当前 runtime 护栏:Budget hardStop/throttle、kill switch、collision guard、GitHub.com + GitHub Actions 状态读取
+- 这些护栏是 pre-run/tool guard/runtime checks,不是第二套 permission system,也不替代现有 tool permission/HITL approval pipeline;Loop 仍只是调度/state/guardrail 容器,实际执行层是 Session/Goal + tools
 - Loop 预设库 BudgetSpec 默认值(来自 loop-engineering cost registry)
 - Loop 详情 UI 完整(budget 仪表、run-log 可视化、state 编辑器)
 
@@ -320,17 +322,17 @@
 
 **目标**:无需人盯的 unattended Loop 完整能力。拆必需 + 可选两部分。
 
-**5a 必需**(unattended Loop 基础):
+**Phase 5a 候选方向**(不属于 Phase 4 承诺):
 - `cron` + `trigger` 调度(on_commit/on_pr/on_ci_fail)
-- 跨 loop 协调(优先级排序、同分支节流、maxConcurrent)
+- 跨 loop 协调、队列、同分支节流、maxConcurrent
 - git worktree 隔离执行
 
-**5b 可选**:
+**Phase 5b 候选方向**:
 - 用户自定义 pattern
 - Loop 自清理
-- readiness score(Web UI badge)
+- readiness score(Web UI badge),未来 advisory 指标,不是当前 gate
 
-**External integrations**(Phase 4 起加):GitHub + CI connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可用。
+**External integrations**(Phase 4):只接 GitHub.com + GitHub Actions,让 pr_babysitter / ci_sweeper / issue_triage 等预设能读取状态和评论。GitHub Enterprise、GitLab、Bitbucket、CircleCI、Jenkins、OAuth、GitHub App、浏览器安装授权留后续。
 
 ---
 
@@ -405,7 +407,7 @@
 - ❌ 不做 cron/trigger 调度(Phase 5a 必需,非反范围,但不在 Phase 1-4)
 - ❌ 不做用户自定义 pattern(Phase 5b 可选,预设库已足够起步)
 - ❌ 不做独立 worker 进程(单进程足够)
-- ❌ 不做 pricing/cost / 美元预算(tokens + iterations 足够,后续再说)
+- ❌ 不把缺失 model pricing 当零成本。provider model pricing 是可选 metadata;缺失时 USD budget enforcement 不可用。
 - ❌ Phase 2 不做 checkpoint/rollback/rerun 功能
 - ❌ Phase 2 不做 artifact versions/revisions/latest 指针
 - ❌ Phase 2 不做 Safe/Balanced/Brave approval modes
@@ -414,8 +416,9 @@
 - ❌ 不做 Kiro EARS notation + property testing(太正式,IDE 中心)
 - ❌ 不做 Workflow 渐进迁移(全删无 fallback)
 - ❌ 不做 state.md 双向同步(state.json 是 source of truth,state.md 只读视图)
-- ❌ 不做 AI merge PR(永远不允许——Reviewer 存在的核心理由)
+- ❌ 不做 AI merge/rebase/approve/force-push PR。PR Babysitter 只 watch/status/comment,可选交给 fix Goal。
 - ❌ 不做 AI `git push` / `git merge` / `git rebase` / `git reset --hard`(bash guard 拦截,人审)
+- ❌ Phase 4 不支持 GitHub Enterprise、GitLab、Bitbucket、CircleCI、Jenkins、OAuth、GitHub App 或浏览器安装授权。
 - ❌ 不引入 Mission 原语(保持 Session/Goal/Loop 三层,后续视需要评估)
 
 ---
@@ -469,8 +472,8 @@
 | Compaction 丢 Done 条件 | S2 | Done 条件在 `goal.json` 持久化,不在对话上下文 |
 | Cognitive Surrender("loop 会处理"逃避思考) | S2 | UI 强制展示 last summary + run-log + 架构师必须 review escalate |
 | Comprehension debt spiral | S2 | 每次 run 产 summary + run-log;UI 强制展示 |
-| Over-reach(Loop 擅自大改) | S2 | L2 限定 minimal-fix + approvalPoints + path denylist |
-| 多 Loop 碰撞 | S3 | acting_on 碰撞检测 + 优先级 + 同分支节流(L3) |
+| Over-reach(Loop 擅自大改) | S2 | Phase 4 用 tool profile、approvalPoints、collision guard 和 kill switch 限制风险;L2 minimal-fix 是未来 advisory |
+| 多 Loop 碰撞 | S3 | Phase 4 用 collision guard 阻止已知目标冲突;队列、同分支节流、maxConcurrent 是 Phase 5 候选方向 |
 | Escalate 后无人看 | S3 | `waitedMs` 超期 UI 红标 + 通知 |
 | HITL 断线残留 | S2 | 复用 deferred 超时/abort 安全 resolve |
 | Workflow 删除回归 | S2 | `.archcode/workflows/` 保留只读(不删用户数据),runtime 不再读写 |
@@ -500,10 +503,10 @@
 9. **command_succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command_succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
 10. **Dashboard 留 Phase 1** —— 遍历 ProjectRegistry.list() + 各项目 .archcode/goals/ 文件聚合,REST 初始快照 + SSE 增量,不需新存储(决策 2026-06)
 11. **Phase 3 Loop 允许 action loop** —— 允许 Loop 跑 Goal(可改代码),靠 Reviewer 强制 + approvalPoints + 基础 budget 兜底。Phase 4 补完整护栏(throttle/hardStop/stagnation/kill switch)后才真正可无人看(决策 2026-07)
-12. **Phase 5 拆必需 + 可选** —— 必需(cron/trigger + 跨 loop 协调 + worktree);可选(自定义 pattern + 自清理 + readiness score)。不整体标可选(决策 2026-07)
-13. **Phase 4 加第一批 external integrations** —— GitHub(PR/issue)+ CI 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可用。Phase 3 只本地预设可用(决策 2026-07)
+12. **Phase 5 拆候选方向** —— cron/trigger、跨 loop 协调、队列、worktree、自定义 pattern、自清理、readiness score 都是 Phase 4 之后再评估,不是当前承诺(决策 2026-07,Phase 4 文档更新 2026-07)
+13. **Phase 4 加第一批 external integrations** —— 只支持 GitHub.com(PR/issue)+ GitHub Actions 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可读取状态和评论。Phase 3 只本地预设可用(决策 2026-07,Phase 4 文档更新 2026-07)
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
 15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 6-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)
-16. **Budget 不加 pricing/cost** —— tokens + iterations 足够,不加美元换算,后续视需要再说(决策 2026-07)
-17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge。bash guard 拦截 git push/merge/rebase/reset --hard。AI 可开 PR + 开 issue(Phase 4+ 有 connector)(决策 2026-07)
+16. **Budget pricing 边界** —— provider model pricing 是可选 metadata;缺失 pricing 时 USD budget enforcement 不可用,不能当零成本。token/iteration 护栏仍可用(决策 2026-07,Phase 4 文档更新 2026-07)
+17. **AI 自治边界** —— AI 可 commit 到本地,人 push + 开 PR。AI 永不 merge/rebase/approve/force-push。bash guard 拦截 git push/merge/rebase/reset --hard。Phase 4 connector 只做 GitHub.com/GitHub Actions 的状态、评论和可选 fix Goal handoff(决策 2026-07,Phase 4 文档更新 2026-07)
 18. **self-hosted 不加 headless 模式** —— 用户自行部署到 always-on 主机,ArchCode 不做 headless/daemon 模式,文档指引即可(决策 2026-07)
