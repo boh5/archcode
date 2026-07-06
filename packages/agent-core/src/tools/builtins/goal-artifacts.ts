@@ -12,13 +12,15 @@ import {
   GoalArtifactPathError,
   GoalArtifactPlanLockedError,
   GoalArtifactSecretError,
+} from "../../goals/artifacts";
+import {
   GoalInvalidIdError,
   GoalNotFoundError,
   GoalPathError,
   GoalStateError,
   GoalUuidSchema,
   GoalArtifactNameSchema,
-} from "../../goals";
+} from "../../goals/state";
 import type { SessionRole } from "../../store/types";
 import { defineTool } from "../define-tool";
 import { createToolErrorResult } from "../errors";

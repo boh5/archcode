@@ -26,6 +26,14 @@ const canonicalArtifactNames: GoalArtifactName[] = [
   "final-report.md",
 ];
 
+const removedGoalExecutableNames = [
+  `goal_${"run"}`,
+  `goal_${"retry"}`,
+  `goal_${"check"}_${"done"}`,
+  `goal_${"create"}`,
+  `goal_${"lock"}`,
+];
+
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
 
@@ -104,6 +112,20 @@ async function createGoal(app: ReturnType<typeof createServerApp>["app"], slug: 
 
   expect(res.status).toBe(201);
   return await res.json() as GoalState;
+}
+
+function lastStartedUserMessage(runtime: AgentRuntime): string {
+  const calls = (runtime.startSessionExecution as ReturnType<typeof mock>).mock.calls;
+  expect(calls.length).toBeGreaterThan(0);
+  const input = calls[calls.length - 1]?.[0] as { userMessage?: string } | undefined;
+  expect(input?.userMessage).toBeString();
+  return input?.userMessage ?? "";
+}
+
+function expectNoRemovedGoalExecutableGuidance(message: string): void {
+  for (const name of removedGoalExecutableNames) {
+    expect(message).not.toContain(name);
+  }
 }
 
 describe("goals routes", () => {
@@ -192,8 +214,12 @@ describe("goals routes", () => {
       slug: project.slug,
       workspaceRoot: project.workspaceRoot,
       sessionId: "created-main-session",
-      userMessage: expect.stringContaining("Your first action must be calling goal_run"),
+      userMessage: expect.stringContaining("Your first action must be calling goal_manage with action:\"start\""),
     });
+    const runMessage = lastStartedUserMessage(runtime);
+    expect(runMessage).toContain("goal_manage.action=\"advance_phase\"");
+    expect(runMessage).toContain("goal_evidence action:\"check_done\"");
+    expectNoRemovedGoalExecutableGuidance(runMessage);
 
     const context = await runtime.contextResolver.resolve(project.workspaceRoot);
     const persisted = await context.goalState.read(created.id);
@@ -622,8 +648,12 @@ describe("goals routes", () => {
     expect(retried.mainSessionId).toBe("retry-session");
     expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: "retry-session",
-      userMessage: expect.stringContaining("goal_retry"),
+      userMessage: expect.stringContaining("goal_manage with action:\"retry\""),
     }));
+    const retryMessage = lastStartedUserMessage(runtime);
+    expect(retryMessage).toContain("goal_manage.action=\"advance_phase\"");
+    expect(retryMessage).toContain("goal_evidence action:\"check_done\"");
+    expectNoRemovedGoalExecutableGuidance(retryMessage);
 
     const escalateRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/escalate`, { method: "POST" });
     const escalated = await escalateRes.json() as GoalState;

@@ -33,11 +33,8 @@ import {
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
-  TOOL_GOAL_CREATE,
-  TOOL_GOAL_LOCK,
-  TOOL_GOAL_RUN,
-  TOOL_GOAL_RETRY,
-  TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_MANAGE,
+  TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_CATEGORY_MAP,
@@ -80,11 +77,8 @@ const ALL_BUILTIN_NAMES = [
   TOOL_SKILL_READ,
   TOOL_MEMORY_READ,
   TOOL_MEMORY_WRITE,
-  TOOL_GOAL_CREATE,
-  TOOL_GOAL_LOCK,
-  TOOL_GOAL_RUN,
-  TOOL_GOAL_RETRY,
-  TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_MANAGE,
+  TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
 ] as const;
@@ -124,13 +118,26 @@ describe("tool name constants", () => {
     expect(TOOL_SKILL_READ).toBe("skill_read");
     expect(TOOL_MEMORY_READ).toBe("memory_read");
     expect(TOOL_MEMORY_WRITE).toBe("memory_write");
-    expect(TOOL_GOAL_CREATE).toBe("goal_create");
-    expect(TOOL_GOAL_LOCK).toBe("goal_lock");
-    expect(TOOL_GOAL_RUN).toBe("goal_run");
-    expect(TOOL_GOAL_RETRY).toBe("goal_retry");
-    expect(TOOL_GOAL_CHECK_DONE).toBe("goal_check_done");
+    expect(TOOL_GOAL_MANAGE).toBe("goal_manage");
+    expect(TOOL_GOAL_EVIDENCE).toBe("goal_evidence");
     expect(TOOL_GOAL_ARTIFACT_READ).toBe("goal_artifact_read");
     expect(TOOL_GOAL_ARTIFACT_WRITE).toBe("goal_artifact_write");
+  });
+
+  test("Goal builtin surface exposes only managed lifecycle, evidence, and artifact tools", () => {
+    const activeGoalNames = ALL_BUILTIN_NAMES.filter((name) => name.startsWith("goal_"));
+
+    expect(activeGoalNames).toEqual([
+      TOOL_GOAL_MANAGE,
+      TOOL_GOAL_EVIDENCE,
+      TOOL_GOAL_ARTIFACT_READ,
+      TOOL_GOAL_ARTIFACT_WRITE,
+    ]);
+    expect(activeGoalNames).not.toContain("goal_create");
+    expect(activeGoalNames).not.toContain("goal_lock");
+    expect(activeGoalNames).not.toContain("goal_run");
+    expect(activeGoalNames).not.toContain("goal_retry");
+    expect(activeGoalNames).not.toContain("goal_check_done");
   });
 });
 
@@ -202,11 +209,8 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_WEB_FETCH]).toBe("web");
     expect(TOOL_CATEGORY_MAP[TOOL_SKILL_LIST]).toBe("skill");
     expect(TOOL_CATEGORY_MAP[TOOL_MEMORY_READ]).toBe("memory");
-    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CREATE]).toBe("goal");
-    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_LOCK]).toBe("goal");
-    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RUN]).toBe("goal");
-    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_RETRY]).toBe("goal");
-    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_CHECK_DONE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_MANAGE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_GOAL_EVIDENCE]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_READ]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_WRITE]).toBe("goal");
   });
@@ -241,11 +245,13 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("workflow_update_stage")).toBe("other");
     expect(getToolCategory("artifact_read")).toBe("other");
     expect(getToolCategory("artifact_write")).toBe("other");
-    expect(getToolCategory("goal_create")).toBe("goal");
-    expect(getToolCategory("goal_lock")).toBe("goal");
-    expect(getToolCategory("goal_run")).toBe("goal");
-    expect(getToolCategory("goal_retry")).toBe("goal");
-    expect(getToolCategory("goal_check_done")).toBe("goal");
+    expect(getToolCategory("goal_create")).toBe("other");
+    expect(getToolCategory("goal_lock")).toBe("other");
+    expect(getToolCategory("goal_run")).toBe("other");
+    expect(getToolCategory("goal_retry")).toBe("other");
+    expect(getToolCategory("goal_check_done")).toBe("other");
+    expect(getToolCategory("goal_manage")).toBe("goal");
+    expect(getToolCategory("goal_evidence")).toBe("goal");
     expect(getToolCategory("goal_artifact_read")).toBe("goal");
     expect(getToolCategory("goal_artifact_write")).toBe("goal");
   });
@@ -261,11 +267,8 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("github_get_pull_request")).toBe(true);
     expect(isBuiltinToolName("github_create_issue_comment")).toBe(true);
     expect(isBuiltinToolName("github_rerun_workflow_run")).toBe(true);
-    expect(isBuiltinToolName("goal_create")).toBe(true);
-    expect(isBuiltinToolName("goal_lock")).toBe(true);
-    expect(isBuiltinToolName("goal_run")).toBe(true);
-    expect(isBuiltinToolName("goal_retry")).toBe(true);
-    expect(isBuiltinToolName("goal_check_done")).toBe(true);
+    expect(isBuiltinToolName("goal_manage")).toBe(true);
+    expect(isBuiltinToolName("goal_evidence")).toBe(true);
     expect(isBuiltinToolName("goal_artifact_read")).toBe(true);
     expect(isBuiltinToolName("goal_artifact_write")).toBe(true);
   });
@@ -274,6 +277,14 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("mcp__foo")).toBe(false);
     expect(isBuiltinToolName("unknown_tool")).toBe(false);
     expect(isBuiltinToolName("")).toBe(false);
+  });
+
+  test("returns false for removed Goal executable names", () => {
+    expect(isBuiltinToolName("goal_create")).toBe(false);
+    expect(isBuiltinToolName("goal_lock")).toBe(false);
+    expect(isBuiltinToolName("goal_run")).toBe(false);
+    expect(isBuiltinToolName("goal_retry")).toBe(false);
+    expect(isBuiltinToolName("goal_check_done")).toBe(false);
   });
 
   test("acts as a type guard narrowing to BuiltinToolName", () => {

@@ -1,4 +1,5 @@
 import type {
+  ApprovalPoint,
   DoneCondition,
   DoneResult,
   GoalPhase,
@@ -9,6 +10,7 @@ import type {
   GoalReviewReport,
   GoalSpecComplianceCriterionEvidence,
   GoalState,
+  RetryPolicy,
 } from "@archcode/protocol";
 
 import { GoalApprovalGate } from "../hitl/goal-gates";
@@ -44,6 +46,16 @@ export interface GoalRunnerCreateSessionOptions {
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
   readonly title?: string;
+}
+
+export interface GoalRunnerCreateDraftOptions {
+  readonly projectId: string;
+  readonly title: string;
+  readonly author: string;
+  readonly doneConditions?: DoneCondition[];
+  readonly retryPolicy?: RetryPolicy;
+  readonly approvalPoints?: ApprovalPoint[];
+  readonly reviewerAgent?: string;
 }
 
 export interface GoalRunnerStartOptions {
@@ -121,6 +133,22 @@ export class GoalRunner {
     this.#retryDelay = options.retryDelay ?? sleepAbortable;
   }
 
+  async createDraft(options: GoalRunnerCreateDraftOptions): Promise<GoalState> {
+    return this.#goalStateManager.create(
+      options.projectId,
+      options.title,
+      options.author,
+      options.doneConditions,
+      options.retryPolicy,
+      options.approvalPoints,
+      options.reviewerAgent,
+    );
+  }
+
+  async lockDraft(goalId: string, lockedBy: string): Promise<GoalState> {
+    return this.#goalStateManager.lock(goalId, lockedBy);
+  }
+
   async start(goalId: string, options: GoalRunnerStartOptions = {}): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
     const sessionId = current.mainSessionId ?? await this.#createSession({
@@ -180,6 +208,17 @@ export class GoalRunner {
   async recordReviewerDoneResult(goalId: string, conditionId: string, result: DoneResult): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
     assertGoalReviewEvidencePhaseStatus(current);
+    return persistReviewerDoneResult(this.#goalStateManager, current, conditionId, result);
+  }
+
+  async recordAuthorizedReviewerDoneResult(
+    goalId: string,
+    conditionId: string,
+    result: DoneResult,
+    authorization: GoalReviewerDoneAuthorization,
+  ): Promise<GoalState> {
+    const current = await this.#goalStateManager.read(goalId);
+    assertGoalReviewerDoneAuthorized(current, authorization);
     return persistReviewerDoneResult(this.#goalStateManager, current, conditionId, result);
   }
 
@@ -505,7 +544,7 @@ function repairIssuesForCondition(condition: DoneCondition, result: DoneResult |
       .map((criterion) => withoutUndefined({
         conditionId: criterion.criterionId,
         evidenceSummary: criterion.evidence.join("\n") || result.evidence,
-        repairGuidance: criterion.repairGuidance ?? `Repair acceptance criterion ${criterion.criterionId}, then run goal_check_done again.`,
+        repairGuidance: criterion.repairGuidance ?? `Repair acceptance criterion ${criterion.criterionId}, then run goal_evidence with action:"check_done" again.`,
         repairTarget: criterion.fileRefs?.join(", ") ?? repairTargetForCondition(condition),
         implicatedFiles: criterion.fileRefs,
         failingCommands: criterion.commandRefs,
@@ -518,8 +557,8 @@ function repairIssuesForCondition(condition: DoneCondition, result: DoneResult |
     conditionId: condition.id,
     evidenceSummary: result?.evidence ?? "Required evidence missing",
     repairGuidance: result
-      ? `Repair the implementation so required Done Condition ${condition.id} passes, then run goal_check_done again.`
-      : `Collect canonical Reviewer evidence by running goal_check_done for required Done Condition ${condition.id}.`,
+      ? `Repair the implementation so required Done Condition ${condition.id} passes, then run goal_evidence with action:"check_done" again.`
+      : `Collect canonical Reviewer evidence by running goal_evidence with action:"check_done" for required Done Condition ${condition.id}.`,
     repairTarget: repairTargetForCondition(condition),
   })];
 }
@@ -598,19 +637,19 @@ export function assertGoalReviewerDoneAuthorized(
   if (authorization.agentName !== goal.reviewerAgent) {
     throw new GoalReviewerAuthorizationError(
       goal.id,
-      `goal_check_done requires reviewer agent ${goal.reviewerAgent}, got ${authorization.agentName ?? "unknown"}`,
+      `goal_evidence action:"check_done" requires reviewer agent ${goal.reviewerAgent}, got ${authorization.agentName ?? "unknown"}`,
     );
   }
   if (authorization.sessionRole !== "review") {
     throw new GoalReviewerAuthorizationError(
       goal.id,
-      `goal_check_done requires a review session, got ${authorization.sessionRole ?? "unknown"}`,
+      `goal_evidence action:"check_done" requires a review session, got ${authorization.sessionRole ?? "unknown"}`,
     );
   }
   if (authorization.sessionGoalId !== goal.id) {
     throw new GoalReviewerAuthorizationError(
       goal.id,
-      `goal_check_done requires matching session goal ${goal.id}, got ${authorization.sessionGoalId ?? "unknown"}`,
+      `goal_evidence action:"check_done" requires matching session goal ${goal.id}, got ${authorization.sessionGoalId ?? "unknown"}`,
     );
   }
   assertGoalReviewEvidencePhaseStatus(goal);

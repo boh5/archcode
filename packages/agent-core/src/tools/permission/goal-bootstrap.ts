@@ -6,8 +6,7 @@ import {
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
   TOOL_GLOB,
-  TOOL_GOAL_RETRY,
-  TOOL_GOAL_RUN,
+  TOOL_GOAL_MANAGE,
   TOOL_GREP,
   TOOL_LSP_DIAGNOSTICS,
   TOOL_LSP_FIND_REFERENCES,
@@ -39,7 +38,7 @@ const SAFE_BOOTSTRAP_TOOLS = new Set<string>([
 ]);
 
 export function createGoalBootstrapPermission(): ToolPermission {
-  return async (_input: unknown, ctx: ToolExecutionContext): Promise<PermissionDecision> => {
+  return async (input: unknown, ctx: ToolExecutionContext): Promise<PermissionDecision> => {
     const state = ctx.store.getState();
     if (state.sessionRole !== "main" || !state.goalId) return { outcome: "allow" };
 
@@ -47,17 +46,27 @@ export function createGoalBootstrapPermission(): ToolPermission {
     if (goal.status === "running") return { outcome: "allow" };
     if (SAFE_BOOTSTRAP_TOOLS.has(ctx.toolName)) return { outcome: "allow" };
 
-    const expectedTool = goal.status === "failed" ? TOOL_GOAL_RETRY : TOOL_GOAL_RUN;
-    if ((goal.status === "locked" || goal.status === "paused" || goal.status === "failed") && ctx.toolName === expectedTool) {
+    const expectedAction = goal.status === "failed" ? "retry" : "start";
+    if (
+      (goal.status === "locked" || goal.status === "paused" || goal.status === "failed")
+      && ctx.toolName === TOOL_GOAL_MANAGE
+      && getGoalManageAction(input) === expectedAction
+    ) {
       return { outcome: "allow" };
     }
 
     return {
       outcome: "deny",
-      reason: `Goal main session ${state.sessionId} must claim Goal ${goal.id} with ${expectedTool} before using ${ctx.toolName}`,
+      reason: `Goal main session ${state.sessionId} must claim Goal ${goal.id} with ${TOOL_GOAL_MANAGE}.${expectedAction} before using ${ctx.toolName}`,
       errorKind: "permission-denied",
       errorCode: "GOAL_BOOTSTRAP_TOOL_DENIED",
       source: "tool-guard",
     };
   };
+}
+
+function getGoalManageAction(input: unknown): string | undefined {
+  if (!input || typeof input !== "object" || !("action" in input)) return undefined;
+  const action = (input as { action?: unknown }).action;
+  return typeof action === "string" ? action : undefined;
 }

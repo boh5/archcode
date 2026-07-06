@@ -19,13 +19,10 @@ import {
   TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
-  TOOL_GOAL_CHECK_DONE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
-  TOOL_GOAL_CREATE,
-  TOOL_GOAL_LOCK,
-  TOOL_GOAL_RETRY,
-  TOOL_GOAL_RUN,
+  TOOL_GOAL_EVIDENCE,
+  TOOL_GOAL_MANAGE,
 } from "../../tools/names";
 
 const REQUIRED_AGENT_NAMES = [
@@ -46,6 +43,14 @@ const WORKFLOW_TOOLS = [
   "workflow_task_check",
   "artifact_read",
   "artifact_write",
+] as const;
+
+const REMOVED_GOAL_EXECUTABLE_TOOL_NAMES = [
+  "goal_create",
+  "goal_lock",
+  "goal_run",
+  "goal_retry",
+  "goal_check_done",
 ] as const;
 
 const SOURCE_WRITE_TOOLS = [
@@ -92,6 +97,15 @@ describe("agentDefinitions", () => {
     }
   });
 
+  test("all active definitions omit removed Goal executable tool names", () => {
+    for (const definition of agentDefinitions) {
+      expectNoTools(definition.tools.tools, REMOVED_GOAL_EXECUTABLE_TOOL_NAMES);
+      for (const toolName of REMOVED_GOAL_EXECUTABLE_TOOL_NAMES) {
+        expect(definition.rolePrompt).not.toContain(toolName);
+      }
+    }
+  });
+
   test("default active definitions do not expose GitHub connector tools", () => {
     for (const definition of agentDefinitions) {
       expectNoTools(definition.tools.tools, GITHUB_CONNECTOR_TOOLS);
@@ -101,11 +115,8 @@ describe("agentDefinitions", () => {
   test("orchestrator owns Goal orchestration and delegates to all five child roles", () => {
     const tools = orchestratorAgentDefinition.tools.tools;
 
-    expect(tools).toContain(TOOL_GOAL_CREATE);
-    expect(tools).toContain(TOOL_GOAL_LOCK);
-    expect(tools).toContain(TOOL_GOAL_RUN);
-    expect(tools).toContain(TOOL_GOAL_RETRY);
-    expect(tools).not.toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain(TOOL_GOAL_MANAGE);
+    expect(tools).not.toContain(TOOL_GOAL_EVIDENCE);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
     expect(tools).not.toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_DELEGATE);
@@ -118,10 +129,20 @@ describe("agentDefinitions", () => {
     ]);
     expect(orchestratorAgentDefinition.mcpTools).toEqual(["context7", "exa"]);
     expect(orchestratorAgentDefinition.rolePrompt).toContain("## Goal Role: Orchestrator");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_create");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_lock");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_run");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_check_done");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_manage");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=create");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=lock");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=start");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=advance_phase build");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=advance_phase review");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=retry");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_create");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_lock");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_run");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_retry");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_check_done");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_manage.finalize_review");
+    expect(orchestratorAgentDefinition.rolePrompt).not.toContain("finalize_review");
     expect(orchestratorAgentDefinition.rolePrompt).not.toContain("workflow_create");
   });
 
@@ -144,7 +165,7 @@ describe("agentDefinitions", () => {
     const tools = buildAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
-    expect(tools).not.toContain(TOOL_GOAL_CHECK_DONE);
+    expectNoTools(tools, [TOOL_GOAL_MANAGE, TOOL_GOAL_EVIDENCE]);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
@@ -154,7 +175,8 @@ describe("agentDefinitions", () => {
   test("Reviewer can verify goals but cannot mutate source", () => {
     const tools = reviewerAgentDefinition.tools.tools;
 
-    expect(tools).toContain(TOOL_GOAL_CHECK_DONE);
+    expect(tools).toContain(TOOL_GOAL_EVIDENCE);
+    expect(tools).toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain("git_diff");
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
@@ -163,6 +185,18 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
+  });
+
+  test("Goal lifecycle and evidence tools are limited to intended roles", () => {
+    const goalManageAgents = agentDefinitions
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
+      .map((definition) => definition.name);
+    const goalEvidenceAgents = agentDefinitions
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_EVIDENCE))
+      .map((definition) => definition.name);
+
+    expect(goalManageAgents).toEqual(["orchestrator", "reviewer"]);
+    expect(goalEvidenceAgents).toEqual(["reviewer"]);
   });
 
   test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
@@ -175,11 +209,20 @@ describe("agentDefinitions", () => {
     expect(prompt).toContain("DONE");
     expect(prompt).toContain("NOT_DONE");
     expect(prompt).not.toContain("ESCALATE_HUMAN");
+    expect(prompt).toContain("goal_evidence");
+    expect(prompt).toContain("goal_manage.finalize_review");
+    expect(prompt).not.toContain("goal_check_done");
   });
 
   test("Explore and Librarian are ancillary read-only agents with no delegation", () => {
     for (const definition of [exploreAgentDefinition, librarianAgentDefinition]) {
       expectNoTools(definition.tools.tools, SOURCE_WRITE_TOOLS);
+      expectNoTools(definition.tools.tools, [
+        TOOL_GOAL_MANAGE,
+        TOOL_GOAL_EVIDENCE,
+        TOOL_GOAL_ARTIFACT_READ,
+        TOOL_GOAL_ARTIFACT_WRITE,
+      ]);
       expect("delegateTargets" in definition.tools).toBe(false);
       expect("childPolicy" in definition).toBe(false);
       expect(definition.tools.tools).not.toContain(TOOL_DELEGATE);

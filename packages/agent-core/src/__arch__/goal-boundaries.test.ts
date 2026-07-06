@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
-import { TOOL_GOAL_CHECK_DONE } from "@archcode/protocol";
 
 import { agentDefinitions } from "../agents/definitions";
+import {
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
+  TOOL_GOAL_EVIDENCE,
+  TOOL_GOAL_MANAGE,
+} from "../tools/names";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -63,6 +68,38 @@ const webLegacyWorkflowUiImportPatterns = [
 const directGoalRunningTransitionPattern = /\.transitionStatus\s*\(\s*[^,]+,\s*["']running["']\s*\)/;
 
 const directDoneResultRecordPattern = /\.recordDoneResult\s*\(/;
+
+const directLifecycleMutationPatterns = [
+  /\.transitionStatus\s*\(/,
+  /\.updatePhase\s*\(/,
+  /\.recordReviewOutcome\s*\(/,
+  /\.complete\s*\(/,
+  /\.startRetryAttempt\s*\(/,
+] as const;
+
+const activeGoalToolNames = [
+  TOOL_GOAL_MANAGE,
+  TOOL_GOAL_EVIDENCE,
+  TOOL_GOAL_ARTIFACT_READ,
+  TOOL_GOAL_ARTIFACT_WRITE,
+] as const;
+
+const removedGoalExecutableToolNames = [
+  "goal_create",
+  "goal_lock",
+  "goal_run",
+  "goal_retry",
+  "goal_check_done",
+] as const;
+
+const fixedWorkflowSupervisorPatterns = [
+  /\bGoalSupervisor\b/,
+  /\bWorkflowSupervisor\b/,
+  /\b(?:create|run|start)GoalSupervisor\b/,
+  /\b(?:goal|workflow)SupervisorLoop\b/,
+  /fixed\s+workflow\s+supervisor/i,
+  /goal\s+supervisor/i,
+] as const;
 
 const rawLlmPersistenceFieldPatterns = [
   /\braw(?:Llm|LLM|Model|Reviewer)?(?:Output|Text|Transcript)\b/,
@@ -246,6 +283,12 @@ function expectNoViolations(violations: Violation[]): void {
   expect(violations, message).toEqual([]);
 }
 
+function goalToolsFor(agentName: string): readonly string[] {
+  const definition = agentDefinitions.find((candidate) => candidate.name === agentName);
+  if (!definition) throw new Error(`Missing agent definition: ${agentName}`);
+  return definition.tools.tools.filter((tool) => (activeGoalToolNames as readonly string[]).includes(tool));
+}
+
 function legacyWorkflowImplementationExists(): boolean {
   return existsSync(join(srcRoot, "agents/workflow")) || existsSync(join(srcRoot, "tools/builtins/workflow"));
 }
@@ -375,12 +418,49 @@ describe("Goal migration boundaries", () => {
     );
   });
 
-  test("goal_check_done is exposed only to Reviewer tool allowlists", () => {
+  test("active Goal tool allowlists match the agent-driven lifecycle boundary", () => {
+    expect(goalToolsFor("orchestrator")).toEqual([TOOL_GOAL_MANAGE, TOOL_GOAL_ARTIFACT_READ]);
+    expect(goalToolsFor("plan")).toEqual([TOOL_GOAL_ARTIFACT_READ, TOOL_GOAL_ARTIFACT_WRITE]);
+    expect(goalToolsFor("build")).toEqual([TOOL_GOAL_ARTIFACT_READ, TOOL_GOAL_ARTIFACT_WRITE]);
+    expect(goalToolsFor("reviewer")).toEqual([
+      TOOL_GOAL_EVIDENCE,
+      TOOL_GOAL_MANAGE,
+      TOOL_GOAL_ARTIFACT_READ,
+      TOOL_GOAL_ARTIFACT_WRITE,
+    ]);
+    expect(goalToolsFor("explore")).toEqual([]);
+    expect(goalToolsFor("librarian")).toEqual([]);
+  });
+
+  test("goal_evidence is exposed only to Reviewer tool allowlists", () => {
     const exposedTo = agentDefinitions
-      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_CHECK_DONE))
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_EVIDENCE))
       .map((definition) => definition.name);
 
     expect(exposedTo).toEqual(["reviewer"]);
+  });
+
+  test("goal_manage is exposed only to lifecycle roles", () => {
+    const exposedTo = agentDefinitions
+      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
+      .map((definition) => definition.name);
+
+    expect(exposedTo).toEqual(["orchestrator", "reviewer"]);
+  });
+
+  test("removed Goal executable names are absent from active agent allowlists and prompts", () => {
+    for (const definition of agentDefinitions) {
+      for (const toolName of removedGoalExecutableToolNames) {
+        expect(definition.tools.tools).not.toContain(toolName);
+        expect(definition.rolePrompt).not.toContain(toolName);
+      }
+    }
+  });
+
+  test("production Goal tools keep lifecycle mutations behind GoalRunner", () => {
+    expectNoViolations(
+      findSourceTextViolations("packages/agent-core/src/tools/builtins", directLifecycleMutationPatterns),
+    );
   });
 
   test("production tool code does not directly record Goal done results", () => {
@@ -405,6 +485,15 @@ describe("Goal migration boundaries", () => {
         ]),
         [...workflowRegistrationPatterns, ...serverWorkflowRoutePatterns],
       ),
+    );
+  });
+
+  test("production code does not introduce a fixed workflow supervisor", () => {
+    expectNoViolations(
+      findWorkspaceTextViolations([
+        "apps/server/src",
+        "packages/agent-core/src",
+      ], fixedWorkflowSupervisorPatterns),
     );
   });
 

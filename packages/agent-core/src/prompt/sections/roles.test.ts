@@ -26,6 +26,14 @@ function makeCtx(rolePrompt?: string): PromptContext {
   };
 }
 
+const REMOVED_GOAL_EXECUTABLE_TOOL_NAMES = [
+  "goal_create",
+  "goal_lock",
+  "goal_run",
+  "goal_retry",
+  "goal_check_done",
+] as const;
+
 describe("buildRoleSection", () => {
   test.each([
     ["orchestrator", orchestratorAgentDefinition.rolePrompt, "## Goal Role: Orchestrator"],
@@ -47,13 +55,38 @@ describe("buildRoleSection", () => {
     expect(buildRoleSection(makeCtx(undefined))).toBeNull();
   });
 
+  test.each([
+    ["orchestrator", orchestratorAgentDefinition.rolePrompt],
+    ["plan", planAgentDefinition.rolePrompt],
+    ["build", buildAgentDefinition.rolePrompt],
+    ["reviewer", reviewerAgentDefinition.rolePrompt],
+    ["explore", exploreAgentDefinition.rolePrompt],
+    ["librarian", librarianAgentDefinition.rolePrompt],
+  ])("%s role prompt omits removed Goal executable names", (_name, rolePrompt) => {
+    const result = buildRoleSection(makeCtx(rolePrompt));
+
+    for (const toolName of REMOVED_GOAL_EXECUTABLE_TOOL_NAMES) {
+      expect(result).not.toContain(toolName);
+    }
+  });
+
   test("orchestrator role prompt describes Goal lifecycle and delegation boundaries", () => {
     const result = buildRoleSection(makeCtx(orchestratorAgentDefinition.rolePrompt));
 
-    expect(result).toContain("goal_create");
-    expect(result).toContain("goal_lock");
-    expect(result).toContain("goal_run");
-    expect(result).toContain("goal_check_done");
+    expect(result).toContain("goal_manage");
+    expect(result).toContain("action=create");
+    expect(result).toContain("action=lock");
+    expect(result).toContain("action=start");
+    expect(result).toContain("action=advance_phase build");
+    expect(result).toContain("action=advance_phase review");
+    expect(result).toContain("action=retry");
+    expect(result).not.toContain("goal_create");
+    expect(result).not.toContain("goal_lock");
+    expect(result).not.toContain("goal_run");
+    expect(result).not.toContain("goal_retry");
+    expect(result).not.toContain("goal_check_done");
+    expect(result).not.toContain("goal_manage.finalize_review");
+    expect(result).not.toContain("finalize_review");
     expect(result).toContain("Tool sets are hardcoded by child agent definitions");
     expect(result).toContain("Plan handles requirements");
     expect(result).toContain("Build writes code");
@@ -88,7 +121,9 @@ describe("buildRoleSection", () => {
     expect(result).toContain("DONE");
     expect(result).toContain("NOT_DONE");
     expect(result).not.toContain("ESCALATE_HUMAN");
-    expect(result).toContain("goal_check_done");
+    expect(result).toContain("goal_evidence");
+    expect(result).toContain("goal_manage.finalize_review");
+    expect(result).not.toContain("goal_check_done");
     expect(result).toContain("no file_write, file_edit, bash, or ast_grep_replace");
   });
 

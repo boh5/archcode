@@ -46,11 +46,11 @@ function deniedResponse(): HitlResponse {
 }
 
 function passingResult(conditionId = condition.id): DoneResult {
-  return { conditionId, passed: true, evidence: "goal_check_done passed", checkedAt: new Date().toISOString() };
+  return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
 function failingResult(conditionId = condition.id): DoneResult {
-  return { conditionId, passed: false, evidence: "goal_check_done failed", checkedAt: new Date().toISOString() };
+  return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
 }
 
 function customFailingResult(conditionId: string, evidence: string): DoneResult {
@@ -123,6 +123,68 @@ async function runToReview(goalId: string, runner: GoalRunner): Promise<void> {
 }
 
 describe("GoalRunner", () => {
+  it("creates draft goals through the lifecycle facade", async () => {
+    const runner = createRunner();
+
+    const goal = await runner.createDraft({
+      projectId: "project-a",
+      title: "Draft through runner",
+      author: "architect",
+      doneConditions: [condition],
+      retryPolicy: { maxRetries: 2, backoffMs: 5, escalateOnFailure: true },
+      approvalPoints: ["after_plan"],
+      reviewerAgent: "senior-reviewer",
+    });
+
+    expect(goal).toMatchObject({
+      projectId: "project-a",
+      title: "Draft through runner",
+      status: "draft",
+      phase: "plan",
+      doneConditions: [condition],
+      retryPolicy: { maxRetries: 2, backoffMs: 5, escalateOnFailure: true },
+      approvalPoints: ["after_plan"],
+      reviewerAgent: "senior-reviewer",
+      author: "architect",
+    });
+    expect(await manager.read(goal.id)).toMatchObject({ status: "draft", title: "Draft through runner" });
+  });
+
+  it("locks draft goals through the lifecycle facade", async () => {
+    const runner = createRunner();
+    const goal = await runner.createDraft({
+      projectId: "project-a",
+      title: "Lock through runner",
+      author: "architect",
+      doneConditions: [condition],
+    });
+
+    const locked = await runner.lockDraft(goal.id, "locker-session");
+
+    expect(locked).toMatchObject({
+      id: goal.id,
+      status: "locked",
+      lockedBy: "locker-session",
+    });
+    expect(typeof locked.lockedAt).toBe("string");
+    expect(await manager.read(goal.id)).toMatchObject({ status: "locked", lockedBy: "locker-session" });
+  });
+
+  it("records authorized reviewer done results through the runner facade", async () => {
+    const goal = await lockedGoal();
+    const runner = createRunner();
+    await runToReview(goal.id, runner);
+
+    const verifying = await runner.recordAuthorizedReviewerDoneResult(goal.id, condition.id, passingResult(), {
+      agentName: "reviewer",
+      sessionRole: "review",
+      sessionGoalId: goal.id,
+    });
+
+    expect(verifying.status).toBe("verifying");
+    expect(verifying.doneResults[condition.id]?.passed).toBe(true);
+  });
+
   it("runs the happy path with approval gates, reviewer evidence, and completion", async () => {
     const goal = await lockedGoal(["after_plan", "before_complete"]);
     const runner = createRunner({ approval: approvedResponse() });
@@ -268,7 +330,7 @@ describe("GoalRunner", () => {
       expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE" });
       expect(failed.repairContext?.issues.map((issue) => issue.conditionId).sort()).toEqual(["AC-002", "AC-003"]);
       expect(failed.repairContext?.issues[0]?.evidenceSummary).toBe("Required evidence missing");
-      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("goal_check_done");
+      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("goal_evidence with action:\"check_done\"");
       expect(failed.lastError).toContain("Reviewer NOT_DONE");
     });
 

@@ -15,11 +15,8 @@ import { createMemoryWriteTool } from "../tools/builtins/memory-write";
 import {
   createGoalArtifactReadTool,
   createGoalArtifactWriteTool,
-  createGoalCheckDoneTool,
-  createGoalCreateTool,
-  createGoalLockTool,
-  createGoalRetryTool,
-  createGoalRunTool,
+  goalEvidenceTool,
+  goalManageTool,
 } from "../tools/builtins/goal-tools";
 import { createGitHubToolDescriptors } from "../tools/github";
 
@@ -33,11 +30,8 @@ export function registerBuiltinTools(
   registry.register(createMemoryReadTool());
   registry.register(createMemoryWriteTool());
 
-  registry.register(createGoalCreateTool());
-  registry.register(createGoalLockTool());
-  registry.register(createGoalRunTool());
-  registry.register(createGoalRetryTool());
-  registry.register(createGoalCheckDoneTool());
+  registry.register(goalManageTool);
+  registry.register(goalEvidenceTool);
   registry.register(createGoalArtifactReadTool());
   registry.register(createGoalArtifactWriteTool());
 

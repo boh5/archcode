@@ -59,11 +59,8 @@ export const TOOL_MEMORY_READ = "memory_read";
 export const TOOL_MEMORY_WRITE = "memory_write";
 
 // Goal lifecycle tools
-export const TOOL_GOAL_CREATE = "goal_create";
-export const TOOL_GOAL_LOCK = "goal_lock";
-export const TOOL_GOAL_RUN = "goal_run";
-export const TOOL_GOAL_RETRY = "goal_retry";
-export const TOOL_GOAL_CHECK_DONE = "goal_check_done";
+export const TOOL_GOAL_MANAGE = "goal_manage";
+export const TOOL_GOAL_EVIDENCE = "goal_evidence";
 export const TOOL_GOAL_ARTIFACT_READ = "goal_artifact_read";
 export const TOOL_GOAL_ARTIFACT_WRITE = "goal_artifact_write";
 
@@ -103,11 +100,8 @@ export type BuiltinToolName =
   | typeof TOOL_SKILL_READ
   | typeof TOOL_MEMORY_READ
   | typeof TOOL_MEMORY_WRITE
-  | typeof TOOL_GOAL_CREATE
-  | typeof TOOL_GOAL_LOCK
-  | typeof TOOL_GOAL_RUN
-  | typeof TOOL_GOAL_RETRY
-  | typeof TOOL_GOAL_CHECK_DONE
+  | typeof TOOL_GOAL_MANAGE
+  | typeof TOOL_GOAL_EVIDENCE
   | typeof TOOL_GOAL_ARTIFACT_READ
   | typeof TOOL_GOAL_ARTIFACT_WRITE;
 
@@ -164,11 +158,8 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_SKILL_READ]: "skill",
   [TOOL_MEMORY_READ]: "memory",
   [TOOL_MEMORY_WRITE]: "memory",
-  [TOOL_GOAL_CREATE]: "goal",
-  [TOOL_GOAL_LOCK]: "goal",
-  [TOOL_GOAL_RUN]: "goal",
-  [TOOL_GOAL_RETRY]: "goal",
-  [TOOL_GOAL_CHECK_DONE]: "goal",
+  [TOOL_GOAL_MANAGE]: "goal",
+  [TOOL_GOAL_EVIDENCE]: "goal",
   [TOOL_GOAL_ARTIFACT_READ]: "goal",
   [TOOL_GOAL_ARTIFACT_WRITE]: "goal",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;

@@ -325,8 +325,8 @@ function buildGoalRunUserMessage(goal: GoalState): string {
     "Bootstrap an ArchCode Goal run.",
     `Goal ID: ${goal.id}`,
     `Goal title JSON: ${JSON.stringify(goal.title)}`,
-    "Your first action must be calling goal_run with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_run succeeds.",
-    "After goal_run succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+    "Your first action must be calling goal_manage with action:\"start\" and this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_manage action:\"start\" succeeds.",
+    "After goal_manage action:\"start\" succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, advance phases with goal_manage.action=\"advance_phase\", record Reviewer evidence with goal_evidence action:\"check_done\", and report progress.",
   ].join("\n");
 }
 
@@ -335,8 +335,8 @@ function buildGoalRetryUserMessage(goal: GoalState): string {
     "Bootstrap an ArchCode Goal retry.",
     `Goal ID: ${goal.id}`,
     `Goal title JSON: ${JSON.stringify(goal.title)}`,
-    "Your first action must be calling goal_retry with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_retry succeeds.",
-    "After goal_retry succeeds, load the Goal state, follow the Goal operating loop from the plan phase, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+    "Your first action must be calling goal_manage with action:\"retry\" and this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_manage action:\"retry\" succeeds.",
+    "After goal_manage action:\"retry\" succeeds, load the Goal state, follow the Goal operating loop from the plan phase, keep Done Conditions locked, use Plan/Build/Reviewer delegation, advance phases with goal_manage.action=\"advance_phase\", record Reviewer evidence with goal_evidence action:\"check_done\", and report progress.",
   ].join("\n");
 }
 
