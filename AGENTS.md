@@ -275,10 +275,10 @@ Minimal example:
 
 | Role | Hooks | Notes |
 |------|-------|-------|
-| **Orchestrator** (`"orchestrator"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Owns root store + SubAgentManager. Delegates to `plan`, `build`, `reviewer`, `explore`, `librarian`. Goal lifecycle tools: `goal_create`, `goal_lock`, `goal_run`, `goal_retry`, `goal_artifact_read`. |
+| **Orchestrator** (`"orchestrator"`) | auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation | Owns root store + SubAgentManager. Delegates to `plan`, `build`, `reviewer`, `explore`, `librarian`. Goal lifecycle tool: `goal_manage`; artifact read: `goal_artifact_read`. |
 | **Plan** (`"plan"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only planning agent. Can write the current Goal's `plan.md`; delegates to `explore`/`librarian`. |
 | **Build** (`"build"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source write agent with file write/edit, bash, LSP, git diff/status, and `ast_grep_replace`. Can write the current Goal's `build.md`; delegates to `explore`. |
-| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only verifier. Has Reviewer-only `goal_check_done`, writes review/spec evidence artifacts, delegates to `explore`/`librarian`, defaults to NOT_DONE until evidence proves DONE. |
+| **Reviewer** (`"reviewer"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Source read-only verifier. Has Reviewer-only `goal_evidence` plus `goal_manage.finalize_review`, writes review/spec evidence artifacts, delegates to `explore`/`librarian`, defaults to NOT_DONE until evidence proves DONE. |
 | **Explore** (`"explore"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Read-only local code search/LSP/git diff/status/AST search agent. No delegation and no memory extraction. |
 | **Librarian** (`"librarian"`) | auto-compact, auto-inject-reminder, todo-continuation, transcript-save | Read-only documentation/reference agent with local read/search, web_fetch, memory_read, and MCP docs/search tools. No delegation and no memory extraction. |
 
@@ -313,7 +313,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 ## Tool System
 
-**41 builtin tools** (24 base via `createBuiltinToolDescriptors()`, 2 memory, 7 Goal, 8 GitHub connector tools — all registered in `core/register-tools.ts`):
+**38 builtin tools** (24 base via `createBuiltinToolDescriptors()`, 2 memory, 4 Goal, 8 GitHub connector tools — all registered in `core/register-tools.ts`):
 
 | Category | Tools | Notes |
 |----------|-------|-------|
@@ -326,7 +326,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 | LSP | lsp_diagnostics✅, lsp_goto_definition✅, lsp_find_references✅, lsp_symbols✅ | Guard: workspace |
 | Delegation / Skills | delegate❌, background_output✅, wait_for_reminder✅, view_tool_output✅, cancel_session❌, skill_list✅, skill_read✅ | Delegation tools are available only to agents whose definitions include them; skills are read-only discovery/read helpers. |
 | Memory | memory_read✅, memory_write❌ | memory_write rejects secrets |
-| Goal | goal_create❌, goal_lock❌, goal_run❌, goal_retry❌, goal_check_done❌, goal_artifact_read✅, goal_artifact_write❌ | Goal tools replace legacy workflow tools. `goal_check_done` is Reviewer-only by agent definition. |
+| Goal | goal_manage❌, goal_evidence❌, goal_artifact_read✅, goal_artifact_write❌ | Goal tools replace legacy workflow tools. `goal_evidence` is Reviewer-only by agent definition; Reviewer finalization uses `goal_manage.finalize_review`. |
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
@@ -348,7 +348,7 @@ Project: `.archcode/memory/`, User: `~/.archcode/memory/`. Structure: `index.md`
 
 ## Goal System
 
-Goal is the primary execution primitive; legacy workflow runtime/tools/routes are removed. `packages/agent-core/src/goals/` owns Goal state, canonical artifacts, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Canonical artifacts are current Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files. `goal_check_done` is Reviewer-only and returns external outcomes exactly as `DONE` or `NOT_DONE`; Orchestrator must not declare completion without Reviewer evidence.
+Goal is the primary execution primitive; legacy workflow runtime/tools/routes are removed. `packages/agent-core/src/goals/` owns Goal state, canonical artifacts, Reviewer checks, retry state/backoff, token budgets, and isolated Goal memory. Canonical artifacts are current Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files. `goal_evidence` is Reviewer-only for Done Condition evidence, and `goal_manage.finalize_review` records external outcomes exactly as `DONE` or `NOT_DONE`; Orchestrator must not declare completion without Reviewer evidence.
 
 ## HITL
 
