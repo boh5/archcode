@@ -320,17 +320,22 @@
 
 ### 阶段 5:进阶
 
-**目标**:无需人盯的 unattended Loop 完整能力。拆必需 + 可选两部分。
+**目标**:无需人盯的 unattended Loop 完整能力。Phase 5 已确认交付完整 5a,再加安全的自清理子集。readiness/custom pattern 只保留占位,不进入当前实现。
 
-**Phase 5a 候选方向**(不属于 Phase 4 承诺):
-- `cron` + `trigger` 调度(on_commit/on_pr/on_ci_fail)
-- 跨 loop 协调、队列、同分支节流、maxConcurrent
-- git worktree 隔离执行
+**Phase 5a 已确认范围**:
+- `cron` 调度:5-field UTC cron 表达式,补齐 missed-run 元数据,只 enqueue 最新一次错过的 run
+- `triggers[]`:事件触发列表,支持 `on_commit` / `on_pr` / `on_ci_fail`,触发器带最小 cadence 与基础过滤条件
+- 跨 loop 协调、持久队列、同分支节流、`maxConcurrent`:用 project-level coordinator 控制并发,同 branch/collision key 串行
+- git worktree 隔离执行:action loop 在独立 worktree 中运行,主工作区保持 clean boundary
 
-**Phase 5b 候选方向**:
-- 用户自定义 pattern
-- Loop 自清理
-- readiness score(Web UI badge),未来 advisory 指标,不是当前 gate
+**Phase 5 安全 cleanup 子集**:
+- `cleanupPolicy` 和 `cleanupState`:支持标记候选、自动 pause、保留需审查 worktree、删除明确无变化且策略允许的 worktree
+- 只允许保守清理。changed、failed、expired 或非托管 worktree 必须保留并要求审查,不能自动删除
+
+**仍然排除,仅作未来占位**:
+- readiness score / readiness gate / readiness scheduler。`readinessScore` 只允许 legacy `null` 兼容,不做分数、不做门控
+- 用户自定义 pattern registry/profile/script/hooks/DSL。预设库仍是可选起点,当前不开放用户可执行 pattern 文件
+- 自定义 tool profiles 和 auto-approval 模式。工具边界仍由 agent definition、Loop tool profile allowlist、现有 permission/HITL 管道控制
 
 **External integrations**(Phase 4):只接 GitHub.com + GitHub Actions,让 pr_babysitter / ci_sweeper / issue_triage 等预设能读取状态和评论。GitHub Enterprise、GitLab、Bitbucket、CircleCI、Jenkins、OAuth、GitHub App、浏览器安装授权留后续。
 
@@ -404,8 +409,8 @@
 
 ### 8.2 功能反范围
 
-- ❌ 不做 cron/trigger 调度(Phase 5a 必需,非反范围,但不在 Phase 1-4)
-- ❌ 不做用户自定义 pattern(Phase 5b 可选,预设库已足够起步)
+- ❌ Phase 1-4 不做 cron/trigger 调度;Phase 5 已确认支持 cron 和 `triggers[]`
+- ❌ Phase 5 不做用户自定义 pattern registry/profile/script/hooks/DSL。预设库已足够起步
 - ❌ 不做独立 worker 进程(单进程足够)
 - ❌ 不把缺失 model pricing 当零成本。provider model pricing 是可选 metadata;缺失时 USD budget enforcement 不可用。
 - ❌ Phase 2 不做 checkpoint/rollback/rerun 功能
@@ -473,7 +478,7 @@
 | Cognitive Surrender("loop 会处理"逃避思考) | S2 | UI 强制展示 last summary + run-log + 架构师必须 review escalate |
 | Comprehension debt spiral | S2 | 每次 run 产 summary + run-log;UI 强制展示 |
 | Over-reach(Loop 擅自大改) | S2 | Phase 4 用 tool profile、approvalPoints、collision guard 和 kill switch 限制风险;L2 minimal-fix 是未来 advisory |
-| 多 Loop 碰撞 | S3 | Phase 4 用 collision guard 阻止已知目标冲突;队列、同分支节流、maxConcurrent 是 Phase 5 候选方向 |
+| 多 Loop 碰撞 | S3 | Phase 4 用 collision guard 阻止已知目标冲突;Phase 5 用持久队列、同分支节流、`maxConcurrent` 和 worktree 隔离降低并发风险 |
 | Escalate 后无人看 | S3 | `waitedMs` 超期 UI 红标 + 通知 |
 | HITL 断线残留 | S2 | 复用 deferred 超时/abort 安全 resolve |
 | Workflow 删除回归 | S2 | `.archcode/workflows/` 保留只读(不删用户数据),runtime 不再读写 |
@@ -503,7 +508,7 @@
 9. **command_succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command_succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
 10. **Dashboard 留 Phase 1** —— 遍历 ProjectRegistry.list() + 各项目 .archcode/goals/ 文件聚合,REST 初始快照 + SSE 增量,不需新存储(决策 2026-06)
 11. **Phase 3 Loop 允许 action loop** —— 允许 Loop 跑 Goal(可改代码),靠 Reviewer 强制 + approvalPoints + 基础 budget 兜底。Phase 4 补完整护栏(throttle/hardStop/stagnation/kill switch)后才真正可无人看(决策 2026-07)
-12. **Phase 5 拆候选方向** —— cron/trigger、跨 loop 协调、队列、worktree、自定义 pattern、自清理、readiness score 都是 Phase 4 之后再评估,不是当前承诺(决策 2026-07,Phase 4 文档更新 2026-07)
+12. **Phase 5 边界确认** —— Phase 5 交付完整 5a:cron、`triggers[]`、跨 loop 协调、持久队列、同分支节流、`maxConcurrent`、worktree 隔离;再交付安全 cleanup 子集。readiness scoring/gates 和用户自定义 pattern 仍排除,只保留占位(决策更新 2026-07-06)
 13. **Phase 4 加第一批 external integrations** —— 只支持 GitHub.com(PR/issue)+ GitHub Actions 状态 connector,让 pr_babysitter / ci_sweeper / issue_triage 等预设可读取状态和评论。Phase 3 只本地预设可用(决策 2026-07,Phase 4 文档更新 2026-07)
 14. **不引入 Mission,但留占位** —— 保持 Session/Goal/Loop 三层。TDD 留"未来扩展点:Mission 原语"占位节,后续单个 Goal 不够大功能场景再评估(决策 2026-07)
 15. **Workflow 硬切迁移** —— Phase 1 同步删 code + 6-agent 立即 required。用户数据 `.archcode/workflows/` 保留只读。ProjectContext refactor 是高风险区,需扎实 acceptance test(决策 2026-07)

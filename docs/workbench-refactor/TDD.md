@@ -1252,17 +1252,24 @@ Projects
 
 ### 阶段 5:进阶
 
-**目标**:无需人盯的 unattended Loop 完整能力。拆必需 + 可选两部分。
+**目标**:无需人盯的 unattended Loop 完整能力。Phase 5 已确认交付完整 5a,再加安全 cleanup 子集。readiness/custom pattern 继续排除,只保留类型占位或未来讨论入口。
 
-**Phase 5a 候选方向**(不属于 Phase 4 承诺):
-- `cron` + `trigger` 调度(on_commit/on_pr/on_ci_fail)
-- 跨 loop 协调、队列、同分支节流、maxConcurrent
-- git worktree 隔离执行(action loop 改代码不污染主分支)
+**Phase 5a 已确认范围**:
+- `cron` 调度:5-field UTC expression,cron adapter 负责注册、next-fire 计算、restart catch-up,错过多次时只 enqueue 最新一次 missed run
+- `triggers[]`:事件触发列表,支持 `on_commit` / `on_pr` / `on_ci_fail`;trigger polling 只读取 GitHub/CI 状态,按 `cadenceMs` 和 subject dedupe 入队
+- 跨 loop 协调和持久队列:`LoopJobQueue` + `LoopJobCoordinator`,用 `dedupeKey`、`branchKey`、collision key 串行化同一分支/目标
+- `maxConcurrent`:project coordinator 配置,默认 2,控制同项目并发 job 数。Server route 暂不提供 project-level 持久化 API,不能把 route body 的 `projectConfig` 当成有效配置
+- git worktree 隔离执行:action loop 在 managed sibling root 下创建 worktree,session/tool cwd 使用 worktree,Loop state/run-log/queue 仍写 canonical workspace
 
-**Phase 5b 候选方向**:
-- 用户自定义 pattern(开放预设库,用户可写 SKILL.md 式 pattern 文件)
-- Loop 自清理(watchlist 空 → 删 scheduler)
-- readiness score(Web UI badge,15 信号,0-100 分,loop-audit scoring 纯函数移植),未来 advisory 指标,不是当前 gate
+**Phase 5 安全 cleanup 子集**:
+- `cleanupPolicy`:允许 mark/pause、自定义 quiet/no-finding 阈值、显式 `deleteUnchangedWorktrees`
+- `cleanupState`:记录 `cleanup_candidate`、`auto_paused`、`preserved`、`cleaned`、`cleanup_failed`、`expired_needs_review` 等状态
+- 删除只限 manager 重新检查后确认无变化且策略显式允许的 managed worktree。changed、failed、expired、blocked、非托管或路径异常的 worktree 必须保留并要求审查
+
+**明确排除的 Phase 5b/未来占位**:
+- readiness score / readiness gate / readiness scheduler。协议和 state 仅保留 `readinessScore?: null` 兼容占位,不能出现非 null 分数、maturity scoring 或调度门控
+- 用户自定义 pattern registry/profile/script/hooks/DSL。预设库仍是可选起点,当前不执行用户提供的 pattern 文件
+- 自定义 tool profiles 和 auto-approval 模式。工具安全边界继续由 agent definition、固定 Loop tool profile allowlist、permission/HITL 管道承担
 
 ---
 
@@ -1280,7 +1287,7 @@ Projects
 | **Comprehension debt spiral** | S2 | Loop 跑久了,架构师不懂项目现状 | 每次 run 产 run-log + summary;UI 强制展示 last summary |
 | **Self-improvement context poisoning** | S2 | bad suggestion 写入 memory | memory_write 已有 secret 拒绝;loop-write guard:禁止 loop 写 `knowledge/`,只写 `state.json` |
 | **Over-reach** | S2 | Loop 擅自做大改动 | Phase 4 用 tool profile、approvalPoints、collision guard 和 kill switch 限制风险;L2 minimal-fix 是未来 advisory |
-| **Parallel collision** | S3 | 多 loop 同分支并发改 | Phase 4 用 collision guard 阻止已知目标冲突;队列、同分支节流、maxConcurrent 是 Phase 5 候选方向 |
+| **Parallel collision** | S3 | 多 loop 同分支并发改 | Phase 4 用 collision guard 阻止已知目标冲突;Phase 5 用持久队列、同分支节流、`maxConcurrent` 和 worktree 隔离降低并发风险 |
 | **Escalation failure** | S3 | escalate 后无人看 → 永久挂起 | `waitedMs` 超期 → UI 红标 + 通知 |
 | **Notification fatigue** | S3 | Loop 频繁 escalate | noise 列表 + 同类 issue 折叠 + 用户可调阈值 |
 | **HITL 断线残留** | S2 | SSE 断线,pending HITL 永不 resolve | 复用现有 deferred 超时/abort 安全 resolve(approval timeout, question cancelled) |
@@ -1329,10 +1336,10 @@ Projects
 
 ## 14. 不做什么
 
-- ❌ 不做 cron / trigger 调度(Phase 5a 必需,见 §11)
-- ❌ 不做用户自定义 pattern(Phase 5b 可选,预设库已足够起步)
+- ❌ Phase 1-4 不做 cron / trigger 调度;Phase 5 已确认支持 cron 和 `triggers[]`
+- ❌ Phase 5 不做用户自定义 pattern registry/profile/script/hooks/DSL。预设库已足够起步
 - ❌ 不做独立 worker 进程(单进程足够,v3 视扩展)
-- ❌ 不做 loop-audit CLI(Web UI 展示 readiness 即可)
+- ❌ Phase 5 不做 loop-audit CLI、readiness score、readiness gate 或 readiness scheduler。`readinessScore` 只保留 null 兼容占位
 - ❌ 不做 OpenHands 式训练 critic 模型(研究阶段,成本高)
 - ❌ 不做 Kiro EARS notation + property testing(太正式,IDE 中心)
 - ❌ 不做"loop 自主改进项目"(误用,不是功能)
@@ -1374,7 +1381,7 @@ Projects
 | CLI-first(loop-init/loop-audit/loop-cost) | ArchCode 是 Web UI first |
 | GitHub Actions 作为 scheduler | ArchCode 有 in-process scheduler |
 | Tool-specific starters(grok/claude-code/codex) | ArchCode 是 tool-agnostic,model 在 .archcode.json |
-| 硬编码 pattern registry 作为唯一方式 | ArchCode 允许 custom pattern |
+| 硬编码 pattern registry 作为唯一方式 | ArchCode 当前只用内置预设作为可选起点;用户自定义 pattern registry/profile/script/hooks/DSL 留未来评估 |
 | STATE.md 手动维护 | ArchCode state.json 机器维护,state.md 是生成视图 |
 
 ### 15.3 ArchCode 相对 loop-engineering 的优势
