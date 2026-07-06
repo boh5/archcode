@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { GlobalSessionEventEnvelope, SessionEventPayload } from "@archcode/protocol";
+import type {
+  CompressionBlockSnapshot,
+  CompressionStateSnapshot,
+  GlobalSessionEventEnvelope,
+  SessionEventPayload,
+  SessionMessage,
+} from "@archcode/protocol";
 import type { PermissionRequest, QuestionRequest } from "../api/types";
 import {
   createWebSessionStore,
@@ -423,9 +429,9 @@ describe("initializeFromSnapshot", () => {
     expect(store.getState().nextEventId).toBe(2);
 
     // Snapshot from server has up-to-date data (eventCursor matches)
-    const snapshotMessages = [{ id: "msg-1", role: "assistant" as const, parts: [], createdAt: 1000 }];
+    const snapshotMessages: SessionMessage[] = [{ id: "msg-1", role: "assistant", parts: [], createdAt: 1000 }];
     store.getState().initializeFromSnapshot({
-      messages: snapshotMessages as any,
+      messages: snapshotMessages,
       steps: [],
       stats: { messages: { user: 3, assistant: 2, total: 5 }, tools: { calls: 3, completed: 2, failed: 0 }, steps: { started: 8, completed: 7 }, usage: { inputTokens: 100, outputTokens: 200, totalTokens: 300, reasoningTokens: 0, cachedInputTokens: 0 } },
       eventCursor: 2,
@@ -494,5 +500,173 @@ describe("resetTransientState", () => {
 
     expect(store.getState().pendingPermissions.size).toBe(0);
     expect(store.getState().pendingQuestions.size).toBe(0);
+  });
+});
+
+function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {}): CompressionBlockSnapshot {
+  return {
+    id: "block-1",
+    ref: "b1",
+    status: "active",
+    strategy: "dynamic-range",
+    trigger: "model_tool_call",
+    range: {
+      startMessageId: "first",
+      endMessageId: "tail",
+      startRef: "m0001",
+      endRef: "m0002",
+      startIndex: 0,
+      endIndex: 1,
+    },
+    summary: "## Current Objective\nKeep going",
+    childBlockRefs: [],
+    protectedRefs: [],
+    createdAt: 123456789,
+    updatedAt: 123456789,
+    ...overrides,
+  };
+}
+
+function makeCompressionState(block: CompressionBlockSnapshot): CompressionStateSnapshot {
+  return {
+    version: 1,
+    refMap: {
+      messageRefsById: { first: "m0001", tail: "m0002" },
+      messageIdsByRef: { m0001: "first", m0002: "tail" },
+      blockRefsById: { "block-1": "b1" },
+      blockIdsByRef: { b1: "block-1" },
+      nextMessageIndex: 3,
+      nextBlockIndex: 2,
+    },
+    blocksByRef: { b1: block },
+    activeBlockRefs: ["b1"],
+    inactiveBlockRefs: [],
+    supersededBlockRefs: [],
+    failures: [],
+    updatedAt: 123456789,
+  };
+}
+
+describe("compression events and snapshot hydration", () => {
+  beforeEach(() => {
+    __resetWebSessionStoresForTest();
+  });
+
+  test("reduces compression.block_committed into compression state and compressionBlocks", () => {
+    const store = createWebSessionStore("compress-1", "demo");
+    const block = makeCompressionBlock();
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      sessionId: "compress-1",
+    });
+
+    const state = store.getState();
+    expect(state.compression?.blocksByRef.b1?.status).toBe("active");
+    expect(state.compression?.activeBlockRefs).toEqual(["b1"]);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks?.[0]?.blockRef).toBe("b1");
+    expect(state.compressionBlocks?.[0]?.strategy).toBe("dynamic-range");
+    expect(state.compressionBlocks?.[0]?.summary).toContain("Keep going");
+    expect(state.messages.some((m) => m.compacted === true)).toBe(false);
+  });
+
+  test("reduces compression.block_failed into compression failures without compacted flags", () => {
+    const store = createWebSessionStore("compress-fail", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "compression.block_failed",
+        failure: { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+      }),
+      sessionId: "compress-fail",
+    });
+
+    const state = store.getState();
+    expect(state.compression?.failures).toEqual([
+      { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+    ]);
+    expect(state.compressionBlocks ?? []).toEqual([]);
+  });
+
+  test("reduces compression.ref_map_updated into compression refMap", () => {
+    const store = createWebSessionStore("compress-refmap", "demo");
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, {
+        type: "compression.ref_map_updated",
+        refMap: {
+          messageRefsById: { first: "m0001" },
+          messageIdsByRef: { m0001: "first" },
+          blockRefsById: {},
+          blockIdsByRef: {},
+          nextMessageIndex: 2,
+          nextBlockIndex: 1,
+        },
+        updatedAt: 200,
+      }),
+      sessionId: "compress-refmap",
+    });
+
+    expect(store.getState().compression?.refMap.messageRefsById.first).toBe("m0001");
+  });
+
+  test("initializeFromSnapshot hydrates compression and compressionBlocks from session snapshot", () => {
+    const store = createWebSessionStore("compress-snap", "demo");
+    const block = makeCompressionBlock();
+    const compression = makeCompressionState(block);
+
+    store.getState().initializeFromSnapshot({
+      compression,
+      compressionBlocks: [
+        {
+          type: "compression-block",
+          id: "compression:b1:part-1",
+          blockRef: "b1",
+          status: "active",
+          strategy: "dynamic-range",
+          trigger: "model_tool_call",
+          summary: "## Current Objective\nKeep going",
+          startRef: "m0001",
+          endRef: "m0002",
+          childBlockRefs: [],
+          committedAt: 123456789,
+        },
+      ],
+      eventCursor: 0,
+    });
+
+    const state = store.getState();
+    expect(state.compression?.blocksByRef.b1?.strategy).toBe("dynamic-range");
+    expect(state.compression?.activeBlockRefs).toEqual(["b1"]);
+    expect(state.compressionBlocks).toHaveLength(1);
+    expect(state.compressionBlocks?.[0]?.blockRef).toBe("b1");
+  });
+
+  test("does not overwrite compression when SSE is ahead of snapshot", () => {
+    const store = createWebSessionStore("compress-stale", "demo");
+    const block = makeCompressionBlock();
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      sessionId: "compress-stale",
+    });
+    store.getState().applyRemoteEnvelope({
+      ...event(1, userMessage("after")),
+      sessionId: "compress-stale",
+    });
+
+    expect(store.getState().nextEventId).toBe(2);
+    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
+
+    const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2", strategy: "hard-limit" });
+    store.getState().initializeFromSnapshot({
+      compression: makeCompressionState(staleBlock),
+      compressionBlocks: [],
+      eventCursor: 0,
+    });
+
+    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
+    expect(store.getState().compression?.blocksByRef.b2).toBeUndefined();
   });
 });
