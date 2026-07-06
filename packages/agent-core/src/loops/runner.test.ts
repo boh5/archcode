@@ -290,6 +290,53 @@ describe("session loop runner", () => {
     expect(await fixture.stateManager.readRunLog(loop.loopId)).toEqual([]);
   });
 
+  test("scheduler-compatible callback preserves unchanged worktree when deletion is disabled by default", async () => {
+    const fixture = await createFixture({ worktreePath: "/tmp/unchanged-preserved-worktree", worktreeHasChanges: false });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "unchanged-preserved-run",
+      startedAt: 4_100,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40), resolvedHeadSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "succeeded",
+      worktreePath: "/tmp/unchanged-preserved-worktree",
+      cleanupState: "preserved",
+    });
+    expect(result.observedArtifacts).toContainEqual({ path: "cleanup:preserved", status: "observed" });
+    expect(fixture.worktreeManager?.cleanupMock).not.toHaveBeenCalled();
+  });
+
+  test("scheduler-compatible callback cleans unchanged worktree when deletion is explicitly enabled", async () => {
+    const fixture = await createFixture({ worktreePath: "/tmp/unchanged-cleaned-worktree", worktreeHasChanges: false });
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      cleanupPolicy: { deleteUnchangedWorktrees: true },
+    });
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "unchanged-cleaned-run",
+      startedAt: 4_200,
+      job: testJob(loop.loopId, { baseSha: "a".repeat(40), resolvedHeadSha: "a".repeat(40) }),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "succeeded",
+      worktreePath: "/tmp/unchanged-cleaned-worktree",
+      cleanupState: "cleaned",
+    });
+    expect(result.observedArtifacts).toContainEqual({ path: "cleanup:cleaned", status: "observed" });
+    expect(fixture.worktreeManager?.cleanupMock).toHaveBeenCalledTimes(1);
+  });
+
   test("scheduler-compatible callback releases prepared worktree when session creation fails before execution", async () => {
     const fixture = await createFixture({
       worktreePath: "/tmp/session-create-fail-worktree",
@@ -718,6 +765,7 @@ async function createFixture(options: {
   afterCreateSession?: (sessionId: string) => Promise<void>;
   afterGoalStart?: (goal: GoalState) => Promise<void>;
   worktreePath?: string;
+  worktreeHasChanges?: boolean;
 } = {}): Promise<{
   stateManager: LoopStateManager;
   runtime: FakeLoopRuntime;
@@ -735,7 +783,7 @@ async function createFixture(options: {
   const goalStateManager = new FakeGoalStateManager();
   const goalRunner = new FakeGoalRunner(goalStateManager, options.goalStartError, options.afterGoalStart, options.goalStartWithoutMainSession ?? false);
   const collisionLedger = new CollisionLedger({ stateManager, workspaceRoot, clock: { now: () => 1_000 } });
-  const worktreeManager = options.worktreePath === undefined ? undefined : new FakeWorktreeManager(options.worktreePath);
+  const worktreeManager = options.worktreePath === undefined ? undefined : new FakeWorktreeManager(options.worktreePath, options.worktreeHasChanges ?? true);
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -848,24 +896,24 @@ class FakeWorktreeManager {
     worktreePath: input.worktreePath,
     branchName: input.branchName,
     baseSha: input.baseSha,
-    headSha: "b".repeat(40),
-    status: { dirty: true, entries: [{ path: "evidence/report.md", index: "?", worktree: "?", raw: "?? evidence/report.md" }] },
-    untrackedFiles: ["evidence/report.md"],
-    localCommitsAhead: 1,
-    changedRefs: [{ ref: `refs/heads/${input.branchName}`, before: input.baseSha, after: "b".repeat(40) }],
-    diffStats: { committed: " README.md | 1 +", workingTree: " evidence/report.md | 1 +" },
-    evidenceArtifacts: [{ path: "evidence/report.md", status: "created" }],
-    hasChanges: true,
+    headSha: this.hasChanges ? "b".repeat(40) : input.baseSha,
+    status: this.hasChanges ? { dirty: true, entries: [{ path: "evidence/report.md", index: "?", worktree: "?", raw: "?? evidence/report.md" }] } : { dirty: false, entries: [] },
+    untrackedFiles: this.hasChanges ? ["evidence/report.md"] : [],
+    localCommitsAhead: this.hasChanges ? 1 : 0,
+    changedRefs: this.hasChanges ? [{ ref: `refs/heads/${input.branchName}`, before: input.baseSha, after: "b".repeat(40) }] : [],
+    diffStats: this.hasChanges ? { committed: " README.md | 1 +", workingTree: " evidence/report.md | 1 +" } : { committed: "", workingTree: "" },
+    evidenceArtifacts: this.hasChanges ? [{ path: "evidence/report.md", status: "created" }] : [],
+    hasChanges: this.hasChanges,
   }));
   readonly cleanupMock = mock(async (input: { inspection: LoopWorktreeInspection }) => ({
-    cleanupState: "preserved" as const,
-    removed: false,
-    reviewRequired: true,
-    reason: "worktree contains changes",
+    cleanupState: input.inspection.hasChanges ? "preserved" as const : "cleaned" as const,
+    removed: !input.inspection.hasChanges,
+    reviewRequired: input.inspection.hasChanges,
+    reason: input.inspection.hasChanges ? "worktree contains changes" : "worktree had no changes",
     worktreePath: input.inspection.worktreePath,
   }));
 
-  constructor(private readonly worktreePath: string) {}
+  constructor(private readonly worktreePath: string, private readonly hasChanges: boolean) {}
 
   async create(input: Parameters<FakeWorktreeManager["createMock"]>[0]): ReturnType<FakeWorktreeManager["createMock"]> {
     return await this.createMock(input);

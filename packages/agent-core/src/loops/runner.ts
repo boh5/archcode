@@ -5,6 +5,7 @@ import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
 import type { LoopCleanupState, LoopGoalTemplate, LoopJobStatus, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopWorktreeArtifact } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
+import { normalizeLoopCleanupPolicy } from "./cleanup";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
 import { LoopWorktreeManagerError, type LoopWorktreeCreateResult, type LoopWorktreeInspection } from "./worktree-manager";
@@ -316,7 +317,7 @@ export class LoopRunner {
       });
       executionStarted = true;
       const result = await this.#executeGoalSession(input, started, scope);
-      return await this.#finalizeWorktreeResult(scope, result);
+      return await this.#finalizeWorktreeResult(input.loop, scope, result);
     } catch (error) {
       const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, undefined);
       const result = budgetExceeded ?? {
@@ -325,7 +326,7 @@ export class LoopRunner {
         error: errorToMessage(error),
       };
       if (!executionStarted) this.#releaseExecutionScope(scope, result.sessionId);
-      return await this.#finalizeWorktreeResult(scope, result);
+      return await this.#finalizeWorktreeResult(input.loop, scope, result);
     }
   }
 
@@ -398,7 +399,7 @@ export class LoopRunner {
       await this.#recordScheduledSessionLink(input, session.sessionId);
       executionStarted = true;
       const result = await this.#executeLoopSession(input, session.sessionId, scope);
-      return await this.#finalizeWorktreeResult(scope, result);
+      return await this.#finalizeWorktreeResult(input.loop, scope, result);
     } catch (error) {
       const budgetExceeded = await this.#budgetExceededResult(input.loop, input.runId, undefined);
       const result = budgetExceeded ?? {
@@ -406,7 +407,7 @@ export class LoopRunner {
         error: errorToMessage(error),
       };
       if (!executionStarted) this.#releaseExecutionScope(scope, result.sessionId);
-      return await this.#finalizeWorktreeResult(scope, result);
+      return await this.#finalizeWorktreeResult(input.loop, scope, result);
     }
   }
 
@@ -566,7 +567,7 @@ export class LoopRunner {
     return await resolveCanonicalHeadSha(this.#workspaceRoot);
   }
 
-  async #finalizeWorktreeResult(scope: LoopExecutionScope, result: LoopRunnerFinishedResult): Promise<LoopRunnerFinishedResult> {
+  async #finalizeWorktreeResult(loop: LoopState, scope: LoopExecutionScope, result: LoopRunnerFinishedResult): Promise<LoopRunnerFinishedResult> {
     const worktree = scope.worktree;
     if (worktree === undefined || this.#worktreeManager === undefined) return result;
     const inspection = await this.#worktreeManager.inspect({
@@ -576,7 +577,7 @@ export class LoopRunner {
       evidencePaths: evidencePathsForLoopRun(result),
     });
     const jobStatus = jobStatusForCleanup(result);
-    const cleanup = await this.#worktreeManager.cleanup({ inspection, jobStatus });
+    const cleanup = await this.#cleanupWorktreeAfterRun(loop, inspection, jobStatus);
     const blockedReason = result.status === "failed" && inspection.hasChanges
       ? "failed_with_changes"
       : result.blockedReason;
@@ -590,6 +591,35 @@ export class LoopRunner {
       cleanupState: cleanup.cleanupState,
       observedArtifacts: observedArtifactsFromInspection(inspection, cleanup.cleanupState),
     };
+  }
+
+  async #cleanupWorktreeAfterRun(
+    loop: LoopState,
+    inspection: LoopWorktreeInspection,
+    jobStatus: LoopJobStatus,
+  ): ReturnType<LoopRunnerWorktreeManager["cleanup"]> {
+    const latest = await this.#stateManager.read(loop.loopId);
+    const policy = normalizeLoopCleanupPolicy(latest.config.cleanupPolicy);
+    const deleteUnchangedWorktree = policy.enabled && policy.deleteUnchangedWorktrees;
+    if (!deleteUnchangedWorktree && !inspection.hasChanges && jobStatus !== "failed") {
+      return {
+        cleanupState: "preserved",
+        removed: false,
+        reviewRequired: false,
+        reason: "unchanged worktree deletion disabled",
+        worktreePath: inspection.worktreePath,
+      };
+    }
+    if (this.#worktreeManager === undefined) {
+      return {
+        cleanupState: "preserved",
+        removed: false,
+        reviewRequired: false,
+        reason: "worktree manager unavailable",
+        worktreePath: inspection.worktreePath,
+      };
+    }
+    return await this.#worktreeManager.cleanup({ inspection, jobStatus });
   }
 
   #releaseExecutionScope(scope: LoopExecutionScope, sessionId?: string): void {
