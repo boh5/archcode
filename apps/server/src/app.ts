@@ -8,6 +8,7 @@ import { UnauthorizedError } from "./errors";
 import { PermissionService } from "./permission-service";
 import { requestLogger } from "./logger";
 import { createCommandsRoutes } from "./routes/commands";
+import { createCompressionRoutes } from "./routes/compression";
 import { createDirectoriesRoutes } from "./routes/directories";
 import { createDashboardRoutes } from "./routes/dashboard";
 import { createFilesRoutes } from "./routes/files";
@@ -88,6 +89,7 @@ export function createServerApp(
   const permissions = createPermissionRoutes(new PermissionService(serverRuntime));
   const questions = createQuestionsRoutes(new AskUserService(serverRuntime));
   const commands = createCommandsRoutes(serverRuntime);
+  const compression = createCompressionRoutes(serverRuntime);
   const agents = new Hono();
   const files = createFilesRoutes(serverRuntime);
   const directories = createDirectoriesRoutes();
@@ -101,6 +103,7 @@ export function createServerApp(
   app.route("/api/projects", projectHitl);
   app.route("/api/projects/:slug/sessions", sessions);
   app.route("/api/projects/:slug/sessions/:sessionId", messages);
+  app.route("/api/projects/:slug/sessions/:sessionId/compression", compression);
   app.route("/api/events", globalEvents);
   app.route("/api/projects/:slug/sessions/:sessionId/commands", commands);
   app.route("/api/projects", files);

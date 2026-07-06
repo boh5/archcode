@@ -2,7 +2,7 @@ import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@archcode/protocol";
-import { createEmptyCompressionState } from "../compression";
+import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
   SessionTreeDiagnostic,
@@ -285,6 +285,15 @@ export class SessionStoreManager {
 
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
     return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
+  }
+
+  async resolveCompressionOriginalRange(
+    workspaceRoot: string,
+    sessionId: string,
+    blockRef: string,
+  ): Promise<CompressionOriginalRangeResult> {
+    const session = await this.getSessionFile(workspaceRoot, sessionId);
+    return resolveCompressionOriginalRange(session, blockRef);
   }
 
   async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {

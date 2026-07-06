@@ -1,5 +1,6 @@
 export { closeMcpManagerBestEffort, createRuntime } from "./runtime";
 export type { AgentRuntime, AgentRuntimeOptions, CreateRuntimeSessionOptions, LoopIntegrationStatus, LoopIntegrationStatusSnapshot } from "./runtime";
+export type { CompressionOriginalRangeResult } from "./compression";
 
 export { createProcessRunner } from "./process/runner";
 export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./process/types";
