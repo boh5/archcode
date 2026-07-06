@@ -211,6 +211,11 @@ describe("loops routes", () => {
         message: "config.schedule.expression must be a valid 5-field UTC cron expression",
       },
       {
+        name: "impossible cron",
+        body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "0 0 30 2 *" } } },
+        message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+      },
+      {
         name: "too-fast trigger cadence",
         body: { config: { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000, baseBranch: "main" }] } },
         message: "config.triggers.0.cadenceMs must be at least 30000",

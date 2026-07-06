@@ -283,7 +283,8 @@ function assertRouteLoopConfig(config: LoopConfig): void {
   if (config.schedule.kind !== "cron") return;
 
   try {
-    Bun.cron.parse(config.schedule.expression, new Date(0));
+    const next = Bun.cron.parse(config.schedule.expression, new Date(0));
+    if (next === null) throw new Error("Cron expression has no future occurrence");
   } catch {
     throw new BadRequestError("Request body is invalid", {
       validationMessages: ["config.schedule.expression must be a valid 5-field UTC cron expression"],
