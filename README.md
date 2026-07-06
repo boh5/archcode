@@ -22,20 +22,21 @@ Work happens through six specialized agents, each with a distinct role:
 [Explore + Librarian]                      ==  Supporting research & docs.
 ```
 
-ArchCode is a long-running coding agent with a Hono server + React Web UI, two-tier agent architecture (Orchestrator + Explorer sub-agents), structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode is a long-running coding agent with a Hono server + React Web UI, a six-agent delegation architecture (Orchestrator + Plan/Build/Reviewer core agents, with Explore/Librarian support), structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Quick Start
 
 ```sh
 bun install
 bun run typecheck    # Type check
-bun test             # Run tests
+bun run test         # Run tests
 ```
 
 | Scenario | Command | Description |
 |---|---|---|
 | Development | `bun run dev` | Starts both server and web via Turborepo |
 | Production | `bun run build` | Build production binary at dist/archcode |
+| Web assets only | `bun run web:build` | Build the Vite web app without compiling the server binary |
 
 `bun run dev` starts the Hono API/SSE server (from `apps/server/src/main.ts`) and the Vite React frontend (from `apps/web`) in parallel via Turborepo.
 
@@ -369,7 +370,7 @@ Resolved token values are process-local only: they are not persisted back into `
 
 ### Memory Configuration
 
-Memory extraction runs automatically after each query loop on the root orchestrator agent. Sub-agents (explore, etc.) do not trigger memory extraction. You can control its behavior via the `memory` section in `.archcode.json`:
+Memory extraction runs automatically after each query loop on the root orchestrator agent. Delegated sub-agents (`plan`, `build`, `reviewer`, `explore`, and `librarian`) do not trigger memory extraction. You can control its behavior via the `memory` section in `.archcode.json`:
 
 ```json
 {
@@ -449,20 +450,24 @@ packages/agent-core/src/agents/model-resolver.ts   # Agent → model + resolved 
 packages/agent-core/src/agents/query/loop.ts       # runLlmStream + tool execution cycle (max 50 steps)
 packages/agent-core/src/goals/                     # Goal state, Reviewer checks, artifacts, retry, token budget, isolated Goal memory
 packages/agent-core/src/hitl/                      # Durable project-scoped HITL approval queue with redacted display payloads
+packages/agent-core/src/loops/                     # Loop scheduler/runner, budgets, collisions, triggers, and cross-run state
 packages/agent-core/src/projects/                  # Multi-project registry and per-workspace context resolver
 apps/server/src/                                   # Hono REST + SSE server with auth, CORS, errors, lifecycle
 apps/web/                                          # Vite + React + Tailwind frontend
+packages/protocol/src/                             # Shared protocol types and stream event reducer (zero runtime deps)
+packages/utils/src/                                # Shared utility helpers (zero runtime deps)
 packages/agent-core/src/compact/                   # 3-phase context compaction pipeline
 packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
 packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
 packages/agent-core/src/llm/                       # Managed LLM runtime boundary, retry/recovery, adapter test seam
-packages/agent-core/src/tools/                     # 21 builtin tools with guard/hook pipeline
+packages/agent-core/src/tools/                     # 41 builtin tools: 24 base + 2 memory + 7 Goal + 8 GitHub connector tools
 ```
 
 **Data flow:**
 ```
 .archcode.json → config → resolveAgentModel() → ModelInfo + resolvedOptions
-  → Hono server → project-scoped OrchestratorAgent → query loop → store → SSE → Web UI
+  → Hono server → project-scoped OrchestratorAgent → Goal/Loop/HITL routes
+  → query loop → store → SSE → Web UI
 ```
 
 ## Development
@@ -471,7 +476,8 @@ packages/agent-core/src/tools/                     # 21 builtin tools with guard
 bun run dev          # Start server + web together via Turborepo
 bun run build        # Type check + build Web UI assets + compile binary
 bun run typecheck    # Type check all packages (via Turborepo)
-bun test             # Run tests (via Turborepo)
+bun run test         # Run tests (via Turborepo)
+bun run web:build    # Build Web UI assets only
 ```
 
 ### Testing Patterns
