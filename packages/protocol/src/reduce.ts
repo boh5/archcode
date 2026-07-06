@@ -1,4 +1,10 @@
 import type {
+  CompressionBlockPart,
+  CompressionBlockRef,
+  CompressionBlockSnapshot,
+  CompressionFailureSnapshot,
+  CompressionRefMapSnapshot,
+  CompressionStateSnapshot,
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
@@ -590,6 +596,29 @@ export function reduceStreamEvent(
       );
     }
 
+    case "compression.block_committed": {
+      const compression = event.state ?? commitCompressionBlockSnapshot(state.compression, event.block, timestamp);
+      const compressionBlocks = upsertCompressionBlockPart(state.compressionBlocks ?? [], event.block, timestamp, ctx);
+
+      return { compression, compressionBlocks };
+    }
+
+    case "compression.block_failed": {
+      const compression = event.state ?? appendCompressionFailureSnapshot(state.compression, event.failure, timestamp);
+
+      return { compression };
+    }
+
+    case "compression.ref_map_updated": {
+      const compression = {
+        ...(state.compression ?? createEmptyCompressionStateSnapshot()),
+        refMap: event.refMap,
+        ...(event.updatedAt === undefined ? {} : { updatedAt: event.updatedAt }),
+      } satisfies CompressionStateSnapshot;
+
+      return { compression };
+    }
+
     case "goal.state_change": {
       const goals = { ...(state.goals ?? {}) };
       goals[event.goalId] = event.state;
@@ -738,6 +767,120 @@ export function reduceStreamEvent(
       return { messages };
     }
   }
+}
+
+function createEmptyCompressionRefMapSnapshot(): CompressionRefMapSnapshot {
+  return {
+    messageRefsById: {},
+    messageIdsByRef: {},
+    blockRefsById: {},
+    blockIdsByRef: {},
+    nextMessageIndex: 1,
+    nextBlockIndex: 1,
+  };
+}
+
+function createEmptyCompressionStateSnapshot(): CompressionStateSnapshot {
+  return {
+    version: 1,
+    refMap: createEmptyCompressionRefMapSnapshot(),
+    blocksByRef: {},
+    activeBlockRefs: [],
+    inactiveBlockRefs: [],
+    supersededBlockRefs: [],
+    failures: [],
+  };
+}
+
+function commitCompressionBlockSnapshot(
+  existing: CompressionStateSnapshot | undefined,
+  block: CompressionBlockSnapshot,
+  timestamp: number,
+): CompressionStateSnapshot {
+  const base = existing ?? createEmptyCompressionStateSnapshot();
+  const blocksByRef = { ...base.blocksByRef, [block.ref]: block };
+  return normalizeCompressionStateSnapshot({
+    ...base,
+    refMap: mergeCompressionRefMap(base.refMap, block),
+    blocksByRef,
+    updatedAt: block.updatedAt || timestamp,
+  });
+}
+
+function appendCompressionFailureSnapshot(
+  existing: CompressionStateSnapshot | undefined,
+  failure: CompressionFailureSnapshot,
+  timestamp: number,
+): CompressionStateSnapshot {
+  const base = existing ?? createEmptyCompressionStateSnapshot();
+  return {
+    ...base,
+    failures: [...base.failures, failure],
+    updatedAt: failure.failedAt || timestamp,
+  };
+}
+
+function normalizeCompressionStateSnapshot(state: CompressionStateSnapshot): CompressionStateSnapshot {
+  const blocks = Object.values(state.blocksByRef);
+  return {
+    ...state,
+    activeBlockRefs: blocks.filter((block) => block.status === "active").map((block) => block.ref),
+    inactiveBlockRefs: blocks.filter((block) => block.status === "inactive").map((block) => block.ref),
+    supersededBlockRefs: blocks.filter((block) => block.status === "superseded").map((block) => block.ref),
+  };
+}
+
+function mergeCompressionRefMap(
+  refMap: CompressionRefMapSnapshot,
+  block: CompressionBlockSnapshot,
+): CompressionRefMapSnapshot {
+  return {
+    ...refMap,
+    messageRefsById: {
+      ...refMap.messageRefsById,
+      [block.range.startMessageId]: block.range.startRef,
+      [block.range.endMessageId]: block.range.endRef,
+    },
+    messageIdsByRef: {
+      ...refMap.messageIdsByRef,
+      [block.range.startRef]: block.range.startMessageId,
+      [block.range.endRef]: block.range.endMessageId,
+    },
+    blockRefsById: { ...refMap.blockRefsById, [block.id]: block.ref },
+    blockIdsByRef: { ...refMap.blockIdsByRef, [block.ref]: block.id },
+  };
+}
+
+function upsertCompressionBlockPart(
+  parts: CompressionBlockPart[],
+  block: CompressionBlockSnapshot,
+  timestamp: number,
+  ctx: ReduceContext,
+): CompressionBlockPart[] {
+  const part = toCompressionBlockPart(block, timestamp, ctx);
+  const existingIndex = parts.findIndex((item) => item.blockRef === block.ref);
+  if (existingIndex === -1) return [...parts, part];
+  return parts.map((item, index) => index === existingIndex ? part : item);
+}
+
+function toCompressionBlockPart(
+  block: CompressionBlockSnapshot,
+  timestamp: number,
+  ctx: ReduceContext,
+): CompressionBlockPart {
+  return {
+    type: "compression-block",
+    id: `compression:${block.ref}:${ctx.generateId()}`,
+    blockRef: block.ref,
+    status: block.status,
+    strategy: block.strategy,
+    trigger: block.trigger,
+    summary: block.summary,
+    startRef: block.range.startRef,
+    endRef: block.range.endRef,
+    childBlockRefs: block.childBlockRefs,
+    committedAt: block.createdAt || timestamp,
+  };
 }
 
 function upsertChildSessionLink(

@@ -3,6 +3,8 @@ import { reduceStreamEvent } from "./reduce";
 import type { ReduceContext } from "./reduce";
 import { createEmptySessionStats } from "./usage";
 import type {
+  CompressionBlockSnapshot,
+  CompressionRefMapSnapshot,
   GoalState,
   GoalStatus,
   HitlRequest,
@@ -101,6 +103,41 @@ function makeChildSessionLink(overrides: Partial<ToolChildSessionLink> = {}): To
     background: true,
     status: "linked",
     createdAt: 100,
+    ...overrides,
+  };
+}
+
+function makeCompressionRefMap(): CompressionRefMapSnapshot {
+  return {
+    messageRefsById: { first: "m0001", tail: "m0002" },
+    messageIdsByRef: { m0001: "first", m0002: "tail" },
+    blockRefsById: { "block-1": "b1" },
+    blockIdsByRef: { b1: "block-1" },
+    nextMessageIndex: 3,
+    nextBlockIndex: 2,
+  };
+}
+
+function makeCompressionBlock(overrides: Partial<CompressionBlockSnapshot> = {}): CompressionBlockSnapshot {
+  return {
+    id: "block-1",
+    ref: "b1",
+    status: "active",
+    strategy: "dynamic-range",
+    trigger: "model_tool_call",
+    range: {
+      startMessageId: "first",
+      endMessageId: "tail",
+      startRef: "m0001",
+      endRef: "m0002",
+      startIndex: 0,
+      endIndex: 1,
+    },
+    summary: "## Current Objective\nKeep going",
+    childBlockRefs: [],
+    protectedRefs: [],
+    createdAt: 123456789,
+    updatedAt: 123456789,
     ...overrides,
   };
 }
@@ -577,6 +614,53 @@ describe("reduceStreamEvent", () => {
     const after = applyEvents(before, [{ type: "compact", summary: "summary", tailStartId: "missing" }]);
 
     expect(after.stats).toEqual(before.stats);
+  });
+
+  test("compression.block_committed updates compression state and part without compacted flags", () => {
+    const first: SessionMessage = {
+      id: "first",
+      role: "user",
+      parts: [{ type: "text", id: "p1", text: "first", createdAt: 1, completedAt: 1 }],
+      createdAt: 1,
+      completedAt: 1,
+    };
+    const tail: SessionMessage = {
+      id: "tail",
+      role: "assistant",
+      parts: [{ type: "text", id: "p2", text: "tail", createdAt: 2, completedAt: 2 }],
+      createdAt: 2,
+      completedAt: 2,
+    };
+
+    const state = applyEvents(createProjection({ messages: [first, tail] }), [
+      { type: "compression.block_committed", block: makeCompressionBlock() },
+    ]);
+
+    expect(state.compression?.blocksByRef.b1?.status).toBe("active");
+    expect(state.compression?.activeBlockRefs).toEqual(["b1"]);
+    expect(state.messages.some((message) => message.compacted === true)).toBe(false);
+    expect(state.messages).toEqual([first, tail]);
+    expect(state.compressionBlocks).toHaveLength(1);
+    const part = state.compressionBlocks![0]!;
+    expect(part.blockRef).toBe("b1");
+    expect(part.strategy).toBe("dynamic-range");
+    expect(part.summary).toContain("Keep going");
+  });
+
+  test("compression.block_failed and compression.ref_map_updated update compression state only", () => {
+    const state = applyEvents(createProjection(), [
+      { type: "compression.ref_map_updated", refMap: makeCompressionRefMap(), updatedAt: 100 },
+      {
+        type: "compression.block_failed",
+        failure: { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+      },
+    ]);
+
+    expect(state.compression?.refMap.messageRefsById.first).toBe("m0001");
+    expect(state.compression?.failures).toEqual([
+      { id: "failure-1", reason: "summary invalid", startRef: "m0001", endRef: "m0002", failedAt: 101 },
+    ]);
+    expect(state.messages).toEqual([]);
   });
 
   test("creates system notice messages", () => {
