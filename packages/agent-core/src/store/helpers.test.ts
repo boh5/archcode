@@ -6,6 +6,7 @@ import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
 import type { CompactionPart, PendingInteraction, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
+import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 
@@ -201,6 +202,7 @@ type PersistedSessionState = Pick<
   | "steps"
   | "stats"
   | "executions"
+  | "compression"
   | "todos"
   | "pendingInteractions"
   | "reminders"
@@ -227,6 +229,7 @@ function persistedState(
   pendingInteractions: PendingInteraction[] = [],
   loopId: string | undefined = undefined,
   sessionRole: SessionRole | undefined = undefined,
+  compression: CompressionState = createEmptyCompressionState(),
 ): PersistedSessionState {
   return {
     sessionId,
@@ -237,6 +240,7 @@ function persistedState(
     steps,
     stats,
     executions,
+    compression,
     todos,
     pendingInteractions,
     reminders,
@@ -246,6 +250,90 @@ function persistedState(
     goalId,
     loopId,
     sessionRole,
+  };
+}
+
+function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
+  return {
+    version: 1 as const,
+    childBlockRefs,
+    sections: {
+      "Current Objective": "Keep the implementation moving",
+      "User Constraints": "Stay inside store scope",
+      "Decisions Made": "Use projection-only refs",
+      "Open Tasks": "Run targeted tests",
+      "Important Files": "packages/agent-core/src/store/projection.ts",
+      "Tool Results": "No tools in this summary",
+      "Errors/Unknown Results": "None",
+      "Protected Refs": "m0003 is protected",
+      "Child Block Refs": childBlockRefs.length === 0 ? "None" : childBlockRefs.map((ref) => `(${ref})`).join(" "),
+      "Resume Instructions": "Continue after the compressed block",
+    },
+  };
+}
+
+function richCompressionState(): CompressionState {
+  return {
+    ...createEmptyCompressionState(),
+    refMap: {
+      messageRefsById: { "msg-1": "m0001", "msg-2": "m0002", "msg-3": "m0003" },
+      messageIdsByRef: { m0001: "msg-1", m0002: "msg-2", m0003: "msg-3" },
+      blockRefsById: { "block-active": "b1", "block-inactive": "b2", "block-superseded": "b3" },
+      blockIdsByRef: { b1: "block-active", b2: "block-inactive", b3: "block-superseded" },
+      nextMessageIndex: 4,
+      nextBlockIndex: 4,
+    },
+    blocksByRef: {
+      b1: {
+        id: "block-active",
+        ref: "b1",
+        status: "active",
+        strategy: "dynamic-range",
+        trigger: "model_tool_call",
+        range: { startMessageId: "msg-1", endMessageId: "msg-2", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
+        summary: compressionSummary(),
+        protectedRefs: [{ ref: "m0003", kind: "latest_tail", reason: "Latest tail stays visible", messageId: "msg-3", partId: "part-3" }],
+        childBlockRefs: [],
+        tokenEstimate: { originalTokens: 1200, summaryTokens: 200, savedTokens: 1000, estimatedAt: 5000 },
+        createdAt: 4000,
+        updatedAt: 5000,
+      },
+      b2: {
+        id: "block-inactive",
+        ref: "b2",
+        status: "inactive",
+        strategy: "hard-limit",
+        trigger: "hard_threshold",
+        range: { startMessageId: "msg-1", endMessageId: "msg-1", startRef: "m0001", endRef: "m0001", startIndex: 0, endIndex: 0 },
+        summary: compressionSummary(),
+        protectedRefs: [],
+        childBlockRefs: [],
+        createdAt: 3000,
+        updatedAt: 3500,
+        deactivatedAt: 3600,
+      },
+      b3: {
+        id: "block-superseded",
+        ref: "b3",
+        status: "superseded",
+        strategy: "dynamic-range",
+        trigger: "model_tool_call",
+        range: { startMessageId: "msg-2", endMessageId: "msg-2", startRef: "m0002", endRef: "m0002", startIndex: 1, endIndex: 1 },
+        summary: compressionSummary(),
+        protectedRefs: [],
+        childBlockRefs: [],
+        createdAt: 2000,
+        updatedAt: 2500,
+        deactivatedAt: 2600,
+        supersededBy: "b1",
+      },
+    },
+    activeBlockRefs: ["b1"],
+    inactiveBlockRefs: ["b2"],
+    supersededBlockRefs: ["b3"],
+    protectedRefs: [{ ref: "m0003", kind: "latest_tail", reason: "Latest tail stays visible", messageId: "msg-3", partId: "part-3" }],
+    failures: [{ id: "failure-1", reason: "invalid range", startRef: "m0001", endRef: "m0002", strategy: "dynamic-range", failedAt: 6000 }],
+    updatedAt: 6000,
   };
 }
 
@@ -843,8 +931,8 @@ describe("session transcript serialization", () => {
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     expect(loaded.getState().toModelMessages()).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: [{ type: "text", text: "hi" }, { type: "tool-call", toolCallId: "call", toolName: "read", input: { path: "a" } }] },
+      { role: "user", content: expect.stringContaining("hello") },
+      { role: "assistant", content: expect.arrayContaining([{ type: "text", text: "hi" }, { type: "tool-call", toolCallId: "call", toolName: "read", input: { path: "a" } }]) },
       { role: "tool", content: [{ type: "tool-result", toolCallId: "call", toolName: "read", output: { type: "text", value: "content" } }] },
     ]);
   });
@@ -859,6 +947,7 @@ describe("session transcript serialization", () => {
     expect(Object.keys(parsed).sort()).toEqual([
       "agentName",
       "childSessionLinks",
+      "compression",
       "createdAt",
       "executions",
       "messages",
@@ -1106,6 +1195,42 @@ describe("saveSessionTranscript error handling", () => {
 });
 
 describe("compaction and meta transcript round-trip", () => {
+  test("compression state roundtrip preserves refs, blocks, protected refs, token estimates, and summary version", async () => {
+    const sessionId = uniqueSessionId("compression-state-roundtrip");
+    const messages: StoredMessage[] = [
+      { id: "msg-1", role: "user", parts: [textPart("part-1", "old user", 1)], createdAt: 1, completedAt: 1 },
+      { id: "msg-2", role: "assistant", parts: [textPart("part-2", "old assistant", 2)], createdAt: 2, completedAt: 2 },
+      { id: "msg-3", role: "user", parts: [textPart("part-3", "tail", 3)], createdAt: 3, completedAt: 3 },
+    ];
+    const compression = richCompressionState();
+
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, [], undefined, undefined, compression), TMP_DIR);
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    const loadedCompression = loaded.getState().compression;
+    if (loadedCompression === undefined) throw new Error("Expected loaded session to hydrate compression state");
+
+    expect(loadedCompression).toEqual(compression);
+    expect(loadedCompression.blocksByRef.b1?.summary.version).toBe(1);
+    expect(loadedCompression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(1000);
+    expect(loadedCompression.protectedRefs[0]?.kind).toBe("latest_tail");
+  });
+
+  test("old session files without compression hydrate an empty compression state", async () => {
+    const sessionId = uniqueSessionId("legacy-no-compression");
+    const state = persistedState(sessionId);
+    const { compression: _compression, ...legacyState } = state;
+
+    await writeSessionFile(sessionId, legacyState);
+    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
+
+    expect("compression" in raw).toBe(false);
+
+    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
+
+    expect(loaded.getState().compression).toEqual(createEmptyCompressionState());
+  });
+
   test("roundtrips compacted messages with compacted flag", async () => {
     const sessionId = uniqueSessionId("compacted-roundtrip");
     const messages: StoredMessage[] = [
@@ -1275,7 +1400,7 @@ describe("compaction and meta transcript round-trip", () => {
     expect(loaded.getState().messages).toEqual(messages);
     expect(loaded.getState().toModelMessages()[0]).toEqual({
       role: "user",
-      content: "<compact-summary>\nUser asked about old topic and got a response\n</compact-summary>",
+      content: expect.stringContaining("<compact-summary>\nUser asked about old topic and got a response\n</compact-summary>"),
     });
   });
 });

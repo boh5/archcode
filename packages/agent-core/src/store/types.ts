@@ -12,6 +12,7 @@ import type {
   ToolChildSessionLink,
   PendingInteraction,
 } from "@archcode/protocol";
+import type { CompressionState } from "../compression";
 
 export type {
   StreamEvent,
@@ -92,6 +93,7 @@ export interface SessionStoreState {
   steps: SessionStep[];
   stats: SessionStats;
   executions: SessionExecutionRecord[];
+  compression?: CompressionState;
 
   // Session-only state
   todos: SessionTodo[];

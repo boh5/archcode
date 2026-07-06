@@ -6,6 +6,16 @@ import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./t
 import type { SessionModelInfo } from "@archcode/protocol";
 import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
+import {
+  COMPRESSION_BLOCK_STATUSES,
+  COMPRESSION_STATE_VERSION,
+  COMPRESSION_STRATEGIES,
+  COMPRESSION_SUMMARY_FORMAT_VERSION,
+  COMPRESSION_SUMMARY_SECTION_NAMES,
+  COMPRESSION_TRIGGERS,
+  PROTECTED_CONTENT_KINDS,
+  createEmptyCompressionState,
+} from "../compression";
 
 const SessionRoleSchema = z.enum(["main", "plan", "build", "review", "explore", "librarian", "standalone"]);
 
@@ -284,6 +294,95 @@ const StepInfoSchema = z.strictObject({
   error: z.string().optional(),
 });
 
+const MessageRefSchema = z.custom<`m${string}`>(
+  (value) => typeof value === "string" && /^m\d+$/.test(value),
+  "Expected compression message ref like m0001",
+);
+
+const BlockRefSchema = z.custom<`b${number}`>(
+  (value) => typeof value === "string" && /^b\d+$/.test(value),
+  "Expected compression block ref like b1",
+);
+
+const CompressionRefMapSchema = z.strictObject({
+  messageRefsById: z.record(z.string(), MessageRefSchema),
+  messageIdsByRef: z.record(MessageRefSchema, z.string()),
+  blockRefsById: z.record(z.string(), BlockRefSchema),
+  blockIdsByRef: z.record(BlockRefSchema, z.string()),
+  nextMessageIndex: z.number(),
+  nextBlockIndex: z.number(),
+});
+
+const CompressionRangeSchema = z.strictObject({
+  startMessageId: z.string(),
+  endMessageId: z.string(),
+  startRef: MessageRefSchema,
+  endRef: MessageRefSchema,
+  startIndex: z.number(),
+  endIndex: z.number(),
+});
+
+const CompressionTokenEstimateSchema = z.strictObject({
+  originalTokens: z.number(),
+  summaryTokens: z.number(),
+  savedTokens: z.number(),
+  estimatedAt: z.number(),
+});
+
+const ProtectedRefSchema = z.strictObject({
+  ref: z.union([MessageRefSchema, BlockRefSchema]),
+  kind: z.enum(PROTECTED_CONTENT_KINDS),
+  reason: z.string(),
+  messageId: z.string().optional(),
+  partId: z.string().optional(),
+});
+
+const CompressionSummarySchema = z.strictObject({
+  version: z.literal(COMPRESSION_SUMMARY_FORMAT_VERSION),
+  sections: z.strictObject(Object.fromEntries(
+    COMPRESSION_SUMMARY_SECTION_NAMES.map((section) => [section, z.string()]),
+  ) as Record<(typeof COMPRESSION_SUMMARY_SECTION_NAMES)[number], z.ZodString>),
+  childBlockRefs: z.array(BlockRefSchema),
+});
+
+const CompressionBlockSchema = z.strictObject({
+  id: z.string(),
+  ref: BlockRefSchema,
+  status: z.enum(COMPRESSION_BLOCK_STATUSES),
+  strategy: z.enum(COMPRESSION_STRATEGIES),
+  trigger: z.enum(COMPRESSION_TRIGGERS),
+  range: CompressionRangeSchema,
+  summary: CompressionSummarySchema,
+  protectedRefs: z.array(ProtectedRefSchema),
+  childBlockRefs: z.array(BlockRefSchema),
+  tokenEstimate: CompressionTokenEstimateSchema.optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  deactivatedAt: z.number().optional(),
+  supersededBy: BlockRefSchema.optional(),
+});
+
+const CompressionFailureSchema = z.strictObject({
+  id: z.string(),
+  reason: z.string(),
+  startRef: MessageRefSchema.optional(),
+  endRef: MessageRefSchema.optional(),
+  strategy: z.enum(COMPRESSION_STRATEGIES).optional(),
+  failedAt: z.number(),
+});
+
+const CompressionStateSchema = z.strictObject({
+  version: z.literal(COMPRESSION_STATE_VERSION),
+  refMap: CompressionRefMapSchema,
+  blocksByRef: z.record(BlockRefSchema, CompressionBlockSchema),
+  activeBlockRefs: z.array(BlockRefSchema),
+  inactiveBlockRefs: z.array(BlockRefSchema),
+  supersededBlockRefs: z.array(BlockRefSchema),
+  protectedRefs: z.array(ProtectedRefSchema),
+  failures: z.array(CompressionFailureSchema),
+  updatedAt: z.number().optional(),
+});
+
 const SessionEventEnvelopeSchema = z.strictObject({
   id: z.number(),
   createdAt: z.number(),
@@ -301,6 +400,7 @@ export const SessionFileSchema = z.strictObject({
   steps: z.array(StepInfoSchema),
   stats: SessionStatsSchema,
   executions: z.array(SessionExecutionRecordSchema),
+  compression: CompressionStateSchema.default(() => createEmptyCompressionState()),
   events: z.array(SessionEventEnvelopeSchema).optional(),
   todos: z.array(StoredTodoSchema)
     .refine(
@@ -320,7 +420,10 @@ export const SessionFileSchema = z.strictObject({
   eventCursor: z.number().optional(),
 });
 
-export type SessionFile = z.infer<typeof SessionFileSchema>;
+export type HydratedSessionFile = z.output<typeof SessionFileSchema>;
+export type SessionFile = Omit<HydratedSessionFile, "compression"> & {
+  readonly compression?: HydratedSessionFile["compression"];
+};
 
 export interface SessionSummary {
   sessionId: string;
@@ -341,7 +444,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "events"
+  "compression" | "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -376,7 +479,7 @@ async function saveSessionTranscript(
     throw new Error(`Failed to create sessions directory "${dir}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
 
-  const data: SessionFile = {
+  const data: HydratedSessionFile = {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
     agentName: state.agentName,
@@ -385,6 +488,7 @@ async function saveSessionTranscript(
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
+    compression: state.compression ?? createEmptyCompressionState(),
     todos: state.todos,
     pendingInteractions: state.pendingInteractions ?? [],
     reminders: state.reminders ?? [],
@@ -418,7 +522,7 @@ async function readSessionFile(
   sessionId: string,
   workspaceRoot: string,
   rootSessionId?: string,
-): Promise<SessionFile> {
+): Promise<HydratedSessionFile> {
   const filePath = rootSessionId === undefined
     ? getRootSessionPath(workspaceRoot, sessionId)
     : getSessionPath(workspaceRoot, rootSessionId, sessionId);
@@ -433,7 +537,7 @@ async function readSessionFile(
   return parsed;
 }
 
-function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, "nextEventId">): SessionFile {
+function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, "nextEventId">): HydratedSessionFile {
   return {
     sessionId: state.sessionId,
     createdAt: state.createdAt,
@@ -443,6 +547,7 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     steps: state.steps,
     stats: state.stats,
     executions: state.executions,
+    compression: state.compression ?? createEmptyCompressionState(),
     todos: state.todos,
     pendingInteractions: state.pendingInteractions ?? [],
     reminders: state.reminders ?? [],
@@ -543,7 +648,7 @@ async function readTopLevelSessionDirNames(dir: string): Promise<string[]> {
   }
 }
 
-async function readValidatedSessionFile(filePath: string): Promise<SessionFile> {
+async function readValidatedSessionFile(filePath: string): Promise<HydratedSessionFile> {
   const raw = await Bun.file(filePath).text();
   return SessionFileSchema.parse(JSON.parse(raw));
 }

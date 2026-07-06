@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { toModelMessagesFromStoredMessages } from "./projection";
 import type { CompactionPart, StoredMessage, StoredPart, SystemNoticePart } from "./types";
 import { REDACTION_MARKER } from "../tools/security";
+import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 let idCounter = 0;
 
@@ -127,6 +128,61 @@ function storedMessage(role: StoredMessage["role"], parts: StoredPart[], compact
     createdAt: idCounter,
     completedAt: idCounter + 1,
     ...(compacted ? { compacted: true } : {}),
+  };
+}
+
+function compressionSummary(childBlockRefs: CompressionState["activeBlockRefs"] = []) {
+  return {
+    version: 1 as const,
+    childBlockRefs,
+    sections: {
+      "Current Objective": "Compressed old implementation discussion",
+      "User Constraints": "Do not mutate canonical message text",
+      "Decisions Made": "Use projection-only refs",
+      "Open Tasks": "Continue with verification",
+      "Important Files": "packages/agent-core/src/store/projection.ts",
+      "Tool Results": "No tool result required",
+      "Errors/Unknown Results": "None",
+      "Protected Refs": "m0003 remains visible",
+      "Child Block Refs": childBlockRefs.length === 0 ? "None" : childBlockRefs.map((ref) => `(${ref})`).join(" "),
+      "Resume Instructions": "Resume after the tail question",
+    },
+  };
+}
+
+function compressionStateForProjection(blockOverrides: Partial<CompressionState["blocksByRef"]["b1"]> = {}): CompressionState {
+  return {
+    ...createEmptyCompressionState(),
+    refMap: {
+      messageRefsById: { "msg-old-user": "m0001", "msg-old-assistant": "m0002", "msg-tail": "m0003" },
+      messageIdsByRef: { m0001: "msg-old-user", m0002: "msg-old-assistant", m0003: "msg-tail" },
+      blockRefsById: { "block-1": "b1" },
+      blockIdsByRef: { b1: "block-1" },
+      nextMessageIndex: 4,
+      nextBlockIndex: 2,
+    },
+    blocksByRef: {
+      b1: {
+        id: "block-1",
+        ref: "b1",
+        status: "active",
+        strategy: "dynamic-range",
+        trigger: "model_tool_call",
+        range: { startMessageId: "msg-old-user", endMessageId: "msg-old-assistant", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
+        summary: compressionSummary(),
+        protectedRefs: [],
+        childBlockRefs: [],
+        createdAt: 100,
+        updatedAt: 110,
+        ...blockOverrides,
+      },
+    },
+    activeBlockRefs: ["b1"],
+    inactiveBlockRefs: [],
+    supersededBlockRefs: [],
+    protectedRefs: [],
+    failures: [],
+    updatedAt: 110,
   };
 }
 
@@ -751,5 +807,88 @@ describe("toModelMessagesFromStoredMessages compaction", () => {
       },
       { role: "user", content: "new question" },
     ]);
+  });
+});
+
+describe("toModelMessagesFromStoredMessages compression projection", () => {
+  test("projection-only refs replace active ranges without mutating canonical text", () => {
+    const oldUser = storedMessage("user", [textPart("ORIGINAL_OLD_USER")]);
+    const oldAssistant = storedMessage("assistant", [textPart("ORIGINAL_OLD_ASSISTANT")]);
+    const tail = storedMessage("user", [textPart("TAIL_VISIBLE")]);
+    const messages: StoredMessage[] = [
+      { ...oldUser, id: "msg-old-user" },
+      { ...oldAssistant, id: "msg-old-assistant" },
+      { ...tail, id: "msg-tail" },
+    ];
+    const originalText = messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "";
+
+    const projected = toModelMessagesFromStoredMessages(messages, { compression: compressionStateForProjection() });
+    const serialized = JSON.stringify(projected);
+    const compressionContent = projected[0]?.role === "user" && typeof projected[0].content === "string" ? projected[0].content : "";
+
+    expect(serialized).toContain("m0001");
+    expect(compressionContent).toContain("<compression-block ref=\"b1\" strategy=\"dynamic-range\" start-ref=\"m0001\" end-ref=\"m0002\">");
+    expect(serialized).toContain("## Current Objective");
+    expect(serialized).toContain("m0003");
+    expect(serialized).toContain("TAIL_VISIBLE");
+    expect(serialized).not.toContain("ORIGINAL_OLD_USER");
+    expect(serialized).not.toContain("ORIGINAL_OLD_ASSISTANT");
+    expect(messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "").toBe(originalText);
+  });
+
+  test("full-history mode keeps covered originals and omits compression block projection", () => {
+    const messages: StoredMessage[] = [
+      { ...storedMessage("user", [textPart("ORIGINAL_OLD_USER")]), id: "msg-old-user" },
+      { ...storedMessage("assistant", [textPart("ORIGINAL_OLD_ASSISTANT")]), id: "msg-old-assistant" },
+      { ...storedMessage("user", [textPart("TAIL_VISIBLE")]), id: "msg-tail" },
+    ];
+
+    const projected = toModelMessagesFromStoredMessages(messages, { mode: "full-history", compression: compressionStateForProjection() });
+    const serialized = JSON.stringify(projected);
+
+    expect(serialized).toContain("ORIGINAL_OLD_USER");
+    expect(serialized).toContain("ORIGINAL_OLD_ASSISTANT");
+    expect(serialized).not.toContain("compression-block");
+    expect(serialized).not.toContain("m0001");
+  });
+
+  test("child block refs are present exactly once through the validated summary", () => {
+    const messages: StoredMessage[] = [
+      { ...storedMessage("user", [textPart("old")]), id: "msg-old-user" },
+      { ...storedMessage("assistant", [textPart("older")]), id: "msg-old-assistant" },
+    ];
+    const compression = compressionStateForProjection({ childBlockRefs: ["b2"], summary: compressionSummary(["b2"]) });
+
+    const projected = toModelMessagesFromStoredMessages(messages, { compression });
+    const serialized = JSON.stringify(projected);
+
+    expect(serialized.match(/\(b2\)/g)).toHaveLength(1);
+  });
+
+  test("fresh compression state injects projection refs for uncompressed messages", () => {
+    const messages: StoredMessage[] = [
+      { ...storedMessage("user", [textPart("fresh question")]), id: "msg-fresh-user" },
+      { ...storedMessage("assistant", [textPart("fresh answer")]), id: "msg-fresh-assistant" },
+    ];
+    const originalUserText = messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "";
+    const originalAssistantText = messages[1]!.parts[0]!.type === "text" ? messages[1]!.parts[0]!.text : "";
+
+    const projected = toModelMessagesFromStoredMessages(messages, { compression: createEmptyCompressionState() });
+    const userContent = projected[0]?.role === "user" ? projected[0].content : "";
+    const assistantContent = projected[1]?.role === "assistant" ? projected[1].content : [];
+    const fullHistoryProjected = toModelMessagesFromStoredMessages(messages, { mode: "full-history", compression: createEmptyCompressionState() });
+    const fullHistorySerialized = JSON.stringify(fullHistoryProjected);
+
+    expect(userContent).toContain("<message ref=\"m0001\">");
+    expect(userContent).toContain("fresh question");
+    expect(assistantContent).toContainEqual({ type: "text", text: "<message ref=\"m0002\">" });
+    expect(assistantContent).toContainEqual({ type: "text", text: "fresh answer" });
+    expect(messages[0]!.parts[0]!.type === "text" ? messages[0]!.parts[0]!.text : "").toBe(originalUserText);
+    expect(messages[1]!.parts[0]!.type === "text" ? messages[1]!.parts[0]!.text : "").toBe(originalAssistantText);
+    expect(fullHistorySerialized).toContain("fresh question");
+    expect(fullHistorySerialized).toContain("fresh answer");
+    expect(fullHistorySerialized).not.toContain("m0001");
+    expect(fullHistorySerialized).not.toContain("m0002");
+    expect(fullHistorySerialized).not.toContain("<message ref=");
   });
 });
