@@ -1,10 +1,10 @@
 import type { StoreApi } from "zustand";
 import type { CircuitBreaker } from "../compact/circuit-breaker";
-import { compact, commitCompact } from "../compact/compact";
+import { prepareHardLimitCompression } from "../compression";
 import type { ModelCallOptions } from "../config/index";
 import { silentLogger, type Logger } from "../logger";
 import type { ModelInfo } from "../provider/model";
-import type { SessionStoreState, StoredMessage } from "../store/types";
+import type { SessionStoreState } from "../store/types";
 import type { CommandDescriptor } from "./types";
 
 export function createCompactCommand(
@@ -33,30 +33,29 @@ export function createCompactCommand(
         const activeModelInfo = ctx.modelInfo ?? modelInfo;
         const activeModelOptions = ctx.modelOptions ?? modelOptions;
         const activeCircuitBreaker = ctx.circuitBreaker ?? circuitBreaker;
-        const beforeMessages = activeStore.getState().messages;
-        const result = await compact(
-          {
-            messages: beforeMessages,
-            contextLimit: activeModelInfo.limit.context,
-            model: activeModelInfo.model,
-            modelOptions: activeModelOptions,
-            sessionId: activeStore.getState().sessionId,
-            logger: activeLogger,
-          },
-          ctx.abort,
-        );
+        const beforeMessages = activeStore.getState().messages.length;
+        const result = await prepareHardLimitCompression({
+          storeState: activeStore.getState(),
+          model: activeModelInfo.model,
+          modelOptions: activeModelOptions,
+          abort: ctx.abort,
+          logger: activeLogger,
+          strategy: "hard-limit",
+          trigger: "manual_command",
+        });
 
-        if (result === null) {
-          return { success: false, message: "Not enough messages to compact" };
+        activeStore.getState().append(result.event);
+        if (!result.ok) {
+          return { success: false, message: result.code === "no_safe_range" ? "No safe range to compact" : `Compact failed: ${result.reason}` };
         }
 
-        const counts = countCompactedAndTailMessages(beforeMessages, result.tailStartId);
-        commitCompact(activeStore, result);
         activeCircuitBreaker?.reset();
 
+        const compacted = result.block.range.endIndex - result.block.range.startIndex + 1;
+        const tail = Math.max(0, beforeMessages - result.block.range.endIndex - 1);
         return {
           success: true,
-          message: `Context compacted. ${counts.compacted} messages summarized. ${counts.tail} messages preserved in tail.`,
+          message: `Context compacted. ${compacted} messages summarized. ${tail} messages preserved in tail.`,
         };
       } catch (err) {
         activeLogger.warn("compact.command.failed", {
@@ -70,20 +69,5 @@ export function createCompactCommand(
         isCompacting = false;
       }
     },
-  };
-}
-
-function countCompactedAndTailMessages(
-  messages: readonly StoredMessage[],
-  tailStartId: string,
-): { compacted: number; tail: number } {
-  const tailStartIndex = messages.findIndex((message) => message.id === tailStartId);
-  if (tailStartIndex === -1) {
-    return { compacted: messages.length, tail: 0 };
-  }
-
-  return {
-    compacted: tailStartIndex,
-    tail: messages.length - tailStartIndex,
   };
 }

@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type { ModelInfo } from "../provider/model";
 import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
@@ -44,7 +43,7 @@ function compactableMessages(): StoredMessage[] {
   ];
 }
 
-const model = { modelId: "mock" } as unknown as LanguageModelV3;
+const model = { modelId: "mock" } as unknown as ModelInfo["model"];
 const modelInfo = {
   model,
   displayName: "Mock",
@@ -54,6 +53,25 @@ const modelInfo = {
   modelId: "mock",
   qualifiedId: "test:mock",
 } as unknown as ModelInfo;
+
+function summary() {
+  return {
+    version: 1 as const,
+    childBlockRefs: [],
+    sections: {
+      "Current Objective": "Continue the current task",
+      "User Constraints": "Preserve constraints",
+      "Decisions Made": "Manual hybrid compact selected a safe prefix",
+      "Open Tasks": "Continue from the visible tail",
+      "Important Files": "packages/agent-core/src/commands/compact.ts",
+      "Tool Results": "None",
+      "Errors/Unknown Results": "None",
+      "Protected Refs": "None",
+      "Child Block Refs": "None",
+      "Resume Instructions": "Resume after the block",
+    },
+  };
+}
 
 function createBreaker(): CircuitBreaker & { reset: ReturnType<typeof mock> } {
   return {
@@ -67,6 +85,10 @@ function createBreaker(): CircuitBreaker & { reset: ReturnType<typeof mock> } {
 
 beforeEach(() => {
   setLlmAdapterForTest({
+    generateText: mock(() => ({
+      text: "",
+      toolCalls: [{ toolName: "compression_summary", input: summary() }],
+    })) as unknown as typeof import("ai").generateText,
     streamText: mock(() => ({
       text: Promise.resolve("## Current Objective\nSummarized"),
       fullStream: (async function* () {})(),
@@ -88,7 +110,7 @@ describe("createCompactCommand", () => {
     expect(descriptor.description).toContain("Compact");
   });
 
-  test("triggers compact pipeline and commits result", async () => {
+  test("manual hybrid compact commits compression block without old compact event", async () => {
     const store = storeManager.create(`compact-command-success-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
 
@@ -96,24 +118,24 @@ describe("createCompactCommand", () => {
 
     expect(result.success).toBe(true);
     expect(result.message).toBe("Context compacted. 6 messages summarized. 5 messages preserved in tail.");
-    expect(store.getState().messages.some((m) => m.parts.some((p) => p.type === "compaction"))).toBe(true);
+    expect(store.getState().compression?.blocksByRef.b1?.range).toMatchObject({ startIndex: 0, endIndex: 5 });
+    expect(store.getState().compression?.blocksByRef.b1?.trigger).toBe("manual_command");
+    expect(store.getState().events.at(-1)?.kind).toBe("compression.block_committed");
+    expect(store.getState().events.some((event) => event.kind === "compact")).toBe(false);
+    expect(store.getState().messages.some((m) => m.parts.some((p) => p.type === "compaction"))).toBe(false);
   });
 
   test("passes context modelOptions into compact summary call", async () => {
     let capturedOptions: Record<string, unknown> = {};
     const providerOptions = { openai: { reasoningEffort: "high" } };
     setLlmAdapterForTest({
-      streamText: mock((opts: Record<string, unknown>) => {
+      generateText: mock((opts: Record<string, unknown>) => {
         capturedOptions = opts;
         return {
-          text: Promise.resolve("## Current Objective\nSummarized"),
-          fullStream: (async function* () {})(),
-          finishReason: Promise.resolve("stop"),
-          usage: Promise.resolve({ totalTokens: 1 }),
-          toolCalls: Promise.resolve([]),
-          toolResults: Promise.resolve([]),
+          text: "",
+          toolCalls: [{ toolName: "compression_summary", input: summary() }],
         };
-      }) as unknown as typeof import("ai").streamText,
+      }) as unknown as typeof import("ai").generateText,
     });
     const store = storeManager.create(`compact-command-options-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
@@ -133,7 +155,7 @@ describe("createCompactCommand", () => {
     expect(result.success).toBe(true);
     expect(capturedOptions.temperature).toBe(0.4);
     expect(capturedOptions.topP).toBe(0.6);
-    expect(capturedOptions.maxOutputTokens).toBe(4096);
+    expect(capturedOptions.maxOutputTokens).toBe(2400);
     expect(capturedOptions.providerOptions).toBe(providerOptions);
     expect(capturedOptions).not.toHaveProperty("variant");
   });
@@ -164,23 +186,16 @@ describe("createCompactCommand", () => {
       circuitBreaker,
     });
 
-    expect(result).toEqual({ success: false, message: "Not enough messages to compact" });
+    expect(result).toEqual({ success: false, message: "No safe range to compact" });
     expect(circuitBreaker.reset).not.toHaveBeenCalled();
   });
 
   test("returns busy message while compaction is already in progress", async () => {
     let resolveSummary!: (summary: string) => void;
     setLlmAdapterForTest({
-      streamText: mock(() => ({
-        text: new Promise<string>((resolve) => {
+      generateText: mock(() => new Promise((resolve) => {
           resolveSummary = resolve;
-        }),
-        fullStream: (async function* () {})(),
-        finishReason: Promise.resolve("stop"),
-        usage: Promise.resolve({ totalTokens: 1 }),
-        toolCalls: Promise.resolve([]),
-        toolResults: Promise.resolve([]),
-      })) as unknown as typeof import("ai").streamText,
+        }).then(() => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }))) as unknown as typeof import("ai").generateText,
     });
     const store = storeManager.create(`compact-command-busy-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
@@ -189,7 +204,7 @@ describe("createCompactCommand", () => {
     const first = descriptor.handler({ store, modelInfo });
     await Promise.resolve();
     const second = await descriptor.handler({ store, modelInfo });
-    resolveSummary("## Current Objective\nDone");
+    resolveSummary("done");
     await first;
 
     expect(second).toEqual({ success: false, message: "Compact already in progress" });
@@ -197,9 +212,9 @@ describe("createCompactCommand", () => {
 
   test("returns failure message and clears busy guard on error", async () => {
     setLlmAdapterForTest({
-      streamText: mock(() => {
+      generateText: mock(() => {
         throw Object.assign(new Error("model down"), { status: 422 });
-      }) as unknown as typeof import("ai").streamText,
+      }) as unknown as typeof import("ai").generateText,
     });
     const store = storeManager.create(`compact-command-error-${crypto.randomUUID()}`);
     store.setState({ messages: compactableMessages() });
@@ -208,7 +223,8 @@ describe("createCompactCommand", () => {
     const failed = await descriptor.handler({ store, modelInfo });
     const retry = await descriptor.handler({ store, modelInfo });
 
-    expect(failed).toEqual({ success: false, message: "Compact failed: Compact failed: Summary generation failed: compact.summarize failed after 1 attempt: model down" });
+    expect(failed.message).toContain("Compact failed:");
+    expect(failed.message).toContain("model down");
     expect(retry.message).not.toBe("Compact already in progress");
   });
 });

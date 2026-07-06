@@ -29,8 +29,8 @@ import { AgentRunningError, MissingProjectContextError } from "./errors";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import type { AgentDefinition } from "./factory-types";
 import {
-  createAutoCompactHook,
   createAutoInjectReminderHook,
+  createHybridCompressionHook,
   createMemoryConsolidationHook,
   createMemoryExtractionHook,
   createTitleGenerationHook,
@@ -92,7 +92,7 @@ export class ConfiguredAgent implements Agent {
   private readonly depth: number;
   private readonly memoryRoots: MemoryRoots;
   private readonly commandRegistry: CommandRegistry;
-  private readonly autoCompactHook: ReturnType<typeof createAutoCompactHook>;
+  private readonly hybridCompressionHook: ReturnType<typeof createHybridCompressionHook>;
   private readonly backgroundTaskManager: BackgroundTaskManager;
   private readonly ownsBackgroundTaskManager: boolean;
   private readonly resolveAllowedTools: (definition: AgentDefinition, depth: number) => readonly string[];
@@ -113,7 +113,7 @@ export class ConfiguredAgent implements Agent {
       module: "agents.configured-agent",
       context: { agentName: options.definition.name },
     });
-    this.autoCompactHook = createAutoCompactHook(this.logger.child({ module: "compact.auto" }));
+    this.hybridCompressionHook = createHybridCompressionHook(this.logger.child({ module: "compression.hybrid" }));
     this.definition = options.definition;
     this.toolRegistry = options.toolRegistry;
     this.skillService = options.skillService;
@@ -154,7 +154,7 @@ export class ConfiguredAgent implements Agent {
       createCompactCommand(
         this.store,
         this.modelInfo,
-        this.autoCompactHook.circuitBreaker,
+        this.hybridCompressionHook.circuitBreaker,
         this.modelOptions,
         this.logger.child({ module: "compact.command" }),
       ),
@@ -378,12 +378,15 @@ export class ConfiguredAgent implements Agent {
     const isCancelled = () => this.disposed;
 
     if (policy.autoCompact) {
-      hooks.beforeModelBuild = [this.autoCompactHook.hook];
+      hooks.beforeModelBuild = [this.hybridCompressionHook.beforeModelBuild];
     }
 
     const beforeModelCall = [];
     if (policy.autoInjectReminder) {
       beforeModelCall.push(createAutoInjectReminderHook());
+    }
+    if (policy.autoCompact) {
+      beforeModelCall.push(this.hybridCompressionHook.beforeModelCall);
     }
     if (
       policy.titleGeneration === "enabled" ||
