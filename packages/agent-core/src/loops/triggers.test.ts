@@ -79,7 +79,7 @@ describe("LoopTriggerPoller", () => {
       rerunAfterCurrent: true,
       subjectKey: "commit:archcode/workbench:main",
       dedupeKey: `${loop.loopId}:on_commit:commit:archcode/workbench:main`,
-      resolvedHeadSha: oldSha,
+      resolvedHeadSha: newSha,
     });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.payloadSha)).toEqual([oldSha, newSha]);
     expect(jobs[0]?.eventSummaries.map((entry) => entry.summary)).toEqual([
@@ -122,6 +122,51 @@ describe("LoopTriggerPoller", () => {
     const jobs = await queue.list();
     expect(jobs).toHaveLength(1);
     expect(jobs[0]?.subjectKey).toBe("pr:archcode/workbench#2:bbb222");
+  });
+
+  test("honors assigned pull request scope", async () => {
+    const github = new FakeGitHub();
+    github.prPages.push([
+      makePr({ number: 1, baseRef: "main", headSha: "aaa111" }),
+      makePr({ number: 2, baseRef: "main", headSha: "bbb222", assignees: [{ login: "maintainer" }] }),
+    ]);
+    github.prPages.push([makePr({ number: 2, baseRef: "main", headSha: "bbb222", assignees: [{ login: "maintainer" }] })]);
+    const { poller, queue, stateManager } = makeHarness({ github });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "assigned" }] });
+
+    const result = await poller.pollLoop(loop.loopId);
+
+    expect(result.enqueued).toHaveLength(1);
+    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:archcode/workbench#2:bbb222"]);
+  });
+
+  test("does not treat authored pull request scope as open without actor identity", async () => {
+    const github = new FakeGitHub();
+    github.prPages.push([makePr({ number: 3, baseRef: "main", headSha: "ccc333", authorLogin: "someone" })]);
+    const { poller, queue, stateManager } = makeHarness({ github });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "authored" }] });
+
+    const result = await poller.pollLoop(loop.loopId);
+
+    expect(result.enqueued).toEqual([]);
+    expect(await queue.list()).toEqual([]);
+    expect(github.prCalls).toHaveLength(1);
+  });
+
+  test("honors review_requested pull request scope", async () => {
+    const github = new FakeGitHub();
+    github.prPages.push([
+      makePr({ number: 1, baseRef: "main", headSha: "aaa111", assignees: [{ login: "maintainer" }] }),
+      makePr({ number: 2, baseRef: "main", headSha: "bbb222", requestedReviewers: [{ login: "reviewer" }] }),
+    ]);
+    github.prPages.push([makePr({ number: 2, baseRef: "main", headSha: "bbb222", requestedReviewers: [{ login: "reviewer" }] })]);
+    const { poller, queue, stateManager } = makeHarness({ github });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_pr", baseBranch: "main", prScope: "review_requested" }] });
+
+    const result = await poller.pollLoop(loop.loopId);
+
+    expect(result.enqueued).toHaveLength(1);
+    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:archcode/workbench#2:bbb222"]);
   });
 
   test("skips superseded pull request SHA after immediate revalidation", async () => {
@@ -247,13 +292,24 @@ class FakeGitHub {
   }
 }
 
-function makePr(input: { readonly number: number; readonly baseRef: string; readonly headSha: string; readonly headRef?: string }): GitHubPullRequest {
+function makePr(input: {
+  readonly number: number;
+  readonly baseRef: string;
+  readonly headSha: string;
+  readonly headRef?: string;
+  readonly authorLogin?: string;
+  readonly assignees?: readonly { readonly login: string }[];
+  readonly requestedReviewers?: readonly { readonly login: string }[];
+}): GitHubPullRequest {
   return {
     number: input.number,
     state: "open",
     title: `PR ${input.number}`,
+    user: { login: input.authorLogin ?? `author-${input.number}` },
     head: { ref: input.headRef ?? `feature/${input.number}`, sha: input.headSha },
     base: { ref: input.baseRef },
+    assignees: input.assignees,
+    requested_reviewers: input.requestedReviewers,
     updated_at: `2026-07-05T00:00:0${input.number}Z`,
   };
 }

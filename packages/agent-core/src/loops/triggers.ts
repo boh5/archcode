@@ -27,6 +27,17 @@ export interface LocalBranchHead {
   readonly sha: string;
 }
 
+interface GitHubPullRequestScopeFields {
+  readonly assignee?: GitHubUserLike | null;
+  readonly assignees?: readonly (GitHubUserLike | null)[];
+  readonly requested_reviewers?: readonly (GitHubUserLike | null)[];
+  readonly requested_teams?: readonly unknown[];
+}
+
+interface GitHubUserLike {
+  readonly login?: string;
+}
+
 export interface LoopLocalGitReader {
   readBranchHead(branch?: string): Promise<LocalBranchHead | undefined>;
 }
@@ -485,7 +496,15 @@ function matchesPullRequestTrigger(pr: GitHubPullRequest, trigger: Extract<LoopT
   if (pr.state !== undefined && pr.state !== "open") return false;
   if (trigger.baseBranch !== undefined && pr.base?.ref !== trigger.baseBranch) return false;
   if (trigger.branch !== undefined && pr.head?.ref !== trigger.branch) return false;
-  return true;
+  return matchesPullRequestScope(pr, trigger.prScope);
+}
+
+function matchesPullRequestScope(pr: GitHubPullRequest, scope: Extract<LoopTriggerSpec, { kind: "on_pr" }>["prScope"]): boolean {
+  if (scope === undefined || scope === "open") return true;
+  const scoped = pr as GitHubPullRequest & GitHubPullRequestScopeFields;
+  if (scope === "authored") return false;
+  if (scope === "assigned") return scoped.assignee !== null && scoped.assignee !== undefined || (scoped.assignees ?? []).some((user) => user !== null && user?.login !== undefined);
+  return (scoped.requested_reviewers ?? []).some((user) => user !== null && user?.login !== undefined) || (scoped.requested_teams ?? []).length > 0;
 }
 
 function matchesCiFailureTrigger(failure: GitHubCiFailureSubject, trigger: Extract<LoopTriggerSpec, { kind: "on_ci_fail" }>): boolean {
