@@ -456,12 +456,17 @@ apps/server/src/                                   # Hono REST + SSE server with
 apps/web/                                          # Vite + React + Tailwind frontend
 packages/protocol/src/                             # Shared protocol types and stream event reducer (zero runtime deps)
 packages/utils/src/                                # Shared utility helpers (zero runtime deps)
-packages/agent-core/src/compact/                   # 3-phase context compaction pipeline
+packages/agent-core/src/compression/               # Hybrid Compression runtime: dynamic ranges, hard-limit/emergency blocks, projection refs, originals
+packages/agent-core/src/compact/                   # Compatibility utilities and old session read/display support
 packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
 packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
 packages/agent-core/src/llm/                       # Managed LLM runtime boundary, retry/recovery, adapter test seam
 packages/agent-core/src/tools/                     # 41 builtin tools: 24 base + 2 memory + 7 Goal + 8 GitHub connector tools
 ```
+
+**Hybrid Compression:** `packages/agent-core/src/compression/` is the active runtime architecture for reducing model context while preserving the canonical session transcript. Dynamic Range compression lets the model request a safe older range by projection ref (`mNNNN`) through the compression tool; Hard-Limit and Emergency compression run from query hooks and the manual `/compact` command when context pressure requires automatic system action. Compression blocks are stored in durable compression state as active/inactive/superseded block refs (`bN`) with structured summaries, protected refs, child block refs, and token estimates.
+
+Model projection is ref-based only: canonical messages keep their original text and tool parts, while the model view injects session-local message refs and replaces covered ranges with `<compression-block ref="bN">` summaries. The server exposes an original-range API for expanding a block back to its covered canonical messages and sanitized tool-output previews; large persisted outputs are represented by safe refs instead of filesystem paths. The older `packages/agent-core/src/compact/` path remains for reusable utilities and compatibility with existing persisted sessions that contain `CompactEvent`, `CompactionPart`, `compacted` flags, `tailStartId`, or `<compact-summary>` display data.
 
 **Data flow:**
 ```
