@@ -215,7 +215,8 @@ describe("LoopsRoute", () => {
         loopId: "loop-1",
         config: {
           title: "Daily Triage Loop",
-          schedule: { kind: "interval", everyMs: 60000 },
+          schedule: { kind: "cron", expression: "*/15 * * * *" },
+          triggers: [{ kind: "on_pr", cadenceMs: 60000 }],
           runKind: "session",
           mode: "report",
           approvalPolicy: "interactive",
@@ -231,6 +232,36 @@ describe("LoopsRoute", () => {
           endedAt: 1700000010000,
         },
         nextRunAt: 1700000060000,
+        currentJob: {
+          jobId: "job-1",
+          loopId: "loop-1",
+          status: "blocked",
+          triggerKind: "on_pr",
+          subjectKey: "github:archcode/archcode:pr:42",
+          dedupeKey: "loop-1:on_pr:42",
+          branchKey: "archcode/archcode:feature-loop",
+          queuedAt: 1700000020000,
+          attempts: 1,
+          blockedReason: "needs-review",
+          worktreePath: "/safe/worktrees/loop-1",
+          cleanupState: "cleanup_candidate",
+        },
+        queuedJobs: [
+          {
+            jobId: "job-2",
+            loopId: "loop-1",
+            status: "queued",
+            triggerKind: "cron",
+            subjectKey: "cron:*/15",
+            dedupeKey: "loop-1:cron:1700000060000",
+            queuedAt: 1700000060000,
+            attempts: 0,
+          },
+        ],
+        triggerHealth: [
+          { triggerKind: "on_pr", status: "healthy", cadenceMs: 60000, lastCheckedAt: 1700000030000 },
+        ],
+        cleanupState: "auto_paused",
       }),
       makeLoop({
         loopId: "loop-2",
@@ -270,7 +301,7 @@ describe("LoopsRoute", () => {
 
       expect(container.textContent).toContain("active");
       expect(container.textContent).toContain("paused");
-      expect(container.textContent).toContain("interval 60000ms");
+      expect(container.textContent).toContain("cron UTC */15 * * * *");
       expect(container.textContent).toContain("manual");
       expect(container.textContent).toContain("runKind: session");
       expect(container.textContent).toContain("runKind: goal");
@@ -278,6 +309,10 @@ describe("LoopsRoute", () => {
       expect(container.textContent).toContain("mode: act");
       expect(container.textContent).toContain("succeeded");
       expect(container.textContent).toContain("next:");
+      expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("on_pr healthy 60000ms");
+      expect(container.textContent).toContain("job-1 blocked on_pr blocked needs-review");
+      expect(container.textContent).toContain("queued: 1");
+      expect(container.textContent).toContain("cleanup: auto_paused");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -477,6 +512,265 @@ describe("LoopsRoute", () => {
       expect(config.toolProfileId).toBe("loop_local_report");
       expect(config.goalTemplate).toBeUndefined();
       expect("goalTemplateId" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("creates cron session loop with five-field UTC expression", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    let postedBody: Record<string, unknown> | undefined;
+
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
+        return Response.json({ loop: makeLoop() });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Cron Session",
+        scheduleKind: "cron",
+        cronExpression: "*/15 * * * *",
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_local_report",
+        taskPrompt: "Draft the cron report.",
+      });
+
+      expect(container.querySelector('[data-testid="loop-schedule-kind"]')).not.toBeNull();
+      expect((container.querySelector('[data-testid="loop-cron-expression"]') as HTMLInputElement | null)?.value).toBe("*/15 * * * *");
+      const submitButton = container.querySelector('[data-testid="loop-create-submit"]') as HTMLButtonElement;
+      expect(submitButton).not.toBeNull();
+      expect(submitButton.disabled).toBe(false);
+
+      await act(async () => {
+        submitCreateLoopForm(container);
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+      expect(config.triggers).toBeUndefined();
+      expect("projectConfig" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("rejects six-field cron expression with exact validation text", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    Object.defineProperty(globalThis, "fetch", { value: mock(async () => new Response("Unexpected", { status: 500 })), configurable: true });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Invalid Cron",
+        scheduleKind: "cron",
+        cronExpression: "*/15 * * * * *",
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_local_report",
+        taskPrompt: "Summarize local project health.",
+      });
+
+      expect(container.textContent).toContain("Cron must be a 5-field UTC expression");
+      const submitButton = container.querySelector('[data-testid="loop-create-submit"]') as HTMLButtonElement;
+      expect(submitButton.disabled).toBe(true);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("creates manual schedule with separate on_pr trigger payload", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    let postedBody: Record<string, unknown> | undefined;
+    const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+      if (url.endsWith("/api/projects/demo/loops") && init?.method === "POST") {
+        postedBody = init.body ? JSON.parse(init.body as string) : undefined;
+        return Response.json({ loop: makeLoop() });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+    Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Manual PR Watch",
+        scheduleKind: "manual",
+        triggerOnPr: true,
+        triggerCadenceMs: 60000,
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_github_pr_watch",
+        taskPrompt: "Watch pull requests.",
+      });
+
+      expect((container.querySelector('[data-testid="loop-trigger-on-pr"]') as HTMLInputElement | null)?.checked).toBe(true);
+      expect((container.querySelector('[data-testid="loop-trigger-cadence-ms"]') as HTMLInputElement | null)?.value).toBe("60000");
+      await act(async () => {
+        submitCreateLoopForm(container);
+      });
+
+      await waitFor(() => {
+        expect(postedBody).toBeDefined();
+      });
+
+      const config = postedBody!.config as Record<string, unknown>;
+      expect(config.schedule).toEqual({ kind: "manual" });
+      expect(config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60000 }]);
+      expect("projectConfig" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("invalid on_pr cadence shows exact validation text and disables submit", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    Object.defineProperty(globalThis, "fetch", { value: mock(async () => new Response("Unexpected", { status: 500 })), configurable: true });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Bad Cadence",
+        scheduleKind: "manual",
+        triggerOnPr: true,
+        triggerCadenceMs: 29000,
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_github_pr_watch",
+        taskPrompt: "Watch pull requests.",
+      });
+
+      expect(container.textContent).toContain("Cadence must be at least 30000 ms");
+      const submitButton = container.querySelector('[data-testid="loop-create-submit"]') as HTMLButtonElement;
+      expect(submitButton.disabled).toBe(true);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("renders required selectors and keeps forbidden loop form UI absent", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    Object.defineProperty(globalThis, "fetch", { value: mock(async () => new Response("Unexpected", { status: 500 })), configurable: true });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        title: "Selector Check",
+        scheduleKind: "cron",
+        cronExpression: "*/15 * * * *",
+        triggerOnPr: true,
+        triggerCadenceMs: 60000,
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        maxIterationsPerRun: 8,
+        maxTokensPerRun: 120000,
+        maxWallClockMinutesPerRun: 15,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+        toolProfileId: "loop_local_report",
+        taskPrompt: "Summarize local project health.",
+      });
+
+      for (const testId of [
+        "loop-schedule-kind",
+        "loop-cron-expression",
+        "loop-trigger-on-pr",
+        "loop-trigger-cadence-ms",
+        "loop-max-concurrent",
+        "loop-create-submit",
+      ]) {
+        expect(container.querySelector(`[data-testid="${testId}"]`)).not.toBeNull();
+      }
+      const maxConcurrent = container.querySelector('[data-testid="loop-max-concurrent"]') as HTMLInputElement;
+      expect(maxConcurrent.disabled).toBe(true);
+      const lowerText = (container.textContent ?? "").toLowerCase();
+      expect(lowerText).not.toContain("readiness");
+      expect(lowerText).not.toContain("custom pattern");
+      expect(lowerText).not.toContain("auto approve");
+      expect(lowerText).not.toContain("auto-approval");
+      expect(lowerText).not.toContain("projectconfig");
     } finally {
       await act(async () => {
         reactRoot.unmount();

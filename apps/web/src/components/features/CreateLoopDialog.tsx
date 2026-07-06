@@ -17,6 +17,7 @@ import type {
   LoopScheduleSpec,
   LoopState,
   LoopToolProfileId,
+  LoopTriggerSpec,
   RetryPolicy,
 } from "../../api/types";
 
@@ -201,10 +202,11 @@ const DEFAULT_RETRY_POLICY: RetryPolicy = {
   escalateOnFailure: true,
 };
 
-// Minimum interval guard; server validation remains the source of truth.
+// Minimum interval/trigger guards; server validation remains the source of truth.
 const MIN_INTERVAL_MS = 1000;
+const MIN_TRIGGER_CADENCE_MS = 30000;
 
-type ScheduleKind = "manual" | "interval";
+type ScheduleKind = "manual" | "interval" | "cron";
 
 interface CreateLoopDialogProps {
   open: boolean;
@@ -382,6 +384,9 @@ export interface LoopFormState {
   description: string;
   scheduleKind: ScheduleKind;
   everyMs: number;
+  cronExpression: string;
+  triggerOnPr: boolean;
+  triggerCadenceMs: number;
   runKind: LoopRunKind;
   mode: LoopMode;
   approvalPolicy: LoopApprovalPolicy;
@@ -426,7 +431,14 @@ function buildBudgetConfig(state: LoopFormState): LoopBudgetConfig {
 export function buildLoopConfig(state: LoopFormState): LoopConfig {
   const trimmedTitle = state.title.trim();
   const schedule: LoopScheduleSpec =
-    state.scheduleKind === "interval" ? { kind: "interval", everyMs: state.everyMs } : { kind: "manual" };
+    state.scheduleKind === "interval"
+      ? { kind: "interval", everyMs: state.everyMs }
+      : state.scheduleKind === "cron"
+        ? { kind: "cron", expression: state.cronExpression.trim() }
+        : { kind: "manual" };
+  const triggers: LoopTriggerSpec[] = state.triggerOnPr
+    ? [{ kind: "on_pr", cadenceMs: state.triggerCadenceMs }]
+    : [];
   const budget = buildBudgetConfig(state);
 
   const config: LoopConfig = {
@@ -439,6 +451,7 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
     limits: budget,
     budget,
     toolProfileId: state.toolProfileId,
+    ...(triggers.length > 0 ? { triggers } : {}),
     ...(isNonEmpty(state.taskPrompt) ? { taskPrompt: state.taskPrompt.trim() } : {}),
     ...(isNonEmpty(state.instructions) ? { instructions: state.instructions.trim() } : {}),
   };
@@ -465,7 +478,8 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
 
 function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
   const budget = config.budget ?? config.limits;
-  const scheduleKind: ScheduleKind = config.schedule.kind === "interval" ? "interval" : "manual";
+  const scheduleKind: ScheduleKind = config.schedule.kind;
+  const onPrTrigger = config.triggers?.find((trigger) => trigger.kind === "on_pr");
   const wallClockMs = "maxWallClockMsPerRun" in budget ? budget.maxWallClockMsPerRun : undefined;
   const maxTokensPerRun = "maxTokensPerRun" in budget ? budget.maxTokensPerRun : undefined;
   const maxRunsPerDay = "maxRunsPerDay" in budget ? budget.maxRunsPerDay : undefined;
@@ -479,6 +493,9 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
     description: config.description ?? "",
     scheduleKind,
     everyMs: config.schedule.kind === "interval" ? config.schedule.everyMs : 60000,
+    cronExpression: config.schedule.kind === "cron" ? config.schedule.expression : "*/15 * * * *",
+    triggerOnPr: onPrTrigger !== undefined,
+    triggerCadenceMs: onPrTrigger?.cadenceMs ?? 60000,
     runKind: config.runKind,
     mode: config.mode,
     approvalPolicy: config.approvalPolicy,
@@ -605,6 +622,9 @@ function LoopForm({
   const [runKind, setRunKind] = useState<LoopRunKind>(initialState?.runKind ?? "session");
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(initialState?.scheduleKind ?? "manual");
   const [everyMs, setEveryMs] = useState(initialState?.everyMs ?? 60000);
+  const [cronExpression, setCronExpression] = useState(initialState?.cronExpression ?? "*/15 * * * *");
+  const [triggerOnPr, setTriggerOnPr] = useState(initialState?.triggerOnPr ?? false);
+  const [triggerCadenceMs, setTriggerCadenceMs] = useState(initialState?.triggerCadenceMs ?? 60000);
   const [mode, setMode] = useState<LoopMode>(initialState?.mode ?? "report");
   const [approvalPolicy, setApprovalPolicy] = useState<LoopApprovalPolicy>(initialState?.approvalPolicy ?? "interactive");
   const [maxIterationsPerRun, setMaxIterationsPerRun] = useState(initialState?.maxIterationsPerRun ?? 8);
@@ -633,6 +653,8 @@ function LoopForm({
 
   const trimmedTitle = title.trim();
   const intervalValid = scheduleKind !== "interval" || (Number.isInteger(everyMs) && everyMs >= MIN_INTERVAL_MS);
+  const cronValid = scheduleKind !== "cron" || isFiveFieldCronExpression(cronExpression);
+  const triggerCadenceValid = !triggerOnPr || (Number.isInteger(triggerCadenceMs) && triggerCadenceMs >= MIN_TRIGGER_CADENCE_MS);
   const budgetValid =
     isPositiveInt(maxIterationsPerRun) &&
     isPositiveInt(maxTokensPerRun) &&
@@ -650,6 +672,8 @@ function LoopForm({
   const canSubmit =
     isNonEmpty(trimmedTitle) &&
     intervalValid &&
+    cronValid &&
+    triggerCadenceValid &&
     budgetValid &&
     sessionValid &&
     goalConditionsValid &&
@@ -685,6 +709,9 @@ function LoopForm({
       description,
       scheduleKind,
       everyMs,
+      cronExpression,
+      triggerOnPr,
+      triggerCadenceMs,
       runKind,
       mode,
       approvalPolicy,
@@ -714,6 +741,9 @@ function LoopForm({
     description,
     scheduleKind,
     everyMs,
+    cronExpression,
+    triggerOnPr,
+    triggerCadenceMs,
     runKind,
     mode,
     approvalPolicy,
@@ -889,7 +919,7 @@ function LoopForm({
               </div>
             </div>
 
-            <div>
+            <div data-testid="loop-schedule-kind">
               <span className="mb-2 block text-[13px] font-medium text-text-secondary">
                 Schedule
               </span>
@@ -918,6 +948,18 @@ function LoopForm({
                   />
                   <span>interval</span>
                 </label>
+                <label className="flex items-center gap-2 text-[12.5px] text-text-secondary">
+                  <input
+                    type="radio"
+                    name="loop-schedule"
+                    value="cron"
+                    checked={scheduleKind === "cron"}
+                    onChange={() => setScheduleKind("cron")}
+                    disabled={pending}
+                    className="accent-accent"
+                  />
+                  <span>cron</span>
+                </label>
                 {scheduleKind === "interval" && (
                   <label className="flex items-center gap-2 text-[12.5px] text-text-secondary">
                     <span>everyMs</span>
@@ -933,12 +975,87 @@ function LoopForm({
                   </label>
                 )}
               </div>
+              {scheduleKind === "cron" && (
+                <label className="mt-2 flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                  <span>UTC cron expression</span>
+                  <input
+                    data-testid="loop-cron-expression"
+                    id="new-loop-cron-expression"
+                    type="text"
+                    value={cronExpression}
+                    onChange={(e) => setCronExpression(e.target.value)}
+                    placeholder="*/15 * * * *"
+                    disabled={pending}
+                    className="w-full rounded-sm border border-border-default bg-bg-base px-2 py-1.5 font-mono text-[12.5px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+                  />
+                </label>
+              )}
               {scheduleKind === "interval" && !intervalValid && (
                 <p className="mt-1 text-[11px] text-error">
                   everyMs must be a positive integer of at least {MIN_INTERVAL_MS} ms.
                 </p>
               )}
+              {scheduleKind === "cron" && !cronValid && (
+                <p className="mt-1 text-[11px] text-error">
+                  Cron must be a 5-field UTC expression
+                </p>
+              )}
             </div>
+
+            <section className="rounded-sm border border-border-subtle bg-bg-base p-3 space-y-3">
+              <div>
+                <span className="mb-1.5 block text-[13px] font-medium text-text-secondary">
+                  Triggers
+                </span>
+                <p className="text-[11px] text-text-muted">
+                  Triggers enqueue work separately from the schedule. PR polling cadence is UTC/runtime evaluated.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-[12.5px] text-text-secondary">
+                <input
+                  data-testid="loop-trigger-on-pr"
+                  type="checkbox"
+                  checked={triggerOnPr}
+                  onChange={(e) => setTriggerOnPr(e.target.checked)}
+                  disabled={pending}
+                  className="accent-accent"
+                />
+                <span>on_pr</span>
+              </label>
+              <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+                <span>cadenceMs</span>
+                <input
+                  data-testid="loop-trigger-cadence-ms"
+                  id="new-loop-trigger-cadence-ms"
+                  type="number"
+                  min={MIN_TRIGGER_CADENCE_MS}
+                  value={triggerCadenceMs}
+                  onChange={(e) => setTriggerCadenceMs(Number(e.target.value) || 0)}
+                  disabled={pending || !triggerOnPr}
+                  className="w-40 rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[12.5px] text-text-primary focus:border-accent focus:outline-none disabled:opacity-50"
+                />
+              </label>
+              {triggerOnPr && !triggerCadenceValid && (
+                <p className="text-[11px] text-error">
+                  Cadence must be at least 30000 ms
+                </p>
+              )}
+            </section>
+
+            <label className="flex flex-col gap-1 text-[12.5px] text-text-secondary">
+              <span>Project max concurrency</span>
+              <input
+                data-testid="loop-max-concurrent"
+                type="text"
+                value="Runtime-managed; not editable from Loop config"
+                readOnly
+                disabled
+                className="rounded-sm border border-border-subtle bg-bg-base px-2 py-1.5 text-[12.5px] text-text-muted"
+              />
+              <span className="text-[11px] text-text-muted">
+                The server rejects project-level concurrency updates here because no runtime persistence API exists yet.
+              </span>
+            </label>
 
             <div>
               <span className="mb-2 block text-[13px] font-medium text-text-secondary">
@@ -1433,6 +1550,7 @@ function LoopForm({
             </button>
             <button
               type="submit"
+              data-testid="loop-create-submit"
               className="rounded-sm bg-accent px-4 py-2 text-[13px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canSubmit}
             >
@@ -1441,6 +1559,10 @@ function LoopForm({
           </div>
         </form>
   );
+}
+
+function isFiveFieldCronExpression(value: string): boolean {
+  return value.trim().split(/\s+/).filter(Boolean).length === 5;
 }
 
 export function CreateLoopDialog({ open, onClose, slug, onCreated }: CreateLoopDialogProps) {
