@@ -222,7 +222,6 @@ export class SessionExecutionManager {
     }
 
     const targetDefinition = factory.getDefinition(request.targetAgentName);
-    const targetAllowedTools = factory.resolveAllowedTools(targetDefinition, currentDepth + 1);
     const childPolicy = parentDefinition.childPolicy;
     if (childPolicy === undefined) {
       throw new AgentChildPolicyMissingError(parentAgentName);
@@ -347,6 +346,9 @@ export class SessionExecutionManager {
       throw new ChildSessionParentMismatchError(request.sessionId, request.parentSessionId, childState.parentSessionId);
     }
 
+    const background = request.background ?? false;
+    const parentAgentName = request.parentStore.getState().agentName ?? "orchestrator";
+    const parentDefinition = this.#config.sessionAgentManager.getFactory(workspaceRoot).getDefinition(parentAgentName);
     const existingLink = this.#findChildSessionLink(request.parentStore, request.sessionId);
     const resumeLinkCreatedAt = Date.now();
     this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, "running", resumeLinkCreatedAt);
@@ -371,6 +373,9 @@ export class SessionExecutionManager {
         if (current !== undefined && current.executionToken !== execution.executionToken) return;
         const status = childTerminalStatus(childStore.getState().executions.at(-1), execution.abortController.signal);
         this.#appendResumeChildLinkStatus(workspaceRoot, request, existingLink, status, resumeLinkCreatedAt);
+        if (background && parentDefinition.childPolicy?.terminalReminders) {
+          appendTerminalReminder(request.parentStore, request.sessionId, status);
+        }
       });
 
     return {
@@ -645,7 +650,7 @@ export class SessionExecutionManager {
         ...(existingLink?.title === undefined ? {} : { title: existingLink.title }),
         ...(existingLink?.description === undefined ? {} : { description: existingLink.description }),
         depth: existingLink?.depth ?? (request.currentDepth ?? 0) + 1,
-        background: false,
+        background: request.background ?? false,
         status,
         createdAt,
         ...(includeRunMetadata && run?.startedAt !== undefined ? { startedAt: run.startedAt } : {}),

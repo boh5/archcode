@@ -41,6 +41,7 @@ export interface ResumeChildRequest {
   readonly sessionId: string;
   readonly targetAgentName: string;
   readonly prompt: string;
+  readonly background?: boolean;
   readonly currentDepth?: number;
   readonly parentAbort?: AbortSignal;
 }

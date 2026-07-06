@@ -171,6 +171,27 @@ describe("delegate tool", () => {
     expect(executor.lastRequest?.skills).toEqual(["codemap"]);
   });
 
+  it("treats empty session_id values as new delegation requests", async () => {
+    for (const sessionId of ["", "  "]) {
+      const executor = new ToolStubExecutor();
+      const resumeChildSession = mock(() => {
+        throw new Error("resume should not be called for empty session_id values");
+      });
+
+      const result = await executeDelegate(
+        { agent_type: "plan", task: "inspect", skills: [], background: false, session_id: sessionId },
+        makeContext({
+          startChildExecution: (request) => executor.start(request),
+          resumeChildSession,
+        }),
+      );
+
+      expect(resumeChildSession).not.toHaveBeenCalled();
+      expect(executor.lastRequest?.targetAgentName).toBe("plan");
+      expect(result).toContain("Sub-agent result: completed.");
+    }
+  });
+
   it("sync delegation formats child terminal failures instead of returning a tool error", async () => {
     const executor = new FailingChildExecutor();
     const result = await executeDelegate(
@@ -279,7 +300,10 @@ describe("delegate tool", () => {
   describe("resume mode (session_id provided)", () => {
     const RESUME_SESSION_ID = "resume-child-session-id";
 
-    function makeResumeHandle(sessionId: string = RESUME_SESSION_ID) {
+    function makeResumeHandle(
+      sessionId: string = RESUME_SESSION_ID,
+      result: Promise<{ text: string; steps: number }> = Promise.resolve({ text: "resumed output", steps: 1 }),
+    ) {
       const store = storeManager.create(`delegate-resume-${crypto.randomUUID()}`);
       store.getState().setParentSessionId("parent-id");
       store.getState().append({ type: "execution-start", executionId: "resume-run" });
@@ -290,7 +314,7 @@ describe("delegate tool", () => {
       return {
         sessionId,
         store,
-        result: Promise.resolve({ text: "resumed output", steps: 1 }),
+        result,
         abort: () => {},
       };
     }
@@ -316,7 +340,7 @@ describe("delegate tool", () => {
     it("calls resumeChildSession when session_id is provided and returns formatted result", async () => {
       const handle = makeResumeHandle();
       const resumeChildSession = mock(
-        (workspaceRoot: string, request: ResumeChildRequest) => Promise.resolve(handle),
+        (_workspaceRoot: string, _request: ResumeChildRequest) => Promise.resolve(handle),
       );
       const parentStore = storeManager.create(`delegate-parent-${crypto.randomUUID()}`);
       const parentAbort = new AbortController();
@@ -434,25 +458,20 @@ describe("delegate tool", () => {
       });
     });
 
-    it("returns error when session_id is provided AND background=true", async () => {
-      const resumeChildSession = mock(() => Promise.resolve(makeResumeHandle()));
+    it("supports background execution when session_id is provided", async () => {
+      const resumedRun = Promise.resolve({ text: "resumed later", steps: 1 });
+      const handle = makeResumeHandle(RESUME_SESSION_ID, resumedRun);
+      const resumeChildSession = mock(() => Promise.resolve(handle));
 
       const result = await executeDelegate(
         { agent_type: "explore", task: "continue", skills: [], background: true, session_id: RESUME_SESSION_ID },
         makeContext({ resumeChildSession }),
       );
 
-      expect(resumeChildSession).not.toHaveBeenCalled();
-      const errorResult = result as ToolExecutionResult;
-      expect(errorResult.isError).toBe(true);
-      expect(JSON.parse(errorResult.output)).toMatchObject({
-        code: "TOOL_DELEGATE_FAILED",
-        details: {
-          ok: false,
-          session_id: RESUME_SESSION_ID,
-          error: { name: "SubAgentError" },
-        },
-      });
+      expect(resumeChildSession).toHaveBeenCalledTimes(1);
+      expect(result).toContain("Sub-agent started.");
+      expect(result).toContain(`Session ID: ${RESUME_SESSION_ID}`);
+      expect(result).toContain(`Use background_output(session_id="${RESUME_SESSION_ID}") to read the result.`);
     });
 
     it("does not call startChildExecution when session_id is provided", async () => {

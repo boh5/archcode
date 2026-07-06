@@ -1352,6 +1352,82 @@ describe("SessionExecutionManager", () => {
     });
   });
 
+  test("resumeChildExecution supports background links and terminal reminders", async () => {
+    const parentId = crypto.randomUUID();
+    const childSessionId = crypto.randomUUID();
+    const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });
+    const childStore = storeManager.create(childSessionId, workspaceRoot, {
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Resume child",
+    });
+    parentStore.getState().append({
+      type: "tool-child-session-link",
+      link: {
+        parentSessionId: parentId,
+        parentToolCallId: "initial-tool-call",
+        toolName: "delegate",
+        childSessionId,
+        childAgentName: "explore",
+        title: "Resume child",
+        depth: 1,
+        background: false,
+        status: "completed",
+        createdAt: 1,
+        startedAt: 1,
+        endedAt: 2,
+        durationMs: 1,
+      },
+    });
+    const factory = makeFactory();
+    const resumedRun = deferred<AgentResult>();
+    const childAgent = new MockAgent(childSessionId, resumedRun.promise, workspaceRoot);
+    childStore.setState({ append: childAgent.store.getState().append });
+    childAgent.store.setState({
+      rootSessionId: parentId,
+      parentSessionId: parentId,
+      agentName: "explore",
+      title: "Resume child",
+    });
+    const { manager } = createManager({ [childSessionId]: childAgent }, { factory });
+
+    const resumed = await manager.resumeChildExecution(workspaceRoot, {
+      parentStore,
+      parentSessionId: parentId,
+      parentToolCallId: "resume-background-tool-call",
+      toolName: "delegate",
+      sessionId: childSessionId,
+      targetAgentName: "explore",
+      prompt: "second round",
+      background: true,
+      currentDepth: 0,
+      parentAbort: undefined,
+    });
+
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-background-tool-call")).toMatchObject({
+      childSessionId,
+      parentToolCallId: "resume-background-tool-call",
+      background: true,
+      status: "running",
+    });
+
+    resumedRun.resolve({ text: "resumed done", steps: 1 });
+    await resumed.result;
+
+    expect(parentStore.getState().childSessionLinks.find((link) => link.parentToolCallId === "resume-background-tool-call")).toMatchObject({
+      childSessionId,
+      parentToolCallId: "resume-background-tool-call",
+      background: true,
+      status: "completed",
+    });
+    expect(parentStore.getState().reminders.at(-1)).toMatchObject({
+      source: { type: "subagent_completed", sessionId: childSessionId },
+      sessionId: childSessionId,
+      terminalState: "completed",
+    });
+  });
+
   test("resumeChildExecution on running session throws AgentRunningError", async () => {
     const parentId = crypto.randomUUID();
     const parentStore = storeManager.create(parentId, workspaceRoot, { agentName: "orchestrator" });

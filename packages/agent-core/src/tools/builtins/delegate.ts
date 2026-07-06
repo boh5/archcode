@@ -21,9 +21,10 @@ export const DelegateInputSchema = z
     background: z.boolean().default(false).describe("true = run async; use background_output to read results later. false = block until child completes. Default false."),
     session_id: z
       .string()
+      .trim()
       .optional()
       .describe(
-        "Optional id of an existing child session to resume. When provided, resumes the sub-agent session with the given prompt; the sub-agent retains its full history. Resume is foreground-only (background must be false).",
+        "Optional id of an existing child session to resume. Omit this field entirely, or pass an empty value, to start a new child session.",
       ),
   })
   .strict();
@@ -46,9 +47,11 @@ interface ChildExecutionOutcome {
 }
 
 export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
+  const resumeSessionId = input.session_id?.trim();
+
   // Resume mode: session_id provided → resume an existing child session.
-  if (input.session_id !== undefined) {
-    return executeResumeDelegate(input, ctx);
+  if (resumeSessionId !== undefined && resumeSessionId.length > 0) {
+    return executeResumeDelegate({ ...input, session_id: resumeSessionId }, ctx);
   }
 
   if (ctx.startChildExecution === undefined) {
@@ -104,27 +107,9 @@ export async function executeDelegate(input: DelegateInput, ctx: ToolExecutionCo
 
 /**
  * Resume-mode delegate: re-runs an existing child session with a new prompt.
- * Foreground only — background resume is not supported.
  */
 async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionContext) {
   const sessionId = input.session_id!;
-
-  if (input.background ?? false) {
-    return createToolErrorResult({
-      kind: "execution",
-      code: "TOOL_DELEGATE_FAILED",
-      name: "SubAgentError",
-      message: "Resume mode does not support background execution; set background to false when providing session_id",
-      details: {
-        ok: false,
-        session_id: sessionId,
-        error: {
-          name: "SubAgentError",
-          message: "Resume mode does not support background execution; set background to false when providing session_id",
-        },
-      } satisfies DelegateErrorOutput,
-    });
-  }
 
   if (ctx.resumeChildSession === undefined) {
     return createToolErrorResult({
@@ -146,6 +131,7 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
       sessionId,
       targetAgentName: input.agent_type,
       prompt: buildChildPrompt(input),
+      background: input.background ?? false,
       currentDepth: ctx.currentDepth ?? 0,
       parentAbort: ctx.abort,
     });
@@ -163,6 +149,10 @@ async function executeResumeDelegate(input: DelegateInput, ctx: ToolExecutionCon
         error: { name: safeError.name, message: safeError.message },
       } satisfies DelegateErrorOutput,
     });
+  }
+
+  if (input.background ?? false) {
+    return formatAsyncDelegateOutput({ input, handle });
   }
 
   const outcome = await waitForChildOutcome(handle);
@@ -282,7 +272,7 @@ function buildChildPrompt(input: DelegateInput): string {
 export const delegateTool = defineTool({
   name: "delegate",
   description:
-    `Delegate a task to another agent (e.g. "plan", "build", "reviewer", "explore", "librarian"). Persona can shape the child perspective but never changes the child tool set. Returns a plain text summary with the child session id and status. When session_id is provided, resumes an existing sub-agent session with the given task; the sub-agent retains its full history. Resume is foreground-only.`,
+    `Delegate a task to another agent (e.g. "plan", "build", "reviewer", "explore", "librarian"). Persona can shape the child perspective but never changes the child tool set. Returns a plain text summary with the child session id and status. To start a new sub-agent session, omit session_id entirely or pass an empty value. Only provide a non-empty session_id to resume an existing sub-agent session returned by an earlier delegate call. background=true runs asynchronously; use background_output with the returned session_id to read the result.`,
   inputSchema: DelegateInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input, ctx) => executeDelegate(input, ctx),
