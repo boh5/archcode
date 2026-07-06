@@ -43,6 +43,7 @@ import {
   TOOL_GITHUB_LIST_PULL_REQUESTS,
   TOOL_GITHUB_LIST_WORKFLOW_RUNS,
   TOOL_GITHUB_RERUN_WORKFLOW_RUN,
+  TOOL_COMPRESS,
 } from "@archcode/protocol";
 
 const tmpRoots: string[] = [];
@@ -111,7 +112,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 24 builtins including 4 LSP and 2 ast-grep tools", () => {
+  it("registers all 25 builtins including 4 LSP, 2 ast-grep, and compress tools", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 
@@ -140,6 +141,7 @@ describe("registerBuiltinTools", () => {
       "skill_list",
       "skill_read",
       "view_tool_output",
+      TOOL_COMPRESS,
     ]);
   });
 

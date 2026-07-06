@@ -67,6 +67,9 @@ export const TOOL_GOAL_CHECK_DONE = "goal_check_done";
 export const TOOL_GOAL_ARTIFACT_READ = "goal_artifact_read";
 export const TOOL_GOAL_ARTIFACT_WRITE = "goal_artifact_write";
 
+// Compression
+export const TOOL_COMPRESS = "compress";
+
 // ─── BuiltinToolName Union (derived from constants) ───
 export type BuiltinToolName =
   | typeof TOOL_FILE_READ
@@ -109,7 +112,8 @@ export type BuiltinToolName =
   | typeof TOOL_GOAL_RETRY
   | typeof TOOL_GOAL_CHECK_DONE
   | typeof TOOL_GOAL_ARTIFACT_READ
-  | typeof TOOL_GOAL_ARTIFACT_WRITE;
+  | typeof TOOL_GOAL_ARTIFACT_WRITE
+  | typeof TOOL_COMPRESS;
 
 // ─── Tool Category (cross-package semantic classification) ───
 export type ToolCategory =
@@ -171,6 +175,7 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_GOAL_CHECK_DONE]: "goal",
   [TOOL_GOAL_ARTIFACT_READ]: "goal",
   [TOOL_GOAL_ARTIFACT_WRITE]: "goal",
+  [TOOL_COMPRESS]: "other",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;
 
 // ─── Helpers ───
