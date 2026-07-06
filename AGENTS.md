@@ -93,7 +93,7 @@ packages/agent-core/src/
 ├── agents/query/hooks/         # auto-compact, auto-inject-reminder, title-generation, todo-continuation, transcript-save, memory-extraction, memory-consolidation
 ├── tools/define-tool.ts        # defineTool() → ToolDescriptor (name, inputSchema, traits, hooks, guards, execute)
 ├── tools/registry.ts           # register/registerAll/execute, globalGuards, globalHooks
-├── tools/builtins/             # 41 builtin tools: 24 base + 2 memory + 7 Goal + 8 GitHub connector tools
+├── tools/builtins/             # 38 builtin tools: 24 base + 2 memory + 4 Goal + 8 GitHub connector tools
 ├── tools/github.ts             # GitHub connector descriptors (Loop profile-only; not default agent tools)
 ├── tools/hooks/                # Guards: workspace, read-snapshot, sensitive-file, bash-classifier; After: edit-error-recovery, redact, truncate, audit, logger
 ├── tools/concurrency/          # partitionToolCalls(): groups concurrencySafe calls into parallel batches

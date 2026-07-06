@@ -460,7 +460,7 @@ packages/agent-core/src/compact/                   # 3-phase context compaction 
 packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
 packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
 packages/agent-core/src/llm/                       # Managed LLM runtime boundary, retry/recovery, adapter test seam
-packages/agent-core/src/tools/                     # 41 builtin tools: 24 base + 2 memory + 7 Goal + 8 GitHub connector tools
+packages/agent-core/src/tools/                     # 38 builtin tools: 24 base + 2 memory + 4 Goal + 8 GitHub connector tools
 ```
 
 **Data flow:**
