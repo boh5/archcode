@@ -3,17 +3,19 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  TOOL_GOAL_CHECK_DONE,
+  TOOL_GOAL_EVIDENCE,
+  TOOL_GOAL_MANAGE,
   type DoneCondition,
   type DoneResult,
   type GoalArtifactName,
+  type GoalPhase,
+  type GoalReviewOutcome,
   type GoalState,
   type GoalStatus,
   type GoalTokenBudgetState,
 } from "@archcode/protocol";
 
 import { HitlService } from "../hitl/service";
-import type { HitlResponse } from "../hitl/types";
 import { setLlmAdapterForTest } from "../llm";
 import { runLlmText } from "../llm/run-text";
 import type { LlmTextInput } from "../llm/types";
@@ -23,7 +25,7 @@ import type { SessionStoreState } from "../store/types";
 import { createRegistry } from "../tools/registry";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { createToolExecutionContext } from "../tools/types";
-import { createGoalCheckDoneTool } from "../tools/builtins/goal-tools";
+import { goalEvidenceTool, goalManageTool } from "../tools/builtins/goal-tools";
 import { BUDGET_APPROVAL_POINT, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
@@ -85,25 +87,6 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function approvedResponse(): HitlResponse {
-  return { hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "approved" } };
-}
-
-function createRunner(sessionIds: string[] = ["main-session-1"]): GoalRunner {
-  const remainingSessionIds = [...sessionIds];
-  return new GoalRunner({
-    goalStateManager: manager,
-    goalArtifacts: artifacts,
-    workspaceRoot,
-    hitlService: {
-      request: mock(async () => approvedResponse()),
-      listPending: mock(() => []),
-    },
-    createSession: mock(async () => remainingSessionIds.shift() ?? `session-${crypto.randomUUID()}`),
-    isSessionActive: mock(async () => false),
-  });
-}
-
 async function createHitlRunner(options: {
   sessionIds?: string[];
   now?: () => Date;
@@ -153,43 +136,97 @@ async function readGoalStateFile(goalId: string): Promise<GoalState> {
   return JSON.parse(await Bun.file(goalStateFilePath(goalId)).text()) as GoalState;
 }
 
-async function executeGoalCheckDone(
+async function executeGoalEvidence(
   store: ReturnType<typeof createSessionStore>,
   goalId: string,
   conditionId: string,
 ): Promise<DoneResult> {
-  const result = await executeGoalCheckDoneRaw(store, goalId, conditionId);
+  const result = await executeGoalEvidenceRaw(store, goalId, conditionId);
   expect(result.isError).toBe(false);
   return JSON.parse(result.output) as DoneResult;
 }
 
-async function executeGoalCheckDoneRaw(
+async function executeGoalEvidenceRaw(
   store: ReturnType<typeof createSessionStore>,
   goalId: string,
   conditionId: string,
 ) {
-  const registry = createRegistry([createGoalCheckDoneTool()]);
+  const registry = createRegistry([goalEvidenceTool]);
+  const input = { action: "check_done", goalId, conditionId };
   const ctx = createToolExecutionContext({
     store,
     storeManager,
-    toolName: TOOL_GOAL_CHECK_DONE,
-    toolCallId: `${TOOL_GOAL_CHECK_DONE}-${conditionId}`,
-    input: { goalId, conditionId },
+    toolName: TOOL_GOAL_EVIDENCE,
+    toolCallId: `${TOOL_GOAL_EVIDENCE}-${conditionId}`,
+    input,
     step: 1,
     abort: new AbortController().signal,
     startedAt: Date.now(),
-    allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+    allowedTools: new Set([TOOL_GOAL_EVIDENCE]),
     agentName: store.getState().agentName,
     agentSkills: [],
     skillService: testSkillService,
-    projectContext: createTestProjectContext(workspaceRoot),
+    projectContext: goalToolProjectContext(),
   });
 
   const result = await registry.execute(
-    { toolName: TOOL_GOAL_CHECK_DONE, toolCallId: `${TOOL_GOAL_CHECK_DONE}-${conditionId}`, input: { goalId, conditionId } },
+    { toolName: TOOL_GOAL_EVIDENCE, toolCallId: `${TOOL_GOAL_EVIDENCE}-${conditionId}`, input },
     ctx,
   );
   return result;
+}
+
+async function executeGoalManage(
+  store: ReturnType<typeof createSessionStore>,
+  input:
+    | { action: "create"; title: string; author: string; doneConditions: DoneCondition[]; retryPolicy: GoalState["retryPolicy"]; approvalPoints: GoalState["approvalPoints"] }
+    | { action: "lock"; goalId: string }
+    | { action: "start"; goalId: string }
+    | { action: "advance_phase"; goalId: string; nextPhase: Extract<GoalPhase, "build" | "review"> }
+    | { action: "retry"; goalId: string }
+    | { action: "finalize_review"; goalId: string; outcome: GoalReviewOutcome; summary?: string },
+): Promise<GoalState> {
+  const result = await executeGoalManageRaw(store, input);
+  expect(result.isError).toBe(false);
+  return JSON.parse(result.output) as GoalState;
+}
+
+async function executeGoalManageRaw(
+  store: ReturnType<typeof createSessionStore>,
+  input:
+    | { action: "create"; title: string; author: string; doneConditions: DoneCondition[]; retryPolicy: GoalState["retryPolicy"]; approvalPoints: GoalState["approvalPoints"] }
+    | { action: "lock"; goalId: string }
+    | { action: "start"; goalId: string }
+    | { action: "advance_phase"; goalId: string; nextPhase: Extract<GoalPhase, "build" | "review"> }
+    | { action: "retry"; goalId: string }
+    | { action: "finalize_review"; goalId: string; outcome: GoalReviewOutcome; summary?: string },
+) {
+  const registry = createRegistry([goalManageTool]);
+  const ctx = createToolExecutionContext({
+    store,
+    storeManager,
+    toolName: TOOL_GOAL_MANAGE,
+    toolCallId: `${TOOL_GOAL_MANAGE}-${input.action}`,
+    input,
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set([TOOL_GOAL_MANAGE]),
+    agentName: store.getState().agentName,
+    agentSkills: [],
+    skillService: testSkillService,
+    projectContext: goalToolProjectContext(),
+  });
+
+  return registry.execute({ toolName: TOOL_GOAL_MANAGE, toolCallId: `${TOOL_GOAL_MANAGE}-${input.action}`, input }, ctx);
+}
+
+function goalToolProjectContext() {
+  const projectContext = createTestProjectContext(workspaceRoot);
+  projectContext.project = { ...projectContext.project, slug: "project-a", name: "Project A" };
+  projectContext.goalState = manager;
+  projectContext.goalArtifacts = artifacts;
+  return projectContext;
 }
 
 function generateTextPrompts(): string[] {
@@ -220,7 +257,7 @@ function task18Spec(ac002Status: "satisfied" | "failed"): string {
   return [
     "# goal_test_done Spec",
     "",
-    "- AC-001: Canonical artifacts exist status: satisfied; evidence: plan, build, review, and final artifacts are present; file: .archcode/goals; command: goal_check_done; result: artifact set verified",
+    "- AC-001: Canonical artifacts exist status: satisfied; evidence: plan, build, review, and final artifacts are present; file: .archcode/goals; command: goal_evidence action:check_done; result: artifact set verified",
     `- AC-002: Goal daily-use UI and retry evidence status: ${ac002Status}; evidence: ${ac002Evidence}; file: apps/web/src/routes/goal-detail.test.tsx, apps/web/src/routes/dashboard.test.tsx; command: bun test apps/web/src/routes/goal-detail.test.tsx apps/web/src/routes/dashboard.test.tsx; result: ${ac002Status === "satisfied" ? "web route checks pass" : "web route checks incomplete"}; repair: ${ac002Repair}`,
     "",
   ].join("\n");
@@ -326,36 +363,36 @@ async function writeEvidenceFile(name: string, lines: string[]): Promise<void> {
 }
 
 describe("Goal integration happy path", () => {
-  test("runs create → lock → run → plan → approval → build → review → goal_check_done → complete", async () => {
+  test("runs goal_manage create → lock → start → advance_phase → goal_evidence check_done → finalize_review", async () => {
     mockGenerateText
       .mockImplementationOnce(async () => ({ text: "plan: approved plan", toolCalls: [] }))
       .mockImplementationOnce(async () => ({ text: "build: wrote artifact.txt", toolCalls: [] }))
-      .mockImplementationOnce(async () => ({ text: "review: goal_check_done should pass", toolCalls: [] }));
+      .mockImplementationOnce(async () => ({ text: "review: goal_evidence action check_done should pass", toolCalls: [] }));
 
-    const sessionStore = createSessionStore("main-session-1");
-    const runner = createRunner(["main-session-1"]);
+    const sessionStore = createSessionStore("main-session-1", workspaceRoot);
+    sessionStore.setState({ agentName: "orchestrator", sessionRole: "main" });
 
-    const draft = await manager.create(
-      "project-a",
-      "Ship mocked Goal happy path",
-      "architect",
-      [artifactExistsCondition, artifactMentionsPlanCondition],
-      { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
-      ["after_plan", "before_complete"],
-    );
+    const draft = await executeGoalManage(sessionStore, {
+      action: "create",
+      title: "Ship mocked Goal happy path",
+      author: "architect",
+      doneConditions: [artifactExistsCondition, artifactMentionsPlanCondition],
+      retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
+      approvalPoints: [],
+    });
     appendGoalStateChange(sessionStore, draft);
 
-    const locked = await manager.lock(draft.id, "architect");
+    const locked = await executeGoalManage(sessionStore, { action: "lock", goalId: draft.id });
     appendGoalStateChange(sessionStore, locked);
 
-    const running = await runner.start(locked.id);
+    const running = await executeGoalManage(sessionStore, { action: "start", goalId: locked.id });
     appendGoalStateChange(sessionStore, running);
     expect(running).toMatchObject({ status: "running", phase: "plan", mainSessionId: "main-session-1" });
 
     const plan = await runLlmText({ model: dummyModel, prompt: `Plan goal ${running.id}` });
     expect(plan.text).toContain("approved plan");
 
-    const build = await runner.advancePhase(running.id, "build");
+    const build = await executeGoalManage(sessionStore, { action: "advance_phase", goalId: running.id, nextPhase: "build" });
     appendGoalStateChange(sessionStore, build);
     expect(build.phase).toBe("build");
 
@@ -363,16 +400,16 @@ describe("Goal integration happy path", () => {
     expect(buildOutput.text).toContain("artifact.txt");
     await Bun.write(join(workspaceRoot, "artifact.txt"), `${plan.text}\n${buildOutput.text}\napproved plan evidence\n`);
 
-    const reviewPhase = await runner.advancePhase(build.id, "review");
+    const reviewPhase = await executeGoalManage(sessionStore, { action: "advance_phase", goalId: build.id, nextPhase: "review" });
     appendGoalStateChange(sessionStore, reviewPhase);
     expect(reviewPhase.phase).toBe("review");
     sessionStore.setState({ agentName: "reviewer", sessionRole: "review", goalId: reviewPhase.id });
 
     const reviewOutput = await runLlmText({ model: dummyModel, prompt: `Review goal ${reviewPhase.id}` });
-    expect(reviewOutput.text).toContain("goal_check_done");
+    expect(reviewOutput.text).toContain("goal_evidence");
 
-    const fileExistsResult = await executeGoalCheckDone(sessionStore, reviewPhase.id, artifactExistsCondition.id);
-    const grepResult = await executeGoalCheckDone(sessionStore, reviewPhase.id, artifactMentionsPlanCondition.id);
+    const fileExistsResult = await executeGoalEvidence(sessionStore, reviewPhase.id, artifactExistsCondition.id);
+    const grepResult = await executeGoalEvidence(sessionStore, reviewPhase.id, artifactMentionsPlanCondition.id);
     sessionStore.getState().append({ type: "goal.done_check", goalId: reviewPhase.id, results: [fileExistsResult, grepResult] });
 
     expect(fileExistsResult).toMatchObject({ conditionId: artifactExistsCondition.id, passed: true });
@@ -384,22 +421,23 @@ describe("Goal integration happy path", () => {
     appendGoalStateChange(sessionStore, verifying);
     expect(verifying.status).toBe("verifying");
 
-    const reviewed = await runner.review(reviewPhase.id);
-    appendGoalStateChange(sessionStore, reviewed);
-    expect(reviewed.status).toBe("reviewed");
+    const completed = await executeGoalManage(sessionStore, {
+      action: "finalize_review",
+      goalId: reviewPhase.id,
+      outcome: "DONE",
+      summary: "Reviewer verified the mocked happy path Done Conditions.",
+    });
+    appendGoalStateChange(sessionStore, completed);
+    expect(completed.status).toBe("completed");
 
-    const reviewedFile = await readGoalStateFile(reviewPhase.id);
-    expect(reviewedFile.status).toBe("reviewed");
-    for (const condition of reviewedFile.doneConditions.filter((candidate) => candidate.required !== false)) {
-      const result = reviewedFile.doneResults[condition.id];
+    const completedFile = await readGoalStateFile(reviewPhase.id);
+    expect(completedFile.status).toBe("completed");
+    expect(completedFile.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified the mocked happy path Done Conditions." });
+    for (const condition of completedFile.doneConditions.filter((candidate) => candidate.required !== false)) {
+      const result = completedFile.doneResults[condition.id];
       expect(result?.passed).toBe(true);
       expect(result?.evidence.length).toBeGreaterThan(0);
     }
-
-    const completed = await runner.complete(reviewPhase.id);
-    appendGoalStateChange(sessionStore, completed);
-    expect(completed.status).toBe("completed");
-    expect((await readGoalStateFile(reviewPhase.id)).status).toBe("completed");
 
     expect(mockGenerateText).toHaveBeenCalledTimes(3);
     expect(generateTextPrompts()).toEqual([
@@ -414,7 +452,6 @@ describe("Goal integration happy path", () => {
       "running",
       "running",
       "verifying",
-      "reviewed",
       "completed",
     ]);
     expect(stateChangePhaseSequence(sessionStore.getState())).toEqual([
@@ -424,7 +461,6 @@ describe("Goal integration happy path", () => {
       "running:build",
       "running:review",
       "verifying:review",
-      "reviewed:review",
       "completed:review",
     ]);
     expect(sessionStore.getState().events.some((event) => event.kind === "goal.done_check")).toBe(true);
@@ -477,12 +513,12 @@ describe("Goal integration happy path", () => {
 
     const wrongStore = createSessionStore("wrong-session", workspaceRoot);
     wrongStore.setState({ agentName: "orchestrator", sessionRole: "main", goalId: reviewPhase.id });
-    const denied = await executeGoalCheckDoneRaw(wrongStore, reviewPhase.id, specComplianceCondition.id);
+    const denied = await executeGoalEvidenceRaw(wrongStore, reviewPhase.id, specComplianceCondition.id);
     expect(denied.isError).toBe(true);
     expect(denied.output).toContain("GOAL_REVIEWER_REQUIRED");
 
     const reviewStore = reviewerStore("daily-review-session", reviewPhase.id);
-    const specResult = await executeGoalCheckDone(reviewStore, reviewPhase.id, specComplianceCondition.id);
+    const specResult = await executeGoalEvidence(reviewStore, reviewPhase.id, specComplianceCondition.id);
     reviewStore.getState().append({ type: "goal.done_check", goalId: reviewPhase.id, results: [specResult] });
     expect(specResult).toMatchObject({ conditionId: specComplianceCondition.id, passed: true });
     expect(specResult.specCompliance?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002"]);
@@ -556,7 +592,7 @@ describe("Goal integration happy path", () => {
     await requestBudgetApprovalThroughHook(hitl, budgetedAttempt1);
     const attempt1Review = await runner.advancePhase(attempt1Build.id, "review");
     const attempt1Store = reviewerStore("retry-review-session-1", attempt1Review.id);
-    const failedSpec = await executeGoalCheckDone(attempt1Store, attempt1Review.id, specComplianceCondition.id);
+    const failedSpec = await executeGoalEvidence(attempt1Store, attempt1Review.id, specComplianceCondition.id);
     expect(failedSpec.passed).toBe(false);
     expect(failedSpec.specCompliance?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({
       compliant: false,
@@ -586,7 +622,7 @@ describe("Goal integration happy path", () => {
     const attempt2Build = await advancePlanToBuildWithApproval(runner, hitl, retry.id);
     const attempt2Review = await runner.advancePhase(attempt2Build.id, "review");
     const attempt2Store = reviewerStore("retry-review-session-2", attempt2Review.id);
-    const repairedSpec = await executeGoalCheckDone(attempt2Store, attempt2Review.id, specComplianceCondition.id);
+    const repairedSpec = await executeGoalEvidence(attempt2Store, attempt2Review.id, specComplianceCondition.id);
     expect(repairedSpec.passed).toBe(true);
     const completed = await runner.finalizeReviewerReview(attempt2Review.id, "DONE", { summary: "Retry repaired AC-002 and all criteria are satisfied." });
 

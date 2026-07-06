@@ -785,8 +785,8 @@ function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
     `Goal title JSON: ${JSON.stringify(goal.title)}`,
     `Loop ID: ${loop.loopId}`,
     `Loop title JSON: ${JSON.stringify(loop.config.title)}`,
-    "Your first action must be calling goal_run with this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_run succeeds.",
-    "After goal_run succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_check_done, and report progress.",
+    "Your first action must be calling goal_manage with action=\"start\" for this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_manage.start succeeds.",
+    "After goal_manage.start succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_evidence action=\"check_done\", and report progress.",
   ].join("\n");
 }
 

@@ -62,7 +62,7 @@ Use the Web UI **Add Project** flow to register an existing workspace directory.
 
 Phase 2 makes Goal daily-usable without adding new `.archcode.json` budget or retry schema fields/defaults. Budget and retry settings are Goal-scoped create inputs and persisted Goal state (`retryPolicy`, `retryState`, `tokenBudget`).
 
-- `goal_check_done` is Reviewer-only; external Reviewer outcomes are exactly `DONE` or `NOT_DONE`.
+- `goal_evidence` is Reviewer-only; external Reviewer outcomes are exactly `DONE` or `NOT_DONE` via `goal_manage.finalize_review`.
 - Goal artifacts are current canonical Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files.
 - Durable approvals are project-scoped. Web and Dashboard approval views render redacted `displayPayload` data, not raw payloads.
 - Goal budget accounting is token-only (`inputTokens`, `outputTokens`, `totalTokens`); runtime cost accounting is not implemented even though model configs may carry passive pricing metadata.

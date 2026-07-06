@@ -193,7 +193,7 @@
 | **orchestrator** | core | 拥有 Goal,委派,决策,与架构师对话 | 全工具 + 委派 |
 | **plan** | core | 想清楚要做什么 | 只读 + lsp + web_fetch |
 | **build** | core | 实现代码 | 读写工具 |
-| **reviewer** | core | 默认拒绝,用证据判完成 | 只读 + lsp + 跑测试 + `goal_check_done`,**独立 session store** |
+| **reviewer** | core | 默认拒绝,用证据判完成 | 只读 + lsp + 跑测试 + `goal_evidence` + `goal_manage.finalize_review` + `goal_artifact_read`/`goal_artifact_write`,**独立 session store** |
 | **explore** | ancillary | 代码库检索 | 只读 grep |
 | **librarian** | ancillary | 外部文档/库检索 | web_fetch + MCP |
 
@@ -202,7 +202,7 @@
 **Reviewer 的核心差异化**:
 - **强制**(orchestrator 不能跳过)
 - **独立 session store**(不共享 Build 的,避免被带偏)
-- **能跑工具**(lsp_diagnostics / tests / grep / git_diff / goal_check_done)—— 核心差异化 vs Claude Code `/goal` evaluator(不调工具,只读对话)
+- **能跑工具**(lsp_diagnostics / tests / grep / git_diff / goal_evidence / goal_manage.finalize_review / goal_artifact_read/write)—— 核心差异化 vs Claude Code `/goal` evaluator(不调工具,只读对话)
 - **默认拒绝 + 5 点检查清单**(全部通过才 APPROVE):
   1. Scope —— 只改了相关文件,没碰 denylist,没有无关 diff
   2. Intent —— 改动确实针对声明的目标
@@ -270,9 +270,9 @@
 - **Reviewer day-one 强制**(orchestrator 不能跳过,`reviewed` 是 `done` 前置)
 - Reviewer 默认拒绝 + 5 点检查清单
 - Goal 状态机:draft→locked→running→verifying→reviewed→completed/failed/escalated + 显式 phases(plan→build→review)
-- Goal 执行:lock → orchestrator 自主分解 → 委派 plan/build/reviewer → done check → retry(fresh session)
+- Goal 执行:lock → orchestrator 自主分解 → 委派 plan/build/reviewer → reviewer 用 `goal_evidence` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
 - approvalPoints:`after_plan` / `before_complete`(Goal phase 转换门);`on_destructive_op` 是 tool guard(不是 approvalPoint)
-- `goal_check_done` 工具
+- `goal_manage` 生命周期动作工具(create/lock/start/advance_phase/retry/finalize_review) + `goal_evidence` Reviewer 证据工具(action="check_done") + `goal_artifact_read`/`goal_artifact_write`
 - AI 可生成 Done 条件(包括 `command_succeeds`),用户 lock 确认后生效;`goal.json` 记录 author + lockedBy
 - Workflow 删除(code 一次性删,用户数据 `.archcode/workflows/` 保留只读)
 - Web UI:Goal 列表 + 详情(Overview/Plan/Build/Review/Chat/Sessions)、Approval Queue(集中+就地)、项目导航
@@ -283,8 +283,8 @@
 **目标**:Goal 体验完整,架构师可日常依赖 Goal 做真实工程工作。
 
 - retry/fresh-context retry 完整:`retryPolicy`/`retryState` 持久化 `maxRetries`、`backoffMs`、`nextRetryAt` 和 exhausted escalation;到期 retry 可在 runner/service 重建后恢复。
-- `spec_compliance` Done 条件由 Reviewer 在 `goal_check_done` 下产生结构化逐 criterion 证据;不保存 raw LLM 输出,不加单独 spec agent/model/config。
-- Reviewer 验证是硬边界:`goal_check_done` 仅 Reviewer review session 可用;外部 verdict 只有 `DONE` / `NOT_DONE`,其中 `NOT_DONE` 生成 Operator 修复上下文并进入现有 failed/retry/escalated 流程。
+- `spec_compliance` Done 条件由 Reviewer 在 `goal_evidence` 工具下产生结构化逐 criterion 证据;不保存 raw LLM 输出,不加单独 spec agent/model/config。
+- Reviewer 验证是硬边界:`goal_evidence` 仅 Reviewer review session 可用;`goal_manage.finalize_review` 也仅 Reviewer review session 可用。外部 verdict 只有 `DONE` / `NOT_DONE`,其中 `NOT_DONE` 生成 Operator 修复上下文并进入现有 failed/retry/escalated 流程。
 - Goal artifacts 是当前 canonical Markdown 文件:`plan.md`,`build.md`,`review.md`,`spec-compliance.md`,`approvals.md`,`budget.md`,`retry-log.md`,`final-report.md`;不做 artifact version/revision/latest 指针。
 - Approval Queue 完整:durable、project-scoped、全局 Dashboard + 就地列表同步;Web/Dashboard 使用 redacted `displayPayload`,不展示 raw payload。
 - Goal budget 基础:per-Goal token 上限 + warning/hard pause;只统计 token,不做价格/cost accounting。
@@ -497,7 +497,7 @@
 
 以下在 TDD 里有推荐答案,设计阶段已全部决策锁定:
 
-1. **Reviewer 是新增 agent** —— 新建 `reviewer` agent 定义,工具集硬编码(read-only + lsp + goal_check_done 内部白名单执行),独立 session store(决策 2026-06)
+1. **Reviewer 是新增 agent** —— 新建 `reviewer` agent 定义,工具集硬编码(read-only + lsp + goal_evidence + goal_manage.finalize_review + goal_artifact_read/write),独立 session store(决策 2026-06)
 2. **state.md 只读视图** —— state.json 是 source of truth,state.md 是生成视图,不做双向同步。用户编辑 state 通过 UI form(JSON-backed)或 `PATCH /loops/:id/state` API(决策 2026-06)
 3. **L0 起步范围** —— Phase 1 只做 Goal(不做 Loop)。Goal 单独有价值且风险低。Loop 留 Phase 3(决策 2026-06)
 4. **Workflow 用户数据保留只读** —— `.archcode/workflows/` 目录保留,runtime 不再读写,不删用户数据。迁移工具后续提供(决策 2026-06)

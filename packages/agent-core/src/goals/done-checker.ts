@@ -116,7 +116,7 @@ function parseSpecComplianceCriteria(content: string, specPath: string): GoalSpe
     const criterion = sanitizeSummary(extractCriterionText(rawLine, criterionId));
     const evidenceSummary = sanitizeSummary(parseField(rawLine, "evidence") ?? `${criterionId} is ${status} according to ${specPath}.`);
     const repairGuidance = status === "failed"
-      ? sanitizeSummary(parseField(rawLine, "repair") ?? parseField(rawLine, "guidance") ?? `Repair ${criterionId}, then run goal_check_done again.`)
+      ? sanitizeSummary(parseField(rawLine, "repair") ?? parseField(rawLine, "guidance") ?? `Repair ${criterionId}, then run goal_evidence with action:"check_done" again.`)
       : undefined;
 
     criteria.push(withoutUndefined({
@@ -346,7 +346,7 @@ async function commandPermissionDenial(
   }
 
   const confirmation = await options.confirmPermission({
-    toolName: options.toolName ?? "goal_check_done",
+    toolName: options.toolName ?? "goal_evidence",
     toolCallId: options.toolCallId ?? "goal-check-done-command",
     input: { command, timeoutMs },
     description: "Evaluate a command-bearing Goal Done Condition through bash policy.",

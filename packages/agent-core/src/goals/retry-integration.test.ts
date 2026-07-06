@@ -45,11 +45,11 @@ function reviewResponse(outcome: ReviewOutcome["outcome"], comment: string): Hit
 }
 
 function passingResult(conditionId = condition.id): DoneResult {
-  return { conditionId, passed: true, evidence: "goal_check_done passed", checkedAt: new Date().toISOString() };
+  return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
 function failingResult(conditionId = condition.id): DoneResult {
-  return { conditionId, passed: false, evidence: "goal_check_done failed", checkedAt: new Date().toISOString() };
+  return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
 }
 
 function createRunner(options: { sessionIds?: string[] } = {}): GoalRunner {

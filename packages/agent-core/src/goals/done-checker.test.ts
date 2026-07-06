@@ -2,9 +2,9 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TOOL_GOAL_CHECK_DONE, type DoneCondition, type DoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
+import { TOOL_GOAL_EVIDENCE, type DoneCondition, type DoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
 
-import { createGoalCheckDoneTool } from "../tools/builtins/goal-check-done";
+import { goalEvidenceTool } from "../tools/builtins/goal-tools";
 import { createRegistry } from "../tools/registry";
 import { createTestProjectContext } from "../tools/test-project-context";
 import { createToolExecutionContext } from "../tools/types";
@@ -249,7 +249,7 @@ describe("evaluateCondition", () => {
   });
 });
 
-describe("goal_check_done tool", () => {
+describe("goal_evidence check_done tool", () => {
   it("evaluates a condition and persists through the guarded Reviewer boundary", async () => {
     await writeFile(join(workspaceRoot, "artifact.txt"), "done\n");
     const manager = new GoalStateManager(workspaceRoot);
@@ -264,31 +264,31 @@ describe("goal_check_done tool", () => {
     await manager.lock(goal.id, "review-test");
     await manager.transitionStatus(goal.id, "running");
     await manager.updatePhase(goal.id, "review");
-    const registry = createRegistry([createGoalCheckDoneTool()]);
+    const registry = createRegistry([goalEvidenceTool]);
     const store = createMockStore({
       sessionId: "review-session",
       agentName: "reviewer",
       sessionRole: "review",
       goalId: goal.id,
     });
-    const input = { goalId: goal.id, conditionId: "artifact-exists" };
+    const input = { action: "check_done", goalId: goal.id, conditionId: "artifact-exists" };
     const ctx = createToolExecutionContext({
       store,
       storeManager,
-      toolName: TOOL_GOAL_CHECK_DONE,
-      toolCallId: "goal-check-done-call",
+      toolName: TOOL_GOAL_EVIDENCE,
+      toolCallId: "goal-evidence-check-done-call",
       input,
       step: 1,
       abort: new AbortController().signal,
       startedAt: Date.now(),
-      allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+      allowedTools: new Set([TOOL_GOAL_EVIDENCE]),
       agentName: store.getState().agentName,
       agentSkills: [],
       skillService: testSkillService,
       projectContext: createTestProjectContext(workspaceRoot),
     });
 
-    const toolResult = await registry.execute({ toolName: TOOL_GOAL_CHECK_DONE, toolCallId: "goal-check-done-call", input }, ctx);
+    const toolResult = await registry.execute({ toolName: TOOL_GOAL_EVIDENCE, toolCallId: "goal-evidence-check-done-call", input }, ctx);
 
     expect(toolResult.isError).toBe(false);
     const doneResult = JSON.parse(toolResult.output) as DoneResult;
@@ -298,7 +298,7 @@ describe("goal_check_done tool", () => {
     expect(persisted.doneResults["artifact-exists"]).toEqual(doneResult);
   });
 
-  it("spec compliance persists only structured summaries through reviewer-owned goal_check_done", async () => {
+  it("spec compliance persists only structured summaries through reviewer-owned goal_evidence check_done", async () => {
     await writeFile(join(workspaceRoot, "SPEC.md"), specComplianceFixture());
     const manager = new GoalStateManager(workspaceRoot);
     const goal = await manager.create(
@@ -312,31 +312,31 @@ describe("goal_check_done tool", () => {
     await manager.lock(goal.id, "review-test");
     await manager.transitionStatus(goal.id, "running");
     await manager.updatePhase(goal.id, "review");
-    const registry = createRegistry([createGoalCheckDoneTool()]);
+    const registry = createRegistry([goalEvidenceTool]);
     const store = createMockStore({
       sessionId: "review-session",
       agentName: "reviewer",
       sessionRole: "review",
       goalId: goal.id,
     });
-    const input = { goalId: goal.id, conditionId: "spec-check" };
+    const input = { action: "check_done", goalId: goal.id, conditionId: "spec-check" };
     const ctx = createToolExecutionContext({
       store,
       storeManager,
-      toolName: TOOL_GOAL_CHECK_DONE,
-      toolCallId: "goal-check-done-spec-call",
+      toolName: TOOL_GOAL_EVIDENCE,
+      toolCallId: "goal-evidence-check-done-spec-call",
       input,
       step: 1,
       abort: new AbortController().signal,
       startedAt: Date.now(),
-      allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+      allowedTools: new Set([TOOL_GOAL_EVIDENCE]),
       agentName: store.getState().agentName,
       agentSkills: [],
       skillService: testSkillService,
       projectContext: createTestProjectContext(workspaceRoot),
     });
 
-    const toolResult = await registry.execute({ toolName: TOOL_GOAL_CHECK_DONE, toolCallId: "goal-check-done-spec-call", input }, ctx);
+    const toolResult = await registry.execute({ toolName: TOOL_GOAL_EVIDENCE, toolCallId: "goal-evidence-check-done-spec-call", input }, ctx);
 
     expect(toolResult.isError).toBe(false);
     const persisted = await manager.read(goal.id);
@@ -401,26 +401,26 @@ describe("goal_check_done tool", () => {
     await manager.lock(goal.id, "review-test");
     await manager.transitionStatus(goal.id, "running");
     await manager.updatePhase(goal.id, "review");
-    const registry = createRegistry([createGoalCheckDoneTool()]);
+    const registry = createRegistry([goalEvidenceTool]);
     const store = createMockStore({ agentName: "build", sessionRole: "review", goalId: goal.id });
-    const input = { goalId: goal.id, conditionId: "spec-check" };
+    const input = { action: "check_done", goalId: goal.id, conditionId: "spec-check" };
     const ctx = createToolExecutionContext({
       store,
       storeManager,
-      toolName: TOOL_GOAL_CHECK_DONE,
-      toolCallId: "goal-check-done-denied-spec-call",
+      toolName: TOOL_GOAL_EVIDENCE,
+      toolCallId: "goal-evidence-check-done-denied-spec-call",
       input,
       step: 1,
       abort: new AbortController().signal,
       startedAt: Date.now(),
-      allowedTools: new Set([TOOL_GOAL_CHECK_DONE]),
+      allowedTools: new Set([TOOL_GOAL_EVIDENCE]),
       agentName: store.getState().agentName,
       agentSkills: [],
       skillService: testSkillService,
       projectContext: createTestProjectContext(workspaceRoot),
     });
 
-    const toolResult = await registry.execute({ toolName: TOOL_GOAL_CHECK_DONE, toolCallId: "goal-check-done-denied-spec-call", input }, ctx);
+    const toolResult = await registry.execute({ toolName: TOOL_GOAL_EVIDENCE, toolCallId: "goal-evidence-check-done-denied-spec-call", input }, ctx);
 
     expect(toolResult.isError).toBe(true);
     expect(toolResult.output).toContain("GOAL_REVIEWER_REQUIRED");

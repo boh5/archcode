@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 
 function passingResult(conditionId = condition.id): DoneResult {
-  return { conditionId, passed: true, evidence: "goal_check_done passed", checkedAt: new Date().toISOString() };
+  return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
 async function lockedGoal(approvalPoints: Array<"after_plan" | "before_complete">) {

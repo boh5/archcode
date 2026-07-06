@@ -590,7 +590,8 @@ describe("goal loop runner", () => {
     expect(executionInput?.userMessage).toContain("Bootstrap an ArchCode Goal run.");
     expect(executionInput?.userMessage).toContain("Goal ID: goal-1");
     expect(executionInput?.userMessage).toContain(`Loop ID: ${loop.loopId}`);
-    expect(executionInput?.userMessage).toContain("Your first action must be calling goal_run with this Goal ID.");
+    expect(executionInput?.userMessage).toContain("Your first action must be calling goal_manage with action=\"start\" for this Goal ID.");
+    expect(executionInput?.userMessage).toContain("goal_evidence action=\"check_done\"");
 
     const state = await fixture.stateManager.read(loop.loopId);
     expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
