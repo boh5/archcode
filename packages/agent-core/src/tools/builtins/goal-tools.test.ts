@@ -414,6 +414,8 @@ describe("goal_manage builtin tool", () => {
     expect(result.isError).toBe(false);
     const failed = JSON.parse(result.output) as GoalState;
     expect(failed).toMatchObject({ id: goal.id, status: "running", phase: "plan", retryCount: 1 });
+    expect(failed.mainSessionId).toBeString();
+    expect(failed.mainSessionId).not.toBe("review-session");
     expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE", summary: "Required artifact evidence is still missing." });
   });
 

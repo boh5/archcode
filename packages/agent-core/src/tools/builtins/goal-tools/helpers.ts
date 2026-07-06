@@ -56,13 +56,18 @@ export class GoalToolAuthorizationError extends Error {
 }
 
 export function createGoalRunnerFromContext(ctx: ToolExecutionContext): GoalRunner {
-  const currentSessionId = ctx.store.getState().sessionId;
+  const currentSession = ctx.store.getState();
   return new GoalRunner({
     goalStateManager: ctx.projectContext.goalState,
     goalArtifacts: ctx.projectContext.goalArtifacts,
     hitlService: ctx.projectContext.hitl,
     workspaceRoot: ctx.workspaceRoot,
-    createSession: async () => currentSessionId,
+    createSession: async (options) => {
+      if (currentSession.sessionRole === "review") {
+        return (await ctx.storeManager.createSessionFile(ctx.workspaceRoot, options)).sessionId;
+      }
+      return currentSession.sessionId;
+    },
   });
 }
 
