@@ -11,11 +11,14 @@ import type {
   LoopConfig,
   LoopIntegrationError,
   LoopIntegrationStatusSnapshot,
+  LoopJobSummary,
   LoopKillState,
   LoopRunReport,
   LoopScheduleSpec,
   LoopState,
   LoopStatus,
+  LoopTriggerHealth,
+  LoopWorktreeArtifact,
 } from "../api/types";
 
 const STATUS_BADGE_CLASS: Record<LoopStatus, string> = {
@@ -237,6 +240,8 @@ function ConfigSection({ loop }: { loop: LoopState }) {
     <DetailSection title="Config" testId="loop-config-section">
       <div className="grid gap-2 sm:grid-cols-2">
         <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
+        <FieldRow label="triggers" value={formatTriggers(config.triggers)} />
+        <FieldRow label="cleanup policy" value={formatCleanupPolicy(config.cleanupPolicy)} />
         <FieldRow label="run kind" value={config.runKind} />
         <FieldRow label="mode" value={config.mode} />
         <FieldRow label="tool profile" value={config.toolProfileId ?? "none"} />
@@ -258,8 +263,15 @@ function LiveStatusSection({ slug, loop }: { slug: string; loop: LoopState }) {
         <FieldRow label="current run" value={formatRunSummary(loop.currentRun)} />
         <FieldRow label="last run" value={formatRunSummary(loop.lastRun)} />
         <FieldRow label="next run" value={formatDateTime(loop.nextRunAt)} />
+        <FieldRow label="last scheduled" value={formatDateTime(loop.lastScheduledAt)} />
+        <FieldRow label="next scheduled" value={formatDateTime(loop.nextScheduledAt)} />
+        <FieldRow label="last enqueued" value={formatDateTime(loop.lastEnqueuedAt)} />
+        <FieldRow label="missed count" value={String(loop.missedCount ?? 0)} />
+        <FieldRow label="cleanup" value={loop.cleanupState ?? "none"} />
         <FieldRow label="updated" value={formatDateTime(loop.updatedAt)} />
       </div>
+      <QueueStatus loop={loop} />
+      <TriggerHealthRows health={loop.triggerHealth} />
       <LinkedRunResources slug={slug} run={loop.currentRun} label="current linked resources" />
       <LinkedRunResources slug={slug} run={loop.lastRun} label="last linked resources" />
     </DetailSection>
@@ -458,11 +470,19 @@ function RunHistorySection({
               </div>
               <LinkedRunResources slug={slug} run={run} label="run resources" compact />
               <div className="mt-1 grid gap-1 text-[12px] text-text-tertiary sm:grid-cols-2">
+                <span>job: {run.jobId ?? "none"}</span>
+                <span>queue subject: {run.subjectKey ?? "none"}</span>
+                <span>dedupe: {run.dedupeKey ?? "none"}</span>
+                <span>branch: {run.branchKey ?? "none"}</span>
+                <span data-testid="loop-run-worktree-status">worktree: {formatWorktree(run)}</span>
+                <span>diff stats: {formatArtifacts(run.observedArtifacts)}</span>
                 <span>budget: {run.budgetUsage ? formatRunBudgetUsage(run.budgetUsage) : "none"}</span>
                 <span>collision targets: {formatTargets(run.collisionTargets)}</span>
                 <span>collision conflicts: {run.collisionConflicts?.map((conflict) => conflict.targetKey).join(", ") || "none"}</span>
                 <span>integration: {formatRunIntegrationErrors(run.integrationErrors)}</span>
               </div>
+              {run.blockedReason && <p data-testid="loop-run-blocked-reason" className="mt-1 text-[12.5px] text-warning">blocked: {run.blockedReason}</p>}
+              {run.cleanupState && <p className="mt-1 text-[12.5px] text-text-secondary">cleanup: {run.cleanupState}</p>}
               {run.summary && <p className="mt-1 text-[12.5px] text-text-secondary">summary: {run.summary}</p>}
               {run.error && <p className="mt-1 text-[12.5px] text-error">error: {run.error}</p>}
               {run.skippedReason && <p className="mt-1 text-[12.5px] text-warning">skipped: {run.skippedReason}</p>}
@@ -591,7 +611,109 @@ function LinkedRunResources({
 function formatSchedule(schedule: LoopScheduleSpec): string {
   if (schedule.kind === "manual") return "manual";
   if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
-  return `cron ${schedule.expression}`;
+  return `cron UTC ${schedule.expression}`;
+}
+
+function formatTriggers(triggers: LoopConfig["triggers"]): string {
+  if (!triggers || triggers.length === 0) return "none";
+  return triggers.map((trigger) => {
+    const cadence = trigger.cadenceMs === undefined ? "" : ` every ${trigger.cadenceMs}ms`;
+    if (trigger.kind === "on_pr") return `on_pr${cadence}${trigger.branch ? ` branch ${trigger.branch}` : ""}${trigger.baseBranch ? ` base ${trigger.baseBranch}` : ""}`;
+    if (trigger.kind === "on_ci_fail") return `on_ci_fail${cadence}${trigger.workflowName ? ` workflow ${trigger.workflowName}` : ""}${trigger.checkName ? ` check ${trigger.checkName}` : ""}`;
+    return `on_commit${cadence}${trigger.branch ? ` branch ${trigger.branch}` : ""}`;
+  }).join("; ");
+}
+
+function formatCleanupPolicy(policy: LoopConfig["cleanupPolicy"]): string {
+  if (!policy) return "none";
+  return [
+    `enabled ${policy.enabled ?? false}`,
+    policy.action ? `action ${policy.action}` : undefined,
+    policy.deleteUnchangedWorktrees ? "delete unchanged worktrees" : undefined,
+    policy.preserveChangedArtifacts ? "preserve changed artifacts" : undefined,
+    policy.maxPreservedWorktrees !== undefined ? `max preserved ${policy.maxPreservedWorktrees}` : undefined,
+    policy.noFindingRuns !== undefined ? `no-finding runs ${policy.noFindingRuns}` : undefined,
+    policy.quietDays !== undefined ? `quiet days ${policy.quietDays}` : undefined,
+    policy.requiresNoPendingQueue ? "requires no pending queue" : undefined,
+  ].filter(Boolean).join("; ");
+}
+
+function QueueStatus({ loop }: { loop: LoopState }) {
+  return (
+    <div className="mt-3 rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Queue / Worktree</h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <FieldRow label="current job" value={formatJobSummary(loop.currentJob)} />
+        <FieldRow label="queued jobs" value={loop.queuedJobs?.length ? loop.queuedJobs.map(formatJobSummary).join("; ") : "none"} />
+      </div>
+    </div>
+  );
+}
+
+function TriggerHealthRows({ health }: { health: LoopTriggerHealth[] | undefined }) {
+  return (
+    <div data-testid="loop-trigger-health" className="mt-3 rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Trigger Health</h3>
+      {!health || health.length === 0 ? (
+        <div className="text-[12.5px] text-text-tertiary">No trigger health reported</div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {health.map((item) => (
+            <FieldRow
+              key={`${item.triggerKind}:${item.lastCheckedAt ?? "none"}`}
+              label={item.triggerKind}
+              value={formatTriggerHealth(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatJobSummary(job: LoopJobSummary | undefined): string {
+  if (!job) return "none";
+  return [
+    `${job.jobId} ${job.status}`,
+    `trigger ${job.triggerKind}`,
+    `subject ${job.subjectKey}`,
+    job.branchKey ? `branch ${job.branchKey}` : undefined,
+    job.worktreePath ? `worktree ${job.worktreePath}` : undefined,
+    job.blockedReason ? `blocked ${job.blockedReason}` : undefined,
+    job.cleanupState ? `cleanup ${job.cleanupState}` : undefined,
+  ].filter(Boolean).join("; ");
+}
+
+function formatTriggerHealth(item: LoopTriggerHealth): string {
+  return [
+    item.status,
+    item.cadenceMs !== undefined ? `${item.cadenceMs}ms cadence` : undefined,
+    item.lastCheckedAt !== undefined ? `checked ${formatDateTime(item.lastCheckedAt)}` : undefined,
+    item.lastSuccessAt !== undefined ? `success ${formatDateTime(item.lastSuccessAt)}` : undefined,
+    item.retryAfterMs !== undefined ? `retry ${item.retryAfterMs}ms` : undefined,
+    item.missedCount !== undefined ? `missed ${item.missedCount}` : undefined,
+    item.lastError ? `error ${item.lastError}` : undefined,
+  ].filter(Boolean).join("; ");
+}
+
+function formatWorktree(run: LoopRunReport): string {
+  if (!run.worktreePath && !run.branchKey && !run.baseSha && !run.resolvedHeadSha) return "none";
+  return [
+    run.worktreePath ? `path ${run.worktreePath}` : undefined,
+    run.branchKey ? `branch ${run.branchKey}` : undefined,
+    run.baseSha ? `base ${run.baseSha}` : undefined,
+    run.resolvedHeadSha ? `head ${run.resolvedHeadSha}` : undefined,
+    run.missedCount !== undefined ? `missed ${run.missedCount}` : undefined,
+  ].filter(Boolean).join("; ");
+}
+
+function formatArtifacts(artifacts: LoopWorktreeArtifact[] | undefined): string {
+  if (!artifacts || artifacts.length === 0) return "none";
+  const counts = artifacts.reduce<Record<string, number>>((acc, artifact) => {
+    acc[artifact.status] = (acc[artifact.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  return Object.entries(counts).map(([status, count]) => `${status} ${count}`).join(", ");
 }
 
 function formatLimits(config: LoopConfig): string {

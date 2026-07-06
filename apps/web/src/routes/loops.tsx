@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useLoops } from "../api/queries";
 import { CreateLoopDialog } from "../components/features/CreateLoopDialog";
-import type { LoopState, LoopStatus } from "../api/types";
+import type { LoopJobSummary, LoopState, LoopStatus, LoopTriggerHealth } from "../api/types";
 
 const STATUS_BADGE_CLASS: Record<LoopStatus, string> = {
   active: "bg-success-muted text-success",
@@ -129,7 +129,22 @@ function formatSchedule(loop: LoopState): string {
   const { schedule } = loop.config;
   if (schedule.kind === "manual") return "manual";
   if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
-  return `cron ${schedule.expression}`;
+  return `cron UTC ${schedule.expression}`;
+}
+
+function formatTriggerHealth(health: LoopTriggerHealth[] | undefined): string {
+  if (!health || health.length === 0) return "none";
+  return health.map((item) => `${item.triggerKind} ${item.status}${item.cadenceMs !== undefined ? ` ${item.cadenceMs}ms` : ""}`).join("; ");
+}
+
+function formatJob(job: LoopJobSummary | undefined): string {
+  if (!job) return "none";
+  return `${job.jobId} ${job.status} ${job.triggerKind}${job.blockedReason ? ` blocked ${job.blockedReason}` : ""}`;
+}
+
+function formatQueue(loop: LoopState): string {
+  const queued = loop.queuedJobs?.length ?? 0;
+  return `current: ${formatJob(loop.currentJob)}; queued: ${queued}`;
 }
 
 function formatLastRun(loop: LoopState): string {
@@ -165,6 +180,11 @@ function LoopListItem({ loop }: { loop: LoopState }) {
         <div className="flex items-center gap-2 mt-0.5 text-[11px] text-text-muted">
           <span>last run: {formatLastRun(loop)}</span>
           {nextRun && <span>next: {nextRun}</span>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-text-muted">
+          <span data-testid="loop-trigger-health">trigger health: {formatTriggerHealth(loop.triggerHealth)}</span>
+          <span>queue: {formatQueue(loop)}</span>
+          {loop.cleanupState && <span>cleanup: {loop.cleanupState}</span>}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">

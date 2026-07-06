@@ -720,6 +720,121 @@ describe("LoopDetailRoute", () => {
     }
   });
 
+  test("renders phase 5 cron trigger queue worktree cleanup metadata compactly", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    const phase5Loop = makeLoop({
+      config: {
+        ...makeLoop().config,
+        schedule: { kind: "cron", expression: "*/15 * * * *" },
+        triggers: [{ kind: "on_pr", cadenceMs: 60000, baseBranch: "main", prScope: "review_requested" }],
+        cleanupPolicy: { enabled: true, action: "pause", deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, requiresNoPendingQueue: true },
+      },
+      lastScheduledAt: 1700000010000,
+      nextScheduledAt: 1700000910000,
+      lastEnqueuedAt: 1700000020000,
+      missedCount: 2,
+      cleanupState: "auto_paused",
+      currentJob: {
+        jobId: "job-current",
+        loopId: "loop-1",
+        status: "blocked",
+        triggerKind: "on_pr",
+        subjectKey: "github:archcode/archcode:pr:42",
+        dedupeKey: "loop-1:on_pr:42",
+        branchKey: "archcode/archcode:feature-loop",
+        queuedAt: 1700000020000,
+        startedAt: 1700000030000,
+        attempts: 1,
+        blockedReason: "needs-review",
+        worktreePath: "/safe/worktrees/loop-1",
+        cleanupState: "cleanup_candidate",
+        observedArtifacts: [{ path: "src/file.ts", status: "modified", sizeBytes: 42 }],
+      },
+      queuedJobs: [
+        {
+          jobId: "job-queued",
+          loopId: "loop-1",
+          status: "queued",
+          triggerKind: "cron",
+          subjectKey: "cron:*/15",
+          dedupeKey: "loop-1:cron:1700000910000",
+          queuedAt: 1700000910000,
+          attempts: 0,
+          cleanupState: "expired_needs_review",
+        },
+      ],
+      triggerHealth: [
+        { triggerKind: "on_pr", status: "degraded", cadenceMs: 60000, lastCheckedAt: 1700000040000, lastError: "rate limited", missedCount: 2 },
+      ],
+    });
+    setupLoopDetailFetch({
+      loop: phase5Loop,
+      killState: { globalKillActive: false },
+      runs: [
+        makeRun({
+          runId: "run-phase5",
+          status: "skipped",
+          trigger: "on_pr",
+          jobId: "job-current",
+          triggerKind: "on_pr",
+          subjectKey: "github:archcode/archcode:pr:42",
+          dedupeKey: "loop-1:on_pr:42",
+          branchKey: "archcode/archcode:feature-loop",
+          worktreePath: "/safe/worktrees/loop-1",
+          baseSha: "base123",
+          resolvedHeadSha: "head456",
+          missedCount: 2,
+          blockedReason: "needs-review",
+          cleanupState: "cleanup_candidate",
+          observedArtifacts: [
+            { path: "src/file.ts", status: "modified", sizeBytes: 42 },
+            { path: "src/new.ts", status: "created", sizeBytes: 13 },
+          ],
+          summary: "Evidence: session and goal links remain the only navigation affordances.",
+        }),
+      ],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderLoopDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.textContent).toContain("cron UTC */15 * * * *");
+        expect(container.textContent).toContain("on_pr every 60000ms base main");
+        expect(container.textContent).toContain("delete unchanged worktrees");
+        expect(container.textContent).toContain("job-current blocked");
+        expect(container.textContent).toContain("worktree /safe/worktrees/loop-1");
+        expect(container.textContent).toContain("job-queued queued");
+        expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("degraded");
+        expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("rate limited");
+        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("path /safe/worktrees/loop-1");
+        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("branch archcode/archcode:feature-loop");
+        expect(container.querySelector('[data-testid="loop-run-blocked-reason"]')?.textContent).toContain("needs-review");
+        expect(container.textContent).toContain("diff stats: modified 1, created 1");
+        expect(container.textContent).toContain("cleanup: cleanup_candidate");
+        expect(container.textContent).toContain("auto_paused");
+        expect(container.textContent).toContain("expired_needs_review");
+      });
+
+      const lowerText = (container.textContent ?? "").toLowerCase();
+      expect(lowerText).not.toContain("readiness");
+      expect(lowerText).not.toContain("auto approve");
+      expect(lowerText).not.toContain("merge pr");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
   test("trigger conflict 409 displays Loop is already running", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
@@ -858,6 +973,84 @@ describe("LoopDetailRoute", () => {
       expect(Array.isArray(goalTemplate.doneConditions)).toBe(true);
       expect(goalTemplate.doneConditions).toHaveLength(1);
       expect("goalTemplateId" in config).toBe(false);
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("edit loop form preserves cron schedule and on_pr trigger config in PATCH", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    const { paths, getPatchBody } = setupLoopDetailFetch({ killState: { globalKillActive: false } });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      const baseLoop = makeLoop();
+      const loop = makeLoop({
+        config: {
+          ...baseLoop.config,
+          schedule: { kind: "cron", expression: "*/15 * * * *" },
+          triggers: [{ kind: "on_pr", cadenceMs: 60000 }],
+        },
+      });
+
+      await act(async () => {
+        reactRoot.render(
+          <QueryClientProvider client={queryClient}>
+            <EditLoopForm slug="demo" loop={loop} />
+          </QueryClientProvider>,
+        );
+      });
+
+      const dialogScope = document.body;
+
+      await waitFor(() => {
+        const cronExpression = dialogScope.querySelector('[data-testid="loop-cron-expression"]') as HTMLInputElement | null;
+        const onPrTrigger = dialogScope.querySelector('[data-testid="loop-trigger-on-pr"]') as HTMLInputElement | null;
+        const triggerCadence = dialogScope.querySelector('[data-testid="loop-trigger-cadence-ms"]') as HTMLInputElement | null;
+        expect(cronExpression?.value).toBe("*/15 * * * *");
+        expect(onPrTrigger?.checked).toBe(true);
+        expect(triggerCadence?.value).toBe("60000");
+      });
+
+      const renderedText = (dialogScope.textContent ?? "").toLowerCase();
+      expect(renderedText).not.toContain("readiness");
+      expect(renderedText).not.toContain("custom pattern");
+      expect(renderedText).not.toContain("auto approve");
+      expect(renderedText).not.toContain("auto-approval");
+      expect(renderedText).not.toContain("merge pr");
+      expect(renderedText).not.toContain("hard-delete");
+
+      await act(async () => {
+        submitForm(dialogScope);
+      });
+
+      await waitFor(() => {
+        expect(paths).toContain("PATCH /api/projects/demo/loops/loop-1");
+        expect(getPatchBody()).toBeDefined();
+      });
+
+      const patchBody = getPatchBody()!;
+      expect("projectConfig" in patchBody).toBe(false);
+      expect("readiness" in patchBody).toBe(false);
+      expect("customPattern" in patchBody).toBe(false);
+      expect("autoApprove" in patchBody).toBe(false);
+      const config = patchBody.config as Record<string, unknown>;
+      expect(config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+      expect(config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60000 }]);
+      expect("projectConfig" in config).toBe(false);
+      expect("readiness" in config).toBe(false);
+      expect("readinessScore" in config).toBe(false);
+      expect("customPattern" in config).toBe(false);
+      expect("autoApprove" in config).toBe(false);
     } finally {
       await act(async () => {
         reactRoot.unmount();
