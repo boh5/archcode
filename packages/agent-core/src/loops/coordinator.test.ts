@@ -98,20 +98,86 @@ describe("LoopJobCoordinator", () => {
   test("finishes a running duplicate by creating one pending rerun", async () => {
     const clock = new FakeClock(5_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    await enqueueBranch(queue, "rerun", 1);
+    const oldSha = "1".repeat(40);
+    const newSha = "2".repeat(40);
+    await enqueueBranch(queue, "rerun", 1, undefined, 0, oldSha);
     const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 } });
     const [running] = await coordinator.dispatchReady();
-    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_commit", subjectKey: "branch:rerun", eventSummary: { summary: "new commit while running" } });
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:rerun",
+      resolvedHeadSha: newSha,
+      eventSummary: { summary: "new commit while running", payloadSha: newSha },
+    });
 
     await coordinator.finish(running!.jobId, { status: "succeeded" });
 
     const jobs = await queue.list();
     expect(jobs.map((job) => job.status)).toEqual(["succeeded", "pending"]);
     expect(jobs[1]?.dedupeKey).toBe(jobs[0]?.dedupeKey);
+    expect(jobs[0]?.resolvedHeadSha).toBe(newSha);
+    expect(jobs[1]?.resolvedHeadSha).toBe(newSha);
+    expect(jobs[1]?.eventSummaries.at(-1)?.summary).toBe("Queued rerun requested while previous job was running");
+  });
+
+  test("rerun keeps coalesced trigger metadata when finish records current-run execution metadata", async () => {
+    const clock = new FakeClock(6_000);
+    const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
+    const oldBaseSha = "0".repeat(40);
+    const oldSha = "1".repeat(40);
+    const newBaseSha = "2".repeat(40);
+    const newSha = "3".repeat(40);
+    const executionSha = "4".repeat(40);
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:rerun-exec",
+      branchKey: "archcode/workbench:feature/rerun-exec",
+      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "feature/rerun-exec" },
+      worktreePath: "/tmp/old-trigger-worktree",
+      baseSha: oldBaseSha,
+      resolvedHeadSha: oldSha,
+      eventSummary: { summary: "old commit", payloadSha: oldSha },
+    });
+    const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 } });
+    const [running] = await coordinator.dispatchReady();
+    await queue.enqueue({
+      loopId: LOOP_ID,
+      triggerKind: "on_commit",
+      subjectKey: "branch:rerun-exec",
+      branchKey: "archcode/workbench:feature/rerun-exec",
+      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "feature/rerun-exec" },
+      worktreePath: "/tmp/coalesced-trigger-worktree",
+      baseSha: newBaseSha,
+      resolvedHeadSha: newSha,
+      eventSummary: { summary: "new commit while running", payloadSha: newSha },
+    });
+
+    await coordinator.finish(running!.jobId, {
+      status: "succeeded",
+      worktreePath: "/tmp/current-run-output-worktree",
+      baseSha: oldBaseSha,
+      resolvedHeadSha: executionSha,
+      summary: "current run finished with execution metadata",
+    });
+
+    const jobs = await queue.list();
+    expect(jobs.map((job) => job.status)).toEqual(["succeeded", "pending"]);
+    expect(jobs[0]).toMatchObject({
+      worktreePath: "/tmp/current-run-output-worktree",
+      baseSha: oldBaseSha,
+      resolvedHeadSha: executionSha,
+    });
+    expect(jobs[1]).toMatchObject({
+      worktreePath: "/tmp/coalesced-trigger-worktree",
+      baseSha: newBaseSha,
+      resolvedHeadSha: newSha,
+    });
   });
 });
 
-async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, branchKey?: string, priority = 0): Promise<void> {
+async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, branchKey?: string, priority = 0, resolvedHeadSha?: string): Promise<void> {
   await queue.enqueue({
     loopId: LOOP_ID,
     triggerKind: "on_commit",
@@ -119,6 +185,7 @@ async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, b
     branchKey: branchKey ?? `archcode/workbench:feature/${name}`,
     collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: `feature/${name}` },
     priority,
+    resolvedHeadSha,
     eventSummary: { summary: `commit ${index}` },
   });
 }

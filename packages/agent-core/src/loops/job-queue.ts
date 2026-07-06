@@ -228,9 +228,13 @@ export class LoopJobQueue {
         const updated = LoopJobRecordSchema.parse({
           ...duplicate,
           priority: Math.max(duplicate.priority, input.priority ?? duplicate.priority),
-          branchKey: duplicate.branchKey ?? branchKeyFor(input),
-          collisionKey: duplicate.collisionKey ?? collisionKeyFor(input),
-          collisionTarget: duplicate.collisionTarget ?? input.collisionTarget,
+          branchKey: branchKeyFor(input) ?? duplicate.branchKey,
+          collisionKey: collisionKeyFor(input) ?? duplicate.collisionKey,
+          collisionTarget: input.collisionTarget ?? duplicate.collisionTarget,
+          worktreePath: input.worktreePath ?? duplicate.worktreePath,
+          baseSha: input.baseSha ?? duplicate.baseSha,
+          resolvedHeadSha: input.resolvedHeadSha ?? duplicate.resolvedHeadSha,
+          missedCount: input.missedCount ?? duplicate.missedCount,
           updatedAt: now,
           eventSummaries: appendEventSummary(duplicate.eventSummaries, eventSummary),
         });
@@ -242,6 +246,13 @@ export class LoopJobQueue {
         const updated = LoopJobRecordSchema.parse({
           ...duplicate,
           rerunAfterCurrent: true,
+          branchKey: branchKeyFor(input) ?? duplicate.branchKey,
+          collisionKey: collisionKeyFor(input) ?? duplicate.collisionKey,
+          collisionTarget: input.collisionTarget ?? duplicate.collisionTarget,
+          worktreePath: input.worktreePath ?? duplicate.worktreePath,
+          baseSha: input.baseSha ?? duplicate.baseSha,
+          resolvedHeadSha: input.resolvedHeadSha ?? duplicate.resolvedHeadSha,
+          missedCount: input.missedCount ?? duplicate.missedCount,
           updatedAt: now,
           eventSummaries: appendEventSummary(duplicate.eventSummaries, eventSummary),
         });

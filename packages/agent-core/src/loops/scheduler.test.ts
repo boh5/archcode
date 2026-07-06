@@ -851,6 +851,58 @@ describe("LoopScheduler", () => {
     expect(job).toMatchObject({ status: "skipped", blockedReason: "collision_conflict" });
   });
 
+  test("queued on_commit rerun keeps latest coalesced SHA after stale run report finishes", async () => {
+    const oldSha = "1".repeat(40);
+    const newSha = "2".repeat(40);
+    const fixture = await createFixture(0);
+    const loop = await fixture.manager.create("project-a", triggerConfig);
+    await fixture.jobQueue.enqueue({
+      loopId: loop.loopId,
+      triggerKind: "on_commit",
+      subjectKey: "commit:archcode/workbench:main",
+      repoId: "archcode/workbench",
+      branch: "main",
+      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      resolvedHeadSha: oldSha,
+      eventSummary: { summary: "Observed old commit", payloadSha: oldSha },
+    });
+    const firstRunnerStarted = createDeferred<void>();
+    const finishFirstRunner = createDeferred<void>();
+    let runCount = 0;
+    fixture.runner = async () => {
+      runCount += 1;
+      if (runCount === 1) {
+        firstRunnerStarted.resolve();
+        await finishFirstRunner.promise;
+        return { summary: "finished original SHA" };
+      }
+      return { summary: "finished rerun SHA" };
+    };
+
+    const schedulerStart = fixture.scheduler.start("project-a");
+    await firstRunnerStarted.promise;
+    await fixture.jobQueue.enqueue({
+      loopId: loop.loopId,
+      triggerKind: "on_commit",
+      subjectKey: "commit:archcode/workbench:main",
+      repoId: "archcode/workbench",
+      branch: "main",
+      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      resolvedHeadSha: newSha,
+      eventSummary: { summary: "Observed new commit", payloadSha: newSha },
+    });
+    expect((await fixture.jobQueue.list(["running"]))[0]).toMatchObject({ rerunAfterCurrent: true, resolvedHeadSha: newSha });
+
+    finishFirstRunner.resolve();
+    await schedulerStart;
+
+    const jobs = await fixture.jobQueue.list();
+    expect(jobs.map((job) => job.status)).toEqual(["succeeded", "succeeded"]);
+    expect(jobs[0]).toMatchObject({ resolvedHeadSha: newSha });
+    expect(jobs[1]).toMatchObject({ triggerKind: "on_commit", resolvedHeadSha: newSha });
+    expect(fixture.runs[1]?.job).toMatchObject({ triggerKind: "on_commit", resolvedHeadSha: newSha });
+  });
+
   test("schedules cron loops through durable queue before running loop work", async () => {
     const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0));
     const loop = await fixture.manager.create("project-a", cronConfig);

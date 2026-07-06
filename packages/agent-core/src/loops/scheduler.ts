@@ -554,9 +554,9 @@ export class LoopScheduler {
       status: jobStatusFromRunReport(report),
       summary: report.summary ?? report.skippedReason ?? report.error,
       blockedReason: report.blockedReason ?? report.reason,
-      worktreePath: report.worktreePath,
-      baseSha: report.baseSha,
-      resolvedHeadSha: report.resolvedHeadSha,
+      worktreePath: updatedReportField(report.worktreePath, job.worktreePath),
+      baseSha: updatedReportField(report.baseSha, job.baseSha),
+      resolvedHeadSha: updatedReportField(report.resolvedHeadSha, job.resolvedHeadSha),
       cleanupState: report.cleanupState,
       observedArtifacts: report.observedArtifacts,
     });
@@ -1076,6 +1076,11 @@ function jobStatusFromRunReport(report: LoopRunReport): Exclude<LoopJobStatus, "
   if (report.status === "failed") return "failed";
   if (report.status === "cancelled") return "cancelled";
   return "skipped";
+}
+
+function updatedReportField<T>(reportValue: T | undefined, claimedJobValue: T | undefined): T | undefined {
+  if (reportValue === undefined) return undefined;
+  return reportValue === claimedJobValue ? undefined : reportValue;
 }
 
 function isTerminalJobStatus(status: LoopJobStatus): boolean {
