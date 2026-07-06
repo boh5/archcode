@@ -90,6 +90,17 @@ mock.module("react/jsx-dev-runtime", () => ({
   jsxs: jsxDEV,
 }));
 
+interface MockLinkProps {
+  readonly children?: unknown;
+  readonly className?: string;
+  readonly to: string;
+  readonly [key: string]: unknown;
+}
+
+mock.module("react-router-dom", () => ({
+  Link: ({ children, className, to, ...props }: MockLinkProps) => jsxDEV("a", { ...props, href: to, className, children }),
+}));
+
 const respondHitl = mock((_args: { projectSlug: string; hitlId: string; body: unknown }) => {});
 const cancelHitl = mock((_args: { projectSlug: string; hitlId: string; reason?: string }) => {});
 
@@ -260,12 +271,13 @@ describe("HitlCard", () => {
     expect(textContent(goalEl)).toContain("goal-xyz");
   });
 
-  test("renders session context", () => {
-    const item = makeHitlItem({ sessionId: "sess-abc" });
+  test("renders session context as a project session link", () => {
+    const item = makeHitlItem({ projectSlug: "demo", sessionId: "sess-abc" });
     const result = HitlCard({ item });
     const sessionEl = findByTestId(result, "hitl-context-session");
     expect(sessionEl).toBeDefined();
     expect(textContent(sessionEl)).toContain("sess-abc");
+    expect(sessionEl?.props?.to).toBe("/projects/demo/sessions/sess-abc");
   });
 
   test("renders trigger context from approval point source", () => {

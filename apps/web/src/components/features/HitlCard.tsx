@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { ShieldCheck, ShieldX, CircleQuestionMark, FileSearch, X, Check, Loader2 } from "lucide-react";
 import { useRespondHitl, useCancelHitl } from "../../api/mutations";
 import type { DashboardHitlItem } from "../../api/types";
@@ -92,7 +93,13 @@ export function HitlCard({ item }: { item: DashboardHitlItem }) {
         {item.trigger.goalId && (
           <span className="font-mono" data-testid="hitl-context-goal">goal: {item.trigger.goalId}</span>
         )}
-        <span className="font-mono" data-testid="hitl-context-session">session: {item.sessionId}</span>
+        <Link
+          className="font-mono text-accent hover:text-accent-hover underline-offset-2 hover:underline"
+          data-testid="hitl-context-session"
+          to={`/projects/${item.projectSlug}/sessions/${item.sessionId}`}
+        >
+          session: {item.sessionId}
+        </Link>
         {triggerLabel && (
           <span data-testid="hitl-context-trigger">{TRIGGER_LABEL[item.trigger.source?.startsWith("goal.") ? "approval_point" : "agent_request"] ?? "Trigger"}: {triggerLabel}</span>
         )}

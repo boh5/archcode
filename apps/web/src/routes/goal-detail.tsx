@@ -144,7 +144,7 @@ export function GoalDetailRoute() {
 
       <div className="flex-1 overflow-y-auto">
         <section id={`goal-panel-${activeTab}`} role="tabpanel" aria-labelledby={`goal-tab-${activeTab}`}>
-          {activeTab === "overview" && <GoalOverview goal={goal} />}
+          {activeTab === "overview" && <GoalOverview goal={goal} slug={slug} />}
           {activeTab === "chat" && <GoalChat slug={slug} goal={goal} />}
           {activeTab === "sessions" && <GoalSessions slug={slug} goal={goal} />}
           {activeTab === "artifacts" && <GoalArtifacts slug={slug} goalId={goal.id} />}

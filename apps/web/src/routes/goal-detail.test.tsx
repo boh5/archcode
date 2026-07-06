@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult } from "../api/types";
+import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult, DashboardHitlItem } from "../api/types";
 import { GoalDetailRoute } from "./goal-detail";
 
 // ─── Test helpers ───
@@ -135,6 +135,45 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
+}
+
+function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitlItem {
+  return {
+    hitlId: "hitl-1",
+    sessionId: "session-1",
+    kind: "approval",
+    displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
+    trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    createdAt: 1_000,
+    projectSlug: "demo",
+    projectName: "Demo Project",
+    status: "pending",
+    ...overrides,
+  };
+}
+
+/** Fetch mock that serves the current goal plus a list of project-scoped HITL items. */
+function installGoalHitlFetchMock(opts: {
+  goal: GoalState;
+  hitl: DashboardHitlItem[];
+}): ReturnType<typeof mock> {
+  const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
+
+    // Project-scoped HITL list route must be checked before the generic goal route.
+    if (url.endsWith("/api/projects/demo/hitl") || url.includes("/api/projects/demo/hitl?")) {
+      return Response.json({ hitl: opts.hitl });
+    }
+    if (url.includes("/api/projects/demo/hitl/") && init?.method === "POST") {
+      return Response.json({ ok: true, hitlId: url.split("/").slice(-2, -1)[0] });
+    }
+    if (url.includes("/api/projects/demo/goals/goal-1") && !url.endsWith("/goals") && !url.includes("/artifacts")) {
+      return Response.json(opts.goal);
+    }
+    return new Response("Not found", { status: 404 });
+  });
+  Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
+  return fetchMock;
 }
 
 async function renderGoalDetailRoute(
@@ -1052,6 +1091,245 @@ describe("GoalDetailRoute", () => {
         const viewer = container.querySelector('[data-testid="artifact-markdown-viewer"]');
         expect(viewer).not.toBeNull();
         expect(viewer!.textContent).toContain("No artifact available");
+      });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  // ─── Goal-scoped Approval Queue tests ───
+
+  test("overview tab renders goal-scoped approval queue with matching HITL item", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
+    const matchingItem = makeHitlItem({
+      hitlId: "hitl-goal-1",
+      kind: "approval",
+      displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
+      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    });
+
+    installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const queue = container.querySelector('[data-testid="goal-approval-queue"]');
+        expect(queue).not.toBeNull();
+      });
+
+      const queue = container.querySelector('[data-testid="goal-approval-queue"]')!;
+      expect(queue.textContent).toContain("Approval Queue");
+      expect(queue.textContent).toContain("Approve budget?");
+      expect(queue.textContent).toContain("Confirm spend");
+      expect(queue.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);
+      expect(queue.querySelector('[data-testid="hitl-context-session"]')?.getAttribute("href")).toBe("/projects/demo/sessions/session-1");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("goal approval queue filters out HITL items for other goals", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
+    const ownItem = makeHitlItem({
+      hitlId: "hitl-own",
+      displayPayload: { title: "Own approval", redacted: true },
+      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.after_plan" },
+    });
+    const otherItem = makeHitlItem({
+      hitlId: "hitl-other",
+      displayPayload: { title: "Other goal approval", redacted: true },
+      trigger: { projectSlug: "demo", goalId: "goal-other", source: "goal.approval.after_plan" },
+    });
+
+    installGoalHitlFetchMock({ goal, hitl: [ownItem, otherItem] });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const queue = container.querySelector('[data-testid="goal-approval-queue"]');
+        expect(queue).not.toBeNull();
+        expect(queue!.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);
+      });
+
+      const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
+      expect(queueText).toContain("Own approval");
+      expect(queueText).not.toContain("Other goal approval");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("goal approval queue shows empty state when no matching HITL", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
+    const unrelatedItem = makeHitlItem({
+      hitlId: "hitl-unrelated",
+      displayPayload: { title: "Unrelated", redacted: true },
+      trigger: { projectSlug: "demo", goalId: "goal-other", source: "test" },
+    });
+
+    installGoalHitlFetchMock({ goal, hitl: [unrelatedItem] });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const queue = container.querySelector('[data-testid="goal-approval-queue"]');
+        expect(queue).not.toBeNull();
+        expect(queue!.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(0);
+      });
+
+      const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
+      expect(queueText.toLowerCase()).toContain("no pending approvals");
+      expect(queueText).not.toContain("Unrelated");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("goal approval queue renders only redacted displayPayload and never raw secrets", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
+    const redactedItem = makeHitlItem({
+      hitlId: "hitl-redacted",
+      kind: "approval",
+      displayPayload: {
+        title: "Approve budget [REDACTED]",
+        summary: "Budget approval [REDACTED]",
+        fields: [
+          { label: "action", value: "approve_budget" },
+          { label: "context", value: "[REDACTED]" },
+        ],
+        redacted: true,
+      },
+      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
+    });
+    const unsafeApiItem: DashboardHitlItem & { payload: unknown } = {
+      ...redactedItem,
+      hitlId: "hitl-unsafe",
+      payload: {
+        title: "RAW payload sk-test-secret-goal",
+        context: { apiKey: "sk-test-secret-goal", connection: "apiKey=sk-test-secret-goal" },
+      },
+    };
+
+    installGoalHitlFetchMock({ goal, hitl: [redactedItem, unsafeApiItem] });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const queue = container.querySelector('[data-testid="goal-approval-queue"]');
+        expect(queue).not.toBeNull();
+        expect(queue!.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(2);
+      });
+
+      const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
+      expect(queueText).toContain("[REDACTED]");
+      expect(queueText).toContain("approve_budget");
+      expect(queueText).not.toContain("RAW payload");
+      expect(queueText).not.toContain("sk-test-secret-goal");
+      expect(queueText).not.toContain("apiKey=sk");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("clicking cancel on goal approval queue card calls hitl cancel endpoint", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
+    const matchingItem = makeHitlItem({
+      hitlId: "hitl-cancel-target",
+      kind: "approval",
+      displayPayload: { title: "Approve?", redacted: true },
+      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.after_plan" },
+    });
+
+    const fetchMock = installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderGoalDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="goal-approval-queue"]')).not.toBeNull();
+      });
+
+      const cancelButton = container.querySelector('[data-testid="goal-approval-queue"] [data-testid="hitl-cancel-button"]');
+      expect(cancelButton).not.toBeNull();
+
+      await act(async () => {
+        cancelButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining("/api/projects/demo/hitl/hitl-cancel-target/cancel"),
+          expect.objectContaining({ method: "POST" }),
+        );
       });
     } finally {
       await act(async () => {
