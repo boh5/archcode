@@ -14,6 +14,10 @@ const protocolTypesFile = join(projectRoot, "packages/protocol/src/types.ts");
 const loopStateFile = join(loopSourceRoot, "state.ts");
 const loopRunnerFile = join(loopSourceRoot, "runner.ts");
 const loopSchedulerFile = join(loopSourceRoot, "scheduler.ts");
+const loopWorktreeManagerFile = join(loopSourceRoot, "worktree-manager.ts");
+const loopJobQueueFile = join(loopSourceRoot, "job-queue.ts");
+const loopCoordinatorFile = join(loopSourceRoot, "coordinator.ts");
+const loopCleanupFile = join(loopSourceRoot, "cleanup.ts");
 
 type Violation = {
   file: string;
@@ -30,7 +34,6 @@ const loopProductionFiles = [
   join(projectRoot, "packages/protocol/src/reduce.ts"),
 ].filter((file) => existsSync(file));
 
-const loopRuntimeFiles = findTsFiles(loopSourceRoot).filter((file) => !relativeFile(file).endsWith("presets.ts"));
 const loopRunnerBoundaryFiles = [loopRunnerFile, loopSchedulerFile].filter((file) => existsSync(file));
 const connectorDescriptorFiles = [
   ...findTsFiles(toolSourceRoot),
@@ -180,17 +183,46 @@ function findConnectorMutatingToolDescriptorViolations(files: string[]): Violati
   return violations;
 }
 
-describe("Loop Phase 4 architecture guardrails", () => {
-  test("Loop schedule production surface remains manual and interval only", () => {
-    expectNoViolations(findTextViolations(loopProductionFiles, [
-      /kind\s*:\s*["']cron["']/,
-      /kind\s*:\s*["']event["']/,
-      /z\.literal\(\s*["']cron["']\s*\)/,
-      /z\.literal\(\s*["']event["']\s*\)/,
-      /schedule\s*\.\s*kind\s*={?\s*["']cron["']/,
-      /schedule\s*\.\s*kind\s*={?\s*["']event["']/,
-      /on_(?:commit|pr|ci_fail)/,
-    ]));
+describe("Loop Phase 5 architecture guardrails", () => {
+  test("Loop Phase 5 surface explicitly includes confirmed scheduling, queue, worktree, and cleanup contracts", () => {
+    const loopStateSource = readProductionSource(loopStateFile);
+    const protocolSource = readProductionSource(protocolTypesFile);
+
+    expect(loopStateSource).toMatch(/z\.literal\(["']cron["']\)/);
+    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_commit["']\)/);
+    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_pr["']\)/);
+    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_ci_fail["']\)/);
+    expect(loopStateSource).toMatch(/triggers:\s*z\.array\(LoopTriggerSpecSchema\)\.max\(50\)\.optional\(\)/);
+
+    expect(loopStateSource).toContain("export const LoopCoordinatorConfigSchema");
+    expect(loopStateSource).toMatch(/maxConcurrent:\s*z\.number\(\)\.int\(\)\.positive\(\)\.default\(2\)/);
+    expect(loopStateSource).toContain("export const LoopProjectConfigSchema");
+    expect(loopStateSource).toContain("export const LoopJobSummarySchema");
+    expect(loopStateSource).toMatch(/currentJob:\s*LoopJobSummarySchema\.optional\(\)/);
+    expect(loopStateSource).toMatch(/queuedJobs:\s*z\.array\(LoopJobSummarySchema\)\.max\(100\)\.optional\(\)/);
+    expect(loopStateSource).toMatch(/triggerKind:\s*z\.enum\(\[[^\]]*["']manual["'][^\]]*["']interval["'][^\]]*["']cron["'][^\]]*["']on_commit["'][^\]]*["']on_pr["'][^\]]*["']on_ci_fail["'][^\]]*\]\)/s);
+
+    expect(loopStateSource).toContain("export const LoopCleanupPolicySchema");
+    expect(loopStateSource).toMatch(/cleanupPolicy:\s*LoopCleanupPolicySchema\.optional\(\)/);
+    expect(loopStateSource).toMatch(/cleanupState:\s*LoopCleanupStateSchema\.optional\(\)/);
+    expect(loopStateSource).toMatch(/["']cleanup_candidate["']/);
+    expect(loopStateSource).toMatch(/["']auto_paused["']/);
+    expect(loopStateSource).toMatch(/["']cleanup_failed["']/);
+    expect(loopStateSource).toMatch(/["']expired_needs_review["']/);
+
+    expect(protocolSource).toMatch(/\| \{ kind: ["']cron["']; expression: string \}/);
+    expect(protocolSource).toMatch(/triggers\?:\s*LoopTriggerSpec\[\]/);
+    expect(protocolSource).toMatch(/interface LoopCoordinatorConfig \{\s*maxConcurrent: number;/);
+    expect(protocolSource).toMatch(/currentJob\?:\s*LoopJobSummary/);
+    expect(protocolSource).toMatch(/queuedJobs\?:\s*LoopJobSummary\[\]/);
+    expect(protocolSource).toMatch(/worktreePath\?:\s*string/);
+    expect(protocolSource).toMatch(/cleanupPolicy\?:\s*LoopCleanupPolicy/);
+    expect(protocolSource).toMatch(/cleanupState\?:\s*LoopCleanupState/);
+
+    expect(existsSync(loopWorktreeManagerFile)).toBe(true);
+    expect(existsSync(loopJobQueueFile)).toBe(true);
+    expect(existsSync(loopCoordinatorFile)).toBe(true);
+    expect(existsSync(loopCleanupFile)).toBe(true);
   });
 
   test("Loop Phase 4 surface keeps budget, PR collision, integration, and profile metadata first-class", () => {
@@ -241,11 +273,10 @@ describe("Loop Phase 4 architecture guardrails", () => {
     ]));
   });
 
-  test("Loop runner and scheduler do not directly orchestrate git push, merge, rebase, or worktrees", () => {
+  test("Loop runner and scheduler do not directly orchestrate git push, merge, or rebase", () => {
     expectNoViolations(findTextViolations(loopRunnerBoundaryFiles, [
-      /\bworktree\b/i,
-      /["'`]\s*git\s+(?:push|merge|rebase|worktree)\b/i,
-      /["']git["']\s*,\s*["'](?:push|merge|rebase|worktree)["']/i,
+      /["'`]\s*git\s+(?:push|merge|rebase)\b/i,
+      /["']git["']\s*,\s*["'](?:push|merge|rebase)["']/i,
     ]));
   });
 
@@ -265,12 +296,20 @@ describe("Loop Phase 4 architecture guardrails", () => {
     expectNoViolations(findConnectorMutatingToolDescriptorViolations(connectorDescriptorFiles));
   });
 
-  test("Phase 5a worktree and same-branch queue concepts stay out of Phase 4 Loop runtime", () => {
-    expectNoViolations(findTextViolations(loopRuntimeFiles, [
-      /\bworktree\b/i,
-      /\bmaxConcurrent\b/,
-      /same[-_\s]?branch/i,
-      /\bsameBranchQueue\b/i,
+  test("excluded Phase 5b concepts stay out of Loop production surfaces", () => {
+    expectNoViolations(findTextViolations(loopProductionFiles, [
+      /\bcustomPattern(?:Path|Registry|Profile|Script|Hooks?|Dsl|DSL)?\b/,
+      /\bpattern(?:Registry|Profile|Script|Hooks?|Dsl|DSL)\b/,
+      /\bcustomToolProfile(?:Path|Registry|Script|Hooks?|Dsl|DSL)?\b/,
+      /\btoolProfile(?:Registry|Script|Hooks?|Dsl|DSL)\b/,
+      /\bautoApprove\b/,
+      /\bautoApproval\b/,
+      /auto[-_\s]?approval/i,
+      /\bapproveAutomatically\b/,
+      /\breadiness(?:Gate|Scheduler|Signals|Threshold)\b/,
+      /\bminReadiness\b/,
+      /\bcanRunByReadiness\b/,
+      /\breadiness\s*[:=]\s*(?:Math\.|Number\(|\d)/,
     ]));
   });
 });
