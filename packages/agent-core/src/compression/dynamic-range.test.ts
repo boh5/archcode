@@ -170,11 +170,12 @@ describe("dynamic range compression", () => {
     expect(partial.state.activeBlockRefs).toEqual(["b1"]);
   });
 
-  test("protects running tools, unknown results, active questions, protect tags, child links, todos, and reminders", () => {
+  test("protects pending and running tools, unknown results, active questions, protect tags, child links, todos, and reminders", () => {
     const state = baseState([
       message("msg-1", "user", [text("t1", "<protect>keep this</protect>")]),
-      message("msg-2", "assistant", [{ type: "tool", id: "tool-1", state: "running", toolCallId: "call-1", toolName: "bash", input: {}, createdAt: 1, startedAt: 2 }]),
-      message("msg-3", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, errorMessage: "unknown", createdAt: 1, startedAt: 2, endedAt: 3, meta: { unknownResult: true } }]),
+      message("msg-2", "assistant", [{ type: "tool", id: "tool-pending", state: "pending", toolCallId: "call-pending", toolName: "file_read", createdAt: 1 }]),
+      message("msg-3", "assistant", [{ type: "tool", id: "tool-1", state: "running", toolCallId: "call-1", toolName: "bash", input: {}, createdAt: 1, startedAt: 2 }]),
+      message("msg-4", "assistant", [{ type: "tool", id: "tool-2", state: "error", toolCallId: "call-2", toolName: "file_write", input: {}, errorMessage: "unknown", createdAt: 1, startedAt: 2, endedAt: 3, meta: { unknownResult: true } }]),
     ]);
     state.pendingInteractions = [{ id: "q1", type: "clarification", question: "Proceed?", askedAt: "now", status: "pending" }];
     state.todos = [{ id: "todo-1", content: "finish", status: "pending" }];
@@ -182,13 +183,14 @@ describe("dynamic range compression", () => {
     state.childSessionLinks = [{ parentSessionId: "session-1", parentToolCallId: "call-1", toolName: "delegate", childSessionId: "child", childAgentName: "explore", depth: 1, background: false, status: "running", createdAt: 1 }];
     state.events = [{ id: 0, createdAt: 1, kind: "permission.request", payload: { type: "permission.request", permissionId: "perm-1", toolName: "file_write", args: {}, description: "write" } }];
 
-    const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0003", summary: summary() }, 1000);
+    const result = prepareDynamicRangeCompression(state, { startId: "m0001", endId: "m0004", summary: summary() }, 1000);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected rejection");
     expect(result.code).toBe("protected_content");
     expect(result.protectedRefs.map((ref) => ref.kind)).toEqual(expect.arrayContaining([
       "protect_tag",
+      "pending_tool",
       "running_tool",
       "unknown_result",
       "subagent_link",
