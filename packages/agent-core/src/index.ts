@@ -26,7 +26,8 @@ export type { ConsoleLike, LogEntry, LogFields, Logger, LogLevel } from "./logge
 
 export { ProjectContextResolver } from "./projects/context-resolver";
 export { ProjectRegistry, ProjectRegistryError } from "./projects/registry";
-export type { ProjectInfo } from "./projects/types";
+export type { ProjectContext, ProjectInfo } from "./projects/types";
+export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 
 export { DoneConditionSchema, GoalArtifactNameSchema } from "./goals";
 export * from "./integrations";

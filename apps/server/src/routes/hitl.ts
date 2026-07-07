@@ -1,179 +1,398 @@
 import { Hono } from "hono";
-import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
+import type {
+  HitlAllowedAction,
+  HitlOwnerType,
+  HitlProjection,
+  HitlRecord,
+  HitlResponse,
+  HitlSource,
+  HitlStatus,
+} from "@archcode/protocol";
+import type { AgentRuntime, ProjectContext, ResumeCoordinatorResult } from "@archcode/agent-core";
 import { z } from "zod/v4";
+import { globalEventBus } from "../events/global-event-bus";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
-const HitlResponseBodySchema = z.strictObject({
-  decision: z.string().trim().min(1).optional(),
-  answers: z.unknown().optional(),
+type HitlRouteScope = "project" | "session" | "goal" | "loop";
+type HitlRouteStatus = "pending" | "recent" | "all";
+type ResumeStatus = "idle" | "claimed" | "failed" | "terminal";
+
+type HitlMutationBody = z.infer<typeof HitlMutationBodySchema>;
+
+interface HitlApiProjection extends HitlProjection {
+  resumeStatus: ResumeStatus;
+}
+
+interface HitlMutationResponse {
+  hitlId: string;
+  status: HitlStatus;
+  resumeStatus: ResumeStatus;
+  hitl: HitlApiProjection;
+}
+
+const HitlListStatusSchema = z.enum(["pending", "recent", "all"]);
+const HitlScopeSchema = z.enum(["project", "session", "goal", "loop"]);
+
+const HitlMutationBodySchema = z.strictObject({
+  type: z.enum(["question_answer", "permission_decision", "approval_decision", "review_outcome"]).optional(),
+  answers: z.array(z.string()).optional(),
+  decision: z.enum(["approve_once", "approve_always", "deny", "approved", "denied"]).optional(),
   outcome: z.enum(["DONE", "NOT_DONE"]).optional(),
   comment: z.string().optional(),
-  data: z.record(z.string(), z.unknown()).optional(),
+  answeredBy: z.string().optional(),
+  decidedBy: z.string().optional(),
+  reviewedBy: z.string().optional(),
 });
 
 const HitlCancelBodySchema = z.strictObject({
   reason: z.string().trim().min(1).optional(),
+  cancelledBy: z.string().optional(),
 });
 
-type HitlRequest = {
-  hitlId: string;
-  sessionId: string;
-  kind: "question" | "approval" | "review";
-  payload: unknown;
-  displayPayload?: unknown;
-  approvalKey?: string;
-  trigger: {
-    projectSlug?: string;
-    goalId?: string;
-    loopId?: string;
-    source?: string;
-    approvalPoint?: string;
-    toolCallId?: string;
-    timeoutMs?: number;
-  };
-  createdAt: number;
-};
+const TERMINAL_STATUSES = new Set<HitlStatus>(["resolved", "cancelled"]);
 
-type HitlDisplayPayload = {
-  title: string;
-  summary?: string;
-  fields?: Array<{ label: string; value: string }>;
-  redacted: true;
-};
-
-type DashboardHitlRequest = {
-  hitlId: string;
-  sessionId: string;
-  kind: HitlRequest["kind"];
-  trigger: HitlRequest["trigger"];
-  createdAt: number;
-  displayPayload?: HitlDisplayPayload;
-  approvalKey?: string;
-  projectSlug: string;
-  projectName: string;
-  status: "pending";
-};
-
-type HitlRouteScope = "global" | "project";
-
-export function createHitlRoutes(runtime: AgentRuntime, scope: HitlRouteScope = "global"): Hono {
+export function createHitlRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
 
-  if (scope === "global") {
-    app.get("/hitl", async (c) => {
-      const status = parseHitlStatusFilter(c.req.query("status"));
-      const hitl = status === "pending" ? await aggregatePendingHitl(runtime) : [];
-      return c.json({ hitl });
-    });
+  app.get("/:slug/hitl", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    const query = parseListQuery(c.req.query());
+    await assertOwnerExists(runtime, project.workspaceRoot, context, query.scope, query.ownerId);
 
-    app.post("/hitl/:id/respond", async (c) => {
-      const hitlId = requiredParam(c.req.param("id"), "id");
-      throw projectScopedHitlMutationRequired(hitlId);
-    });
+    const hitl = (await context.hitl.list({
+      scope: query.scope,
+      ...(query.ownerId === undefined ? {} : { ownerId: query.ownerId }),
+      includeChildren: query.includeChildren,
+      status: statusForService(query.status),
+    })).map(withResumeStatus);
 
-    app.post("/hitl/:id/cancel", async (c) => {
-      const hitlId = requiredParam(c.req.param("id"), "id");
-      throw projectScopedHitlMutationRequired(hitlId);
-    });
-  }
+    return c.json({ hitl });
+  });
 
-  if (scope === "project") {
-    app.get("/:slug/hitl", async (c) => {
-      const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-      const hitl = context.hitl.listPending(project.slug).map((request) => withProject(request as HitlRequest, project));
-      return c.json({ hitl });
-    });
+  app.post("/:slug/hitl/:hitlId/respond", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const hitlId = requiredParam(c.req.param("hitlId"), "hitlId");
+    const body = await readJsonBody(c.req.json(), HitlMutationBodySchema);
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    const lookup = await context.hitl.lookup(hitlId);
+    if (lookup.status === "missing") throw hitlNotFound(hitlId);
+    if (lookup.status === "ambiguous") throw ambiguousHitl(hitlId);
+    if (lookup.owner.projectSlug !== project.slug) throw hitlNotFound(hitlId);
 
-    app.post("/:slug/hitl/:id/respond", async (c) => {
-      const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-      const hitlIdentifier = requiredParam(c.req.param("id"), "id");
-      const body = await readJsonBody(c.req.json(), HitlResponseBodySchema);
-      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-      const hitlId = resolveProjectScopedHitlId(context.hitl.listPending(project.slug) as HitlRequest[], hitlIdentifier);
+    const response = responseForSource(lookup.record.source, body);
+    const preflight = nonPendingPreflight(lookup.record, response);
+    if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
 
-      if (hitlId === undefined || !context.hitl.respond(hitlId, body, project.slug)) throw hitlNotFound(hitlIdentifier);
-      return c.json({ ok: true, hitlId });
-    });
+    const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
+    const result = await coordinator.respond(hitlId, response);
+    const record = recordFromCoordinatorResult(result, hitlId);
+    if (lookup.record.status === "pending" && result.status === "claimed") emitHitlChanged(record);
+    const statusCode = isConflictingMutation(record, response) ? 409 : 200;
+    return c.json(toMutationResponse(project, record), statusCode);
+  });
 
-    app.post("/:slug/hitl/:id/cancel", async (c) => {
-      const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
-      const hitlIdentifier = requiredParam(c.req.param("id"), "id");
-      const body = await readOptionalJsonBody(c.req.json(), HitlCancelBodySchema);
-      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-      const hitlId = resolveProjectScopedHitlId(context.hitl.listPending(project.slug) as HitlRequest[], hitlIdentifier);
+  app.post("/:slug/hitl/:hitlId/cancel", async (c) => {
+    const project = await resolveProject(runtime, requiredParam(c.req.param("slug"), "slug"));
+    const hitlId = requiredParam(c.req.param("hitlId"), "hitlId");
+    const body = await readOptionalJsonBody(c.req.json(), HitlCancelBodySchema);
+    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
+    const lookup = await context.hitl.lookup(hitlId);
+    if (lookup.status === "missing") throw hitlNotFound(hitlId);
+    if (lookup.status === "ambiguous") throw ambiguousHitl(hitlId);
+    if (lookup.owner.projectSlug !== project.slug) throw hitlNotFound(hitlId);
 
-      if (hitlId === undefined || !context.hitl.cancel(hitlId, body.reason, project.slug)) throw hitlNotFound(hitlIdentifier);
-      return c.json({ ok: true, hitlId });
-    });
-  }
+    const response: HitlResponse = {
+      type: "cancel",
+      reason: body.reason ?? "Cancelled",
+      ...(body.cancelledBy === undefined ? {} : { cancelledBy: body.cancelledBy }),
+    };
+    const preflight = nonPendingPreflight(lookup.record, response);
+    if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
+    validateCancelAction(lookup.record);
+
+    const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
+    const result = await coordinator.cancel(hitlId, response.reason, response.cancelledBy);
+    const record = recordFromCoordinatorResult(result, hitlId);
+    if (lookup.record.status === "pending" && result.status === "claimed") emitHitlChanged(record);
+    const statusCode = isConflictingMutation(record, response) ? 409 : 200;
+    return c.json(toMutationResponse(project, record), statusCode);
+  });
 
   return app;
 }
 
-async function aggregatePendingHitl(runtime: AgentRuntime): Promise<DashboardHitlRequest[]> {
-  const hitl: DashboardHitlRequest[] = [];
-  for (const project of await listProjects(runtime)) {
-    try {
-      const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-      hitl.push(...context.hitl.listPending(project.slug).map((request) => withProject(request as HitlRequest, project)));
-    } catch {
-      // Keep Dashboard HITL aggregation available when one project context is bad.
-    }
+function parseListQuery(query: Record<string, string | undefined>): {
+  scope: HitlRouteScope;
+  ownerId?: string;
+  includeChildren: boolean;
+  status: HitlRouteStatus;
+} {
+  const scope = parseOptionalEnum(query.scope, HitlScopeSchema, "scope") ?? "project";
+  const status = parseOptionalEnum(query.status, HitlListStatusSchema, "status") ?? "pending";
+  const includeChildren = parseIncludeChildren(query.includeChildren);
+  const ownerId = query.ownerId?.trim();
+  if (scope !== "project" && !ownerId) throw new BadRequestError("ownerId is required for session, goal, and loop HITL scope");
+  if (scope === "project" && ownerId) throw new BadRequestError("ownerId is only valid for session, goal, and loop HITL scope");
+
+  return {
+    scope,
+    ...(ownerId ? { ownerId } : {}),
+    includeChildren,
+    status,
+  };
+}
+
+function parseIncludeChildren(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new BadRequestError("includeChildren must be true or false");
+}
+
+function parseOptionalEnum<Schema extends z.ZodEnum>(value: string | undefined, schema: Schema, name: string): z.infer<Schema> | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const result = schema.safeParse(value);
+  if (!result.success) throw new BadRequestError(`${name} is invalid`, z.treeifyError(result.error));
+  return result.data;
+}
+
+function statusForService(status: HitlRouteStatus): "active" | "terminal" | "all" {
+  switch (status) {
+    case "pending":
+      return "active";
+    case "recent":
+      return "terminal";
+    case "all":
+      return "all";
   }
-  return hitl;
 }
 
-function withProject(request: HitlRequest, project: ProjectInfo): DashboardHitlRequest {
+async function assertOwnerExists(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  context: ProjectContext,
+  scope: HitlRouteScope,
+  ownerId: string | undefined,
+): Promise<void> {
+  if (scope === "project") return;
+  const id = ownerId ?? "";
+  try {
+    if (scope === "session") {
+      await runtime.getSessionFile(workspaceRoot, id);
+      return;
+    }
+    if (scope === "goal") {
+      await context.goalState.read(id);
+      return;
+    }
+    await context.loopState.read(id);
+  } catch (error) {
+    if (error instanceof ServerError) throw error;
+    throw ownerNotFound(scope, id);
+  }
+}
+
+function responseForSource(source: HitlSource, body: HitlMutationBody): HitlResponse {
+  switch (source.type) {
+    case "ask_user":
+    case "goal_question":
+    case "loop_question":
+      return questionResponse(body);
+    case "tool_permission":
+      return permissionResponse(body);
+    case "goal_approval":
+    case "goal_budget":
+    case "loop_approval":
+      return approvalResponse(body, { allowDenied: true });
+    case "loop_blocker":
+    case "loop_retry":
+      return approvalResponse(body, { allowDenied: false });
+    case "goal_review":
+      return reviewResponse(body);
+  }
+}
+
+function questionResponse(body: HitlMutationBody): HitlResponse {
+  if (body.type !== undefined && body.type !== "question_answer") throw invalidResponsePayload("question_answer");
+  if (body.answers === undefined || body.answers.length === 0) throw new BadRequestError("answers are required for question HITL responses");
   return {
-    hitlId: request.hitlId,
-    sessionId: request.sessionId,
-    kind: request.kind,
-    trigger: request.trigger,
-    createdAt: request.createdAt,
-    displayPayload: normalizeDisplayPayload(request.displayPayload),
-    approvalKey: request.approvalKey,
-    projectSlug: project.slug,
-    projectName: project.name,
-    status: "pending",
+    type: "question_answer",
+    answers: body.answers,
+    ...(body.comment === undefined ? {} : { comment: body.comment }),
+    ...(body.answeredBy === undefined ? {} : { answeredBy: body.answeredBy }),
   };
 }
 
-function normalizeDisplayPayload(displayPayload: unknown): HitlDisplayPayload | undefined {
-  if (displayPayload === undefined || displayPayload === null || typeof displayPayload !== "object") return undefined;
-  const payload = displayPayload as Record<string, unknown>;
-  if (typeof payload.title !== "string" || payload.redacted !== true) return undefined;
-
-  const fields = Array.isArray(payload.fields)
-    ? payload.fields.flatMap((field) => {
-      if (field === null || typeof field !== "object") return [];
-      const entry = field as Record<string, unknown>;
-      return typeof entry.label === "string" && typeof entry.value === "string"
-        ? [{ label: entry.label, value: entry.value }]
-        : [];
-    })
-    : undefined;
-
+function permissionResponse(body: HitlMutationBody): HitlResponse {
+  if (body.type !== undefined && body.type !== "permission_decision") throw invalidResponsePayload("permission_decision");
+  if (body.decision !== "approve_once" && body.decision !== "approve_always" && body.decision !== "deny") {
+    throw new BadRequestError("decision must be approve_once, approve_always, or deny for permission HITL responses");
+  }
   return {
-    title: payload.title,
-    summary: typeof payload.summary === "string" ? payload.summary : undefined,
-    fields: fields === undefined || fields.length === 0 ? undefined : fields,
-    redacted: true,
+    type: "permission_decision",
+    decision: body.decision,
+    ...(body.comment === undefined ? {} : { comment: body.comment }),
+    ...(body.decidedBy === undefined ? {} : { decidedBy: body.decidedBy }),
   };
 }
 
-function resolveProjectScopedHitlId(pendingRequests: HitlRequest[], identifier: string): string | undefined {
-  const directMatch = pendingRequests.find((request) => request.hitlId === identifier || request.approvalKey === identifier);
-  if (directMatch) return directMatch.hitlId;
-
-  const approvalPointMatches = pendingRequests.filter((request) => request.trigger.approvalPoint === identifier);
-  return approvalPointMatches.length === 1 ? approvalPointMatches[0]!.hitlId : undefined;
+function approvalResponse(body: HitlMutationBody, options: { allowDenied: boolean }): HitlResponse {
+  if (body.type !== undefined && body.type !== "approval_decision") throw invalidResponsePayload("approval_decision");
+  if (body.decision !== "approved" && body.decision !== "denied") {
+    throw new BadRequestError("decision must be approved or denied for approval HITL responses");
+  }
+  if (!options.allowDenied && body.decision === "denied") throw new BadRequestError("deny is not an allowed action for this HITL source");
+  return {
+    type: "approval_decision",
+    decision: body.decision,
+    ...(body.comment === undefined ? {} : { comment: body.comment }),
+    ...(body.decidedBy === undefined ? {} : { decidedBy: body.decidedBy }),
+  };
 }
 
-function parseHitlStatusFilter(status: string | undefined): "pending" {
-  if (status === undefined || status === "pending") return "pending";
-  throw new BadRequestError("status must be pending");
+function reviewResponse(body: HitlMutationBody): HitlResponse {
+  if (body.type !== undefined && body.type !== "review_outcome") throw invalidResponsePayload("review_outcome");
+  if (body.outcome !== "DONE" && body.outcome !== "NOT_DONE") {
+    throw new BadRequestError("outcome must be DONE or NOT_DONE for review HITL responses");
+  }
+  return {
+    type: "review_outcome",
+    outcome: body.outcome,
+    ...(body.comment === undefined ? {} : { comment: body.comment }),
+    ...(body.reviewedBy === undefined ? {} : { reviewedBy: body.reviewedBy }),
+  };
+}
+
+function validateCancelAction(record: HitlRecord): void {
+  if (!allowedActionsFor(record).includes("cancel")) throw new BadRequestError(`Cannot cancel HITL with status ${record.status}`);
+}
+
+function nonPendingPreflight(record: HitlRecord, response: HitlResponse): { statusCode: 200 | 409; record: HitlRecord } | undefined {
+  if (record.status === "pending") return undefined;
+  if (record.response !== undefined) return { statusCode: responsesEquivalent(record.response, response) ? 200 : 409, record };
+  if (TERMINAL_STATUSES.has(record.status)) return { statusCode: 409, record };
+  throw new BadRequestError(`Cannot mutate HITL with status ${record.status}`);
+}
+
+function recordFromCoordinatorResult(
+  result: ResumeCoordinatorResult,
+  hitlId: string,
+): HitlRecord {
+  if (result.status === "missing") throw hitlNotFound(hitlId);
+  if (result.status === "ambiguous") throw ambiguousHitl(hitlId);
+  return result.record;
+}
+
+function isConflictingMutation(record: HitlRecord, response: HitlResponse): boolean {
+  return record.response !== undefined && !responsesEquivalent(record.response, response);
+}
+
+function responsesEquivalent(left: HitlResponse | undefined, right: HitlResponse): boolean {
+  if (left === undefined) return false;
+  return stableJson(left) === stableJson(right);
+}
+
+function toMutationResponse(project: { slug: string; name?: string }, record: HitlRecord): HitlMutationResponse {
+  const hitl = withResumeStatus(toProjection(project, record));
+  return {
+    hitlId: record.hitlId,
+    status: record.status,
+    resumeStatus: hitl.resumeStatus,
+    hitl,
+  };
+}
+
+function toProjection(project: { slug: string; name?: string }, record: HitlRecord): HitlProjection {
+  return {
+    hitlId: record.hitlId,
+    project: { slug: project.slug, ...(project.name === undefined ? {} : { name: project.name }) },
+    owner: record.owner,
+    source: record.source,
+    status: record.status,
+    displayPayload: record.displayPayload,
+    allowedActions: allowedActionsFor(record),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(record.resolvedAt === undefined ? {} : { resolvedAt: record.resolvedAt }),
+  };
+}
+
+function withResumeStatus(projection: HitlProjection): HitlApiProjection {
+  return { ...projection, resumeStatus: resumeStatusFor(projection.status) };
+}
+
+function emitHitlChanged(record: HitlRecord): void {
+  globalEventBus.emit({
+    type: "hitl.changed",
+    projectSlug: record.owner.projectSlug,
+    ownerType: record.owner.ownerType,
+    ownerId: record.owner.ownerId,
+    hitlId: record.hitlId,
+    ...hitlIdentifierHints(record.source),
+    createdAt: Date.now(),
+  });
+}
+
+function hitlIdentifierHints(source: HitlSource): { goalId?: string; loopId?: string; sessionId?: string } {
+  switch (source.type) {
+    case "ask_user":
+    case "tool_permission":
+      return { sessionId: source.sessionId };
+    case "goal_approval":
+    case "goal_review":
+    case "goal_budget":
+    case "goal_question":
+      return { goalId: source.goalId };
+    case "loop_approval":
+    case "loop_blocker":
+    case "loop_retry":
+    case "loop_question":
+      return { loopId: source.loopId };
+  }
+}
+
+function resumeStatusFor(status: HitlStatus): ResumeStatus {
+  switch (status) {
+    case "pending":
+      return "idle";
+    case "resume_claimed":
+      return "claimed";
+    case "resume_failed":
+      return "failed";
+    case "resolved":
+    case "cancelled":
+      return "terminal";
+  }
+}
+
+function allowedActionsFor(record: HitlRecord): HitlAllowedAction[] {
+  if (record.status === "resume_failed") return ["retry_resume", "cancel"];
+  if (record.status !== "pending") return [];
+  switch (record.source.type) {
+    case "ask_user":
+    case "goal_question":
+    case "loop_question":
+      return ["answer", "cancel"];
+    case "tool_permission":
+      return ["approve", "deny", "cancel"];
+    case "goal_approval":
+    case "goal_budget":
+    case "loop_approval":
+      return ["approve", "deny", "cancel"];
+    case "goal_review":
+      return ["approve", "deny", "cancel"];
+    case "loop_blocker":
+    case "loop_retry":
+      return ["approve", "cancel"];
+  }
+}
+
+function requiredResumeCoordinator(
+  coordinator: ProjectContext["hitlResumeCoordinator"],
+): NonNullable<ProjectContext["hitlResumeCoordinator"]> {
+  if (coordinator === undefined) throw new ServerError("INTERNAL_ERROR", "HITL resume coordinator is not available", 500);
+  return coordinator;
 }
 
 function requiredParam(value: string | undefined, name: string): string {
@@ -190,9 +409,7 @@ async function readJsonBody<Schema extends z.ZodType>(bodyPromise: Promise<unkno
   }
 
   const result = schema.safeParse(body);
-  if (!result.success) {
-    throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
-  }
+  if (!result.success) throw new BadRequestError("Request body is invalid", z.treeifyError(result.error));
   return result.data;
 }
 
@@ -200,28 +417,33 @@ async function readOptionalJsonBody<Schema extends z.ZodType>(bodyPromise: Promi
   try {
     return await readJsonBody(bodyPromise, schema);
   } catch (error) {
-    if (error instanceof BadRequestError && error.message === "Request body must be valid JSON") {
-      return schema.parse({});
-    }
+    if (error instanceof BadRequestError && error.message === "Request body must be valid JSON") return schema.parse({});
     throw error;
   }
 }
 
-async function listProjects(runtime: AgentRuntime): Promise<ProjectInfo[]> {
-  const registry = runtime.projectRegistry as AgentRuntime["projectRegistry"] & {
-    listProjects?: () => Promise<ProjectInfo[]>;
-  };
-  return await (registry.listProjects?.() ?? registry.list());
+function invalidResponsePayload(expectedType: HitlResponse["type"]): BadRequestError {
+  return new BadRequestError(`Response type must be ${expectedType}`);
+}
+
+function ownerNotFound(scope: HitlOwnerType, ownerId: string): ServerError {
+  return new ServerError("QUESTION_NOT_FOUND", `HITL ${scope} owner not found: ${ownerId}`, 404);
 }
 
 function hitlNotFound(hitlId: string): ServerError {
   return new ServerError("QUESTION_NOT_FOUND", `HITL request not found: ${hitlId}`, 404);
 }
 
-function projectScopedHitlMutationRequired(hitlId: string): ServerError {
-  return new ServerError(
-    "PROJECT_SCOPED_HITL_REQUIRED",
-    `HITL mutation requires a project-scoped route: ${hitlId}`,
-    404,
-  );
+function ambiguousHitl(hitlId: string): ServerError {
+  return new ServerError("INTERNAL_ERROR", `Ambiguous HITL request id: ${hitlId}`, 500);
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, sortJson(entry)]));
 }

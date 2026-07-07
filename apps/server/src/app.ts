@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, HitlSource, HitlStreamEvent, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -76,8 +76,7 @@ export function createServerApp(
   const projects = createProjectsRoutes(serverRuntime);
   const dashboard = createDashboardRoutes(serverRuntime);
   const goals = createGoalsRoutes(serverRuntime);
-  const hitl = createHitlRoutes(serverRuntime);
-  const projectHitl = createHitlRoutes(serverRuntime, "project");
+  const projectHitl = createHitlRoutes(serverRuntime);
   const loops = createLoopsRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
@@ -90,7 +89,6 @@ export function createServerApp(
   const mcp = createMcpRoutes(serverRuntime);
 
   app.route("/api", dashboard);
-  app.route("/api", hitl);
   app.route("/api/projects", projects);
   app.route("/api/projects", goals);
   app.route("/api/projects", loops);
@@ -149,7 +147,7 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
           workspaceRoot: input.workspaceRoot,
           sessionId,
           onEvent: (event) => {
-            globalEventBus.emit(event);
+            globalEventBus.emit(toGlobalEventHint(event));
             if (!isChildSessionLinkEvent(event)) return;
 
             const childSessionId = event.payload.link.childSessionId;
@@ -202,6 +200,54 @@ function isChildSessionLinkEvent(event: GlobalSSEEvent): event is GlobalSessionE
 
 function isTerminalChildLinkStatus(status: ToolChildSessionLinkStatus): boolean {
   return TERMINAL_CHILD_LINK_STATUSES.has(status);
+}
+
+function toGlobalEventHint(event: GlobalSSEEvent): GlobalSSEEvent {
+  if (event.type !== "event" || !isHitlStreamEvent(event.payload)) return event;
+  if (event.payload.type === "hitl.request") {
+    const request = event.payload.request;
+    return {
+      type: "hitl.changed",
+      projectSlug: request.owner.projectSlug,
+      ownerType: request.owner.ownerType,
+      ownerId: request.owner.ownerId,
+      hitlId: request.hitlId,
+      ...hitlIdentifierHints(request.source),
+      createdAt: event.createdAt,
+    };
+  }
+
+  return {
+    type: "hitl.changed",
+    projectSlug: event.slug,
+    ownerType: "session",
+    ownerId: event.sessionId,
+    sessionId: event.sessionId,
+    hitlId: event.payload.hitlId,
+    createdAt: event.createdAt,
+  };
+}
+
+function isHitlStreamEvent(payload: GlobalSessionEventEnvelope["payload"]): payload is HitlStreamEvent {
+  return payload.type === "hitl.request" || payload.type === "hitl.resolved";
+}
+
+function hitlIdentifierHints(source: HitlSource): { goalId?: string; loopId?: string; sessionId?: string } {
+  switch (source.type) {
+    case "ask_user":
+    case "tool_permission":
+      return { sessionId: source.sessionId };
+    case "goal_approval":
+    case "goal_review":
+    case "goal_budget":
+    case "goal_question":
+      return { goalId: source.goalId };
+    case "loop_approval":
+    case "loop_blocker":
+    case "loop_retry":
+    case "loop_question":
+      return { loopId: source.loopId };
+  }
 }
 
 /**

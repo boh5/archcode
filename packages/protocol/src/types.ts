@@ -474,13 +474,26 @@ export interface GlobalSSEMcpStatusEvent {
   createdAt: number;
 }
 
+export interface GlobalSSEHitlChangedEvent {
+  type: "hitl.changed";
+  projectSlug: string;
+  ownerType: HitlOwnerType;
+  ownerId: string;
+  hitlId: string;
+  goalId?: string;
+  loopId?: string;
+  sessionId?: string;
+  createdAt: number;
+}
+
 export type GlobalSSEEvent =
   | GlobalSessionEventEnvelope
   | GlobalSSEHeartbeatEvent
   | GlobalSSEResetEvent
   | GlobalSSELaggedEvent
   | GlobalSSEShutdownEvent
-  | GlobalSSEMcpStatusEvent;
+  | GlobalSSEMcpStatusEvent
+  | GlobalSSEHitlChangedEvent;
 
 export interface PermissionRequestEvent {
   type: "permission.request";

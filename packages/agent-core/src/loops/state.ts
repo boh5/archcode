@@ -563,6 +563,13 @@ export class LoopStateManager {
         if (projectId && state.projectId !== projectId) continue;
         states.push(state);
       } catch (error) {
+        if (error instanceof LoopNotFoundError && error.loopId === loopId) {
+          this.#logger.debug("loops.list.missing.skipped", {
+            context: { path: join(loopsRoot, loopId, "state.json") },
+            error: logError(error),
+          });
+          continue;
+        }
         if (error instanceof LoopStateError) {
           this.#logger.debug("loops.list.parse.skipped", {
             context: { path: join(loopsRoot, loopId, "state.json") },

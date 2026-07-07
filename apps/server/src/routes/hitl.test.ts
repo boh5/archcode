@@ -1,19 +1,63 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import type { GlobalSSEEvent, HitlDisplayPayload, HitlProjection, HitlRecord } from "@archcode/protocol";
 import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import { createServerApp } from "../app";
+import type { AgentRuntime, ProjectContext, ProjectInfo } from "@archcode/agent-core";
+import { GoalStateManager } from "../../../../packages/agent-core/src/goals/state";
+import { ResumeCoordinator, type SessionHitlResumeAdapter } from "../../../../packages/agent-core/src/hitl/resume-coordinator";
+import type { LoopConfig } from "../../../../packages/agent-core/src/loops/state";
+import { SessionStoreManager } from "../../../../packages/agent-core/src/store/session-store-manager";
+import { getSessionPath } from "../../../../packages/agent-core/src/store/sessions-dir";
+import { createServerApp, createServerEventRuntime } from "../app";
+import { globalEventBus } from "../events/global-event-bus";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "hitl-routes");
 
-function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
+type HitlListBody = { hitl: Array<HitlProjection & { resumeStatus: string }> };
+type HitlMutationBody = { hitlId: string; status: string; resumeStatus: string; hitl: HitlProjection & { resumeStatus: string } };
+type TestHitlService = ProjectContext["hitl"];
+
+interface TestFixture {
+  app: ReturnType<typeof createServerApp>["app"];
+  runtime: AgentRuntime;
+  sessionStoreManager: SessionStoreManager;
+  sessionResumeCalls: () => number;
+}
+
+const LOOP_CONFIG: LoopConfig = {
+  title: "Route test loop",
+  schedule: { kind: "manual" },
+  runKind: "session",
+  mode: "report",
+  approvalPolicy: "interactive",
+  limits: {
+    maxIterationsPerRun: 1,
+    softThresholdRatio: 0.8,
+    hardThresholdRatio: 1,
+  },
+};
+
+function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, "app"> {
+  const sessionStoreManager = new SessionStoreManager({ logger: silentLogger });
+  let sessionResumeCalls = 0;
+  const sessionAdapter: SessionHitlResumeAdapter = {
+    async resume(): Promise<void> {
+      sessionResumeCalls += 1;
+    },
+  };
   const contextResolver = new ProjectContextResolver({
     projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
     logger: silentLogger,
+    sessionStoreManager,
+    resumeCoordinatorFactory: (input) => new ResumeCoordinator({
+      hitl: input.hitl,
+      adapters: { session: sessionAdapter },
+      logger: silentLogger,
+    }),
   });
 
-  return {
+  const runtime = {
     projectRegistry,
     contextResolver,
     warnings: [],
@@ -22,9 +66,12 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     providerRegistry: undefined,
     skillService: undefined,
     hitl: undefined,
-    createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    listSessions: mock(async () => []),
+    recoverHitlResumes: mock(async () => undefined),
+    subscribeMcpStatusChanges: mock(() => () => undefined),
+    getMcpServerStatuses: mock(() => new Map()),
+    createSession: mock(async (workspaceRoot: string) => sessionStoreManager.createSessionFile(workspaceRoot)),
+    getSessionFile: mock(async (workspaceRoot: string, sessionId: string) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId)),
+    listSessions: mock(async (workspaceRoot: string) => sessionStoreManager.listSessionSummaries(workspaceRoot)),
     startSessionExecution: mock(() => {
       throw new Error("not implemented");
     }),
@@ -35,24 +82,54 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     getSessionExecution: mock(() => undefined),
     subscribeSessionEvents: mock(() => () => undefined),
     deleteSession: mock(async () => undefined),
-    listSessionTree: mock(async () => ({ root: null, sessions: [] })),
+    listSessionTree: mock(async (workspaceRoot: string, rootSessionId: string) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId)),
     disposeSessionAgent: mock(() => undefined),
     disposeAllSessionAgents: mock(() => undefined),
     isSessionTombstoned: mock(() => false),
     dispatchCommand: mock(async () => null),
+    listLoops: mock(async () => []),
+    readLoop: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    createLoop: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    updateLoop: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    pauseLoop: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    resumeLoop: mock(async () => {
+      throw new Error("not implemented");
+    }),
+    triggerLoopRun: mock(async () => undefined),
+    readLoopKillState: mock(async () => ({ active: false, updatedAt: Date.now() })),
+    cancelLoopCurrentRun: mock(async () => undefined),
+    cancelCurrentLoopRun: mock(async () => undefined),
+    activateLoopGlobalKill: mock(async () => ({ active: true, updatedAt: Date.now() })),
+    clearLoopGlobalKill: mock(async () => ({ active: false, updatedAt: Date.now() })),
+    readLoopBudget: mock(async () => null),
+    readLoopCollisions: mock(async () => ({ targets: [], activeLeases: [], conflicts: [], updatedAt: Date.now() })),
+    readLoopIntegrationStatus: mock(async () => ({ statuses: [], snapshot: null, updatedAt: Date.now() })),
+    readLoopRunLog: mock(async () => []),
+    readLoopStateMarkdown: mock(async () => ""),
+    startLoopSchedulers: mock(async () => undefined),
+    stopLoopSchedulers: mock(async () => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
+
+  return { runtime, sessionStoreManager, sessionResumeCalls: () => sessionResumeCalls };
 }
 
-async function createTestApp(testName: string) {
+async function createTestApp(testName: string): Promise<TestFixture> {
   const homeDir = resolve(tempRoot, "homes", testName);
   await mkdir(homeDir, { recursive: true });
   const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
-  const runtime = createTestRuntime(projectRegistry);
-
+  const fixture = createTestRuntime(projectRegistry);
   return {
-    app: createServerApp(runtime, { dev: true }).app,
-    runtime,
+    app: createServerApp(fixture.runtime, { dev: true }).app,
+    ...fixture,
   };
 }
 
@@ -60,55 +137,6 @@ async function addProject(runtime: AgentRuntime, testName: string, name: string)
   const workspaceRoot = resolve(tempRoot, "workspaces", testName, name);
   await mkdir(workspaceRoot, { recursive: true });
   return await runtime.projectRegistry.add({ workspaceRoot, name });
-}
-
-async function requestHitl(runtime: AgentRuntime, project: ProjectInfo, sessionId: string, goalId = crypto.randomUUID()) {
-  const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-  const responsePromise = context.hitl.request(
-    sessionId,
-    "approval",
-    { kind: "approval", action: "continue", context: { goalId }, title: "Continue?", message: "Approve next step" },
-    { projectSlug: context.project.slug, goalId, source: "test" },
-  );
-  const [request] = context.hitl.listPending(project.slug, goalId);
-  expect(request).toBeDefined();
-  return { context, request: request!, responsePromise };
-}
-
-async function requestBudgetApproval(runtime: AgentRuntime, project: ProjectInfo, sessionId: string, goalId = "goal-budget") {
-  const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-  const responsePromise = context.hitl.request(
-    sessionId,
-    "approval",
-    {
-      kind: "approval",
-      action: "approve_budget",
-      context: {
-        goalId,
-        approvalPoint: "approval_budget_1",
-        apiKey: "sk-test-secret-budget",
-      },
-      title: "Approve budget apiKey=sk-test-secret-budget",
-      message: "Budget approval requires human confirmation with token sk-test-secret-budget",
-    },
-    {
-      projectSlug: context.project.slug,
-      goalId,
-      source: "goal.approval.approval_budget_1",
-      approvalPoint: "approval_budget_1",
-    },
-  );
-  const [request] = context.hitl.listPending(project.slug, goalId);
-  expect(request).toBeDefined();
-  return { context, request: request!, responsePromise };
-}
-
-function expectHitlListIsDisplaySafe(body: unknown) {
-  const serialized = JSON.stringify(body);
-  expect(serialized).not.toContain('"payload"');
-  expect(serialized).not.toContain("sk-test-secret-budget");
-  expect(serialized).toContain('"displayPayload"');
-  expect(serialized).toContain("[REDACTED]");
 }
 
 describe("hitl routes", () => {
@@ -121,302 +149,329 @@ describe("hitl routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("GET /api/hitl aggregates pending HITL across projects with project metadata", async () => {
-    const { app, runtime } = await createTestApp("global-pending");
-    const firstProject = await addProject(runtime, "global-pending", "Alpha Project");
-    const secondProject = await addProject(runtime, "global-pending", "Beta Project");
-    const first = await requestHitl(runtime, firstProject, "session-alpha");
-    const second = await requestHitl(runtime, secondProject, "session-beta");
+  test("scoped canonical route lists project/session/goal/loop HITL and redacts payloads", async () => {
+    const fixture = await createTestApp("scoped-list");
+    const project = await addProject(fixture.runtime, "scoped-list", "Scoped Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
 
-    const res = await app.request("/api/hitl?status=pending");
-    const body = await res.json() as { hitl: Array<{ hitlId: string; projectSlug: string; projectName: string; status: string }> };
+    const rootSessionId = await createSession(fixture, project, {});
+    const childSessionId = await createSession(fixture, project, { rootSessionId, parentSessionId: rootSessionId });
+    const rootHitl = await createSessionHitl(context.hitl, project.slug, rootSessionId, "Root session question");
+    const childHitl = await createSessionHitl(context.hitl, project.slug, childSessionId, "Child session question");
 
-    expect(res.status).toBe(200);
-    expect(body.hitl).toHaveLength(2);
-    expect(body.hitl).toContainEqual(expect.objectContaining({ hitlId: first.request.hitlId, projectSlug: firstProject.slug, projectName: firstProject.name, status: "pending" }));
-    expect(body.hitl).toContainEqual(expect.objectContaining({ hitlId: second.request.hitlId, projectSlug: secondProject.slug, projectName: secondProject.name, status: "pending" }));
+    const goal = await createGoal(context.goalState, project.slug, "Scoped Goal");
+    const goalSessionId = await createSession(fixture, project, { goalId: goal.id });
+    const goalChildSessionId = await createSession(fixture, project, { rootSessionId: goalSessionId, parentSessionId: goalSessionId, goalId: goal.id });
+    const goalHitl = await createGoalHitl(context.hitl, project.slug, goal.id, "Goal approval");
+    const goalSessionHitl = await createSessionHitl(context.hitl, project.slug, goalSessionId, "Goal child session");
+    const goalGrandchildHitl = await createSessionHitl(context.hitl, project.slug, goalChildSessionId, "Goal grandchild session");
 
-    first.context.hitl.cancel(first.request.hitlId);
-    second.context.hitl.cancel(second.request.hitlId);
+    const loop = await context.loopState.create(project.slug, LOOP_CONFIG);
+    const loopSessionId = await createSession(fixture, project, { loopId: loop.loopId });
+    const loopGoal = await createGoal(context.goalState, project.slug, "Loop Goal", loop.loopId);
+    const loopGoalSessionId = await createSession(fixture, project, { goalId: loopGoal.id });
+    const loopHitl = await createLoopHitl(context.hitl, project.slug, loop.loopId, "Loop approval");
+    const loopSessionHitl = await createSessionHitl(context.hitl, project.slug, loopSessionId, "Loop child session");
+    const loopGoalHitl = await createGoalHitl(context.hitl, project.slug, loopGoal.id, "Loop child goal");
+    const loopGoalSessionHitl = await createSessionHitl(context.hitl, project.slug, loopGoalSessionId, "Loop goal session");
+    const staleLoopHitl = await createLoopHitl(context.hitl, project.slug, crypto.randomUUID(), "Stale loop HITL");
+
+    const projectList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=project&status=pending`);
+    expect(projectList.hitl.map((item) => item.hitlId)).toEqual([
+      childHitl.hitlId,
+      goalGrandchildHitl.hitlId,
+      goalSessionHitl.hitlId,
+      loopGoalSessionHitl.hitlId,
+      loopSessionHitl.hitlId,
+      rootHitl.hitlId,
+      goalHitl.hitlId,
+      loopGoalHitl.hitlId,
+      loopHitl.hitlId,
+    ].sort());
+    expect(projectList.hitl.map((item) => item.hitlId)).not.toContain(staleLoopHitl.hitlId);
+    expectHitlListIsDisplaySafe(projectList);
+
+    const sessionList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=session&ownerId=${rootSessionId}&includeChildren=true&status=pending`);
+    expect(sessionList.hitl.map((item) => item.hitlId)).toEqual([childHitl.hitlId, rootHitl.hitlId].sort());
+
+    const goalList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=goal&ownerId=${goal.id}&includeChildren=true&status=pending`);
+    expect(goalList.hitl.map((item) => item.hitlId)).toEqual([goalGrandchildHitl.hitlId, goalHitl.hitlId, goalSessionHitl.hitlId].sort());
+
+    const loopList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=pending`);
+    expect(loopList.hitl.map((item) => item.hitlId)).toEqual([loopGoalHitl.hitlId, loopGoalSessionHitl.hitlId, loopHitl.hitlId, loopSessionHitl.hitlId].sort());
+
+    await context.hitl.cancelRecord(loopHitl.hitlId, "recent route coverage");
+    const recentList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=recent`);
+    expect(recentList.hitl).toContainEqual(expect.objectContaining({ hitlId: loopHitl.hitlId, status: "cancelled", resumeStatus: "terminal" }));
+    const allList = await getHitl(fixture.app, `/api/projects/${project.slug}/hitl?scope=loop&ownerId=${loop.loopId}&includeChildren=true&status=all`);
+    expect(allList.hitl.map((item) => item.hitlId)).toContain(loopHitl.hitlId);
+
+    const missingOwner = await fixture.app.request(`/api/projects/${project.slug}/hitl?scope=session&ownerId=${crypto.randomUUID()}&status=pending`);
+    expect(missingOwner.status).toBe(404);
+    const missingLoopOwner = await fixture.app.request(`/api/projects/${project.slug}/hitl?scope=loop&ownerId=${staleLoopHitl.owner.ownerId}&status=pending`);
+    expect(missingLoopOwner.status).toBe(404);
+    const missingProject = await fixture.app.request("/api/projects/missing-project/hitl?scope=project&status=pending");
+    expect(missingProject.status).toBe(404);
+
+    const legacyGlobalList = await fixture.app.request("/api/hitl?status=pending");
+    const legacyGlobalRespond = await fixture.app.request(`/api/hitl/${rootHitl.hitlId}/respond`, { method: "POST" });
+    const legacyQuestion = await fixture.app.request("/api/questions/legacy-id", { method: "POST" });
+    const legacyPermission = await fixture.app.request("/api/permissions/legacy-id", { method: "POST" });
+    expect(legacyGlobalList.status).toBe(404);
+    expect(legacyGlobalRespond.status).toBe(404);
+    expect(legacyQuestion.status).toBe(404);
+    expect(legacyPermission.status).toBe(404);
   });
 
-  test("GET /api/hitl exposes display-safe pending HITL without raw payload secrets", async () => {
-    const { app, runtime } = await createTestApp("global-redacted-pending");
-    const project = await addProject(runtime, "global-redacted-pending", "Test Project");
-    const pending = await requestBudgetApproval(runtime, project, "session-budget-global");
+  test("scoped SSE HITL invalidation forwards lightweight changed hints only", async () => {
+    const runtime = createRuntimeWithManualSubscriptions();
+    const serverRuntime = createServerEventRuntime(runtime);
+    const observed: GlobalSSEEvent[] = [];
+    const unsubscribeBus = globalEventBus.subscribe((event) => observed.push(event));
 
-    const res = await app.request("/api/hitl?status=pending");
-    const body = await res.json() as { hitl: Array<{ hitlId: string; displayPayload?: unknown; payload?: unknown }> };
-
-    expect(res.status).toBe(200);
-    expect(body.hitl).toHaveLength(1);
-    expect(body.hitl[0]?.hitlId).toBe(pending.request.hitlId);
-    expect((body.hitl[0]?.displayPayload as { redacted?: boolean } | undefined)?.redacted).toBe(true);
-    expect(body.hitl[0]).not.toHaveProperty("payload");
-    expectHitlListIsDisplaySafe(body);
-
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", project.slug);
-  });
-
-  test("GET /api/projects/:slug/hitl lists pending HITL for one project", async () => {
-    const { app, runtime } = await createTestApp("project-pending");
-    const firstProject = await addProject(runtime, "project-pending", "Alpha Project");
-    const secondProject = await addProject(runtime, "project-pending", "Beta Project");
-    const first = await requestHitl(runtime, firstProject, "session-alpha");
-    const second = await requestHitl(runtime, secondProject, "session-beta");
-
-    const res = await app.request(`/api/projects/${firstProject.slug}/hitl`);
-    const body = await res.json() as { hitl: Array<{ hitlId: string; projectSlug: string; projectName: string }> };
-
-    expect(res.status).toBe(200);
-    expect(body.hitl).toHaveLength(1);
-    expect(body.hitl[0]).toMatchObject({ hitlId: first.request.hitlId, projectSlug: firstProject.slug, projectName: firstProject.name });
-
-    first.context.hitl.cancel(first.request.hitlId);
-    second.context.hitl.cancel(second.request.hitlId);
-  });
-
-  test("GET /api/projects/:slug/hitl exposes display-safe pending HITL without raw payload secrets", async () => {
-    const { app, runtime } = await createTestApp("project-redacted-pending");
-    const project = await addProject(runtime, "project-redacted-pending", "Test Project");
-    const pending = await requestBudgetApproval(runtime, project, "session-budget-project");
-
-    const res = await app.request(`/api/projects/${project.slug}/hitl`);
-    const body = await res.json() as { hitl: Array<{ hitlId: string; displayPayload?: unknown; payload?: unknown }> };
-
-    expect(res.status).toBe(200);
-    expect(body.hitl).toHaveLength(1);
-    expect(body.hitl[0]?.hitlId).toBe(pending.request.hitlId);
-    expect((body.hitl[0]?.displayPayload as { redacted?: boolean } | undefined)?.redacted).toBe(true);
-    expect(body.hitl[0]).not.toHaveProperty("payload");
-    expectHitlListIsDisplaySafe(body);
-
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", project.slug);
-  });
-
-  test("POST /api/hitl/:id/respond rejects global HITL mutation", async () => {
-    const { app, runtime } = await createTestApp("respond");
-    const project = await addProject(runtime, "respond", "Respond Project");
-    const pending = await requestHitl(runtime, project, "session-respond");
-
-    const res = await app.request(`/api/hitl/${pending.request.hitlId}/respond`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approve", comment: "Looks good" }),
-      headers: { "content-type": "application/json" },
+    const execution = serverRuntime.startSessionExecution({
+      slug: "scoped-sse-project",
+      workspaceRoot: "/workspace",
+      sessionId: "session-1",
+      userMessage: "run",
     });
+    runtime.emitSession("session-1", hitlRequestEvent());
+    runtime.resolveExecution();
+    await execution.promise;
+    unsubscribeBus();
 
-    expect(res.status).toBe(404);
-    expect(pending.context.hitl.listPending(project.slug)).toEqual([
-      expect.objectContaining({ hitlId: pending.request.hitlId, status: "pending" }),
-    ]);
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", project.slug);
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toEqual({
+      type: "hitl.changed",
+      projectSlug: "scoped-sse-project",
+      ownerType: "session",
+      ownerId: "session-1",
+      sessionId: "session-1",
+      hitlId: "hitl-sse-1",
+      createdAt: 42,
+    });
+    expect(JSON.stringify(observed[0])).not.toContain("displayPayload");
+    expect(JSON.stringify(observed[0])).not.toContain("checkpoint");
   });
 
-  test("POST /api/hitl/:id/cancel rejects global HITL mutation", async () => {
-    const { app, runtime } = await createTestApp("cancel");
-    const project = await addProject(runtime, "cancel", "Cancel Project");
-    const pending = await requestHitl(runtime, project, "session-cancel");
+  test("duplicate canonical respond/cancel is idempotent and conflicting terminal mutation returns current state", async () => {
+    const fixture = await createTestApp("duplicate-mutation");
+    const project = await addProject(fixture.runtime, "duplicate-mutation", "Duplicate Project");
+    const context = await fixture.runtime.contextResolver.resolve(project.workspaceRoot);
+    const sessionId = await createSession(fixture, project, {});
+    const permission = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-approve");
 
-    const res = await app.request(`/api/hitl/${pending.request.hitlId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "No longer needed" }),
-      headers: { "content-type": "application/json" },
+    const first = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+      decision: "approve_once",
+      comment: "approved once",
     });
+    expect(first.status).toBe(200);
+    expect(first.body.hitlId).toBe(permission.hitlId);
+    expect(["resume_claimed", "resolved"]).toContain(first.body.status);
+    expect(["claimed", "terminal"]).toContain(first.body.resumeStatus);
 
-    expect(res.status).toBe(404);
-    expect(pending.context.hitl.listPending(project.slug)).toHaveLength(1);
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", project.slug);
-  });
-
-  test("POST /api/projects/:slug/hitl/:id/respond resolves only that project's durable HITL", async () => {
-    const { app, runtime } = await createTestApp("project-respond");
-    const project = await addProject(runtime, "project-respond", "Respond Project");
-    const pending = await requestHitl(runtime, project, "session-project-respond");
-
-    const res = await app.request(`/api/projects/${project.slug}/hitl/${pending.request.hitlId}/respond`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved", comment: "Project scoped" }),
-      headers: { "content-type": "application/json" },
+    const duplicate = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+      decision: "approve_once",
+      comment: "approved once",
     });
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.hitlId).toBe(permission.hitlId);
+    expect(fixture.sessionResumeCalls()).toBe(1);
 
-    expect(res.status).toBe(200);
-    expect(await pending.responsePromise).toMatchObject({
-      hitlId: pending.request.hitlId,
-      status: "resolved",
-      response: { decision: "approved", comment: "Project scoped" },
+    const conflicting = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${permission.hitlId}/respond`, {
+      decision: "deny",
+      comment: "changed my mind",
     });
-  });
+    expect(conflicting.status).toBe(409);
+    expect(conflicting.body).toMatchObject({ hitlId: permission.hitlId });
+    expect(fixture.sessionResumeCalls()).toBe(1);
 
-  test("POST /api/projects/test-project/hitl/approval_budget_1/respond resolves the matching approval point", async () => {
-    const { app, runtime } = await createTestApp("approval-budget-respond");
-    const project = await addProject(runtime, "approval-budget-respond", "Test Project");
-    expect(project.slug).toBe("test-project");
-    const pending = await requestBudgetApproval(runtime, project, "session-budget-respond", "goal-budget-respond");
-
-    expect(pending.request.hitlId).not.toBe("approval_budget_1");
-    expect(pending.request.trigger.approvalPoint).toBe("approval_budget_1");
-    expect(pending.request.approvalKey).toBe(`${project.slug}:goal-budget-respond:session-budget-respond:approval_point:approval_budget_1`);
-
-    const res = await app.request("/api/projects/test-project/hitl/approval_budget_1/respond", {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved", comment: "Budget approved" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, hitlId: pending.request.hitlId });
-    expect(await pending.responsePromise).toMatchObject({
-      hitlId: pending.request.hitlId,
-      status: "resolved",
-      response: { decision: "approved", comment: "Budget approved" },
-    });
-  });
-
-  test("project budget approval queue is display-safe and resolves by approval point", async () => {
-    const { app, runtime } = await createTestApp("budget-approval-daily-use");
-    const project = await addProject(runtime, "budget-approval-daily-use", "Test Project");
-    expect(project.slug).toBe("test-project");
-    const pending = await requestBudgetApproval(runtime, project, "session-budget-daily-use", "goal-budget-daily-use");
-
-    const listRes = await app.request(`/api/projects/${project.slug}/hitl`);
-    const listBody = await listRes.json() as { hitl: Array<{ hitlId: string; displayPayload?: { title?: string; fields?: Array<{ label: string; value: string }>; redacted?: boolean }; payload?: unknown; approvalKey?: string }> };
-    const item = listBody.hitl[0];
-
-    expect(listRes.status).toBe(200);
-    expect(item?.hitlId).toBe(pending.request.hitlId);
-    expect(item?.displayPayload?.redacted).toBe(true);
-    expect(item?.displayPayload?.title).toContain("[REDACTED]");
-    expect(item?.displayPayload?.fields?.some((field) => field.value.includes("[REDACTED]"))).toBe(true);
-    expect(item).not.toHaveProperty("payload");
-    expectHitlListIsDisplaySafe(listBody);
-
-    const respondRes = await app.request(`/api/projects/${project.slug}/hitl/approval_budget_1/respond`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved", comment: "Budget approved from dashboard" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(respondRes.status).toBe(200);
-    expect(await respondRes.json()).toEqual({ ok: true, hitlId: pending.request.hitlId });
-    expect(await pending.responsePromise).toMatchObject({
-      hitlId: pending.request.hitlId,
-      status: "resolved",
-      response: { decision: "approved", comment: "Budget approved from dashboard" },
-    });
-    const afterRes = await app.request(`/api/projects/${project.slug}/hitl`);
-    expect((await afterRes.json() as { hitl: unknown[] }).hitl).toEqual([]);
-  });
-
-  test("project-scoped HITL routes use registry slug even when project name differs from workspace basename", async () => {
-    const { app, runtime } = await createTestApp("registry-slug");
-    const project = await addProject(runtime, "registry-slug", "Project With Spaces");
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-
-    expect(context.project.slug).toBe(project.slug);
-    const pending = await requestHitl(runtime, project, "session-registry-slug");
-
-    const listRes = await app.request(`/api/projects/${project.slug}/hitl`);
-    const listBody = await listRes.json() as { hitl: Array<{ hitlId: string; projectSlug: string }> };
-    expect(listBody.hitl).toContainEqual(expect.objectContaining({ hitlId: pending.request.hitlId, projectSlug: project.slug }));
-
-    const respondRes = await app.request(`/api/projects/${project.slug}/hitl/${pending.request.hitlId}/respond`, {
+    const invalid = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-invalid");
+    const invalidRes = await fixture.app.request(`/api/projects/${project.slug}/hitl/${invalid.hitlId}/respond`, {
       method: "POST",
       body: JSON.stringify({ decision: "approved" }),
       headers: { "content-type": "application/json" },
     });
-    expect(respondRes.status).toBe(200);
-    expect(await pending.responsePromise).toMatchObject({ status: "resolved" });
-  });
+    expect(invalidRes.status).toBe(400);
+    expect((await context.hitl.lookup(invalid.hitlId)).status).toBe("found");
+    const invalidLookup = await context.hitl.lookup(invalid.hitlId);
+    expect(invalidLookup.status === "found" ? invalidLookup.record.status : undefined).toBe("pending");
 
-  test("POST /api/projects/:slug/hitl/:id/respond rejects wrong project without mutating HITL", async () => {
-    const { app, runtime } = await createTestApp("project-wrong-respond");
-    const firstProject = await addProject(runtime, "project-wrong-respond", "Alpha Project");
-    const secondProject = await addProject(runtime, "project-wrong-respond", "Beta Project");
-    const pending = await requestHitl(runtime, firstProject, "session-alpha");
-
-    const res = await app.request(`/api/projects/${secondProject.slug}/hitl/${pending.request.hitlId}/respond`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved" }),
-      headers: { "content-type": "application/json" },
+    const cancellable = await createSessionHitl(context.hitl, project.slug, sessionId, "Cancel duplicate");
+    const cancelFirst = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/cancel`, {
+      reason: "No longer needed",
     });
+    expect(cancelFirst.status).toBe(200);
+    expect(cancelFirst.body.hitlId).toBe(cancellable.hitlId);
+    expect(["resume_claimed", "cancelled"]).toContain(cancelFirst.body.status);
+    expect(["claimed", "terminal"]).toContain(cancelFirst.body.resumeStatus);
 
-    expect(res.status).toBe(404);
-    expect(pending.context.hitl.listPending(firstProject.slug)).toEqual([
-      expect.objectContaining({ hitlId: pending.request.hitlId, status: "pending" }),
-    ]);
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", firstProject.slug);
-  });
-
-  test("POST /api/projects/:slug/hitl/:id/cancel rejects wrong project without mutating HITL", async () => {
-    const { app, runtime } = await createTestApp("project-wrong-cancel");
-    const firstProject = await addProject(runtime, "project-wrong-cancel", "Alpha Project");
-    const secondProject = await addProject(runtime, "project-wrong-cancel", "Beta Project");
-    const pending = await requestHitl(runtime, firstProject, "session-alpha");
-
-    const res = await app.request(`/api/projects/${secondProject.slug}/hitl/${pending.request.hitlId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Wrong project" }),
-      headers: { "content-type": "application/json" },
+    const cancelDuplicate = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/cancel`, {
+      reason: "No longer needed",
     });
+    expect(cancelDuplicate.status).toBe(200);
+    expect(cancelDuplicate.body.hitlId).toBe(cancellable.hitlId);
+    expect(fixture.sessionResumeCalls()).toBe(2);
 
-    expect(res.status).toBe(404);
-    expect(pending.context.hitl.listPending(firstProject.slug)).toEqual([
-      expect.objectContaining({ hitlId: pending.request.hitlId, status: "pending" }),
-    ]);
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", firstProject.slug);
-  });
-
-  test("POST /api/projects/:slug/hitl/approval_budget_1/respond rejects wrong project without mutating matching approval", async () => {
-    const { app, runtime } = await createTestApp("approval-budget-wrong-project");
-    const firstProject = await addProject(runtime, "approval-budget-wrong-project", "Test Project");
-    const secondProject = await addProject(runtime, "approval-budget-wrong-project", "Other Project");
-    const pending = await requestBudgetApproval(runtime, firstProject, "session-budget-wrong", "goal-budget-wrong");
-
-    const res = await app.request(`/api/projects/${secondProject.slug}/hitl/approval_budget_1/respond`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "approved" }),
-      headers: { "content-type": "application/json" },
+    const respondAfterCancel = await postJson<HitlMutationBody>(fixture.app, `/api/projects/${project.slug}/hitl/${cancellable.hitlId}/respond`, {
+      answers: ["late answer"],
     });
-
-    expect(res.status).toBe(404);
-    expect(pending.context.hitl.listPending(firstProject.slug)).toEqual([
-      expect.objectContaining({
-        hitlId: pending.request.hitlId,
-        status: "pending",
-        trigger: expect.objectContaining({ approvalPoint: "approval_budget_1" }),
-      }),
-    ]);
-    pending.context.hitl.cancel(pending.request.hitlId, "test cleanup", firstProject.slug);
-  });
-
-  test("POST /api/projects/:slug/hitl/:id/cancel resolves only that project's durable HITL", async () => {
-    const { app, runtime } = await createTestApp("project-cancel");
-    const project = await addProject(runtime, "project-cancel", "Cancel Project");
-    const pending = await requestHitl(runtime, project, "session-project-cancel");
-
-    const res = await app.request(`/api/projects/${project.slug}/hitl/${pending.request.hitlId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify({ reason: "Project cancel" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(200);
-    expect(await pending.responsePromise).toMatchObject({
-      hitlId: pending.request.hitlId,
-      status: "cancelled",
-      reason: "Project cancel",
-    });
-  });
-
-  test("POST /api/hitl/:id/respond returns 404 when HITL request is not found", async () => {
-    const { app } = await createTestApp("missing");
-
-    const res = await app.request("/api/hitl/missing/respond", {
-      method: "POST",
-      body: JSON.stringify({ decision: "approve" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(404);
+    expect(respondAfterCancel.status).toBe(409);
+    expect(respondAfterCancel.body.hitlId).toBe(cancellable.hitlId);
   });
 });
+
+async function createSession(
+  fixture: TestFixture,
+  project: ProjectInfo,
+  options: { rootSessionId?: string; parentSessionId?: string; goalId?: string; loopId?: string },
+): Promise<string> {
+  const sessionId = crypto.randomUUID();
+  fixture.sessionStoreManager.create(sessionId, project.workspaceRoot, options);
+  await waitForSessionFile(fixture.runtime, project.workspaceRoot, sessionId);
+  return sessionId;
+}
+
+async function waitForSessionFile(runtime: AgentRuntime, workspaceRoot: string, sessionId: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  let lastError: unknown;
+  const sessionPath = getSessionPath(workspaceRoot, sessionId);
+  while (Date.now() < deadline) {
+    try {
+      if (!(await Bun.file(sessionPath).exists())) {
+        throw new Error(`Session file is not persisted yet: ${sessionPath}`);
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      await Bun.sleep(10);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for session ${sessionId}`);
+}
+
+async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {
+  const goal = await manager.create(projectSlug, title, "tester", [], undefined, ["after_plan"]);
+  return loopId === undefined ? goal : await manager.updateLoopId(goal.id, loopId);
+}
+
+async function createSessionHitl(hitl: TestHitlService, projectSlug: string, sessionId: string, title: string): Promise<HitlRecord> {
+  return await hitl.create({
+    owner: { projectSlug, ownerType: "session", ownerId: sessionId },
+    blockingKey: `session:${sessionId}:ask:${crypto.randomUUID()}`,
+    source: { type: "ask_user", sessionId, toolCallId: crypto.randomUUID() },
+    displayPayload: redactedPayload(title),
+  });
+}
+
+async function createPermissionHitl(hitl: TestHitlService, projectSlug: string, sessionId: string, toolCallId: string): Promise<HitlRecord> {
+  return await hitl.create({
+    owner: { projectSlug, ownerType: "session", ownerId: sessionId },
+    blockingKey: `session:${sessionId}:tool:${toolCallId}`,
+    source: { type: "tool_permission", sessionId, toolCallId, toolName: "bash" },
+    displayPayload: redactedPayload("Permission for [REDACTED]"),
+  });
+}
+
+async function createGoalHitl(hitl: TestHitlService, projectSlug: string, goalId: string, title: string): Promise<HitlRecord> {
+  return await hitl.create({
+    owner: { projectSlug, ownerType: "goal", ownerId: goalId },
+    blockingKey: `goal:${goalId}:approval:after_plan:${crypto.randomUUID()}`,
+    source: { type: "goal_approval", goalId, approvalPoint: "after_plan" },
+    displayPayload: redactedPayload(title),
+  });
+}
+
+async function createLoopHitl(hitl: TestHitlService, projectSlug: string, loopId: string, title: string): Promise<HitlRecord> {
+  return await hitl.create({
+    owner: { projectSlug, ownerType: "loop", ownerId: loopId },
+    blockingKey: `loop:${loopId}:approval:manual:${crypto.randomUUID()}`,
+    source: { type: "loop_approval", loopId, approvalPoint: "manual" },
+    displayPayload: redactedPayload(title),
+  });
+}
+
+function redactedPayload(title: string): HitlDisplayPayload {
+  return {
+    title,
+    summary: "Display-safe payload with [REDACTED] secret",
+    fields: [{ label: "details", value: "[REDACTED]" }],
+    redacted: true,
+  };
+}
+
+function createRuntimeWithManualSubscriptions() {
+  const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
+  let resolveExecution!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolveExecution = resolve;
+  });
+
+  const runtime = {
+    subscribeSessionEvents: mock((input: { sessionId: string; onEvent: (event: GlobalSSEEvent) => void }) => {
+      subscriptions.set(input.sessionId, input.onEvent);
+      return () => subscriptions.delete(input.sessionId);
+    }),
+    startSessionExecution: mock(() => ({ promise })),
+    emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
+    resolveExecution: () => resolveExecution(),
+  };
+
+  return runtime as unknown as AgentRuntime & {
+    emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
+    resolveExecution: () => void;
+  };
+}
+
+function hitlRequestEvent(): GlobalSSEEvent {
+  return {
+    type: "event",
+    slug: "scoped-sse-project",
+    sessionId: "session-1",
+    eventId: 1,
+    createdAt: 42,
+    kind: "hitl.request",
+    agentName: "orchestrator",
+    payload: {
+      type: "hitl.request",
+      request: {
+        hitlId: "hitl-sse-1",
+        owner: { projectSlug: "scoped-sse-project", ownerType: "session", ownerId: "session-1" },
+        blockingKey: "session:session-1:ask:call-1",
+        source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" },
+        status: "pending",
+        displayPayload: redactedPayload("Do not forward this payload"),
+        createdAt: new Date(42).toISOString(),
+        updatedAt: new Date(42).toISOString(),
+      },
+    },
+  };
+}
+
+async function getHitl(app: TestFixture["app"], path: string): Promise<HitlListBody> {
+  const res = await app.request(path);
+  const body = await res.json() as HitlListBody;
+  expect(res.status).toBe(200);
+  return {
+    hitl: [...body.hitl].sort((left, right) => left.hitlId.localeCompare(right.hitlId)),
+  };
+}
+
+async function postJson<T>(app: TestFixture["app"], path: string, body: Record<string, unknown>): Promise<{ status: number; body: T }> {
+  const res = await app.request(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "content-type": "application/json" },
+  });
+  return { status: res.status, body: await res.json() as T };
+}
+
+function expectHitlListIsDisplaySafe(body: unknown): void {
+  const serialized = JSON.stringify(body);
+  expect(serialized).not.toContain('"payload"');
+  expect(serialized).not.toContain('"checkpoint"');
+  expect(serialized).not.toContain('"input"');
+  expect(serialized).not.toContain("sk-test");
+  expect(serialized).toContain('"displayPayload"');
+  expect(serialized).toContain("[REDACTED]");
+}
