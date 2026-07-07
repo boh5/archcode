@@ -384,6 +384,7 @@ describe("Sidebar", () => {
     const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
     const sessionCreateButton = createButtons.find((b) => b.props?.title === "New session");
     expect(sessionCreateButton).toBeDefined();
+    expect(sessionCreateButton?.props?.label).toBe("New session");
     expect(sessionCreateButton?.props?.disabled).toBe(true);
   });
 
@@ -673,6 +674,7 @@ describe("Sidebar", () => {
     const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
     const goalCreateButton = createButtons.find((b) => b.props?.title === "New goal");
     expect(goalCreateButton).toBeDefined();
+    expect(goalCreateButton?.props?.label).toBe("New goal");
     expect(typeof goalCreateButton?.props?.onClick).toBe("function");
 
     const dialogs = findAll(tree, (element) => typeName(element) === "CreateGoalDialog");
@@ -796,6 +798,7 @@ describe("Sidebar", () => {
     const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
     const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
     expect(loopCreateButton).toBeDefined();
+    expect(loopCreateButton?.props?.label).toBe("New loop");
     expect(typeof loopCreateButton?.props?.onClick).toBe("function");
 
     const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");

@@ -350,10 +350,12 @@ function PlaceholderDashboardButton({
 function CreateButton({
   onClick,
   title,
+  label,
   disabled,
 }: {
   onClick: () => void;
   title: string;
+  label: string;
   disabled?: boolean;
 }) {
   return (
@@ -363,9 +365,10 @@ function CreateButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="w-5 h-5 rounded-sm flex items-center justify-center text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-sm border border-accent/50 bg-accent-subtle px-2.5 text-[12px] font-semibold text-accent shadow-[0_0_0_1px_rgba(255,255,255,0.02)] transition-colors duration-150 hover:border-accent hover:bg-accent/15 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
     >
-      <Plus size={12} />
+      <Plus size={13} />
+      <span className="whitespace-nowrap">{label}</span>
     </button>
   );
 }
@@ -654,6 +657,7 @@ export function Sidebar() {
               <CreateButton
                 onClick={handleNewSession}
                 title="New session"
+                label="New session"
                 disabled={createSession.isPending}
               />
             </div>
@@ -752,6 +756,7 @@ export function Sidebar() {
               <CreateButton
                 onClick={() => setCreateGoalOpen(true)}
                 title="New goal"
+                label="New goal"
               />
             </div>
           </div>
@@ -795,6 +800,7 @@ export function Sidebar() {
               <CreateButton
                 onClick={() => setCreateLoopOpen(true)}
                 title="New loop"
+                label="New loop"
               />
             </div>
           </div>
