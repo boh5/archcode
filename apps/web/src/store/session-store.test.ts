@@ -6,7 +6,6 @@ import type {
   SessionEventPayload,
   SessionMessage,
 } from "@archcode/protocol";
-import type { PermissionRequest, QuestionRequest } from "../api/types";
 import {
   createWebSessionStore,
   evictIdleSessionStores,
@@ -30,27 +29,6 @@ function event(eventId: number, payload: SessionEventPayload): GlobalSessionEven
 
 function userMessage(content: string): SessionEventPayload {
   return { type: "user-message", content };
-}
-
-function makePermission(id: string, sessionId = "test-session"): PermissionRequest {
-  return {
-    id,
-    sessionId,
-    toolName: "bash",
-    toolCallId: "",
-    input: { command: "pwd" },
-    description: "Run a command",
-  };
-}
-
-function makeQuestion(id: string, sessionId = "test-session"): QuestionRequest {
-  return {
-    id,
-    sessionId,
-    toolName: "ask_user",
-    toolCallId: "",
-    questions: [{ text: "Continue?" }],
-  };
 }
 
 describe("web session store registry", () => {
@@ -134,18 +112,14 @@ describe("web session store registry", () => {
     }
   });
 
-  test("does not evict foreground, running, streaming, or pending-confirmation stores", () => {
+  test("does not evict foreground, running, or streaming stores", () => {
     const foreground = createWebSessionStore("foreground", "pinned");
     const running = createWebSessionStore("running", "pinned");
     const streaming = createWebSessionStore("streaming", "pinned");
-    const pendingPermission = createWebSessionStore("pending-permission", "pinned");
-    const pendingQuestion = createWebSessionStore("pending-question", "pinned");
 
     markSessionForeground("pinned", "foreground", true);
     running.setState({ isRunning: true });
     streaming.setState({ isStreamingModel: true });
-    pendingPermission.getState().addPermissionRequest(makePermission("perm", "pending-permission"));
-    pendingQuestion.getState().addQuestionRequest(makeQuestion("question", "pending-question"));
 
     for (let index = 0; index < 22; index += 1) {
       createWebSessionStore(`evictable-${index}`, "pinned");
@@ -156,8 +130,6 @@ describe("web session store registry", () => {
     expect(findWebSessionStore("foreground", "pinned")).toBe(foreground);
     expect(findWebSessionStore("running", "pinned")).toBe(running);
     expect(findWebSessionStore("streaming", "pinned")).toBe(streaming);
-    expect(findWebSessionStore("pending-permission", "pinned")).toBe(pendingPermission);
-    expect(findWebSessionStore("pending-question", "pinned")).toBe(pendingQuestion);
     expect(findWebSessionStore("evictable-0", "pinned")).toBeUndefined();
   });
 });
@@ -205,135 +177,6 @@ describe("applyRemoteEnvelope", () => {
     expect(store.getState().nextEventId).toBe(2);
   });
 
-  test("adds and removes pending permission requests from remote envelopes", () => {
-    const store = createWebSessionStore("permission-remote", "demo");
-
-    store.getState().applyRemoteEnvelope({
-      ...event(0, {
-        type: "permission.request",
-        permissionId: "perm-remote-1",
-        toolName: "bash",
-        args: { command: "pwd" },
-        description: "Run pwd",
-      }),
-      sessionId: "permission-remote",
-    });
-
-    expect(store.getState().pendingPermissions.get("perm-remote-1")).toMatchObject({
-      id: "perm-remote-1",
-      sessionId: "permission-remote",
-      toolName: "bash",
-      input: { command: "pwd" },
-      description: "Run pwd",
-    });
-
-    store.getState().applyRemoteEnvelope({
-      ...event(1, {
-        type: "permission.terminal",
-        permissionId: "perm-remote-1",
-        status: "resolved",
-      }),
-      sessionId: "permission-remote",
-    });
-
-    expect(store.getState().pendingPermissions.size).toBe(0);
-  });
-
-  test("adds and removes pending question requests from remote envelopes", () => {
-    const store = createWebSessionStore("question-remote", "demo");
-
-    store.getState().applyRemoteEnvelope({
-      ...event(0, {
-        type: "question.request",
-        questionId: "question-remote-1",
-        question: JSON.stringify({ toolName: "ask_user", toolCallId: "tc-1", questions: [{ question: "Continue?", header: "Q1", options: [], custom: true }] }),
-      }),
-      sessionId: "question-remote",
-    });
-
-    expect(store.getState().pendingQuestions.get("question-remote-1")).toMatchObject({
-      id: "question-remote-1",
-      sessionId: "question-remote",
-      toolName: "ask_user",
-      toolCallId: "tc-1",
-      questions: [{ question: "Continue?", header: "Q1", options: [], custom: true }],
-    });
-
-    store.getState().applyRemoteEnvelope({
-      ...event(1, {
-        type: "question.terminal",
-        questionId: "question-remote-1",
-        status: "resolved",
-        answer: "Yes",
-      }),
-      sessionId: "question-remote",
-    });
-
-    expect(store.getState().pendingQuestions.size).toBe(0);
-  });
-
-  test("batched question.request with 3 questions stores all 3 in a single pending entry", () => {
-    const store = createWebSessionStore("question-batched", "demo");
-
-    store.getState().applyRemoteEnvelope({
-      ...event(0, {
-        type: "question.request",
-        questionId: "question-batch-1",
-        question: JSON.stringify({
-          toolName: "ask_user",
-          toolCallId: "tc-batch-1",
-          questions: [
-            { question: "First?", header: "Q1", options: [{ label: "A", description: "" }], custom: false },
-            { question: "Second?", header: "Q2", options: [{ label: "B", description: "" }], custom: false },
-            { question: "Third?", header: "Q3", options: [{ label: "C", description: "" }], custom: false },
-          ],
-        }),
-      }),
-      sessionId: "question-batched",
-    });
-
-    const pending = store.getState().pendingQuestions.get("question-batch-1");
-    expect(pending).toBeDefined();
-    expect(pending!.questions).toHaveLength(3);
-    expect(pending!.questions[0]).toMatchObject({ header: "Q1" });
-    expect(pending!.questions[1]).toMatchObject({ header: "Q2" });
-    expect(pending!.questions[2]).toMatchObject({ header: "Q3" });
-  });
-
-  test("question.terminal empties the queue and unpins the store", () => {
-    const store = createWebSessionStore("question-terminal-clear", "demo");
-
-    store.getState().applyRemoteEnvelope({
-      ...event(0, {
-        type: "question.request",
-        questionId: "question-clear-1",
-        question: JSON.stringify({ toolName: "ask_user", toolCallId: "tc-1", questions: [{ question: "Continue?" }] }),
-      }),
-      sessionId: "question-terminal-clear",
-    });
-
-    expect(store.getState().pendingQuestions.size).toBe(1);
-
-    store.getState().applyRemoteEnvelope({
-      ...event(1, {
-        type: "question.terminal",
-        questionId: "question-clear-1",
-        status: "resolved",
-        answer: "Yes",
-      }),
-      sessionId: "question-terminal-clear",
-    });
-
-    expect(store.getState().pendingQuestions.size).toBe(0);
-    // The store should no longer be pinned by pending questions.
-    // isPinned checks pendingPermissions.size > 0 || pendingQuestions.size > 0;
-    // with both empty and no running/streaming/foreground flags, it is not pinned.
-    const state = store.getState();
-    expect(state.pendingPermissions.size).toBe(0);
-    expect(state.pendingQuestions.size).toBe(0);
-    expect(state.isRunning).toBe(false);
-    expect(state.isStreamingModel).toBe(false);
-  });
 });
 
 describe("initializeFromSnapshot", () => {
@@ -486,20 +329,19 @@ describe("resetTransientState", () => {
     __resetWebSessionStoresForTest();
   });
 
-  test("clears scoped pending confirmations without transport cursor or connection state", () => {
+  test("resetTransientState does not reintroduce legacy pending confirmation state", () => {
     const store = createWebSessionStore("reset", "demo");
     const state = store.getState();
 
-    state.addPermissionRequest(makePermission("perm-1", "reset"));
-    state.addQuestionRequest(makeQuestion("question-1", "reset"));
-
     expect(state).not.toHaveProperty("connectionState");
     expect(state).not.toHaveProperty("lastEventId");
+    expect(state).not.toHaveProperty("pendingPermissions");
+    expect(state).not.toHaveProperty("pendingQuestions");
 
     state.resetTransientState();
 
-    expect(store.getState().pendingPermissions.size).toBe(0);
-    expect(store.getState().pendingQuestions.size).toBe(0);
+    expect(store.getState()).not.toHaveProperty("pendingPermissions");
+    expect(store.getState()).not.toHaveProperty("pendingQuestions");
   });
 });
 

@@ -7,7 +7,7 @@ export interface CompressionProtectionResult {
 }
 
 export function collectProtectedRefsForRange(
-  state: Pick<SessionStoreState, "messages" | "pendingInteractions" | "reminders" | "todos" | "childSessionLinks" | "events">,
+  state: Pick<SessionStoreState, "messages" | "reminders" | "todos" | "childSessionLinks">,
   range: CompressionRange,
 ): CompressionProtectionResult {
   const protectedRefs: ProtectedRef[] = [];
@@ -21,7 +21,6 @@ export function collectProtectedRefsForRange(
   }
 
   collectLatestTailRefs(protectedRefs, state.messages, range);
-  collectActiveInteractionRefs(protectedRefs, state, range.startRef);
   collectTodoRefs(protectedRefs, state, range.startRef);
   collectReminderRefs(protectedRefs, state, range.startRef);
 
@@ -75,22 +74,6 @@ function collectLatestTailRefs(
   }
 }
 
-function collectActiveInteractionRefs(
-  protectedRefs: ProtectedRef[],
-  state: Pick<SessionStoreState, "pendingInteractions" | "events">,
-  fallbackRef: MessageRef,
-): void {
-  for (const interaction of state.pendingInteractions ?? []) {
-    if (interaction.status === "pending") {
-      protectedRefs.push(protectedRef(fallbackRef, "active_question", `Active question ${interaction.id} is pending`));
-    }
-  }
-
-  for (const permissionId of activePermissionIds(state.events ?? [])) {
-    protectedRefs.push(protectedRef(fallbackRef, "active_permission", `Active permission ${permissionId} is pending`));
-  }
-}
-
 function collectTodoRefs(
   protectedRefs: ProtectedRef[],
   state: Pick<SessionStoreState, "todos">,
@@ -126,16 +109,6 @@ function childLinksByToolCallId(links: readonly ToolChildSessionLink[]): Map<str
     map.set(link.parentToolCallId, existing);
   }
   return map;
-}
-
-function activePermissionIds(events: readonly SessionStoreState["events"][number][]): string[] {
-  const active = new Set<string>();
-  for (const event of events) {
-    const payload = event.payload;
-    if (payload.type === "permission.request") active.add(payload.permissionId);
-    if (payload.type === "permission.terminal") active.delete(payload.permissionId);
-  }
-  return [...active];
 }
 
 function protectedRef(

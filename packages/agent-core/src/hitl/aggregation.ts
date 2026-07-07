@@ -162,8 +162,14 @@ function loopScopeOwners(
   const selectedSessions = includeChildren
     ? includeSessionDescendants([...directLoopSessions, ...goalSessions], sessions)
     : directLoopSessions;
-  descriptors.push(...selectedSessions.map((session) => sessionDescriptor(projectSlug, session, ["loop", loopId, "session", session.sessionId])));
+  descriptors.push(...selectedSessions.map((session) => sessionDescriptor(projectSlug, session, loopSessionProjectionPath(loopId, loopGoals, session))));
   return descriptors;
+}
+
+function loopSessionProjectionPath(loopId: string, loopGoals: GoalState[], session: SessionSummary): string[] {
+  const childGoal = loopGoals.find((goal) => goal.id === session.goalId);
+  if (childGoal !== undefined) return ["loop", loopId, "goal", childGoal.id, "session", session.sessionId];
+  return ["loop", loopId, "session", session.sessionId];
 }
 
 function includeSessionDescendants(seed: SessionSummary[], sessions: SessionSummary[]): SessionSummary[] {

@@ -230,7 +230,6 @@ async function writeSession(input: {
     stats,
     executions: [{ id: `${input.sessionId}:run`, startedAt: 1, status: input.executionStatus ?? "completed", endedAt: 2, durationMs: 1 }],
     todos: [],
-    pendingInteractions: [],
     reminders: [],
     childSessionLinks: input.childSessionLinks ?? [],
     rootSessionId: input.rootSessionId ?? input.sessionId,

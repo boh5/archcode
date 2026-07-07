@@ -281,7 +281,7 @@ describe("Loop Phase 5 architecture guardrails", () => {
   });
 
   test("Loop config schema and protocol types do not accept raw per-loop tool arrays", () => {
-    const stateConfigSchema = sourceSection(loopStateFile, "export const LoopConfigSchema", "export const LoopRunReportStatusSchema");
+    const stateConfigSchema = sourceSection(loopStateFile, "export const LoopConfigSchema", "export const LoopStateSchema");
     const protocolLoopConfig = sourceSection(protocolTypesFile, "export interface LoopConfig", "export type LoopRunReportStatus");
 
     expect(stateConfigSchema).not.toMatch(/\btools\s*:/);

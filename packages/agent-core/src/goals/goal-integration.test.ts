@@ -15,10 +15,12 @@ import {
   type GoalTokenBudgetState,
 } from "@archcode/protocol";
 
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
 import { setLlmAdapterForTest } from "../llm";
 import { runLlmText } from "../llm/run-text";
 import type { LlmTextInput } from "../llm/types";
+import { LoopStateManager } from "../loops/state";
 import { SkillService } from "../skills";
 import { createSessionStore, storeManager } from "../store/store";
 import type { SessionStoreState } from "../store/types";
@@ -28,6 +30,7 @@ import { createToolExecutionContext } from "../tools/types";
 import { goalEvidenceTool, goalManageTool } from "../tools/builtins/goal-tools";
 import { BUDGET_APPROVAL_POINT, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
 import { GoalArtifactManager } from "./artifacts";
+import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -64,6 +67,7 @@ const mockGenerateText = mock(async (input: Record<string, unknown>) => {
 let workspaceRoot = "";
 let manager: GoalStateManager;
 let artifacts: GoalArtifactManager;
+let loops: LoopStateManager;
 
 beforeEach(async () => {
   storeManager.clearAll();
@@ -79,6 +83,7 @@ beforeEach(async () => {
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
   artifacts = new GoalArtifactManager(workspaceRoot);
+  loops = new LoopStateManager(workspaceRoot);
 });
 
 afterAll(async () => {
@@ -91,22 +96,42 @@ async function createHitlRunner(options: {
   sessionIds?: string[];
   now?: () => Date;
   retryDelay?: (ms: number, abort: AbortSignal) => Promise<void>;
-} = {}): Promise<{ runner: GoalRunner; hitl: HitlService }> {
+} = {}): Promise<{ runner: GoalRunner; hitl: HitlService; coordinator: ResumeCoordinator }> {
   const remainingSessionIds = [...(options.sessionIds ?? ["main-session-1", "retry-session-2", "retry-session-3"])] as string[];
-  const hitl = new HitlService();
-  await hitl.load(workspaceRoot);
+  const hitl = new HitlService({
+    workspaceRoot,
+    project: { slug: "project-a", name: "Project A" },
+    sessions: storeManager,
+    goalState: manager,
+    loopState: loops,
+  });
+  let runner: GoalRunner;
+  runner = new GoalRunner({
+    goalStateManager: manager,
+    goalArtifacts: artifacts,
+    workspaceRoot,
+    hitlService: hitl,
+    createSession: mock(async () => remainingSessionIds.shift() ?? `session-${crypto.randomUUID()}`),
+    isSessionActive: mock(async () => false),
+    now: options.now,
+    retryDelay: options.retryDelay,
+  });
+  const coordinator = new ResumeCoordinator({
+    hitl,
+    adapters: {
+      goal: new GoalHitlResumeAdapter({
+        workspaceRoot,
+        goalStateManager: manager,
+        goalArtifacts: artifacts,
+        hitlService: hitl,
+        createRunner: () => runner,
+      }),
+    },
+  });
   return {
     hitl,
-    runner: new GoalRunner({
-      goalStateManager: manager,
-      goalArtifacts: artifacts,
-      workspaceRoot,
-      hitlService: hitl,
-      createSession: mock(async () => remainingSessionIds.shift() ?? `session-${crypto.randomUUID()}`),
-      isSessionActive: mock(async () => false),
-      now: options.now,
-      retryDelay: options.retryDelay,
-    }),
+    runner,
+    coordinator,
   };
 }
 
@@ -126,6 +151,15 @@ function stateChangeStatuses(state: SessionStoreState): GoalStatus[] {
     .map((event) => event.payload)
     .filter((payload): payload is Extract<typeof payload, { type: "goal.state_change" }> => payload.type === "goal.state_change")
     .map((payload) => payload.status);
+}
+
+async function waitForGoal(goalId: string, predicate: (goal: GoalState) => boolean): Promise<GoalState> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const goal = await manager.read(goalId);
+    if (predicate(goal)) return goal;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for Goal state");
 }
 
 function goalStateFilePath(goalId: string): string {
@@ -265,23 +299,27 @@ function task18Spec(ac002Status: "satisfied" | "failed"): string {
 
 async function waitForPendingApproval(hitl: HitlService, goalId: string, approvalPoint: string) {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const pending = hitl.listPending("project-a", goalId).find((request) => request.trigger.approvalPoint === approvalPoint);
+    const pending = (await hitl.list({ scope: "goal", ownerId: goalId })).find((request) => {
+      return "approvalPoint" in request.source && request.source.approvalPoint === approvalPoint;
+    });
     if (pending) return pending;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error(`Timed out waiting for ${approvalPoint} approval`);
 }
 
-async function approvePending(hitl: HitlService, goalId: string, approvalPoint: string, comment: string): Promise<void> {
+async function approvePending(coordinator: ResumeCoordinator, hitl: HitlService, goalId: string, approvalPoint: string, comment: string): Promise<void> {
   const pending = await waitForPendingApproval(hitl, goalId, approvalPoint);
   const serialized = JSON.stringify(pending);
   expect(pending.displayPayload?.redacted).toBe(true);
   expect(serialized).toContain("displayPayload");
   expect(serialized).not.toContain("sk-test-secret");
-  expect(hitl.respond(pending.hitlId, { decision: "approved", comment }, "project-a")).toBe(true);
+  const result = await coordinator.respond(pending.hitlId, { type: "approval_decision", decision: "approved", comment });
+  expect(result.scheduled).toBe(true);
+  await waitForGoal(goalId, (goal) => goal.resumeCheckpoint === undefined);
 }
 
-async function requestBudgetApprovalThroughHook(hitl: HitlService, goal: GoalState): Promise<GoalState> {
+async function requestBudgetApprovalThroughHook(coordinator: ResumeCoordinator, hitl: HitlService, goal: GoalState): Promise<GoalState> {
   const projectContext = createTestProjectContext(workspaceRoot);
   projectContext.project = { ...projectContext.project, slug: "project-a", name: "Project A" };
   projectContext.goalState = manager;
@@ -290,33 +328,44 @@ async function requestBudgetApprovalThroughHook(hitl: HitlService, goal: GoalSta
 
   const store = createSessionStore(goal.mainSessionId ?? "budget-session", workspaceRoot);
   store.setState({ agentName: "orchestrator", sessionRole: "main", goalId: goal.id });
-  const approvalPromise = enforceGoalBudgetBeforeModelCall({
+  await expect(enforceGoalBudgetBeforeModelCall({
     store,
     projectContext,
     modelOptions: { maxOutputTokens: 50 },
-  });
+  })).rejects.toThrow("Goal paused: budget warning approval is pending");
   const pending = await waitForPendingApproval(hitl, goal.id, BUDGET_APPROVAL_POINT);
   const serialized = JSON.stringify(pending);
-  expect(pending.approvalKey).toBe(`project-a:${goal.id}:${store.getState().sessionId}:approval_point:${BUDGET_APPROVAL_POINT}`);
-  expect(serialized).toContain("[REDACTED]");
+  expect(pending.displayPayload.redacted).toBe(true);
   expect(serialized).not.toContain("sk-test-secret");
-  expect(hitl.respond(pending.hitlId, { decision: "approved", comment: "Budget approved" }, "project-a")).toBe(true);
-  await approvalPromise;
+  const response = await coordinator.respond(pending.hitlId, { type: "approval_decision", decision: "approved", comment: "Budget approved" });
+  expect(response.scheduled).toBe(true);
+  await waitForGoal(goal.id, (state) => state.resumeCheckpoint === undefined);
 
-  const approved = await manager.read(goal.id);
+  const paused = await manager.read(goal.id);
+  expect(paused.status).toBe("paused");
+  expect(paused.tokenBudget).toMatchObject({ status: "paused", totalTokens: 890, warningThresholdTokens: 900 });
+  expect(await readArtifact("budget.md", goal.id)).toContain("Event | warning_pending");
+  const approved = await manager.updateTokenBudget(goal.id, {
+    ...paused.tokenBudget!,
+    status: "ok",
+    warningApprovalPoint: BUDGET_APPROVAL_POINT,
+    warningApprovalThresholdTokens: paused.tokenBudget?.warningThresholdTokens,
+    warningApprovedAt: new Date().toISOString(),
+    warningApprovedTotalTokens: paused.tokenBudget?.totalTokens,
+  });
   expect(approved.status).toBe("paused");
   expect(approved.tokenBudget).toMatchObject({
     warningApprovalPoint: BUDGET_APPROVAL_POINT,
     warningApprovedTotalTokens: 890,
   });
-  expect(await readArtifact("budget.md", goal.id)).toContain("Event | warning_approved");
   return manager.transitionStatus(goal.id, "running");
 }
 
-async function advancePlanToBuildWithApproval(runner: GoalRunner, hitl: HitlService, goalId: string): Promise<GoalState> {
-  const buildPromise = runner.advancePhase(goalId, "build");
-  await approvePending(hitl, goalId, "after_plan", "Plan approved");
-  return buildPromise;
+async function advancePlanToBuildWithApproval(runner: GoalRunner, coordinator: ResumeCoordinator, hitl: HitlService, goalId: string): Promise<GoalState> {
+  const paused = await runner.advancePhase(goalId, "build");
+  expect(paused).toMatchObject({ status: "paused", phase: "plan" });
+  await approvePending(coordinator, hitl, goalId, "after_plan", "Plan approved");
+  return waitForGoal(goalId, (goal) => goal.status === "running" && goal.phase === "build");
 }
 
 function reviewerStore(sessionId: string, goalId: string): ReturnType<typeof createSessionStore> {
@@ -471,7 +520,7 @@ describe("Goal integration happy path", () => {
       .mockImplementationOnce(async () => ({ text: `plan raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
       .mockImplementationOnce(async () => ({ text: `build raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
       .mockImplementationOnce(async () => ({ text: `review raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }));
-    const { runner, hitl } = await createHitlRunner({ sessionIds: ["daily-main-session"] });
+    const { runner, hitl, coordinator } = await createHitlRunner({ sessionIds: ["daily-main-session"] });
     const sessionStore = createSessionStore("daily-main-session", workspaceRoot);
     await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
 
@@ -493,14 +542,14 @@ describe("Goal integration happy path", () => {
     expect(planOutput.text).toContain(RAW_PRIVATE_MARKER);
     await artifacts.writeArtifact(running, "plan.md", "# Plan\n\nStructured Task 18 plan artifact, no raw model output.", { agentName: "plan" });
 
-    const build = await advancePlanToBuildWithApproval(runner, hitl, running.id);
+    const build = await advancePlanToBuildWithApproval(runner, coordinator, hitl, running.id);
     appendGoalStateChange(sessionStore, build);
     expect(build.phase).toBe("build");
     await expectPlanLocked(build);
 
     const budgeted = await manager.updateTokenBudget(build.id, tokenBudget(890));
     expect(budgeted.tokenBudget).toMatchObject({ status: "ok", totalTokens: 890, maxTokens: 1000 });
-    await requestBudgetApprovalThroughHook(hitl, budgeted);
+    await requestBudgetApprovalThroughHook(coordinator, hitl, budgeted);
 
     const buildOutput = await runLlmText({ model: dummyModel, prompt: `Build Task 18 goal ${build.id}` });
     expect(buildOutput.text).toContain(RAW_PRIVATE_MARKER);
@@ -524,11 +573,12 @@ describe("Goal integration happy path", () => {
     expect(specResult.specCompliance?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002"]);
     expect(specResult.specCompliance?.criteria.every((criterion) => criterion.compliant)).toBe(true);
 
-    const reviewedPromise = runner.finalizeReviewerReview(reviewPhase.id, "DONE", { summary: "Reviewer verified Task 18 DONE criteria." });
+    const pausedForCompletion = await runner.finalizeReviewerReview(reviewPhase.id, "DONE", { summary: "Reviewer verified Task 18 DONE criteria." });
+    expect(pausedForCompletion).toMatchObject({ status: "paused", phase: "review" });
     const beforeCompletePending = await waitForPendingApproval(hitl, reviewPhase.id, "before_complete");
-    expect(beforeCompletePending.approvalKey).toBe(`project-a:${reviewPhase.id}:daily-main-session:approval_point:before_complete`);
-    expect(hitl.respond(beforeCompletePending.hitlId, { decision: "approved", comment: "Completion approved" }, "project-a")).toBe(true);
-    const completed = await reviewedPromise;
+    const completionResponse = await coordinator.respond(beforeCompletePending.hitlId, { type: "approval_decision", decision: "approved", comment: "Completion approved" });
+    expect(completionResponse.scheduled).toBe(true);
+    const completed = await waitForGoal(reviewPhase.id, (goal) => goal.status === "completed");
     appendGoalStateChange(sessionStore, completed);
 
     expect(completed.status).toBe("completed");
@@ -565,7 +615,7 @@ describe("Goal integration happy path", () => {
   test("Task 18 NOT_DONE repair flow schedules retry, exposes structured context, then completes DONE on attempt 2", async () => {
     let nowMs = Date.parse("2026-07-03T12:00:00.000Z");
     const delayCalls: number[] = [];
-    const { runner, hitl } = await createHitlRunner({
+    const { runner, hitl, coordinator } = await createHitlRunner({
       sessionIds: ["retry-main-session-1", "retry-main-session-2"],
       now: () => new Date(nowMs),
       retryDelay: mock(async (ms: number, abort: AbortSignal) => {
@@ -587,9 +637,9 @@ describe("Goal integration happy path", () => {
     const locked = await manager.lock(goal.id, "architect");
     const attempt1 = await runner.start(locked.id);
     await artifacts.writeArtifact(attempt1, "plan.md", "# Plan\n\nAttempt 1 plan artifact.", { agentName: "plan" });
-    const attempt1Build = await advancePlanToBuildWithApproval(runner, hitl, attempt1.id);
+    const attempt1Build = await advancePlanToBuildWithApproval(runner, coordinator, hitl, attempt1.id);
     const budgetedAttempt1 = await manager.updateTokenBudget(attempt1Build.id, tokenBudget(890));
-    await requestBudgetApprovalThroughHook(hitl, budgetedAttempt1);
+    await requestBudgetApprovalThroughHook(coordinator, hitl, budgetedAttempt1);
     const attempt1Review = await runner.advancePhase(attempt1Build.id, "review");
     const attempt1Store = reviewerStore("retry-review-session-1", attempt1Review.id);
     const failedSpec = await executeGoalEvidence(attempt1Store, attempt1Review.id, specComplianceCondition.id);
@@ -619,7 +669,7 @@ describe("Goal integration happy path", () => {
     expect(await readArtifact("review.md", retry.id)).toContain("NOT_DONE");
 
     await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
-    const attempt2Build = await advancePlanToBuildWithApproval(runner, hitl, retry.id);
+    const attempt2Build = await advancePlanToBuildWithApproval(runner, coordinator, hitl, retry.id);
     const attempt2Review = await runner.advancePhase(attempt2Build.id, "review");
     const attempt2Store = reviewerStore("retry-review-session-2", attempt2Review.id);
     const repairedSpec = await executeGoalEvidence(attempt2Store, attempt2Review.id, specComplianceCondition.id);

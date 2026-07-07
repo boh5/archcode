@@ -11,7 +11,6 @@ import type {
   SessionExecutionRecord,
   SessionHitlCheckpoint,
   ToolChildSessionLink,
-  PendingInteraction,
 } from "@archcode/protocol";
 import type { CompressionState } from "../compression";
 
@@ -64,11 +63,6 @@ export type {
   SessionHitlCheckpoint,
   SessionEventEnvelope,
   SessionEventPayload,
-  PermissionRequestEvent,
-  PermissionTerminalEvent,
-  QuestionRequestEvent,
-  QuestionTerminalEvent,
-  PendingInteraction,
   ShutdownEvent,
   Reminder,
   ReminderSource,
@@ -99,7 +93,6 @@ export interface SessionStoreState {
 
   // Session-only state
   todos: SessionTodo[];
-  pendingInteractions?: PendingInteraction[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
   // Identity is assigned at creation/load and treated as immutable afterwards.
@@ -140,9 +133,6 @@ export interface SessionStoreState {
 
   // Methods
   append: (event: SessionEventPayload) => void;
-  addPendingInteraction: (interaction: PendingInteraction) => void;
-  answerPendingInteraction: (questionId: string, answer: string, answeredAt?: string) => void;
-  expirePendingInteractions: (questionIds?: string[], expiredAt?: string) => void;
   setTitle: (title: string | null) => void;
   setParentSessionId: (parentSessionId: string | undefined) => void;
   setGoalId: (goalId: string | undefined) => void;

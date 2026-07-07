@@ -96,19 +96,6 @@ const StoredTodoSchema = z.strictObject({
   updatedAt: z.number().optional(),
 });
 
-const PendingInteractionSchema = z.strictObject({
-  id: z.string(),
-  type: z.enum(["decision", "approval", "clarification"]),
-  question: z.string(),
-  context: z.record(z.string(), z.unknown()).optional(),
-  askedAt: z.string(),
-  status: z.enum(["pending", "answered", "expired"]),
-  answer: z.strictObject({
-    content: z.string(),
-    answeredAt: z.string(),
-  }).optional(),
-});
-
 const ReminderSourceSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("todo_step_reminder"),
@@ -437,7 +424,6 @@ export const SessionFileSchema = z.strictObject({
       "Only one todo can be in_progress",
     )
     .optional(),
-  pendingInteractions: z.array(PendingInteractionSchema).default([]),
   reminders: z.array(ReminderSchema).default([]),
   childSessionLinks: z.array(ToolChildSessionLinkSchema).default([]),
   // Tree edges are read from each child file; parent files intentionally keep no child cache.
@@ -475,7 +461,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "compression" | "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
+  "compression" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -519,7 +505,6 @@ async function saveSessionTranscript(
     executions: state.executions,
     compression: state.compression ?? createEmptyCompressionState(),
     todos: state.todos,
-    pendingInteractions: state.pendingInteractions ?? [],
     reminders: state.reminders ?? [],
     childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,
@@ -578,7 +563,6 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     executions: state.executions,
     compression: state.compression ?? createEmptyCompressionState(),
     todos: state.todos,
-    pendingInteractions: state.pendingInteractions ?? [],
     reminders: state.reminders ?? [],
     childSessionLinks: state.childSessionLinks ?? [],
     rootSessionId: state.rootSessionId,

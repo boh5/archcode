@@ -495,45 +495,6 @@ export type GlobalSSEEvent =
   | GlobalSSEMcpStatusEvent
   | GlobalSSEHitlChangedEvent;
 
-export interface PermissionRequestEvent {
-  type: "permission.request";
-  permissionId: string;
-  toolName: string;
-  args: unknown;
-  description?: string;
-}
-
-export interface PermissionTerminalEvent {
-  type: "permission.terminal";
-  permissionId: string;
-  status: "resolved" | "denied" | "timeout" | "cancelled";
-}
-
-export interface QuestionRequestEvent {
-  type: "question.request";
-  questionId: string;
-  question: string;
-  questionType?: "decision" | "approval" | "clarification";
-  context?: Record<string, unknown>;
-}
-
-export interface PendingInteraction {
-  id: string;
-  type: "decision" | "approval" | "clarification";
-  question: string;
-  context?: Record<string, unknown>;
-  askedAt: string;
-  status: "pending" | "answered" | "expired";
-  answer?: { content: string; answeredAt: string };
-}
-
-export interface QuestionTerminalEvent {
-  type: "question.terminal";
-  questionId: string;
-  status: "resolved" | "denied" | "timeout" | "cancelled";
-  answer?: string;
-}
-
 export interface ShutdownEvent {
   type: "shutdown";
   reason?: string;
@@ -541,10 +502,6 @@ export interface ShutdownEvent {
 
 export type SessionEventPayload =
   | StreamEvent
-  | PermissionRequestEvent
-  | PermissionTerminalEvent
-  | QuestionRequestEvent
-  | QuestionTerminalEvent
   | ShutdownEvent;
 
 export interface TextPart {
@@ -713,7 +670,6 @@ export interface SessionProjection {
   messages: SessionMessage[];
   steps: SessionStep[];
   todos: SessionTodo[];
-  pendingInteractions?: PendingInteraction[];
   reminders: Reminder[];
   childSessionLinks: ToolChildSessionLink[];
   stats: SessionStats;
@@ -870,29 +826,6 @@ export interface ToolResultMeta {
   unknownResult?: boolean;
   diffs?: ToolDiffMetadata;
   [key: string]: unknown;
-}
-
-export interface PermissionRequest {
-  id: string;
-  sessionId: string;
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  description: string;
-  reason?: string;
-  approval?: unknown;
-  agentName?: string;
-  currentDepth?: number;
-  decisionDisplay?: string;
-  ruleId?: string;
-}
-
-export interface QuestionRequest {
-  id: string;
-  sessionId: string;
-  toolName: string;
-  toolCallId: string;
-  questions: unknown[];
 }
 
 // ─── Goal Types ───
@@ -1547,9 +1480,3 @@ export interface CommandResult {
   success: boolean;
   message: string;
 }
-
-export type PermissionDecision = "approve_once" | "approve_always" | "deny";
-
-export type QuestionAnswerBody =
-  | { answers: string[][] }
-  | { isError: true; reason: string };

@@ -25,7 +25,6 @@ import {
   type SessionRole,
   type SessionStoreState,
   type StreamEvent,
-  type PendingInteraction,
   type TextPart,
   MAX_EVENTS,
 } from "./types";
@@ -148,7 +147,6 @@ export class SessionStoreManager {
       executions: [],
       compression: createEmptyCompressionState(),
       todos: [],
-      pendingInteractions: [],
       reminders: [],
       childSessionLinks: [],
       // Root/parent IDs are write-once session identity, not mutable tree state.
@@ -198,19 +196,6 @@ export class SessionStoreManager {
           return { ...partial, events, eventOffset, nextEventId };
         });
         persistForEvent(event);
-      },
-      addPendingInteraction: (interaction: PendingInteraction) => {
-        set((state) => ({ pendingInteractions: upsertPendingInteraction(state.pendingInteractions ?? [], interaction) }));
-        persist();
-      },
-      answerPendingInteraction: (questionId: string, answer: string, answeredAt = new Date().toISOString()) => {
-        set((state) => ({ pendingInteractions: answerPendingInteraction(state.pendingInteractions ?? [], questionId, answer, answeredAt) }));
-        persist();
-      },
-      expirePendingInteractions: (questionIds?: string[], expiredAt = new Date().toISOString()) => {
-        void expiredAt;
-        set((state) => ({ pendingInteractions: expirePendingInteractions(state.pendingInteractions ?? [], questionIds) }));
-        persist();
       },
       setTitle: (title: string | null) => {
         set({ title });
@@ -462,7 +447,6 @@ export class SessionStoreManager {
         compression: parsed.compression,
         executionCount: parsed.executions.length,
         todos: parsed.todos ?? [],
-        pendingInteractions: parsed.pendingInteractions,
         reminders: parsed.reminders,
         childSessionLinks: parsed.childSessionLinks,
         rootSessionId: parsed.rootSessionId,
@@ -609,39 +593,6 @@ const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
 function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
   const latest = events.at(-1);
   return latest === undefined ? 0 : latest.id + 1;
-}
-
-function upsertPendingInteraction(
-  interactions: readonly PendingInteraction[],
-  interaction: PendingInteraction,
-): PendingInteraction[] {
-  const index = interactions.findIndex((entry) => entry.id === interaction.id);
-  if (index === -1) return [...interactions, interaction];
-  return interactions.map((entry, currentIndex) => currentIndex === index ? interaction : entry);
-}
-
-function answerPendingInteraction(
-  interactions: readonly PendingInteraction[],
-  questionId: string,
-  answer: string,
-  answeredAt: string,
-): PendingInteraction[] {
-  return interactions.map((interaction) => interaction.id === questionId
-    ? { ...interaction, status: "answered", answer: { content: answer, answeredAt } }
-    : interaction,
-  );
-}
-
-function expirePendingInteractions(
-  interactions: readonly PendingInteraction[],
-  questionIds?: readonly string[],
-): PendingInteraction[] {
-  const ids = questionIds === undefined ? undefined : new Set(questionIds);
-  return interactions.map((interaction) => {
-    if (ids !== undefined && !ids.has(interaction.id)) return interaction;
-    if (interaction.status !== "pending") return interaction;
-    return { ...interaction, status: "expired" };
-  });
 }
 
 function isMissingFileError(error: unknown): boolean {

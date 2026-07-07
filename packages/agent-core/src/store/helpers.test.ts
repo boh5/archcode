@@ -5,7 +5,7 @@ import { getAssistantText, sessionFileInternals } from "./helpers";
 import { storeManager } from "./store";
 import { __setSessionsDirForTest } from "./sessions-dir";
 import { createEmptySessionStats, type SessionExecutionRecord, type SessionStats, type ToolChildSessionLink } from "@archcode/protocol";
-import type { CompactionPart, PendingInteraction, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
+import type { CompactionPart, Reminder, SessionRole, SessionStoreState, StepInfo, StoredMessage, StoredPart, StoredTodo, SystemNoticePart } from "./types";
 import { createEmptyCompressionState, type CompressionState } from "../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
@@ -123,27 +123,6 @@ function sampleTodos(): StoredTodo[] {
   ];
 }
 
-function samplePendingInteractions(): PendingInteraction[] {
-  return [
-    {
-      id: "question-1",
-      type: "decision",
-      question: "Proceed with the risky migration?",
-      context: { risk: "high" },
-      askedAt: "2026-06-03T00:00:00.000Z",
-      status: "pending",
-    },
-    {
-      id: "question-2",
-      type: "clarification",
-      question: "Which provider should be used?",
-      askedAt: "2026-06-03T00:01:00.000Z",
-      status: "answered",
-      answer: { content: "local", answeredAt: "2026-06-03T00:02:00.000Z" },
-    },
-  ];
-}
-
 function sampleReminders(): Reminder[] {
   return [
     {
@@ -206,7 +185,6 @@ type PersistedSessionState = Pick<
   | "executions"
   | "compression"
   | "todos"
-  | "pendingInteractions"
   | "reminders"
   | "childSessionLinks"
   | "rootSessionId"
@@ -228,7 +206,6 @@ function persistedState(
   parentSessionId: string | undefined = undefined,
   childSessionLinks: ToolChildSessionLink[] = [],
   goalId: string | undefined = undefined,
-  pendingInteractions: PendingInteraction[] = [],
   loopId: string | undefined = undefined,
   sessionRole: SessionRole | undefined = undefined,
   compression: CompressionState = createEmptyCompressionState(),
@@ -244,7 +221,6 @@ function persistedState(
     executions,
     compression,
     todos,
-    pendingInteractions,
     reminders,
     childSessionLinks,
     rootSessionId: rootSessionId ?? sessionId,
@@ -358,37 +334,8 @@ describe("session transcript serialization", () => {
     expect(loaded.getState().executions).toEqual(state.executions);
     expect(loaded.getState().executionCount).toBe(state.executions.length);
     expect(loaded.getState().todos).toEqual(state.todos);
-    expect(loaded.getState().pendingInteractions).toEqual([]);
+    expect(loaded.getState()).not.toHaveProperty("pendingInteractions");
     expect(loaded.getState().childSessionLinks).toEqual([]);
-  });
-
-  test("save/load roundtrips pending interactions", async () => {
-    const sessionId = uniqueSessionId("pending-interactions");
-    const pendingInteractions = samplePendingInteractions();
-
-    await sessionFileInternals.saveSessionTranscript(
-      persistedState(
-        sessionId,
-        sampleMessages(),
-        sampleSteps(),
-        sampleTodos(),
-        createEmptySessionStats(),
-        [],
-        [],
-        undefined,
-        undefined,
-        [],
-        undefined,
-        pendingInteractions,
-      ),
-      TMP_DIR,
-    );
-
-    const raw = JSON.parse(await Bun.file(sessionFilePath(sessionId)).text()) as Record<string, unknown>;
-    expect(raw.pendingInteractions).toEqual(pendingInteractions);
-
-    const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
-    expect(loaded.getState().pendingInteractions).toEqual(pendingInteractions);
   });
 
   test("save/load roundtrips child session links", async () => {
@@ -720,7 +667,6 @@ describe("session transcript serialization", () => {
       undefined,
       [],
       undefined,
-      [],
       undefined,
       "explore",
     );
@@ -749,7 +695,6 @@ describe("session transcript serialization", () => {
       undefined,
       [],
       undefined,
-      [],
       loopId,
     );
 
@@ -768,12 +713,12 @@ describe("session transcript serialization", () => {
     const goalId = crypto.randomUUID();
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, [], undefined, "main"),
+      persistedState(rootSessionId, [], [], [], createEmptySessionStats(), [], [], undefined, undefined, [], goalId, undefined, "main"),
       TMP_DIR,
     );
 
     await sessionFileInternals.saveSessionTranscript(
-      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, [], undefined, "explore"),
+      persistedState(childSessionId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId, [], goalId, undefined, "explore"),
       TMP_DIR,
     );
 
@@ -989,7 +934,6 @@ describe("session transcript serialization", () => {
       "createdAt",
       "executions",
       "messages",
-      "pendingInteractions",
       "reminders",
       "rootSessionId",
       "sessionId",
@@ -1003,7 +947,7 @@ describe("session transcript serialization", () => {
     expect(parsed.stats).toEqual(createEmptySessionStats());
     expect(parsed.executions).toEqual([]);
     expect(parsed.todos).toEqual(sampleTodos());
-    expect(parsed.pendingInteractions).toEqual([]);
+    expect(parsed).not.toHaveProperty("pendingInteractions");
     expect(parsed.reminders).toEqual([]);
     expect(parsed.childSessionLinks).toEqual([]);
     expect(parsed.agentName).toBe("orchestrator");
@@ -1041,7 +985,24 @@ describe("session transcript serialization", () => {
     expect(loadedState.executions).toEqual([]);
     expect(loadedState.executionCount).toBe(0);
     expect(loadedState.todos).toEqual(originalTodos);
-    expect(loadedState.pendingInteractions).toEqual([]);
+    expect(loadedState).not.toHaveProperty("pendingInteractions");
+  });
+
+  test("load rejects legacy pendingInteractions snapshots", async () => {
+    const sessionId = uniqueSessionId("legacy-pending-interactions");
+
+    await writeSessionFile(sessionId, {
+      ...persistedState(sessionId, [], []),
+      pendingInteractions: [{
+        id: "question-1",
+        type: "clarification",
+        question: "Proceed?",
+        askedAt: "2026-06-03T00:00:00.000Z",
+        status: "pending",
+      }],
+    });
+
+    await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
   test("load rejects unknown reminder fields", async () => {
@@ -1242,7 +1203,7 @@ describe("compaction and meta transcript round-trip", () => {
     ];
     const compression = richCompressionState();
 
-    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, [], undefined, undefined, compression), TMP_DIR);
+    await sessionFileInternals.saveSessionTranscript(persistedState(sessionId, messages, [], [], createEmptySessionStats(), [], [], undefined, undefined, [], undefined, undefined, undefined, compression), TMP_DIR);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
     const loadedCompression = loaded.getState().compression;

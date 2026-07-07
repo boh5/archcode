@@ -6,7 +6,6 @@ import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError } from "./errors";
 import { sessionFileInternals } from "./helpers";
 import { silentLogger } from "../logger";
-import type { PendingInteraction } from "./types";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "session-store-manager");
 
@@ -125,59 +124,20 @@ describe("SessionStoreManager", () => {
     expect(store.getState().childSessionLinks).toEqual([]);
   });
 
-  test("create() defaults pending interactions to empty", () => {
+  test("create() does not expose legacy pending interactions", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const store = manager.create(sessionId(), TMP_DIR);
 
-    expect(store.getState().pendingInteractions).toEqual([]);
+    expect(store.getState()).not.toHaveProperty("pendingInteractions");
   });
 
-  test("pending interaction methods record answers and expirations", () => {
-    const manager = new SessionStoreManager({ logger: silentLogger });
-    const store = manager.create(sessionId(), TMP_DIR);
-    const interaction: PendingInteraction = {
-      id: "question-1",
-      type: "approval",
-      question: "Approve deploy?",
-      askedAt: "2026-06-03T00:00:00.000Z",
-      status: "pending",
-    };
-
-    store.getState().addPendingInteraction(interaction);
-    store.getState().answerPendingInteraction("question-1", "yes", "2026-06-03T00:01:00.000Z");
-    store.getState().addPendingInteraction({ ...interaction, id: "question-2" });
-    store.getState().expirePendingInteractions(["question-2"]);
-
-    expect(store.getState().pendingInteractions).toMatchObject([
-      {
-        id: "question-1",
-        status: "answered",
-        answer: { content: "yes", answeredAt: "2026-06-03T00:01:00.000Z" },
-      },
-      { id: "question-2", status: "expired" },
-    ]);
-  });
-
-  test("legacy question events do not update canonical pending interaction status", () => {
+  test("legacy pending interaction mutators are not part of the store API", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const store = manager.create(sessionId(), TMP_DIR);
 
-    store.getState().append({
-      type: "question.request",
-      questionId: "question-1",
-      question: "Proceed?",
-      questionType: "decision",
-      context: { blockers: 2 },
-    });
-    expect(store.getState().pendingInteractions).toEqual([]);
-
-    store.getState().append({
-      type: "question.terminal",
-      questionId: "question-1",
-      status: "resolved",
-      answer: "yes",
-    });
-    expect(store.getState().pendingInteractions).toEqual([]);
+    expect(store.getState()).not.toHaveProperty("addPendingInteraction");
+    expect(store.getState()).not.toHaveProperty("answerPendingInteraction");
+    expect(store.getState()).not.toHaveProperty("expirePendingInteractions");
   });
 
   test("compression events persist compression state to disk", async () => {
@@ -271,7 +231,6 @@ describe("SessionStoreManager", () => {
     ]);
     expect(stateAfterDottedEvents.loops?.["loop-1"]).toEqual(loopState);
 
-    store.getState().append({ type: "permission.request", permissionId: "permission-1", toolName: "bash", args: {} });
     store.getState().append({ type: "shutdown", reason: "test" });
 
     const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests" | "loops">;

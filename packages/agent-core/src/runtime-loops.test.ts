@@ -35,7 +35,7 @@ const goalLoopConfig: LoopConfig = {
   schedule: { kind: "manual" },
   runKind: "goal",
   mode: "act",
-  approvalPolicy: "explicit_per_run",
+  approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {
     title: "Runtime-created Goal",

@@ -43,10 +43,6 @@ export type {
   SessionProjection,
   SessionEventEnvelope,
   SessionEventPayload,
-  PermissionRequestEvent,
-  PermissionTerminalEvent,
-  QuestionRequestEvent,
-  QuestionTerminalEvent,
   ShutdownEvent,
   SessionStoreState,
 } from "./types";

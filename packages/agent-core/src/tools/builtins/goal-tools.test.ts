@@ -3,13 +3,12 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import { TOOL_GOAL_EVIDENCE, TOOL_GOAL_MANAGE, type DoneCondition, type DoneResult, type GoalState } from "@archcode/protocol";
+import { TOOL_GOAL_EVIDENCE, TOOL_GOAL_MANAGE, type DoneCondition, type DoneResult, type GoalState, type HitlRecord } from "@archcode/protocol";
 import { GoalArtifactManager } from "../../goals/artifacts";
 import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalRunner } from "../../goals/runner";
 import { GoalStateManager } from "../../goals/state";
-import { HitlService } from "../../hitl/service";
-import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "../../hitl/types";
+import { HitlService, type CreateHitlRecordInput } from "../../hitl/service";
 import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
@@ -85,18 +84,19 @@ function makeCtx(
   });
 }
 
-class ResolvingHitlService extends HitlService {
-  constructor(private readonly decision: "approved" | "denied") {
-    super();
-  }
-
-  override request(_sessionId: string, kind: HitlKind, _payload: HitlPayload, _trigger: HitlTrigger = {}): Promise<HitlResponse> {
-    return Promise.resolve({
-      hitlId: "resolved-hitl",
-      kind,
-      status: "resolved",
-      response: { decision: this.decision },
-    });
+class CapturingHitlService extends HitlService {
+  override async create(input: CreateHitlRecordInput): Promise<HitlRecord> {
+    const now = input.createdAt ?? new Date().toISOString();
+    return {
+      hitlId: "captured-hitl",
+      owner: input.owner,
+      blockingKey: input.blockingKey,
+      source: input.source,
+      status: "pending",
+      displayPayload: input.displayPayload,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 }
 
@@ -112,7 +112,7 @@ function createTestProjectContext(options: { approvalDecision?: "approved" | "de
     goalArtifacts: new GoalArtifactManager(TMP_DIR),
     goalMemory: new GoalMemoryManager(TMP_DIR),
     loopState: new LoopStateManager(TMP_DIR),
-    hitl: options.approvalDecision === undefined ? new HitlService() : new ResolvingHitlService(options.approvalDecision),
+    hitl: options.approvalDecision === undefined ? new HitlService() : new CapturingHitlService(),
     memory: new MemoryFileManager({
       project: join(TMP_DIR, ".archcode", "memory"),
       user: join(TMP_DIR, ".archcode", "user-memory"),
@@ -345,7 +345,7 @@ describe("goal_manage builtin tool", () => {
     expect(JSON.parse(review.output)).toMatchObject({ id: locked.id, status: "running", phase: "review" });
   });
 
-  it("advance_phase preserves after_plan approval denial behavior", async () => {
+  it("advance_phase requests owner-local after_plan approval and pauses", async () => {
     const projectContext = createTestProjectContext({ approvalDecision: "denied" });
     await writeFile(join(TMP_DIR, "artifact.txt"), "done\n");
     const store = mainStore({ sessionId: "main-session" });
@@ -359,7 +359,8 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(false);
     const paused = JSON.parse(result.output) as GoalState;
-    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "plan", lastError: "Approval after_plan denied" });
+    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "plan", lastError: "Waiting for after_plan approval" });
+    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: "advancePhase", approvalPoint: "after_plan" });
   });
 
   it("retry delegates to GoalRunner.handleFailedVerification", async () => {
@@ -486,7 +487,7 @@ describe("goal_manage builtin tool", () => {
     expect(completed.reviewReport).toMatchObject({ outcome: "DONE", summary: "All required Done Conditions passed." });
   });
 
-  it("finalize_review DONE preserves before_complete approval denial behavior", async () => {
+  it("finalize_review DONE requests owner-local before_complete approval and pauses", async () => {
     const projectContext = createTestProjectContext({ approvalDecision: "denied" });
     await writeFile(join(TMP_DIR, "artifact.txt"), "done\n");
     const store = mainStore({ sessionId: "main-session" });
@@ -518,7 +519,8 @@ describe("goal_manage builtin tool", () => {
 
     expect(result.isError).toBe(false);
     const paused = JSON.parse(result.output) as GoalState;
-    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "review", lastError: "Approval before_complete denied" });
+    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "review", lastError: "Waiting for before_complete approval" });
+    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
     expect(paused.reviewReport?.outcome).toBe("DONE");
   });
 

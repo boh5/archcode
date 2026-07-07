@@ -971,7 +971,6 @@ class FakeLoopRuntime {
       stats: createEmptySessionStats(),
       executions: this.sessionExecutions,
       todos: [],
-      pendingInteractions: [],
       reminders: [],
       childSessionLinks: [],
       rootSessionId: sessionId,

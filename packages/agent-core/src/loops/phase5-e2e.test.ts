@@ -326,7 +326,6 @@ function makeSession(sessionId: string, options?: { loopId?: string; sessionRole
     stats: createEmptySessionStats(),
     executions,
     todos: [],
-    pendingInteractions: [],
     reminders: [],
     childSessionLinks: [],
     rootSessionId: sessionId,

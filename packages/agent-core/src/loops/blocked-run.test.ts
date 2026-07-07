@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type PendingInteraction, type SessionEventEnvelope, type SessionExecutionRecord } from "@archcode/protocol";
+import { createEmptySessionStats, type SessionEventEnvelope, type SessionExecutionRecord } from "@archcode/protocol";
 
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { SessionFile } from "../store/helpers";
@@ -35,64 +35,6 @@ afterAll(async () => {
 });
 
 describe("blocked queued loop runs", () => {
-  test("legacy pending permission request no longer maps to needs_user", async () => {
-    const fixture = await createRunnerFixture({ events: [permissionRequestEvent("permission-1")] });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
-
-    const result = await fixture.runner.createSchedulerRunner()({
-      loop,
-      trigger: "manual",
-      runId: "permission-run",
-      startedAt: 1_000,
-      job: testJob(loop.loopId),
-    });
-    if (result === undefined) throw new Error("Expected scheduler runner result");
-
-    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
-    expect(result.error).toBeUndefined();
-    expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("legacy pending ask_user question request no longer maps to needs_user", async () => {
-    const fixture = await createRunnerFixture({ events: [questionRequestEvent("question-1")] });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
-
-    const result = await fixture.runner.createSchedulerRunner()({
-      loop,
-      trigger: "manual",
-      runId: "question-run",
-      startedAt: 1_000,
-      job: testJob(loop.loopId),
-    });
-    if (result === undefined) throw new Error("Expected scheduler runner result");
-
-    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
-    expect(result.error).toBeUndefined();
-  });
-
-  test("legacy pending interaction state is not canonical loop blocking state", async () => {
-    const pending: PendingInteraction = {
-      id: "interaction-1",
-      type: "clarification",
-      question: "Need input?",
-      askedAt: new Date(0).toISOString(),
-      status: "pending",
-    };
-    const fixture = await createRunnerFixture({ pendingInteractions: [pending] });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
-
-    const result = await fixture.runner.createSchedulerRunner()({
-      loop,
-      trigger: "manual",
-      runId: "pending-interaction-run",
-      startedAt: 1_000,
-      job: testJob(loop.loopId),
-    });
-    if (result === undefined) throw new Error("Expected scheduler runner result");
-
-    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
-  });
-
   test("pending hitl Goal confirmation request maps to needs_user", async () => {
     const fixture = await createRunnerFixture({ events: [hitlRequestEvent("hitl-1")] });
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
@@ -163,7 +105,7 @@ describe("blocked queued loop runs", () => {
     const coordinator = new LoopJobCoordinator({ queue: jobQueue, clock, leaseTtlMs: 60_000 });
     const observedArtifacts: LoopWorktreeArtifact[] = [{ path: "evidence/report.md", status: "created" }];
     const runnerMock = mock(async (_input: LoopSchedulerRunInput) => ({
-      status: "skipped" as const,
+      status: "needs_user" as const,
       sessionId: "session-worktree",
       blockedReason: "needs_user",
       worktreePath: "/tmp/archcode-loop-worktree",
@@ -186,7 +128,7 @@ describe("blocked queued loop runs", () => {
 
     expect(runnerMock).toHaveBeenCalledTimes(1);
     expect(report).toMatchObject({
-      status: "skipped",
+      status: "needs_user",
       blockedReason: "needs_user",
       worktreePath: "/tmp/archcode-loop-worktree",
       baseSha: "a".repeat(40),
@@ -201,7 +143,7 @@ describe("blocked queued loop runs", () => {
     expect(await Bun.file(join("/tmp/archcode-loop-worktree", ".archcode", "loops", loop.loopId, "run-log.jsonl")).exists()).toBe(false);
     const jobs = await jobQueue.list();
     expect(jobs[0]).toMatchObject({
-      status: "blocked",
+      status: "needs_user",
       blockedReason: "needs_user",
       worktreePath: "/tmp/archcode-loop-worktree",
       baseSha: "a".repeat(40),
@@ -214,7 +156,6 @@ describe("blocked queued loop runs", () => {
 
 async function createRunnerFixture(options: {
   events?: SessionEventEnvelope[];
-  pendingInteractions?: PendingInteraction[];
   blockedByHitlIds?: string[];
   worktreeManager?: LoopRunnerWorktreeManager;
 } = {}): Promise<{
@@ -226,7 +167,7 @@ async function createRunnerFixture(options: {
   const workspaceRoot = join(TMP_DIR, `workspace-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
-  const runtime = new FakeLoopRuntime(options.events ?? [], options.pendingInteractions ?? [], options.blockedByHitlIds ?? []);
+  const runtime = new FakeLoopRuntime(options.events ?? [], options.blockedByHitlIds ?? []);
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -243,7 +184,7 @@ class FakeLoopRuntime {
   readonly #sessions = new Map<string, SessionFile>();
   readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
     const sessionId = `session-${this.#nextSession++}`;
-    const session = makeSession(sessionId, this.events, this.pendingInteractions, this.blockedByHitlIds, options);
+    const session = makeSession(sessionId, this.events, this.blockedByHitlIds, options);
     this.#sessions.set(sessionId, session);
     return session;
   });
@@ -267,7 +208,6 @@ class FakeLoopRuntime {
 
   constructor(
     private readonly events: SessionEventEnvelope[],
-    private readonly pendingInteractions: PendingInteraction[],
     private readonly blockedByHitlIds: string[],
   ) {}
 
@@ -330,7 +270,6 @@ class FakeTimer implements LoopSchedulerTimer {
 function makeSession(
   sessionId: string,
   events: SessionEventEnvelope[],
-  pendingInteractions: PendingInteraction[],
   blockedByHitlIds: string[],
   options?: { loopId?: string; sessionRole?: "main"; title?: string },
 ): SessionFile {
@@ -345,7 +284,6 @@ function makeSession(
     executions: [COMPLETED_EXECUTION],
     events,
     todos: [],
-    pendingInteractions,
     reminders: [],
     childSessionLinks: [],
     rootSessionId: sessionId,
@@ -363,14 +301,6 @@ function testJob(loopId: string, overrides: Partial<NonNullable<LoopSchedulerRun
     dedupeKey: `loop:${loopId}:manual`,
     ...overrides,
   };
-}
-
-function permissionRequestEvent(permissionId: string): SessionEventEnvelope {
-  return envelope(1, { type: "permission.request", permissionId, toolName: "file_write", args: {}, description: "write file" });
-}
-
-function questionRequestEvent(questionId: string): SessionEventEnvelope {
-  return envelope(1, { type: "question.request", questionId, question: "{}" });
 }
 
 function hitlRequestEvent(hitlId: string): SessionEventEnvelope {

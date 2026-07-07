@@ -34,11 +34,7 @@ export type {
   DiffLine,
   DiffHunk,
   DiffFile,
-  PermissionRequest,
-  QuestionRequest,
   CommandResult,
-  PermissionDecision,
-  QuestionAnswerBody,
   GoalArtifactName,
   GoalArtifactFile,
   LoopConfig,
@@ -69,7 +65,7 @@ export type {
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { ApprovalPoint, GoalArtifactFile, GoalState, HitlAllowedAction, HitlDisplayPayload, HitlOwnerKey, HitlProjection, HitlSource, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+import type { GoalArtifactFile, GoalState, HitlProjection, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
 
 // ─── Unified HITL API types ───
 
@@ -84,94 +80,11 @@ export interface HitlListResponse {
   hitl: HitlProjection[];
 }
 
-/** Convert a legacy DashboardHitlItem into a HitlProjection for unified rendering. */
-export function dashboardHitlItemToProjection(item: DashboardHitlItem): HitlProjection {
-  const source = dashboardHitlItemToSource(item);
-  const owner: HitlOwnerKey = {
-    projectSlug: item.projectSlug,
-    ownerType: "session",
-    ownerId: item.sessionId,
-  };
-  return {
-    hitlId: item.hitlId,
-    project: { slug: item.projectSlug, name: item.projectName },
-    owner,
-    ancestry: item.trigger.goalId || item.trigger.loopId
-      ? {
-          goalId: item.trigger.goalId,
-          loopId: item.trigger.loopId,
-        }
-      : undefined,
-    source,
-    status: item.status,
-    displayPayload: item.displayPayload,
-    allowedActions: dashboardHitlAllowedActions(item),
-    createdAt: typeof item.createdAt === "number" ? new Date(item.createdAt).toISOString() : item.createdAt,
-    updatedAt: typeof item.createdAt === "number" ? new Date(item.createdAt).toISOString() : item.createdAt,
-  };
-}
-
-function dashboardHitlItemToSource(item: DashboardHitlItem): HitlSource {
-  const trigger = item.trigger;
-  if (item.kind === "question") {
-    return { type: "ask_user", sessionId: item.sessionId, toolCallId: trigger.toolCallId };
-  }
-  if (item.kind === "review") {
-    return { type: "goal_review", goalId: trigger.goalId ?? "" };
-  }
-  const approvalPoint = (trigger.approvalPoint ?? "after_plan") as ApprovalPoint;
-  if (trigger.source?.startsWith("goal.")) {
-    return { type: "goal_approval", goalId: trigger.goalId ?? "", approvalPoint };
-  }
-  if (trigger.loopId) {
-    return { type: "loop_approval", loopId: trigger.loopId, approvalPoint };
-  }
-  return { type: "goal_approval", goalId: trigger.goalId ?? "", approvalPoint };
-}
-
-function dashboardHitlAllowedActions(item: DashboardHitlItem): HitlAllowedAction[] {
-  if (item.kind === "question") return ["answer", "cancel"];
-  if (item.kind === "review") return ["approve", "deny", "cancel"];
-  return ["approve", "deny", "cancel"];
-}
-
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {
   projectSlug: string;
   projectName: string;
 };
-
-/** Redacted display payload from server HITL list routes. Raw payload is never exposed. */
-export type DashboardHitlKind = "question" | "approval" | "review";
-
-export interface DashboardHitlTrigger {
-  projectSlug?: string;
-  goalId?: string;
-  loopId?: string;
-  source?: string;
-  approvalPoint?: string;
-  toolCallId?: string;
-  timeoutMs?: number;
-}
-
-/** HITL item with project metadata. Uses redacted displayPayload only; raw payload is never included. */
-export interface DashboardHitlItem {
-  hitlId: string;
-  owner?: HitlOwnerKey;
-  blockingKey?: string;
-  source?: HitlSource;
-  displayPayload: HitlDisplayPayload;
-  createdAt: string | number;
-  updatedAt?: string;
-  /** Display-safe compatibility fields used by existing dashboard views. No raw payload/input is exposed. */
-  sessionId: string;
-  kind: DashboardHitlKind;
-  trigger: DashboardHitlTrigger;
-  approvalKey?: string;
-  projectSlug: string;
-  projectName: string;
-  status: "pending";
-}
 
 // ─── Goal artifact API response types ───
 // Match the read-only project-scoped artifact routes.

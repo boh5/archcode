@@ -153,6 +153,7 @@ const directGoalRunningTransitionAllowedFiles = new Set([
 const directDoneResultRecordAllowedFiles = new Set([
   "packages/agent-core/src/goals/runner.ts",
   "packages/agent-core/src/hitl/goal-gates.ts",
+  "packages/agent-core/src/goals/hitl-resume-adapter.ts",
 ]);
 
 const legacyWorkflowToolDisplayFormatterFiles = new Set([

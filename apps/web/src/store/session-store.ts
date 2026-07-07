@@ -6,8 +6,6 @@ import type {
   CompressionBlockPart,
   CompressionStateSnapshot,
   GlobalSessionEventEnvelope,
-  PermissionTerminalEvent,
-  QuestionTerminalEvent,
   Reminder,
   ToolChildSessionLink,
   SessionEventEnvelope,
@@ -21,7 +19,6 @@ import type {
   SessionTodo,
   StreamEvent,
 } from "@archcode/protocol";
-import type { PermissionRequest, QuestionRequest } from "../api/types";
 
 const MAX_IDLE_SESSION_STORES = 20;
 const MAX_PENDING_REMOTE_EVENTS = 1000;
@@ -45,14 +42,6 @@ export interface WebSessionStoreState extends SessionProjection {
   setFocusSessionId: (id: string | null) => void;
   append: (event: SessionEventPayload) => void;
   applyRemoteEnvelope: (envelope: GlobalSessionEventEnvelope) => void;
-  pendingPermissions: Map<string, PermissionRequest>;
-  pendingQuestions: Map<string, QuestionRequest>;
-  addPermissionRequest: (request: PermissionRequest) => void;
-  removePermissionRequest: (id: string) => void;
-  addQuestionRequest: (request: QuestionRequest) => void;
-  removeQuestionRequest: (id: string) => void;
-  handlePermissionTerminal: (event: PermissionTerminalEvent) => void;
-  handleQuestionTerminal: (event: QuestionTerminalEvent) => void;
   resetTransientState: () => void;
   initializeFromSnapshot: (data: {
     messages?: SessionMessage[];
@@ -113,59 +102,15 @@ function appendEnvelopeToState(
     eventOffset += dropCount;
   }
 
-  const payload = envelope.payload;
-  if (payload.type === "permission.request") {
-    return {
-      events,
-      eventOffset,
-      nextEventId,
-      pendingPermissions: new Map(state.pendingPermissions).set(payload.permissionId, {
-        id: payload.permissionId,
-        sessionId: state.sessionId,
-        toolName: payload.toolName,
-        toolCallId: "",
-        input: payload.args,
-        description: payload.description ?? "",
-      }),
-    };
-  }
-  if (payload.type === "permission.terminal") {
-    const pendingPermissions = new Map(state.pendingPermissions);
-    pendingPermissions.delete(payload.permissionId);
-    return { events, eventOffset, nextEventId, pendingPermissions };
-  }
-  if (payload.type === "question.request") {
-    // Server serializes the full request as JSON string in payload.question
-    const parsed = typeof payload.question === "string"
-      ? JSON.parse(payload.question) as { toolName?: string; toolCallId?: string; questions?: unknown[] }
-      : payload.question;
-    return {
-      events,
-      eventOffset,
-      nextEventId,
-      pendingQuestions: new Map(state.pendingQuestions).set(payload.questionId, {
-        id: payload.questionId,
-        sessionId: state.sessionId,
-        toolName: parsed.toolName ?? "ask_user",
-        toolCallId: parsed.toolCallId ?? "",
-        questions: Array.isArray(parsed.questions) ? parsed.questions : [parsed as unknown],
-      }),
-    };
-  }
-  if (payload.type === "question.terminal") {
-    const pendingQuestions = new Map(state.pendingQuestions);
-    pendingQuestions.delete(payload.questionId);
-    return { events, eventOffset, nextEventId, pendingQuestions };
-  }
-  if (payload.type === "shutdown") {
+  if (envelope.payload.type === "shutdown") {
     return { events, eventOffset, nextEventId };
   }
 
-  if (!isReducibleStreamEvent(payload)) {
+  if (!isReducibleStreamEvent(envelope.payload)) {
     return { events, eventOffset, nextEventId };
   }
 
-  const partial = reduceStreamEvent(state, payload, {
+  const partial = reduceStreamEvent(state, envelope.payload, {
     timestamp: envelope.createdAt,
     generateId: () => crypto.randomUUID(),
   });
@@ -275,9 +220,7 @@ function isPinned(entry: RegistryEntry): boolean {
   return (
     entry.foreground ||
     state.isRunning ||
-    state.isStreamingModel ||
-    state.pendingPermissions.size > 0 ||
-    state.pendingQuestions.size > 0
+    state.isStreamingModel
   );
 }
 
@@ -325,8 +268,6 @@ export function createWebSessionStore(
     events: [],
     eventOffset: 0,
     nextEventId: 0,
-    pendingPermissions: new Map(),
-    pendingQuestions: new Map(),
     setFocusSessionId: (id: string | null) => set({ focusSessionId: id }),
     append: (event: SessionEventPayload) => {
       set((state) => {
@@ -360,50 +301,7 @@ export function createWebSessionStore(
       touchRegistryEntry(key);
     },
     toModelMessages: () => [],
-    addPermissionRequest: (request: PermissionRequest) => {
-      set((state) => ({
-        pendingPermissions: new Map(state.pendingPermissions).set(request.id, request),
-      }));
-    },
-    removePermissionRequest: (id: string) => {
-      set((state) => {
-        const pendingPermissions = new Map(state.pendingPermissions);
-        pendingPermissions.delete(id);
-        return { pendingPermissions };
-      });
-    },
-    addQuestionRequest: (request: QuestionRequest) => {
-      set((state) => ({
-        pendingQuestions: new Map(state.pendingQuestions).set(request.id, request),
-      }));
-    },
-    removeQuestionRequest: (id: string) => {
-      set((state) => {
-        const pendingQuestions = new Map(state.pendingQuestions);
-        pendingQuestions.delete(id);
-        return { pendingQuestions };
-      });
-    },
-    handlePermissionTerminal: (event: PermissionTerminalEvent) => {
-      set((state) => {
-        const pendingPermissions = new Map(state.pendingPermissions);
-        pendingPermissions.delete(event.permissionId);
-        return { pendingPermissions };
-      });
-    },
-    handleQuestionTerminal: (event: QuestionTerminalEvent) => {
-      set((state) => {
-        const pendingQuestions = new Map(state.pendingQuestions);
-        pendingQuestions.delete(event.questionId);
-        return { pendingQuestions };
-      });
-    },
-    resetTransientState: () => {
-      set({
-        pendingPermissions: new Map(),
-        pendingQuestions: new Map(),
-      });
-    },
+    resetTransientState: () => {},
     initializeFromSnapshot: (data) => {
       set((state) => {
         const snapshotNextEventId = data.eventCursor !== undefined ? data.eventCursor + 1 : (data.events && data.events.length > 0 ? data.events[data.events.length - 1]!.id + 1 : 0);

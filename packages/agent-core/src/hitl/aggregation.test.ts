@@ -80,9 +80,16 @@ describe("HITL aggregation", () => {
     expect(projections.find((projection) => projection.hitlId === sessionHitl.hitlId)?.ancestry?.projectionPath).toEqual([
       "loop",
       loop.loopId,
+      "goal",
+      goal.id,
       "session",
       childSessionId,
     ]);
+    expect(projections.find((projection) => projection.hitlId === sessionHitl.hitlId)?.ancestry).toMatchObject({
+      goalId: goal.id,
+      rootSessionId,
+      parentSessionId: rootSessionId,
+    });
     expect(await Bun.file(join(workspaceRoot, ".archcode", "hitl-queue.json")).exists()).toBe(false);
   });
 

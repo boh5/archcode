@@ -60,7 +60,6 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
     executions: [],
     compression: createEmptyCompressionState(),
     todos: [],
-    pendingInteractions: [],
     reminders: [],
     childSessionLinks: [],
     rootSessionId: "session-1",
