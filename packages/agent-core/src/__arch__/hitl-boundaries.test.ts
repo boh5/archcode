@@ -52,6 +52,18 @@ function findTextViolations(scopeDirs: readonly string[], patterns: readonly Reg
   return violations;
 }
 
+function findFileTextViolations(relativeFilePath: string, patterns: readonly RegExp[]): Violation[] {
+  const file = join(projectRoot, relativeFilePath);
+  if (!existsSync(file)) return [{ file: relativeFilePath, pattern: "missing file" }];
+  const source = stripComments(readFileSync(file, "utf8"));
+  const violations: Violation[] = [];
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    if (pattern.test(source)) violations.push({ file: relativeFilePath, pattern: pattern.source });
+  }
+  return violations;
+}
+
 function expectNoViolations(violations: readonly Violation[]): void {
   const message = violations.map((violation) => `${violation.file} -> ${violation.pattern}`).join("\n");
   expect(violations, message).toEqual([]);
@@ -92,6 +104,31 @@ describe("unified HITL legacy boundary", () => {
       /\/api\/questions\b/,
       /\/api\/permissions\b/,
       /\/api\/hitl\//,
+    ]));
+  });
+
+  test("production HITL service has no legacy compatibility bridge surface", () => {
+    expectNoViolations(findTextViolations(["packages/agent-core/src"], [
+      /\bHitlPayload\b/,
+      /\bHitlRequest\b/,
+      /\bHitlResponsePayload\b/,
+      /\bHitlTrigger\b/,
+      /\bHitlEvent\b/,
+      /\bHitlEventSubmitter\b/,
+      /\bHitlKind\b/,
+      /\bprotocolHitlSource\b/,
+      /\bprotocolHitlResponse\b/,
+      /\btoProtocolHitlEvent\b/,
+      /\bsubmitHitlEvent\b/,
+      /\bpendingCompat\b/,
+      /\blistPending\b/,
+    ]));
+
+    expectNoViolations(findFileTextViolations("packages/agent-core/src/hitl/service.ts", [
+      /request\s*\(/,
+      /respond\s*\(/,
+      /cancel\s*\(/,
+      /has\s*\(/,
     ]));
   });
 

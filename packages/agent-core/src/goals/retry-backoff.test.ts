@@ -3,8 +3,6 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
-
-import type { HitlResponse } from "../hitl/types";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
@@ -35,10 +33,6 @@ beforeEach(async () => {
 afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
-
-function approvalResponse(): HitlResponse {
-  return { hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "approved" } };
-}
 
 function failingResult(): DoneResult {
   return {

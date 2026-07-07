@@ -6,7 +6,6 @@ import type { DoneCondition, GoalTokenBudgetState } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
 import { HitlService } from "../hitl/service";
-import type { HitlEvent } from "../hitl/types";
 import { LoopStateManager } from "../loops/state";
 import type { ModelInfo } from "../provider/model";
 import type { ProjectContext } from "../projects/types";
@@ -39,14 +38,12 @@ const modelInfo = {
 
 let workspaceRoot = "";
 let projectContext: ProjectContext;
-let hitlEvents: Array<{ sessionId: string; event: HitlEvent }>;
 
 beforeEach(async () => {
   setLlmAdapterForTest(undefined);
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
-  hitlEvents = [];
   projectContext = createTestProjectContext(workspaceRoot);
   projectContext.hitl = new HitlService({
     workspaceRoot,
@@ -54,11 +51,6 @@ beforeEach(async () => {
     sessions: new SessionStoreManager({ logger: silentLogger }),
     goalState: projectContext.goalState,
     loopState: new LoopStateManager(workspaceRoot),
-    events: {
-      submitHitlEvent(sessionId, event) {
-        hitlEvents.push({ sessionId, event });
-      },
-    },
   });
   await projectContext.hitl.load(workspaceRoot);
 });
@@ -157,7 +149,6 @@ describe("Goal budget enforcement", () => {
     const pendingAfterSecond = await projectContext.hitl.list({ scope: "goal", ownerId: goal.id });
     expect(first).toBeInstanceOf(GoalBudgetEnforcementStopError);
     expect(second).toBeInstanceOf(GoalBudgetEnforcementStopError);
-    expect(hitlEvents).toHaveLength(0);
     expect(pendingAfterSecond.map((record) => record.hitlId)).toEqual([pending.hitlId]);
     expect(persisted.status).toBe("paused");
     expect(persisted.lastError).toBe("Budget warning approval is pending");

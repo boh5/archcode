@@ -12,27 +12,9 @@ import { silentLogger } from "../logger";
 import { LoopStateManager } from "../loops/state";
 import type { ProjectInfo } from "../projects/types";
 import type { SessionStoreManager } from "../store/session-store-manager";
-import { REDACTION_MARKER, redactString, redactValue } from "../tools/security/redaction";
 import { HitlOwnerStore } from "./owner-store";
 import { resolveHitlOwnerPath } from "./owner-paths";
 import { aggregateHitlProjections, collectKnownHitlOwners, type HitlAggregationQuery } from "./aggregation";
-import type {
-  HitlEventSubmitter,
-  HitlKind,
-  HitlPayload,
-  HitlRequest,
-  HitlResponse,
-  HitlResponsePayload,
-  HitlTrigger,
-} from "./types";
-
-interface PendingCompatRequest {
-  readonly request: HitlRequest;
-  readonly owner: HitlOwnerKey;
-  readonly blockingKey: string;
-  readonly persisted: Promise<HitlRecord | undefined>;
-  readonly waiters: Array<(response: HitlResponse) => void>;
-}
 
 export interface HitlServiceManagers {
   readonly sessions?: SessionStoreManager;
@@ -41,7 +23,6 @@ export interface HitlServiceManagers {
 }
 
 export interface HitlServiceOptions extends HitlServiceManagers {
-  readonly events?: HitlEventSubmitter;
   readonly workspaceRoot?: string;
   readonly project?: Pick<ProjectInfo, "slug" | "name">;
 }
@@ -61,20 +42,14 @@ export type HitlLookupResult =
   | { status: "ambiguous"; hitlId: string; owners: HitlOwnerKey[] };
 
 export class HitlService {
-  readonly #events: HitlEventSubmitter;
   #workspaceRoot: string | undefined;
   #project: Pick<ProjectInfo, "slug" | "name"> | undefined;
   #sessions: SessionStoreManager | undefined;
   #goalState: GoalStateManager | undefined;
   #loopState: LoopStateManager | undefined;
-  readonly #pendingCompat = new Map<string, PendingCompatRequest>();
   readonly #localOwners = new Map<string, HitlOwnerKey>();
 
-  constructor(eventsOrOptions: HitlEventSubmitter | HitlServiceOptions = { submitHitlEvent: () => {} }) {
-    const options = isHitlEventSubmitter(eventsOrOptions)
-      ? { events: eventsOrOptions }
-      : eventsOrOptions;
-    this.#events = options.events ?? { submitHitlEvent: () => {} };
+  constructor(options: HitlServiceOptions = {}) {
     this.#workspaceRoot = options.workspaceRoot;
     this.#project = options.project;
     this.#sessions = options.sessions;
@@ -179,158 +154,8 @@ export class HitlService {
     return await aggregateHitlProjections(context, query);
   }
 
-  request(
-    sessionId: string,
-    kind: HitlKind,
-    payload: HitlPayload,
-    trigger: HitlTrigger = {},
-  ): Promise<HitlResponse> {
-    const projectSlug = trigger.projectSlug ?? this.#project?.slug ?? "unknown-project";
-    const owner = ownerFromLegacyRequest(projectSlug, sessionId, trigger);
-    const source = sourceFromLegacyRequest(sessionId, kind, trigger);
-    const blockingKey = blockingKeyFromLegacyRequest(source, kind, trigger);
-    const existingPending = this.#findPendingCompat(owner, blockingKey);
-    if (existingPending !== undefined) return existingPending;
-    const createdAt = new Date().toISOString();
-    const hitlId = crypto.randomUUID();
-    const request = legacyRequestFromRecord({
-      hitlId,
-      owner,
-      blockingKey,
-      source,
-      status: "pending",
-      displayPayload: displayPayloadFromLegacyPayload(payload),
-      createdAt,
-      updatedAt: createdAt,
-    }, sessionId, kind, payload, trigger);
-    const promise = new Promise<HitlResponse>((resolve) => {
-      const persisted = this.create({
-        owner,
-        blockingKey,
-        source,
-        displayPayload: displayPayloadFromLegacyPayload(payload),
-        hitlId,
-        createdAt,
-      }).then((record) => {
-        this.#canonicalizePendingCompat(hitlId, record, sessionId, kind, payload, trigger);
-        return record;
-      }).catch((error) => {
-        void error;
-        this.#events.submitHitlEvent(sessionId, { type: "hitl.request", ...request });
-        return undefined;
-      });
-      this.#pendingCompat.set(hitlId, { request, owner, blockingKey, persisted, waiters: [resolve] });
-    });
-    return promise;
-  }
-
-  respond(hitlId: string, responsePayload: HitlResponsePayload, projectSlug?: string): boolean {
-    const pending = this.#pendingCompat.get(hitlId);
-    if (pending === undefined) return false;
-    if (projectSlug !== undefined && pending.owner.projectSlug !== projectSlug) return false;
-    void this.#respondCompat(hitlId, responsePayload, projectSlug);
-    return true;
-  }
-
-  cancel(hitlId: string, reason = "Cancelled", projectSlug?: string): boolean {
-    const pending = this.#pendingCompat.get(hitlId);
-    if (pending === undefined) return false;
-    if (projectSlug !== undefined && pending.owner.projectSlug !== projectSlug) return false;
-    void this.#cancelCompat(hitlId, reason, projectSlug);
-    return true;
-  }
-
-  has(hitlId: string): boolean {
-    void hitlId;
-    // Synchronous legacy check cannot scan owner-local files. Call lookup() in new code.
-    return this.#pendingCompat.has(hitlId);
-  }
-
-  listPending(projectSlug?: string, goalId?: string, loopId?: string): HitlRequest[] {
-    const pending = [...this.#pendingCompat.values()].map((entry) => entry.request);
-    return pending
-      .filter((request) => projectSlug === undefined || request.trigger.projectSlug === projectSlug)
-      .filter((request) => goalId === undefined || request.trigger.goalId === goalId)
-      .filter((request) => loopId === undefined || request.trigger.loopId === loopId);
-  }
-
   shutdown(): void {
-    this.#pendingCompat.clear();
-  }
-
-  #findPendingCompat(owner: HitlOwnerKey, blockingKey: string): Promise<HitlResponse> | undefined {
-    for (const pending of this.#pendingCompat.values()) {
-      if (ownerKey(pending.owner) === ownerKey(owner) && pending.blockingKey === blockingKey) {
-        return new Promise<HitlResponse>((resolve) => pending.waiters.push(resolve));
-      }
-    }
-    return undefined;
-  }
-
-  #canonicalizePendingCompat(
-    provisionalHitlId: string,
-    record: HitlRecord,
-    sessionId: string,
-    kind: HitlKind,
-    payload: HitlPayload,
-    trigger: HitlTrigger,
-  ): void {
-    const pending = this.#pendingCompat.get(provisionalHitlId);
-    if (pending === undefined) return;
-
-    const request = legacyRequestFromRecord(record, sessionId, kind, payload, trigger);
-    if (record.hitlId !== provisionalHitlId) {
-      this.#pendingCompat.delete(provisionalHitlId);
-      this.#pendingCompat.set(record.hitlId, { ...pending, request, persisted: Promise.resolve(record) });
-    } else {
-      this.#pendingCompat.set(provisionalHitlId, { ...pending, request });
-    }
-    this.#events.submitHitlEvent(sessionId, { type: "hitl.request", ...request });
-  }
-
-  async #respondCompat(hitlId: string, responsePayload: HitlResponsePayload, projectSlug?: string): Promise<void> {
-    const pending = this.#pendingCompat.get(hitlId);
-    const protocolResponse = protocolResponseFromLegacyPayload(pending?.request.kind ?? "approval", responsePayload);
-    if (pending !== undefined) {
-      if (projectSlug !== undefined && pending.owner.projectSlug !== projectSlug) return;
-      this.#resolveCompat(hitlId, { hitlId, kind: pending.request.kind, status: "resolved", response: responsePayload }, undefined);
-      const record = await pending.persisted;
-      if (record !== undefined) await (await this.#storeFor(pending.owner)).complete(hitlId, "resolved", protocolResponse).catch(() => undefined);
-      return;
-    }
-    const found = await this.lookup(hitlId);
-    if (found.status !== "found") return;
-    if (projectSlug !== undefined && found.owner.projectSlug !== projectSlug) return;
-    const terminal = await (await this.#storeFor(found.owner)).complete(hitlId, "resolved", protocolResponse);
-    const response: HitlResponse = { hitlId, kind: legacyKindFromSource(terminal.source), status: "resolved", response: responsePayload };
-    this.#resolveCompat(hitlId, response, terminal);
-  }
-
-  async #cancelCompat(hitlId: string, reason: string, projectSlug?: string): Promise<void> {
-    const pending = this.#pendingCompat.get(hitlId);
-    if (pending !== undefined) {
-      if (projectSlug !== undefined && pending.owner.projectSlug !== projectSlug) return;
-      this.#resolveCompat(hitlId, { hitlId, kind: pending.request.kind, status: "cancelled", reason }, undefined);
-      const record = await pending.persisted;
-      if (record !== undefined) await (await this.#storeFor(pending.owner)).complete(hitlId, "cancelled", { type: "cancel", reason }).catch(() => undefined);
-      return;
-    }
-    const found = await this.lookup(hitlId);
-    if (found.status !== "found") return;
-    if (projectSlug !== undefined && found.owner.projectSlug !== projectSlug) return;
-    const terminal = await (await this.#storeFor(found.owner)).complete(hitlId, "cancelled", { type: "cancel", reason });
-    const response: HitlResponse = { hitlId, kind: legacyKindFromSource(terminal.source), status: "cancelled", reason };
-    this.#resolveCompat(hitlId, response, terminal);
-  }
-
-  #resolveCompat(hitlId: string, response: HitlResponse, terminal: HitlRecord | undefined): void {
-    const pending = this.#pendingCompat.get(hitlId);
-    if (pending !== undefined) {
-      this.#pendingCompat.delete(hitlId);
-      for (const resolve of pending.waiters) resolve(response);
-    }
-    const sessionId = pending?.request.sessionId ?? (terminal === undefined ? undefined : sessionIdFromSource(terminal.source) ?? terminal.owner.ownerId) ?? "unknown-session";
-    this.#events.submitHitlEvent(sessionId, { type: "hitl.resolved", sessionId, resolvedAt: Date.now(), ...response });
+    // Owner-local writes are committed per operation; no in-memory waiters remain.
   }
 
   async #storeFor(owner: HitlOwnerKey): Promise<HitlOwnerStore> {
@@ -369,120 +194,6 @@ export class HitlService {
   }
 }
 
-function isHitlEventSubmitter(value: HitlEventSubmitter | HitlServiceOptions): value is HitlEventSubmitter {
-  return "submitHitlEvent" in value;
-}
-
 function ownerKey(owner: HitlOwnerKey): string {
   return `${owner.projectSlug}:${owner.ownerType}:${owner.ownerId}`;
-}
-
-function ownerFromLegacyRequest(projectSlug: string, sessionId: string, trigger: HitlTrigger): HitlOwnerKey {
-  if (trigger.goalId !== undefined) return { projectSlug, ownerType: "goal", ownerId: trigger.goalId };
-  if (trigger.loopId !== undefined) return { projectSlug, ownerType: "loop", ownerId: trigger.loopId };
-  return { projectSlug, ownerType: "session", ownerId: sessionId };
-}
-
-function sourceFromLegacyRequest(sessionId: string, kind: HitlKind, trigger: HitlTrigger): HitlSource {
-  if (trigger.goalId !== undefined) {
-    if (kind === "review") return { type: "goal_review", goalId: trigger.goalId };
-    if (trigger.approvalPoint?.startsWith("approval_budget") === true) {
-      return { type: "goal_budget", goalId: trigger.goalId, approvalPoint: trigger.approvalPoint };
-    }
-    return { type: "goal_approval", goalId: trigger.goalId, approvalPoint: trigger.approvalPoint === "before_complete" ? "before_complete" : "after_plan" };
-  }
-  if (trigger.loopId !== undefined) {
-    return kind === "question"
-      ? { type: "loop_question", loopId: trigger.loopId, questionKey: trigger.source ?? "question" }
-      : { type: "loop_approval", loopId: trigger.loopId, approvalPoint: trigger.approvalPoint ?? trigger.source ?? "approval" };
-  }
-  return kind === "approval" && trigger.toolCallId !== undefined
-    ? { type: "tool_permission", sessionId, toolCallId: trigger.toolCallId, toolName: trigger.source ?? "tool" }
-    : { type: "ask_user", sessionId, toolCallId: trigger.toolCallId };
-}
-
-function blockingKeyFromLegacyRequest(source: HitlSource, kind: HitlKind, trigger: HitlTrigger): string {
-  switch (source.type) {
-    case "ask_user":
-      return `session:${source.sessionId}:ask:${source.toolCallId ?? trigger.source ?? kind}`;
-    case "tool_permission":
-      return `session:${source.sessionId}:tool:${source.toolCallId}`;
-    case "goal_approval":
-      return `goal:${source.goalId}:approval:${source.approvalPoint}`;
-    case "goal_review":
-      return `goal:${source.goalId}:review`;
-    case "goal_budget":
-      return `goal:${source.goalId}:budget:${source.approvalPoint ?? "default"}`;
-    case "goal_question":
-      return `goal:${source.goalId}:question:${source.questionKey}`;
-    case "loop_approval":
-      return `loop:${source.loopId}:approval:${source.approvalPoint}`;
-    case "loop_blocker":
-      return `loop:${source.loopId}:blocker:${source.runId ?? "global"}:${source.reason}`;
-    case "loop_retry":
-      return `loop:${source.loopId}:run:${source.runId}:retry:${source.attempt}`;
-    case "loop_question":
-      return `loop:${source.loopId}:question:${source.questionKey}`;
-  }
-}
-
-function displayPayloadFromLegacyPayload(payload: HitlPayload): HitlDisplayPayload {
-  const details = redactValue(payload.details ?? ("context" in payload ? payload.context : {}) ?? {});
-  return {
-    title: redactedDisplayString(payload.title ?? payload.kind ?? "Human input required"),
-    summary: redactedDisplayString(payload.message ?? "Details redacted for display."),
-    fields: Object.entries(details).map(([label, value]) => ({ label, value: redactedDisplayString(displayFieldValue(value)) })),
-    redacted: true,
-  };
-}
-
-function legacyRequestFromRecord(record: HitlRecord, sessionId: string, kind: HitlKind, payload: HitlPayload, trigger: HitlTrigger): HitlRequest {
-  const { abortSignal: _abortSignal, ...serializableTrigger } = trigger;
-  return {
-    hitlId: record.hitlId,
-    sessionId,
-    kind,
-    payload,
-    trigger: serializableTrigger,
-    createdAt: new Date(record.createdAt).getTime(),
-    status: "pending",
-    displayPayload: record.displayPayload,
-    approvalKey: legacyApprovalKey(record, sessionId, trigger),
-  };
-}
-
-function legacyApprovalKey(record: HitlRecord, sessionId: string, trigger: HitlTrigger): string {
-  if (trigger.approvalPoint !== undefined) {
-    return `${record.owner.projectSlug}:${trigger.goalId ?? record.owner.ownerId}:${sessionId}:approval_point:${trigger.approvalPoint}`;
-  }
-  return record.blockingKey;
-}
-
-function redactedDisplayString(value: string): string {
-  return redactString(value).replaceAll(REDACTION_MARKER, "[REDACTED]");
-}
-
-function displayFieldValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === null || typeof value !== "object") return String(value);
-  return JSON.stringify(value);
-}
-
-function protocolResponseFromLegacyPayload(kind: HitlKind, payload: HitlResponsePayload): ProtocolHitlResponse {
-  if (kind === "question") {
-    return { type: "question_answer", answers: Array.isArray(payload.answers) ? payload.answers.map(String) : [String(payload.answers ?? payload.comment ?? "")] };
-  }
-  if (kind === "review") return { type: "review_outcome", outcome: payload.outcome ?? (payload.decision === "approved" ? "DONE" : "NOT_DONE"), comment: payload.comment };
-  return { type: "approval_decision", decision: payload.decision === "denied" || payload.decision === "deny" ? "denied" : "approved", comment: payload.comment };
-}
-
-function legacyKindFromSource(source: HitlSource): HitlKind {
-  if (source.type === "ask_user" || source.type === "goal_question" || source.type === "loop_question") return "question";
-  if (source.type === "goal_review") return "review";
-  return "approval";
-}
-
-function sessionIdFromSource(source: HitlSource): string | undefined {
-  if (source.type === "ask_user" || source.type === "tool_permission") return source.sessionId;
-  return undefined;
 }

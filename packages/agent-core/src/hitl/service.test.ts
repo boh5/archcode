@@ -9,7 +9,6 @@ import { LoopStateManager } from "../loops/state";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionHitlPath } from "../store/sessions-dir";
 import { HitlService } from "./service";
-import type { HitlEvent } from "./types";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "service");
 
@@ -72,35 +71,6 @@ describe("HitlService owner-local storage", () => {
     expect(lookup).toMatchObject({ status: "found", record: { hitlId: created.hitlId, status: "pending" } });
   });
 
-  test("legacy request reuses an existing active blocking key without emitting a phantom hitlId", async () => {
-    const events: Array<{ sessionId: string; event: HitlEvent }> = [];
-    const { service, sessions, workspaceRoot } = await createLoadedService(undefined, undefined, events);
-    const sessionId = crypto.randomUUID();
-    sessions.create(sessionId, workspaceRoot);
-    await waitForSession(workspaceRoot, sessionId);
-    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
-    const existing = await service.create({
-      ...input(owner, `session:${sessionId}:ask:tool-call`),
-      hitlId: "existing-hitl",
-      source: { type: "ask_user", sessionId, toolCallId: "tool-call" },
-    });
-
-    const pending = service.request(
-      sessionId,
-      "question",
-      { title: "Need input", message: "Answer", details: {} },
-      { projectSlug: "archcode", source: "tool-call" },
-    );
-    await waitFor(() => events.some((entry) => entry.event.type === "hitl.request"));
-
-    const requestEvent = events.find((entry) => entry.event.type === "hitl.request")?.event;
-    expect(requestEvent).toMatchObject({ type: "hitl.request", hitlId: existing.hitlId });
-    expect(service.listPending("archcode").map((request) => request.hitlId)).toEqual([existing.hitlId]);
-
-    expect(service.respond(existing.hitlId, { answers: ["yes"] }, "archcode")).toBe(true);
-    expect(await pending).toMatchObject({ hitlId: existing.hitlId, status: "resolved" });
-  });
-
   test("cancelOwner marks active owner records cancelled with owner_deleted", async () => {
     const { service, sessions, workspaceRoot } = await createLoadedService();
     const sessionId = crypto.randomUUID();
@@ -130,7 +100,6 @@ describe("HitlService owner-local storage", () => {
 async function createLoadedService(
   workspaceRoot?: string,
   sessions = new SessionStoreManager({ logger: silentLogger }),
-  events?: Array<{ sessionId: string; event: HitlEvent }>,
 ) {
   workspaceRoot ??= await mkdtemp(join(TMP_ROOT, "workspace-"));
   const goalState = new GoalStateManager(workspaceRoot, silentLogger);
@@ -141,18 +110,9 @@ async function createLoadedService(
     sessions,
     goalState,
     loopState,
-    events: events === undefined ? undefined : { submitHitlEvent: (sessionId, event) => events.push({ sessionId, event }) },
   });
   await service.load(workspaceRoot);
   return { service, workspaceRoot, sessions, goalState, loopState };
-}
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (predicate()) return;
-    await Bun.sleep(5);
-  }
-  throw new Error("condition was not met");
 }
 
 function input(owner: HitlOwnerKey, blockingKey: string) {

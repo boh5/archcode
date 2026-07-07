@@ -22,14 +22,3 @@ export type {
   SessionHitlResumeAdapter,
 } from "./resume-coordinator";
 export type { HitlAggregationQuery, HitlAggregationScope } from "./aggregation";
-export type {
-  HitlEvent,
-  HitlEventSubmitter,
-  HitlKind,
-  HitlPayload,
-  HitlRequest,
-  HitlResolutionStatus,
-  HitlResponse,
-  HitlResponsePayload,
-  HitlTrigger,
-} from "./types";

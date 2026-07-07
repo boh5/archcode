@@ -312,7 +312,7 @@ describe("ProjectContextResolver", () => {
     const goalState = new GoalStateManager(workspace);
     const goalArtifacts = new GoalArtifactManager(workspace);
     const goalMemory = new GoalMemoryManager(workspace);
-    const hitl = new HitlService({ submitHitlEvent: () => {} });
+    const hitl = new HitlService();
     const resolver = new ProjectContextResolver({
       goalStateFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);

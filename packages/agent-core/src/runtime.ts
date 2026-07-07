@@ -27,9 +27,6 @@ import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
-  HitlResponse as ProtocolHitlResponse,
-  HitlSource,
-  HitlStreamEvent,
   McpServerStatus,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -51,7 +48,6 @@ import { LoopTriggerPoller } from "./loops/triggers";
 import { LoopScheduler, type LoopSchedulerTimer } from "./loops/scheduler";
 import { LoopWorktreeManager } from "./loops/worktree-manager";
 import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopConfig, LoopIntegrationError, LoopIntegrationSnapshot, LoopRunReport, LoopState, LoopUpdateInput } from "./loops/state";
-import type { HitlEvent, HitlEventSubmitter, HitlPayload, HitlResponsePayload } from "./hitl/types";
 import { scopedKey } from "./store/key";
 import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
@@ -207,17 +203,11 @@ export async function createRuntime(
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
     const sessionStoreManager = new SessionStoreManager({ logger });
-    const hitlEvents: HitlEventSubmitter = {
-      submitHitlEvent: (sessionId, event) => {
-        const protocolEvent = toProtocolHitlEvent(event);
-        if (protocolEvent) sessionStoreManager.appendSessionEvent(sessionId, protocolEvent);
-      },
-    };
-    const hitl = new HitlService(hitlEvents);
+    const hitl = new HitlService({ sessions: sessionStoreManager });
     let contextResolver!: ProjectContextResolver;
     contextResolver = new ProjectContextResolver({
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
-      hitlFactory: (workspaceRoot) => new HitlService({ events: hitlEvents, workspaceRoot }),
+      hitlFactory: (workspaceRoot) => new HitlService({ workspaceRoot }),
       sessionStoreManager,
       resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, goalArtifacts, loopState }) => new ResumeCoordinator({
         hitl,
@@ -611,47 +601,6 @@ export async function createRuntime(
   }
 }
 
-function toProtocolHitlEvent(event: HitlEvent): HitlStreamEvent | undefined {
-  if (event.type === "hitl.request") {
-    const ownerType = event.trigger.goalId !== undefined
-      ? "goal"
-      : event.trigger.loopId !== undefined
-        ? "loop"
-        : "session";
-    const ownerId = event.trigger.goalId ?? event.trigger.loopId ?? event.sessionId;
-    const source = protocolHitlSource(event);
-    return {
-      type: "hitl.request",
-      request: {
-        hitlId: event.hitlId,
-        owner: {
-          projectSlug: event.trigger.projectSlug ?? "unknown-project",
-          ownerType,
-          ownerId,
-        },
-        blockingKey: event.approvalKey ?? defaultHitlBlockingKey(event, source),
-        source,
-        status: "pending",
-        displayPayload: event.displayPayload ?? {
-          title: hitlPrompt(event.payload),
-          summary: "Details redacted for display.",
-          redacted: true,
-        },
-        createdAt: new Date(event.createdAt).toISOString(),
-        updatedAt: new Date(event.createdAt).toISOString(),
-      },
-    };
-  }
-
-  const status = event.status === "timeout" ? "cancelled" : event.status;
-  return {
-    type: "hitl.resolved",
-    hitlId: event.hitlId,
-    status,
-    ...(event.status === "resolved" ? { response: protocolHitlResponse(event.kind, event.response) } : {}),
-  };
-}
-
 function githubIntegrationStatus(githubConfig: Parameters<typeof resolveGithubIntegrationConfig>[0], updatedAt: number): LoopIntegrationStatus {
   try {
     const resolved = resolveGithubIntegrationConfig(githubConfig);
@@ -704,74 +653,6 @@ function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopInt
       ...error,
       message: redactString(error.message),
     })),
-  };
-}
-
-function hitlPrompt(payload: HitlPayload): string {
-  return payload.message ?? payload.title ?? ("action" in payload ? payload.action : "Human input requested");
-}
-
-function protocolHitlSource(event: Extract<HitlEvent, { type: "hitl.request" }>): HitlSource {
-  if (event.kind === "approval" && event.trigger.toolCallId !== undefined) {
-    return {
-      type: "tool_permission",
-      sessionId: event.sessionId,
-      toolCallId: event.trigger.toolCallId,
-      toolName: "tool",
-    };
-  }
-  if (event.trigger.goalId !== undefined && event.kind === "review") {
-    return { type: "goal_review", goalId: event.trigger.goalId };
-  }
-  if (event.trigger.goalId !== undefined && event.trigger.approvalPoint !== undefined) {
-    return { type: "goal_approval", goalId: event.trigger.goalId, approvalPoint: event.trigger.approvalPoint === "before_complete" ? "before_complete" : "after_plan" };
-  }
-  if (event.trigger.goalId !== undefined) {
-    return { type: "goal_question", goalId: event.trigger.goalId, questionKey: event.approvalKey ?? event.hitlId };
-  }
-  if (event.trigger.loopId !== undefined && event.trigger.source?.includes("blocker")) {
-    return { type: "loop_blocker", loopId: event.trigger.loopId, reason: event.trigger.source };
-  }
-  if (event.trigger.loopId !== undefined && event.trigger.approvalPoint !== undefined) {
-    return { type: "loop_approval", loopId: event.trigger.loopId, approvalPoint: event.trigger.approvalPoint };
-  }
-  if (event.trigger.loopId !== undefined) {
-    return { type: "loop_question", loopId: event.trigger.loopId, questionKey: event.approvalKey ?? event.hitlId };
-  }
-  return { type: "ask_user", sessionId: event.sessionId, ...(event.trigger.toolCallId === undefined ? {} : { toolCallId: event.trigger.toolCallId }) };
-}
-
-function defaultHitlBlockingKey(event: Extract<HitlEvent, { type: "hitl.request" }>, source: HitlSource): string {
-  if (source.type === "tool_permission") return `session:${event.sessionId}:tool:${source.toolCallId}`;
-  if (source.type === "goal_approval") return `goal:${source.goalId}:approval:${source.approvalPoint}`;
-  if (source.type === "loop_blocker") return `loop:${source.loopId}:blocker:${source.reason}`;
-  return `${source.type}:${event.hitlId}`;
-}
-
-function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePayload): ProtocolHitlResponse {
-  if (kind === "approval") {
-    const approved = response.decision === "approved" || response.decision === "approve" || response.outcome === "DONE" || response.data?.approved === true;
-    const approveAlways = response.decision === "approve_always" || response.data?.approveAlways === true;
-    return {
-      type: "permission_decision",
-      decision: approveAlways ? "approve_always" : approved ? "approve_once" : "deny",
-      ...(response.comment === undefined ? {} : { comment: response.comment }),
-    };
-  }
-  if (kind === "review") {
-    return {
-      type: "review_outcome",
-      outcome: response.outcome ?? (response.decision === "approved" ? "DONE" : "NOT_DONE"),
-      ...(response.comment === undefined ? {} : { comment: response.comment }),
-    };
-  }
-  const answers = Array.isArray(response.answers)
-    ? response.answers.map((answer) => String(answer))
-    : response.decision === undefined ? [] : [response.decision];
-  return {
-    type: "question_answer",
-    answers,
-    ...(response.comment === undefined ? {} : { comment: response.comment }),
   };
 }
 
