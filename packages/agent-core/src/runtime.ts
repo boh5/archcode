@@ -42,6 +42,7 @@ import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import { createGitHubConnector } from "./integrations/github";
 import { LoopRunner } from "./loops/runner";
+import { LoopHitlResumeAdapter } from "./loops/hitl-resume-adapter";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
 import { CollisionLedger } from "./loops/collision-ledger";
 import { LoopKillStateManager, type LoopKillActivateInput, type LoopKillState } from "./loops/kill-state";
@@ -233,6 +234,15 @@ export async function createRuntime(
             resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
             abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
           }),
+          loop: new LoopHitlResumeAdapter({
+            workspaceRoot,
+            stateManager: loopState,
+            jobQueue: new LoopJobQueue({ workspaceRoot, clock: options.loopSchedulerClock }),
+            now: options.loopSchedulerClock?.now,
+            onContinuationQueued: async () => {
+              await (await getLoopScheduler(workspaceRoot)).dispatchPendingJobs();
+            },
+          }),
           goal: new GoalHitlResumeAdapter({
             workspaceRoot,
             goalStateManager: goalState,
@@ -253,6 +263,7 @@ export async function createRuntime(
       resumeAdapters: {
         session: { resume: async () => { throw new Error("Session HITL adapter factory was not used"); } },
         goal: { resume: async () => { throw new Error("Goal HITL adapter factory was not used"); } },
+        loop: { resume: async () => { throw new Error("Loop HITL adapter factory was not used"); } },
       },
       logger: runtimeLogger.child({ module: "projects" }),
     });
@@ -392,6 +403,7 @@ export async function createRuntime(
         budgetLedger,
         collisionLedger,
         jobQueue,
+        hitl: projectContext.hitl,
         triggerPoller,
         killStateManager: new LoopKillStateManager(workspaceRoot, {
           clock: schedulerClock,

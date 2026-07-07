@@ -5,10 +5,18 @@ import { createEmptySessionStats, type SessionExecutionRecord } from "@archcode/
 
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { GoalState } from "../goals/state";
+import { GoalStateManager } from "../goals/state";
+import { HitlService } from "../hitl/service";
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
+import { silentLogger } from "../logger";
 import type { SessionFile } from "../store/helpers";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { CollisionLedger } from "./collision-ledger";
+import { LoopJobCoordinator } from "./coordinator";
+import { LoopHitlResumeAdapter } from "./hitl-resume-adapter";
+import { LoopJobQueue } from "./job-queue";
 import { LoopActiveConflictError, LoopRunner } from "./runner";
-import type { LoopSchedulerRunInput } from "./scheduler";
+import { LoopScheduler, type LoopSchedulerRunInput } from "./scheduler";
 import { LoopConfigSchema, LoopStateManager, type CollisionTarget, type LoopConfig, type LoopGoalTemplate, type LoopState } from "./state";
 import type { LoopWorktreeInspection } from "./worktree-manager";
 
@@ -757,6 +765,77 @@ describe("goal loop runner", () => {
   });
 });
 
+describe("loop-owned-hitl resume", () => {
+  test("loop-owned-hitl explicit run approval writes owner-local HITL and duplicate approve re-enqueues once", async () => {
+    const fixture = await createLoopHitlFixture();
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      approvalPolicy: "explicit_per_run",
+    });
+
+    const report = await fixture.scheduler.runManual(loop.loopId);
+
+    expect(fixture.runnerMock).not.toHaveBeenCalled();
+    const hitlId = report?.blockedByHitlIds?.[0];
+    if (hitlId === undefined) throw new Error("Expected Loop HITL id");
+    expect(report).toMatchObject({
+      status: "needs_user",
+      blockedReason: "needs_user",
+      blockedByHitlIds: [hitlId],
+      attentionStatus: "waiting_for_human",
+    });
+    const projections = await fixture.hitl.list({ scope: "loop", ownerId: loop.loopId, includeChildren: true });
+    expect(projections).toHaveLength(1);
+    expect(projections[0]).toMatchObject({
+      hitlId,
+      owner: { ownerType: "loop", ownerId: loop.loopId },
+      source: { type: "loop_approval", loopId: loop.loopId, approvalPoint: "explicit_per_run" },
+    });
+    expect(await fixture.hitl.knownOwners()).toContainEqual({ projectSlug: "project-a", ownerType: "loop", ownerId: loop.loopId });
+    const ownerStore = await fixture.hitl.ownerStore({ projectSlug: "project-a", ownerType: "loop", ownerId: loop.loopId });
+    expect((await ownerStore.list()).map((record) => record.hitlId)).toContain(hitlId);
+    expect(await ownerStore.lookup(hitlId)).toMatchObject({ status: "found" });
+    expect(await fixture.hitl.lookup(hitlId)).toMatchObject({ status: "found" });
+    expect(await Bun.file(await fixture.stateManager.loopHitlPath(loop.loopId)).exists()).toBe(true);
+
+    const first = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
+    const second = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
+    expect(first.status).not.toBe("missing");
+    expect(second.scheduled).toBe(false);
+    await waitFor(async () => (await fixture.jobQueue.list(["pending"])).length === 1 && (await fixture.stateManager.read(loop.loopId)).attentionStatus === "clear");
+    expect(fixture.continuationQueuedMock).toHaveBeenCalledTimes(1);
+
+    const jobs = await fixture.jobQueue.list();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.status).toBe("pending");
+    expect(jobs[0]?.blockedByHitlIds).toBeUndefined();
+    expect(jobs[0]?.resumeCheckpoint).toBeUndefined();
+    const state = await fixture.stateManager.read(loop.loopId);
+    expect(state.attentionStatus).toBe("clear");
+    expect(state.blockedByHitlIds).toBeUndefined();
+  });
+
+  test("loop-owned-hitl denied approval terminally skips blocked job", async () => {
+    const fixture = await createLoopHitlFixture();
+    const loop = await fixture.stateManager.create("project-a", {
+      ...sessionLoopConfig,
+      approvalPolicy: "explicit_per_run",
+    });
+    const report = await fixture.scheduler.runManual(loop.loopId);
+    const hitlId = report?.blockedByHitlIds?.[0];
+    if (hitlId === undefined) throw new Error("Expected Loop HITL id");
+
+    const result = await fixture.coordinator.respond(hitlId, { type: "approval_decision", decision: "denied", comment: "not now" });
+    expect(result.scheduled).toBe(true);
+    await waitFor(async () => (await fixture.jobQueue.list(["skipped"])).length === 1 && (await fixture.stateManager.read(loop.loopId)).currentRun === undefined);
+
+    expect((await fixture.jobQueue.list())[0]).toMatchObject({ status: "skipped", blockedReason: "not now" });
+    const state = await fixture.stateManager.read(loop.loopId);
+    expect(state.currentRun).toBeUndefined();
+    expect(state.lastRun).toMatchObject({ status: "skipped", summary: "not now" });
+  });
+});
+
 async function createFixture(options: {
   executionPromise?: Promise<void>;
   sessionExecutions?: SessionExecutionRecord[];
@@ -797,6 +876,54 @@ async function createFixture(options: {
     ...(worktreeManager === undefined ? {} : { worktreeManager }),
   });
   return { stateManager, runtime, goalStateManager, goalRunner, runner, collisionLedger, worktreeManager, workspaceRoot };
+}
+
+async function createLoopHitlFixture(): Promise<{
+  workspaceRoot: string;
+  stateManager: LoopStateManager;
+  jobQueue: LoopJobQueue;
+  hitl: HitlService;
+  coordinator: ResumeCoordinator;
+  scheduler: LoopScheduler;
+  runnerMock: ReturnType<typeof mock>;
+  continuationQueuedMock: ReturnType<typeof mock>;
+}> {
+  const workspaceRoot = join(RUN_DIR, `loop-hitl-${nextWorkspaceId++}-${crypto.randomUUID()}`);
+  await mkdir(workspaceRoot, { recursive: true });
+  const stateManager = new LoopStateManager(workspaceRoot);
+  const jobQueue = new LoopJobQueue({ workspaceRoot, clock: { now: () => 1_000 } });
+  const hitl = new HitlService({
+    workspaceRoot,
+    project: { slug: "project-a", name: "Project A" },
+    sessions: new SessionStoreManager({ logger: silentLogger }),
+    goalState: new GoalStateManager(workspaceRoot),
+    loopState: stateManager,
+  });
+  await hitl.load(workspaceRoot);
+  const continuationQueuedMock = mock(async () => {});
+  const coordinator = new ResumeCoordinator({
+    hitl,
+    adapters: {
+      loop: new LoopHitlResumeAdapter({
+        workspaceRoot,
+        stateManager,
+        jobQueue,
+        now: () => 1_000,
+        onContinuationQueued: continuationQueuedMock,
+      }),
+    },
+  });
+  const runnerMock = mock(async (_input: LoopSchedulerRunInput) => ({ status: "succeeded" as const }));
+  const scheduler = new LoopScheduler({
+    stateManager,
+    runner: runnerMock,
+    jobQueue,
+    coordinator: new LoopJobCoordinator({ queue: jobQueue, clock: { now: () => 1_000 }, leaseTtlMs: 60_000 }),
+    clock: { now: () => 1_000 },
+    timer: { schedule: () => ({ id: undefined }), cancel: () => undefined },
+    hitl,
+  });
+  return { workspaceRoot, stateManager, jobQueue, hitl, coordinator, scheduler, runnerMock, continuationQueuedMock };
 }
 
 class FakeLoopRuntime {
@@ -1051,9 +1178,9 @@ function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
   );
 }
 
-async function waitFor(predicate: () => boolean): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await Bun.sleep(1);
   }
   throw new Error("Timed out waiting for predicate");

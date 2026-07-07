@@ -462,11 +462,14 @@ export class LoopRunner {
     const session = await this.#runtime.getSessionFile(workspaceRoot, sessionId);
     const budgetExceeded = await this.#budgetExceededResult(loop, loop.currentRun?.runId, sessionId);
     if (budgetExceeded !== undefined) return budgetExceeded;
-    if (sessionHasPendingUserInteraction(session)) {
+    const pendingUserInteraction = pendingUserInteractionFromSession(session);
+    if (pendingUserInteraction !== undefined) {
       return {
-        status: "skipped",
+        status: "needs_user",
         sessionId,
         blockedReason: "needs_user",
+        blockedByHitlIds: pendingUserInteraction.blockedByHitlIds,
+        attentionStatus: "waiting_for_human",
         skippedReason: `Session ${sessionId} is waiting for user input for loop "${loop.config.title}".`,
         summary: `Session ${sessionId} is blocked waiting for user input.`,
       };
@@ -873,8 +876,9 @@ function observedArtifactsFromInspection(inspection: LoopWorktreeInspection, cle
   return [...artifacts.values()].slice(0, 100);
 }
 
-function sessionHasPendingUserInteraction(session: SessionFile): boolean {
-  if ((session.blockedByHitlIds ?? []).length > 0 || session.blockedHitl !== undefined) return true;
+function pendingUserInteractionFromSession(session: SessionFile): { blockedByHitlIds?: string[] } | undefined {
+  const directIds = session.blockedByHitlIds ?? (session.blockedHitl === undefined ? [] : [session.blockedHitl.hitlId]);
+  if (directIds.length > 0) return { blockedByHitlIds: directIds };
   const pendingHitl = new Set<string>();
   const terminalHitlStatuses = new Map<string, unknown>();
   for (const envelope of session.events ?? []) {
@@ -888,6 +892,8 @@ function sessionHasPendingUserInteraction(session: SessionFile): boolean {
       terminalHitlStatuses.set(payload.hitlId, payload.status);
     }
   }
-  return pendingHitl.size > 0
-    || [...terminalHitlStatuses.values()].some((status) => status !== "resolved");
+  if (pendingHitl.size > 0) return { blockedByHitlIds: [...pendingHitl] };
+  return [...terminalHitlStatuses.values()].some((status) => status !== "resolved")
+    ? {}
+    : undefined;
 }

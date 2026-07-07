@@ -1365,6 +1365,20 @@ export interface LoopConfig {
 
 export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded" | "needs_user";
 
+export interface LoopHitlCheckpoint {
+  version: 1;
+  hitlId: string;
+  loopId: string;
+  runId: string;
+  jobId?: string;
+  trigger: LoopRunTrigger;
+  subjectKey?: string;
+  worktreePath?: string;
+  baseSha?: string;
+  resolvedHeadSha?: string;
+  intendedContinuation: "rerun_job" | "resume_run";
+}
+
 export type LoopRunTrigger = "manual" | "interval" | "cron" | LoopTriggerSpec["kind"];
 
 export type LoopJobStatus =
@@ -1425,6 +1439,7 @@ export interface LoopJobSummary {
   blockedReason?: string;
   blockedByHitlIds?: string[];
   attentionStatus?: HitlAttentionStatus;
+  resumeCheckpoint?: LoopHitlCheckpoint;
   worktreePath?: string;
   baseSha?: string;
   resolvedHeadSha?: string;
@@ -1474,6 +1489,7 @@ export interface LoopRunReport {
   blockedReason?: string;
   blockedByHitlIds?: string[];
   attentionStatus?: HitlAttentionStatus;
+  resumeCheckpoint?: LoopHitlCheckpoint;
   cleanupState?: LoopCleanupState;
   observedArtifacts?: LoopWorktreeArtifact[];
 }
@@ -1503,6 +1519,7 @@ export interface LoopState {
   queuedJobs?: LoopJobSummary[];
   blockedByHitlIds?: string[];
   attentionStatus?: HitlAttentionStatus;
+  resumeCheckpoint?: LoopHitlCheckpoint;
   triggerHealth?: LoopTriggerHealth[];
   cleanupState?: LoopCleanupState;
 }

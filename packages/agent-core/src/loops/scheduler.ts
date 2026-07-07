@@ -1,3 +1,6 @@
+import type { HitlRecord } from "@archcode/protocol";
+
+import type { HitlService } from "../hitl/service";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { LoopBudgetLedger } from "./budget-ledger";
@@ -45,6 +48,9 @@ export interface LoopSchedulerRunJob {
   readonly missedCount?: number;
   readonly cleanupState?: LoopCleanupState;
   readonly observedArtifacts?: LoopWorktreeArtifact[];
+  readonly blockedByHitlIds?: string[];
+  readonly attentionStatus?: "clear" | "waiting_for_human";
+  readonly resumeCheckpoint?: LoopRunReport["resumeCheckpoint"];
 }
 
 export interface LoopSchedulerRunResult {
@@ -65,6 +71,9 @@ export interface LoopSchedulerRunResult {
   readonly resolvedHeadSha?: string;
   readonly cleanupState?: LoopCleanupState;
   readonly observedArtifacts?: LoopWorktreeArtifact[];
+  readonly blockedByHitlIds?: string[];
+  readonly attentionStatus?: "clear" | "waiting_for_human";
+  readonly resumeCheckpoint?: LoopRunReport["resumeCheckpoint"];
 }
 
 export type LoopSchedulerRunner = (input: LoopSchedulerRunInput) => Promise<LoopSchedulerRunResult | void>;
@@ -94,6 +103,7 @@ export interface LoopSchedulerOptions {
   readonly logger?: Logger;
   readonly cronAdapter?: CronAdapter;
   readonly triggerPoller?: LoopTriggerPoller;
+  readonly hitl?: HitlService;
 }
 
 type LoopSchedulerFinishedRunResult = Required<Pick<LoopSchedulerRunResult, "status">> & Omit<LoopSchedulerRunResult, "status">;
@@ -135,6 +145,7 @@ export class LoopScheduler {
   readonly #activeRuns = new Map<string, ActiveSchedulerRun>();
   readonly #manualWaiters = new Map<string, ManualJobWaiter[]>();
   readonly #triggerPoller?: LoopTriggerPoller;
+  readonly #hitl?: HitlService;
   #disposed = false;
   #started = false;
   #dispatching = false;
@@ -156,6 +167,7 @@ export class LoopScheduler {
     this.#abortSessionExecutionAndWait = options.abortSessionExecutionAndWait;
     this.#logger = (options.logger ?? silentLogger).child({ module: "loops.scheduler" });
     this.#triggerPoller = options.triggerPoller;
+    this.#hitl = options.hitl;
   }
 
   async start(projectId?: string): Promise<void> {
@@ -256,10 +268,15 @@ export class LoopScheduler {
     void this.stop();
   }
 
+  async dispatchPendingJobs(): Promise<void> {
+    await this.dispatchReadyJobs();
+  }
+
   private async scheduleLoopState(loop: LoopState, options: { restart: boolean }): Promise<void> {
     this.clearTimer(loop.loopId);
     if (this.#disposed) return;
     if (loop.status !== "active") return;
+    if (loop.attentionStatus === "waiting_for_human") return;
     if (await this.isGlobalKillActive()) return;
 
     if (loop.config.schedule.kind === "cron") {
@@ -554,6 +571,9 @@ export class LoopScheduler {
       status: jobStatusFromRunReport(report),
       summary: report.summary ?? report.skippedReason ?? report.error,
       blockedReason: report.blockedReason ?? report.reason,
+      blockedByHitlIds: report.blockedByHitlIds,
+      attentionStatus: report.attentionStatus,
+      resumeCheckpoint: report.resumeCheckpoint,
       worktreePath: updatedReportField(report.worktreePath, job.worktreePath),
       baseSha: updatedReportField(report.baseSha, job.baseSha),
       resolvedHeadSha: updatedReportField(report.resolvedHeadSha, job.resolvedHeadSha),
@@ -650,6 +670,8 @@ export class LoopScheduler {
     try {
       startedState = await this.#stateManager.recordRunStart(loop.loopId, runningReport);
       await this.#budgetLedger?.recordRunStart(loop.loopId, runId);
+      const approvalBlocked = await this.createExplicitRunApproval(startedState, runningReport, job);
+      if (approvalBlocked !== undefined) return approvalBlocked;
       const result = await this.#runner({
         loop: startedState,
         trigger,
@@ -675,6 +697,9 @@ export class LoopScheduler {
         resolvedHeadSha: result?.resolvedHeadSha,
         cleanupState: result?.cleanupState,
         observedArtifacts: result?.observedArtifacts,
+        blockedByHitlIds: result?.blockedByHitlIds,
+        attentionStatus: result?.attentionStatus,
+        resumeCheckpoint: result?.resumeCheckpoint,
       });
       this.rememberActiveSession(loop.loopId, report);
       return report;
@@ -695,7 +720,7 @@ export class LoopScheduler {
   private activeRunFor(loop: LoopState): ActiveSchedulerRun | undefined {
     const activeRun = this.#activeRuns.get(loop.loopId);
     if (activeRun !== undefined) return activeRun;
-    if (loop.currentRun?.status === "running") {
+    if (loop.currentRun?.status === "running" || loop.currentRun?.status === "needs_user") {
       return { runId: loop.currentRun.runId, sessionId: loop.currentRun.sessionId };
     }
     return undefined;
@@ -713,9 +738,15 @@ export class LoopScheduler {
       return { ...runningReport, ...latest.lastRun };
     }
 
+    const loopOwnedHitl = result.blockedByHitlIds === undefined && result.resumeCheckpoint === undefined && result.blockedReason === "needs_user"
+      ? await this.createLoopBlockerHitl(loop, runningReport, result)
+      : undefined;
+    const blockedByHitlIds = result.blockedByHitlIds ?? hitlIdsFromRecord(loopOwnedHitl);
+    const resumeCheckpoint = result.resumeCheckpoint ?? checkpointFromRecord(loopOwnedHitl, runningReport, result, "resume_run");
+    const status = result.blockedReason === "needs_user" ? "needs_user" : result.status;
     const finishedReport: LoopRunReport = {
       ...runningReport,
-      status: result.status,
+      status,
       endedAt: this.#clock.now(),
       sessionId: result.sessionId,
       goalId: result.goalId,
@@ -729,13 +760,18 @@ export class LoopScheduler {
       integrationErrors: result.integrationErrors,
       toolProfileId: loop.config.toolProfileId,
       blockedReason: result.blockedReason,
+      blockedByHitlIds,
+      attentionStatus: blockedByHitlIds === undefined ? result.attentionStatus : "waiting_for_human",
+      resumeCheckpoint,
       worktreePath: result.worktreePath ?? runningReport.worktreePath,
       baseSha: result.baseSha ?? runningReport.baseSha,
       resolvedHeadSha: result.resolvedHeadSha ?? runningReport.resolvedHeadSha,
       cleanupState: result.cleanupState ?? runningReport.cleanupState,
       observedArtifacts: result.observedArtifacts ?? runningReport.observedArtifacts,
     };
-    const finishedState = await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
+    const finishedState = finishedReport.status === "needs_user"
+      ? await this.#stateManager.recordRunBlocked(loop.loopId, finishedReport)
+      : await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
     await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
     await this.#collisionLedger?.cleanupStale();
 
@@ -761,6 +797,54 @@ export class LoopScheduler {
     };
     await this.#stateManager.appendRunReport(loopId, report);
     return report;
+  }
+
+  private async createExplicitRunApproval(loop: LoopState, runningReport: LoopRunReport, job: LoopJobRecord): Promise<LoopRunReport | undefined> {
+    if (this.#hitl === undefined || loop.config.approvalPolicy !== "explicit_per_run") return undefined;
+    if (job.attempts > 1) return undefined;
+    const record = await this.#hitl.create({
+      owner: { projectSlug: loop.projectId, ownerType: "loop", ownerId: loop.loopId },
+      blockingKey: `loop:${loop.loopId}:run:${runningReport.runId}:approval:explicit_per_run`,
+      source: { type: "loop_approval", loopId: loop.loopId, approvalPoint: "explicit_per_run" },
+      displayPayload: {
+        title: `Approve loop run: ${loop.config.title}`,
+        summary: `Loop ${loop.loopId} is waiting for approval before running ${runningReport.trigger}.`,
+        fields: [
+          { label: "Loop", value: loop.config.title },
+          { label: "Trigger", value: runningReport.trigger },
+          { label: "Job", value: job.jobId },
+        ],
+        redacted: true,
+      },
+    });
+    const checkpoint = checkpointFromRecord(record, runningReport, { worktreePath: job.worktreePath, baseSha: job.baseSha, resolvedHeadSha: job.resolvedHeadSha }, "rerun_job");
+    return await this.finishRun(loop, runningReport, {
+      status: "needs_user",
+      blockedReason: "needs_user",
+      summary: `Loop ${loop.loopId} is waiting for explicit run approval.`,
+      blockedByHitlIds: [record.hitlId],
+      attentionStatus: "waiting_for_human",
+      resumeCheckpoint: checkpoint,
+    });
+  }
+
+  private async createLoopBlockerHitl(loop: LoopState, runningReport: LoopRunReport, result: LoopSchedulerFinishedRunResult): Promise<HitlRecord | undefined> {
+    if (this.#hitl === undefined) return undefined;
+    return await this.#hitl.create({
+      owner: { projectSlug: loop.projectId, ownerType: "loop", ownerId: loop.loopId },
+      blockingKey: `loop:${loop.loopId}:run:${runningReport.runId}:blocker:${result.blockedReason ?? "needs_user"}`,
+      source: { type: "loop_blocker", loopId: loop.loopId, runId: runningReport.runId, reason: result.blockedReason ?? "needs_user" },
+      displayPayload: {
+        title: `Loop blocked: ${loop.config.title}`,
+        summary: result.summary ?? result.skippedReason ?? "Loop run needs human input before continuing.",
+        fields: [
+          { label: "Loop", value: loop.config.title },
+          { label: "Run", value: runningReport.runId },
+          ...(result.sessionId === undefined ? [] : [{ label: "Session", value: result.sessionId }]),
+        ],
+        redacted: true,
+      },
+    });
   }
 
   private async acquireCollisionTargets(loop: LoopState, job: LoopJobRecord, runId: string, trigger: LoopRunTrigger, targets: readonly CollisionTarget[]): Promise<LoopRunReport | undefined> {
@@ -1049,7 +1133,7 @@ function collisionTargetsForRun(loop: LoopState, job: LoopJobRecord): CollisionT
   return targets;
 }
 
-function jobReportFields(job: LoopJobRecord): Pick<LoopRunReport, "jobId" | "triggerKind" | "subjectKey" | "dedupeKey" | "branchKey" | "worktreePath" | "baseSha" | "resolvedHeadSha" | "missedCount" | "blockedReason" | "cleanupState" | "observedArtifacts"> {
+function jobReportFields(job: LoopJobRecord): Pick<LoopRunReport, "jobId" | "triggerKind" | "subjectKey" | "dedupeKey" | "branchKey" | "worktreePath" | "baseSha" | "resolvedHeadSha" | "missedCount" | "blockedReason" | "blockedByHitlIds" | "attentionStatus" | "resumeCheckpoint" | "cleanupState" | "observedArtifacts"> {
   return {
     jobId: job.jobId,
     triggerKind: job.triggerKind,
@@ -1061,6 +1145,9 @@ function jobReportFields(job: LoopJobRecord): Pick<LoopRunReport, "jobId" | "tri
     resolvedHeadSha: job.resolvedHeadSha,
     missedCount: job.missedCount,
     blockedReason: job.blockedReason,
+    blockedByHitlIds: job.blockedByHitlIds,
+    attentionStatus: job.attentionStatus,
+    resumeCheckpoint: job.resumeCheckpoint,
     cleanupState: job.cleanupState,
     observedArtifacts: job.observedArtifacts,
   };
@@ -1070,7 +1157,34 @@ function attachJobFields(report: LoopRunReport, job: LoopJobRecord): LoopRunRepo
   return { ...report, ...jobReportFields(job) };
 }
 
+function hitlIdsFromRecord(record: HitlRecord | undefined): string[] | undefined {
+  return record === undefined ? undefined : [record.hitlId];
+}
+
+function checkpointFromRecord(
+  record: HitlRecord | undefined,
+  runningReport: LoopRunReport,
+  result: Pick<LoopSchedulerRunResult, "worktreePath" | "baseSha" | "resolvedHeadSha">,
+  intendedContinuation: "rerun_job" | "resume_run",
+): LoopRunReport["resumeCheckpoint"] {
+  if (record === undefined) return undefined;
+  return {
+    version: 1,
+    hitlId: record.hitlId,
+    loopId: runningReport.loopId,
+    runId: runningReport.runId,
+    ...(runningReport.jobId === undefined ? {} : { jobId: runningReport.jobId }),
+    trigger: runningReport.trigger,
+    ...(runningReport.subjectKey === undefined ? {} : { subjectKey: runningReport.subjectKey }),
+    ...(result.worktreePath === undefined ? {} : { worktreePath: result.worktreePath }),
+    ...(result.baseSha === undefined ? {} : { baseSha: result.baseSha }),
+    ...(result.resolvedHeadSha === undefined ? {} : { resolvedHeadSha: result.resolvedHeadSha }),
+    intendedContinuation,
+  };
+}
+
 function jobStatusFromRunReport(report: LoopRunReport): Exclude<LoopJobStatus, "pending" | "queued" | "running"> {
+  if (report.status === "needs_user") return "needs_user";
   if (report.blockedReason === "needs_user" || report.blockedReason === "dirty-canonical") return "blocked";
   if (report.status === "succeeded") return "succeeded";
   if (report.status === "failed") return "failed";

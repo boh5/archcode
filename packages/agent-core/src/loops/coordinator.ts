@@ -12,6 +12,9 @@ export interface LoopJobFinishInput {
   readonly status: Exclude<LoopJobStatus, "pending" | "queued" | "running">;
   readonly summary?: string;
   readonly blockedReason?: string;
+  readonly blockedByHitlIds?: string[];
+  readonly attentionStatus?: "clear" | "waiting_for_human";
+  readonly resumeCheckpoint?: LoopJobRecord["resumeCheckpoint"];
   readonly worktreePath?: string;
   readonly baseSha?: string;
   readonly resolvedHeadSha?: string;
@@ -87,6 +90,9 @@ export class LoopJobCoordinator {
     const finished = await this.#queue.update(jobId, {
       status: input.status,
       blockedReason: input.blockedReason,
+      blockedByHitlIds: input.blockedByHitlIds,
+      attentionStatus: input.attentionStatus,
+      resumeCheckpoint: input.resumeCheckpoint,
       worktreePath: input.worktreePath ?? existing.worktreePath,
       baseSha: input.baseSha ?? existing.baseSha,
       resolvedHeadSha: input.resolvedHeadSha ?? existing.resolvedHeadSha,

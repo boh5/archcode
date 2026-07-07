@@ -93,7 +93,7 @@ describe("blocked queued loop runs", () => {
     expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
   });
 
-  test("pending HITL Goal confirmation request maps to needs_user", async () => {
+  test("pending hitl Goal confirmation request maps to needs_user", async () => {
     const fixture = await createRunnerFixture({ events: [hitlRequestEvent("hitl-1")] });
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
 
@@ -106,8 +106,30 @@ describe("blocked queued loop runs", () => {
     });
     if (result === undefined) throw new Error("Expected scheduler runner result");
 
-    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+    expect(result).toMatchObject({ status: "needs_user", blockedReason: "needs_user", sessionId: "session-1", blockedByHitlIds: ["hitl-1"] });
     expect(result.summary).toContain("blocked waiting for user input");
+  });
+
+  test("loop-started Session ask_user hitl maps to needs_user with child blockedByHitlIds", async () => {
+    const fixture = await createRunnerFixture({ blockedByHitlIds: ["session-hitl-1"] });
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+
+    const result = await fixture.runner.createSchedulerRunner()({
+      loop,
+      trigger: "manual",
+      runId: "session-hitl-run",
+      startedAt: 1_000,
+      job: testJob(loop.loopId),
+    });
+    if (result === undefined) throw new Error("Expected scheduler runner result");
+
+    expect(result).toMatchObject({
+      status: "needs_user",
+      blockedReason: "needs_user",
+      blockedByHitlIds: ["session-hitl-1"],
+      attentionStatus: "waiting_for_human",
+      sessionId: "session-1",
+    });
   });
 
   test("dirty canonical blocks before worktree creation completes and before session execution", async () => {
@@ -193,6 +215,7 @@ describe("blocked queued loop runs", () => {
 async function createRunnerFixture(options: {
   events?: SessionEventEnvelope[];
   pendingInteractions?: PendingInteraction[];
+  blockedByHitlIds?: string[];
   worktreeManager?: LoopRunnerWorktreeManager;
 } = {}): Promise<{
   stateManager: LoopStateManager;
@@ -203,7 +226,7 @@ async function createRunnerFixture(options: {
   const workspaceRoot = join(TMP_DIR, `workspace-${crypto.randomUUID()}`);
   await mkdir(workspaceRoot, { recursive: true });
   const stateManager = new LoopStateManager(workspaceRoot);
-  const runtime = new FakeLoopRuntime(options.events ?? [], options.pendingInteractions ?? []);
+  const runtime = new FakeLoopRuntime(options.events ?? [], options.pendingInteractions ?? [], options.blockedByHitlIds ?? []);
   const runner = new LoopRunner({
     stateManager,
     runtime,
@@ -220,7 +243,7 @@ class FakeLoopRuntime {
   readonly #sessions = new Map<string, SessionFile>();
   readonly createSessionMock = mock(async (_workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> => {
     const sessionId = `session-${this.#nextSession++}`;
-    const session = makeSession(sessionId, this.events, this.pendingInteractions, options);
+    const session = makeSession(sessionId, this.events, this.pendingInteractions, this.blockedByHitlIds, options);
     this.#sessions.set(sessionId, session);
     return session;
   });
@@ -245,6 +268,7 @@ class FakeLoopRuntime {
   constructor(
     private readonly events: SessionEventEnvelope[],
     private readonly pendingInteractions: PendingInteraction[],
+    private readonly blockedByHitlIds: string[],
   ) {}
 
   async createSession(workspaceRoot: string, options?: { loopId?: string; sessionRole?: "main"; title?: string }): Promise<SessionFile> {
@@ -307,6 +331,7 @@ function makeSession(
   sessionId: string,
   events: SessionEventEnvelope[],
   pendingInteractions: PendingInteraction[],
+  blockedByHitlIds: string[],
   options?: { loopId?: string; sessionRole?: "main"; title?: string },
 ): SessionFile {
   return {
@@ -324,6 +349,7 @@ function makeSession(
     reminders: [],
     childSessionLinks: [],
     rootSessionId: sessionId,
+    ...(blockedByHitlIds.length === 0 ? {} : { blockedByHitlIds }),
     ...(options?.loopId === undefined ? {} : { loopId: options.loopId }),
     ...(options?.sessionRole === undefined ? {} : { sessionRole: options.sessionRole }),
   };

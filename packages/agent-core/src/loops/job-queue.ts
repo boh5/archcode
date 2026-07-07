@@ -9,6 +9,7 @@ import { canonicalTargetKey } from "./collision-ledger";
 import {
   CollisionTargetSchema,
   LoopCleanupStateSchema,
+  LoopHitlCheckpointSchema,
   LoopJobStatusSchema,
   LoopRunTriggerSchema,
   LoopWorktreeArtifactSchema,
@@ -80,6 +81,9 @@ export interface LoopJobRecord {
   readonly attempts: number;
   readonly rerunAfterCurrent?: boolean;
   readonly blockedReason?: string;
+  readonly blockedByHitlIds?: string[];
+  readonly attentionStatus?: "clear" | "waiting_for_human";
+  readonly resumeCheckpoint?: z.infer<typeof LoopHitlCheckpointSchema>;
   readonly worktreePath?: string;
   readonly baseSha?: string;
   readonly resolvedHeadSha?: string;
@@ -138,6 +142,9 @@ export const LoopJobRecordSchema = z.strictObject({
   attempts: z.number().int().nonnegative(),
   rerunAfterCurrent: z.boolean().optional(),
   blockedReason: z.string().trim().min(1).max(20_000).optional(),
+  blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
+  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
+  resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
   worktreePath: z.string().trim().min(1).max(10_000).optional(),
   baseSha: z.string().trim().min(1).max(128).optional(),
   resolvedHeadSha: z.string().trim().min(1).max(128).optional(),

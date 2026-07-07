@@ -263,6 +263,23 @@ export const LoopWorktreeArtifactSchema = z.strictObject({
   sha: ShaSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopWorktreeArtifact>;
 
+export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded", "needs_user"]);
+export const LoopRunTriggerSchema = z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]);
+
+export const LoopHitlCheckpointSchema = z.strictObject({
+  version: z.literal(1),
+  hitlId: LoopIdentifierSchema,
+  loopId: LoopUuidSchema,
+  runId: LoopIdentifierSchema,
+  jobId: LoopIdentifierSchema.optional(),
+  trigger: LoopRunTriggerSchema,
+  subjectKey: LoopIdentifierSchema.optional(),
+  worktreePath: LoopTextSchema.optional(),
+  baseSha: ShaSchema.optional(),
+  resolvedHeadSha: ShaSchema.optional(),
+  intendedContinuation: z.enum(["rerun_job", "resume_run"]),
+});
+
 export const LoopJobStatusSchema = z.enum([
   "pending",
   "queued",
@@ -292,6 +309,7 @@ export const LoopJobSummarySchema = z.strictObject({
   blockedReason: LoopTextSchema.optional(),
   blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
   attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
+  resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
   worktreePath: LoopTextSchema.optional(),
   baseSha: ShaSchema.optional(),
   resolvedHeadSha: ShaSchema.optional(),
@@ -330,9 +348,6 @@ export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   cleanupPolicy: LoopCleanupPolicySchema.optional(),
 });
 
-export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded", "needs_user"]);
-export const LoopRunTriggerSchema = z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]);
-
 export const LoopRunReportSchema = z.strictObject({
   runId: LoopIdentifierSchema,
   loopId: LoopUuidSchema,
@@ -363,6 +378,7 @@ export const LoopRunReportSchema = z.strictObject({
   blockedReason: LoopTextSchema.optional(),
   blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
   attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
+  resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
   observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
 }) satisfies z.ZodType<ProtocolLoopRunReport>;
@@ -392,6 +408,7 @@ export const LoopStateSchema = z.strictObject({
   queuedJobs: z.array(LoopJobSummarySchema).max(100).optional(),
   blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
   attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
+  resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
   triggerHealth: z.array(LoopTriggerHealthSchema).max(50).optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopState>;
@@ -625,6 +642,58 @@ export class LoopStateManager {
     }, finishedAt);
 
     await this.appendRunReport(loopId, report);
+    await this.write(updated);
+    return updated;
+  }
+
+  async recordRunBlocked(loopId: string, reportBlocked: LoopRunReport): Promise<LoopState> {
+    const state = await this.read(loopId);
+    const report = this.parseRunReport(loopId, reportBlocked);
+    if (report.status !== "needs_user") {
+      throw new LoopRunLogError(loopId, "Blocked Loop run reports must use needs_user status");
+    }
+    const blockedAt = report.endedAt ?? Date.now();
+    const updated = this.nextState({
+      ...state,
+      lastRun: report,
+      currentRun: report,
+      blockedByHitlIds: report.blockedByHitlIds,
+      attentionStatus: "waiting_for_human",
+      resumeCheckpoint: report.resumeCheckpoint,
+      currentJob: report.jobId !== undefined && state.currentJob?.jobId === report.jobId
+        ? {
+            ...state.currentJob,
+            status: "needs_user",
+            blockedReason: report.blockedReason,
+            blockedByHitlIds: report.blockedByHitlIds,
+            attentionStatus: "waiting_for_human",
+            resumeCheckpoint: report.resumeCheckpoint,
+          }
+        : state.currentJob,
+    }, blockedAt);
+
+    await this.appendRunReport(loopId, report);
+    await this.write(updated);
+    return updated;
+  }
+
+  async clearHitlBlocker(loopId: string, hitlId: string): Promise<LoopState> {
+    const state = await this.read(loopId);
+    const blockedByHitlIds = state.blockedByHitlIds?.filter((id) => id !== hitlId);
+    const currentRun = state.currentRun?.resumeCheckpoint?.hitlId === hitlId
+      ? undefined
+      : clearReportHitlId(state.currentRun, hitlId);
+    const currentJob = state.currentJob?.resumeCheckpoint?.hitlId === hitlId
+      ? undefined
+      : clearJobHitlId(state.currentJob, hitlId);
+    const updated = this.nextState({
+      ...state,
+      currentRun,
+      currentJob,
+      blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
+      attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : state.attentionStatus,
+      resumeCheckpoint: state.resumeCheckpoint?.hitlId === hitlId ? undefined : state.resumeCheckpoint,
+    });
     await this.write(updated);
     return updated;
   }
@@ -883,6 +952,26 @@ function nextRunAtFrom(schedule: LoopScheduleSpec, now: number): number | undefi
   }
   if (schedule.kind !== "interval") return undefined;
   return now + schedule.everyMs;
+}
+
+function clearReportHitlId(report: LoopRunReport | undefined, hitlId: string): LoopRunReport | undefined {
+  if (report === undefined) return undefined;
+  const blockedByHitlIds = report.blockedByHitlIds?.filter((id) => id !== hitlId);
+  return LoopRunReportSchema.parse({
+    ...report,
+    blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
+    attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : report.attentionStatus,
+  });
+}
+
+function clearJobHitlId(job: LoopJobSummary | undefined, hitlId: string): LoopJobSummary | undefined {
+  if (job === undefined) return undefined;
+  const blockedByHitlIds = job.blockedByHitlIds?.filter((id) => id !== hitlId);
+  return LoopJobSummarySchema.parse({
+    ...job,
+    blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
+    attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : job.attentionStatus,
+  });
 }
 
 function generateStateSummary(config: LoopConfig): string {
