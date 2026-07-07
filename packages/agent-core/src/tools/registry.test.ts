@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 
 import { z } from "zod";
 import { SkillService } from "../skills";
-import { storeManager } from "../store/store";
+import { createSessionStore, storeManager } from "../store/store";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
@@ -33,6 +33,7 @@ import { TOOL_ERROR_META_KEY } from "./errors";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { jsonSchema } from "ai";
+import { SessionHitlPause } from "../execution/session-hitl-pause";
 
 
 // ─── Test helpers ───
@@ -86,6 +87,12 @@ function makeProjectContext(
     }),
     approvals,
   };
+}
+
+async function makeLoadedProjectContext(workspaceRoot: string): Promise<ProjectContext> {
+  const projectContext = makeProjectContext(workspaceRoot);
+  await projectContext.hitl.load(workspaceRoot);
+  return projectContext;
 }
 
 // ─── ToolRegistry ───
@@ -1261,15 +1268,27 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(order).toEqual(["global-after"]);
     });
 
-    test("ask decision without confirmation callback returns unavailable", async () => {
+    test("ask decision without confirmation callback pauses for durable Session HITL", async () => {
       registry.register(makeDescriptor("echo"));
       registry.globalPermissions.push(async () => ({ outcome: "ask", reason: "confirm" }));
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-pause-${crypto.randomUUID()}`);
+      const sessionId = crypto.randomUUID();
+      const ctx = makeContext({
+        workspaceRoot,
+        store: createSessionStore(sessionId, workspaceRoot),
+        projectContext: await makeLoadedProjectContext(workspaceRoot),
+      });
 
-      const result = await registry.execute(makeToolCall(), makeContext());
-
-      expect(result.isError).toBe(true);
-      expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE");
-      expect(result.meta?.skippedExecution).toBe(true);
+      try {
+        await registry.execute(makeToolCall(), ctx);
+        throw new Error("Expected permission ask to pause for Session HITL");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SessionHitlPause);
+        if (!(error instanceof SessionHitlPause)) throw error;
+        expect(error.record.owner).toEqual({ projectSlug: "test-project", ownerType: "session", ownerId: sessionId });
+        expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "echo" });
+        expect(ctx.permissionOutcome).toBe("ask");
+      }
     });
 
     test("confirmation rejection returns failed permission result", async () => {
@@ -1357,7 +1376,6 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
     test.each([
       ["deny", "TOOL_PERMISSION_CONFIRMATION_DENIED"],
       ["timeout", "TOOL_PERMISSION_CONFIRMATION_TIMEOUT"],
-      ["unavailable", "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE"],
       ["failed", "TOOL_PERMISSION_CONFIRMATION_FAILED"],
     ] as const)("permission ask %s returns %s and skips execution", async (scenario, code) => {
       const desc = makeSpiedDescriptor("sensitiveReadTool");
@@ -1386,6 +1404,32 @@ const descs = [makeDescriptor("echo"), makeDescriptor("read"), makeDescriptor("w
       expect(result.meta?.permissionErrorCode).toBe(code);
       expect(result.meta?.skippedExecution).toBe(true);
       expect(desc.execute).not.toHaveBeenCalled();
+    });
+
+    test("permission ask without confirmation callback pauses for durable Session HITL and skips execution", async () => {
+      const desc = makeSpiedDescriptor("sensitiveReadTool");
+      desc.permissions = [async () => ({ outcome: "ask", reason: "confirm sensitive read" })];
+      registry.register(desc);
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-sensitive-pause-${crypto.randomUUID()}`);
+      const sessionId = crypto.randomUUID();
+      const ctx = makeContext({
+        toolName: "sensitiveReadTool",
+        allowedTools: new Set(["sensitiveReadTool"]),
+        workspaceRoot,
+        store: createSessionStore(sessionId, workspaceRoot),
+        projectContext: await makeLoadedProjectContext(workspaceRoot),
+      });
+
+      try {
+        await registry.execute(makeToolCall({ toolName: "sensitiveReadTool" }), ctx);
+        throw new Error("Expected permission ask to pause for Session HITL");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SessionHitlPause);
+        if (!(error instanceof SessionHitlPause)) throw error;
+        expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "sensitiveReadTool" });
+        expect(ctx.permissionOutcome).toBe("ask");
+        expect(desc.execute).not.toHaveBeenCalled();
+      }
     });
 
     test("prepareInput failure returns TOOL_PREPARE_INPUT_FAILED and runs global after", async () => {
@@ -2059,9 +2103,20 @@ describe("Permission API contract — registry", () => {
         },
       };
       registry.register(desc);
+      const workspaceRoot = join(import.meta.dir, "__test_tmp__", `permission-outcome-ask-${crypto.randomUUID()}`);
+      const sessionId = crypto.randomUUID();
 
-      const ctx = makeContext();
-      await registry.execute(makeToolCall(), ctx);
+      const ctx = makeContext({
+        workspaceRoot,
+        store: createSessionStore(sessionId, workspaceRoot),
+        projectContext: await makeLoadedProjectContext(workspaceRoot),
+      });
+      try {
+        await registry.execute(makeToolCall(), ctx);
+        throw new Error("Expected permission ask to pause for Session HITL");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SessionHitlPause);
+      }
 
       expect(ctx.permissionOutcome).toBe("ask");
     });

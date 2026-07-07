@@ -10,6 +10,19 @@ import type { PermissionApprovalRequest } from "./permission/policy-types";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 
+export interface ToolHitlCheckpointContext {
+  readonly toolCalls: readonly ToolCallLike[];
+  readonly completedToolResults: readonly ToolExecutionResultWithCall[];
+  readonly pendingToolCalls: readonly ToolCallLike[];
+  readonly blockedToolIndex: number;
+  readonly assistantMessageId?: string;
+}
+
+export interface ToolExecutionResultWithCall extends ToolExecutionResult {
+  readonly toolCallId: string;
+  readonly toolName: string;
+}
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export interface ToolTraits {
@@ -76,6 +89,8 @@ export interface ToolExecutionContext {
   onInputResolved?: (redactedInput: unknown) => void;
   /** Called immediately before an effectful tool's execute() can perform side effects. */
   onToolAttempt?: (attempt: ToolAttemptMetadata) => void;
+  /** Current ordered model tool-call batch details used to checkpoint HITL boundaries. */
+  hitlCheckpoint?: ToolHitlCheckpointContext;
 }
 
 type ToolExecutionContextInput = Omit<ToolExecutionContext, "workspaceRoot">;

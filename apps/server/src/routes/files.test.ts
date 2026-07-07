@@ -40,11 +40,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
     dispatchCommand: async () => null,
-    requestPermission: async () => "timeout",
-    respondPermission: () => false,
-    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
-    respondQuestion: () => false,
-    cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
   } as unknown as AgentRuntime;
 }

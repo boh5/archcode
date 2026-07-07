@@ -260,6 +260,14 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     return String(part.errorMessage);
   }
 
+  function lastExecutionEnd(events: SessionEventPayload[]): ExecutionEndEvent | undefined {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event?.type === "execution-end") return event;
+    }
+    return undefined;
+  }
+
   test("returns only text and steps in result shape", async () => {
     createMockStreamText([{ text: "Hello" }]);
 
@@ -712,7 +720,6 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       { code: "TOOL_PERMISSION_DENIED", message: "permission denied sensitive read", toolName: "sensitiveReadTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_DENIED", message: "user denied destructive tool", toolName: "destructiveTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_TIMEOUT", message: "confirmation timed out", toolName: "destructiveTool" },
-      { code: "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE", message: "confirmation unavailable", toolName: "sensitiveReadTool" },
       { code: "TOOL_PERMISSION_CONFIRMATION_FAILED", message: "confirmation callback failed", toolName: "sensitiveReadTool" },
       { code: "TOOL_PREPARE_INPUT_FAILED", message: "prepare input failed", toolName: "safeTool" },
     ];
@@ -766,6 +773,61 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       expect(errorMessage).toContain(`"code":"${testCase.code}"`);
       expect(errorMessage).toContain(testCase.message);
     }
+  });
+
+  test("permission ask without legacy callback pauses for durable Session HITL", async () => {
+    const store = createStore();
+    const events = captureEvents(store);
+    const workspaceRoot = import.meta.dir;
+    const projectContext = createTestProjectContext(workspaceRoot);
+    projectContext.hitl.configure({
+      workspaceRoot,
+      project: projectContext.project,
+      sessions: storeManager,
+      goalState: projectContext.goalState,
+      loopState: projectContext.loopState,
+    });
+    const executor = mock(async (_input: z.infer<typeof testToolSchema>, _ctx: ToolExecutionContext) => "should not run");
+    const registry = createPermissionBranchRegistry(async (_name, input, ctx) => executor(input, ctx));
+    const descriptor = registry.get("sensitiveReadTool");
+    if (!descriptor) throw new Error("Expected sensitiveReadTool");
+    descriptor.permissions = [async () => ({ outcome: "ask", reason: "confirmation unavailable" })];
+    createMockStreamText([
+      {
+        finishReason: "tool-calls",
+        chunks: [{ type: "tool-call", toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool", input: {} }],
+      },
+      { text: "Done" },
+    ]);
+
+    await runQueryLoop(
+      makeOptions({
+        store,
+        toolRegistry: registry,
+        allowedTools: ["sensitiveReadTool"],
+        projectContext,
+        workspaceRoot,
+      }),
+      "Use sensitiveReadTool",
+    );
+
+    expect(executor).not.toHaveBeenCalled();
+    const part = assistantMessages(store)[0].parts[0];
+    expect(part).toMatchObject({
+      state: "running",
+      toolCallId: "tc-durable-permission",
+      toolName: "sensitiveReadTool",
+    });
+    const executionEnd = lastExecutionEnd(events);
+    expect(executionEnd).toMatchObject({
+      status: "waiting_for_human",
+      blockedToolCallId: "tc-durable-permission",
+    });
+    expect(executionEnd?.blockedHitl).toMatchObject({
+      source: { type: "tool_permission", sessionId: store.getState().sessionId, toolCallId: "tc-durable-permission", toolName: "sensitiveReadTool" },
+      toolCallId: "tc-durable-permission",
+      toolName: "sensitiveReadTool",
+    });
   });
 
   test("throwing registry tool stores error message", async () => {

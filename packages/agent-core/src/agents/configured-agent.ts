@@ -254,6 +254,10 @@ export class ConfiguredAgent implements Agent {
           currentUserMessage,
         );
 
+        if (this.store.getState().blockedByHitlIds?.length) {
+          return { text: result.text, steps: result.steps };
+        }
+
         if (!this.hasUnconsumedTodoContinuation() || abort?.aborted) {
           return { text: result.text, steps: result.steps };
         }

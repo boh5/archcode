@@ -7,6 +7,9 @@ export interface ExecutionEndEvent {
   type: "execution-end";
   status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted" | "waiting_for_human";
   error?: string;
+  blockedByHitlIds?: string[];
+  blockedToolCallId?: string;
+  blockedHitl?: SessionHitlCheckpoint;
 }
 
 export interface NormalizedUsage {
@@ -36,6 +39,13 @@ export interface SessionExecutionRecord {
 export interface SessionHitlCheckpoint {
   version: 1;
   hitlId: string;
+  blockingKey?: string;
+  source?: HitlSource;
+  toolCallId?: string;
+  toolName?: string;
+  step?: number;
+  assistantMessageId?: string;
+  displayInput?: unknown;
   blockedAt: string;
   reason?: string;
 }
@@ -554,6 +564,7 @@ export interface PendingToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
+  meta?: Record<string, unknown>;
 }
 
 export interface RunningToolPart {
@@ -568,6 +579,7 @@ export interface RunningToolPart {
   attemptId?: string;
   attemptTimestamp?: number;
   attemptDestructive?: boolean;
+  meta?: Record<string, unknown>;
 }
 
 export interface CompletedToolPart {
@@ -694,6 +706,8 @@ export interface SessionProjection {
   stats: SessionStats;
   executions: SessionExecutionRecord[];
   executionCount: number;
+  blockedHitl?: SessionHitlCheckpoint;
+  blockedByHitlIds?: string[];
   isRunning: boolean;
   isStreamingModel: boolean;
   currentExecutionId?: string;

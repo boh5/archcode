@@ -51,6 +51,16 @@ describe("createServerApp", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  test("does not expose legacy deferred question or permission response routes", async () => {
+    const { app } = createServerApp(mockRuntime, { dev: true });
+
+    const permission = await app.request("/api/permissions/legacy-id", { method: "POST" });
+    const question = await app.request("/api/questions/legacy-id", { method: "POST" });
+
+    expect(permission.status).toBe(404);
+    expect(question.status).toBe(404);
+  });
+
   test("recursively forwards child session events to global SSE", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
     const serverRuntime = createServerEventRuntime(runtime);

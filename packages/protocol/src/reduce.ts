@@ -74,7 +74,7 @@ export function reduceStreamEvent(
     }
 
     case "execution-end": {
-      const settledToolFailures = countRunningTools(state.messages, state.currentAssistantMessageId);
+      const settledToolFailures = event.status === "waiting_for_human" ? 0 : countRunningTools(state.messages, state.currentAssistantMessageId);
       const stats = incrementToolFailures(state.stats, settledToolFailures);
       const executions = settleCurrentExecution(state.executions ?? [], state.currentExecutionId, event, timestamp);
 
@@ -86,7 +86,9 @@ export function reduceStreamEvent(
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
-        currentAssistantMessageId: undefined,
+        currentAssistantMessageId: event.status === "waiting_for_human" ? state.currentAssistantMessageId : undefined,
+        blockedHitl: event.status === "waiting_for_human" ? event.blockedHitl : undefined,
+        blockedByHitlIds: event.status === "waiting_for_human" ? event.blockedByHitlIds : undefined,
       };
     }
 
@@ -1002,6 +1004,7 @@ function settleIncompleteState(
   executionStatus: ExecutionEndEvent["status"],
 ): SessionMessage[] {
   const shouldDiscardPartialModelOutput = executionStatus === "interrupted" || executionStatus === "failed";
+  const waitingForHuman = executionStatus === "waiting_for_human";
 
   return messages.map((message) => {
     const parts: SessionPart[] = message.parts.map((part): SessionPart => {
@@ -1034,6 +1037,13 @@ function settleIncompleteState(
       }
 
       if (part.type === "tool" && (part.state === "pending" || part.state === "running")) {
+        if (waitingForHuman) {
+          return {
+            ...part,
+            meta: { ...(part.meta ?? {}), waitingForHuman: true },
+          };
+        }
+
         const hasAttempt = part.attemptId !== undefined;
         const errorPart: ErrorToolPart = {
           ...toRunningToolPart(part, "input" in part ? part.input : undefined, timestamp),

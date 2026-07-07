@@ -158,7 +158,7 @@ describe("SessionStoreManager", () => {
     ]);
   });
 
-  test("question events update pending interaction status", () => {
+  test("legacy question events do not update canonical pending interaction status", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const store = manager.create(sessionId(), TMP_DIR);
 
@@ -169,15 +169,7 @@ describe("SessionStoreManager", () => {
       questionType: "decision",
       context: { blockers: 2 },
     });
-    expect(store.getState().pendingInteractions).toMatchObject([
-      {
-        id: "question-1",
-        type: "decision",
-        question: "Proceed?",
-        context: { blockers: 2 },
-        status: "pending",
-      },
-    ]);
+    expect(store.getState().pendingInteractions).toEqual([]);
 
     store.getState().append({
       type: "question.terminal",
@@ -185,9 +177,7 @@ describe("SessionStoreManager", () => {
       status: "resolved",
       answer: "yes",
     });
-    expect(store.getState().pendingInteractions).toMatchObject([
-      { id: "question-1", status: "answered", answer: { content: "yes" } },
-    ]);
+    expect(store.getState().pendingInteractions).toEqual([]);
   });
 
   test("compression events persist compression state to disk", async () => {

@@ -127,9 +127,9 @@ export class SessionStoreManager {
         || event.type === "llm-recovery-failed"
         || event.type === "compact"
         || event.type === "tool-child-session-link"
-        || event.type === "question.request"
-        || event.type === "question.terminal"
         || event.type === "loop-error"
+        || event.type === "hitl.request"
+        || event.type === "hitl.resolved"
         || event.type === "compression.block_committed"
         || event.type === "compression.block_failed"
         || event.type === "compression.ref_map_updated"
@@ -558,36 +558,6 @@ function reduceStoreEvent(
   state: SessionStoreState,
   event: SessionEventPayload,
 ): Partial<SessionStoreState> {
-  if (event.type === "question.request") {
-    return {
-      pendingInteractions: upsertPendingInteraction(state.pendingInteractions ?? [], {
-        id: event.questionId,
-        type: event.questionType ?? "clarification",
-        question: event.question,
-        ...(event.context === undefined ? {} : { context: event.context }),
-        askedAt: new Date().toISOString(),
-        status: "pending",
-      }),
-    };
-  }
-
-  if (event.type === "question.terminal") {
-    if (event.status === "resolved" && event.answer !== undefined) {
-      return {
-        pendingInteractions: answerPendingInteraction(
-          state.pendingInteractions ?? [],
-          event.questionId,
-          event.answer,
-          new Date().toISOString(),
-        ),
-      };
-    }
-
-    return {
-      pendingInteractions: expirePendingInteractions(state.pendingInteractions ?? [], [event.questionId]),
-    };
-  }
-
   if (isStreamEvent(event)) return reduceStreamEvent(state, event);
 
   return {};

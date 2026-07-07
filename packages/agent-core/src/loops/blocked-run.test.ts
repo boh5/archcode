@@ -35,7 +35,7 @@ afterAll(async () => {
 });
 
 describe("blocked queued loop runs", () => {
-  test("pending permission request maps to needs_user instead of failure", async () => {
+  test("legacy pending permission request no longer maps to needs_user", async () => {
     const fixture = await createRunnerFixture({ events: [permissionRequestEvent("permission-1")] });
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
 
@@ -48,16 +48,12 @@ describe("blocked queued loop runs", () => {
     });
     if (result === undefined) throw new Error("Expected scheduler runner result");
 
-    expect(result).toMatchObject({
-      status: "skipped",
-      sessionId: "session-1",
-      blockedReason: "needs_user",
-    });
+    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
     expect(result.error).toBeUndefined();
     expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
   });
 
-  test("pending ask_user question request maps to needs_user instead of failure", async () => {
+  test("legacy pending ask_user question request no longer maps to needs_user", async () => {
     const fixture = await createRunnerFixture({ events: [questionRequestEvent("question-1")] });
     const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
 
@@ -70,11 +66,11 @@ describe("blocked queued loop runs", () => {
     });
     if (result === undefined) throw new Error("Expected scheduler runner result");
 
-    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
     expect(result.error).toBeUndefined();
   });
 
-  test("pending interaction state maps to needs_user without relying only on event replay", async () => {
+  test("legacy pending interaction state is not canonical loop blocking state", async () => {
     const pending: PendingInteraction = {
       id: "interaction-1",
       type: "clarification",
@@ -94,7 +90,7 @@ describe("blocked queued loop runs", () => {
     });
     if (result === undefined) throw new Error("Expected scheduler runner result");
 
-    expect(result).toMatchObject({ status: "skipped", blockedReason: "needs_user", sessionId: "session-1" });
+    expect(result).toMatchObject({ status: "succeeded", sessionId: "session-1" });
   });
 
   test("pending HITL Goal confirmation request maps to needs_user", async () => {

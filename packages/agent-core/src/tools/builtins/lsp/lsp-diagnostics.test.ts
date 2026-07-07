@@ -11,6 +11,7 @@ import { ToolRegistry } from "../../registry";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import { lspDiagnosticsTool } from "./lsp-diagnostics";
 import { createTestProjectContext } from "../../test-project-context";
+import { SessionHitlPause } from "../../../execution/session-hitl-pause";
 
 const testDir = path.join(import.meta.dir, "__test_tmp__", "lsp-diagnostics");
 
@@ -151,17 +152,24 @@ describe("lspDiagnosticsTool", () => {
     );
   });
 
-  test("workspace permission asks for ../ traversal through registry when confirmation is unavailable", async () => {
+  test("workspace permission asks for ../ traversal through registry and pauses for durable Session HITL", async () => {
     const registry = new ToolRegistry();
     registry.register(lspDiagnosticsTool);
+    const sessionId = crypto.randomUUID();
+    const ctx = makeCtx({ toolName: "lsp_diagnostics", toolCallId: "call-1", input: { filePath: "../outside.ts" }, store: createMockStore({ sessionId }) });
+    await ctx.projectContext.hitl.load(testDir);
 
-    const result = await registry.execute(
-      { toolName: "lsp_diagnostics", toolCallId: "call-1", input: { filePath: "../outside.ts" } },
-      makeCtx({ toolName: "lsp_diagnostics", toolCallId: "call-1", input: { filePath: "../outside.ts" } }),
-    );
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("permission-confirmation-unavailable");
+    try {
+      await registry.execute(
+        { toolName: "lsp_diagnostics", toolCallId: "call-1", input: { filePath: "../outside.ts" } },
+        ctx,
+      );
+      throw new Error("Expected LSP traversal permission to pause for Session HITL");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SessionHitlPause);
+      if (!(error instanceof SessionHitlPause)) throw error;
+      expect(error.record.source).toEqual({ type: "tool_permission", sessionId, toolCallId: "call-1", toolName: "lsp_diagnostics" });
+    }
   });
 
   // ─── Directory support ───

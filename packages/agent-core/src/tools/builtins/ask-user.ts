@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { defineTool } from "../define-tool";
-import type { AskUserQuestionOption, ToolExecutionContext, ToolExecutionResult } from "../types";
+import type { ToolExecutionContext, ToolExecutionResult } from "../types";
 import { createToolErrorResult } from "../errors";
+import { pauseForAskUser } from "../../execution/session-hitl-pause";
+import { formatAskUserAnswers } from "./ask-user-format";
 
 // ─── Input Schema ───
 
@@ -30,27 +32,13 @@ type AskUserResult = Awaited<ReturnType<NonNullable<ToolExecutionContext["askUse
 
 // ─── Execute Logic ───
 
-function formatAnswers(answers: string[][], questions: AskUserInput["questions"]): string {
-  if (questions.length === 1) {
-    const answer = answers[0];
-    if (!answer || answer.length === 0) return "";
-    return answer.join(", ");
-  }
-
-  const lines = questions.map((q, i) => {
-    const answer = answers[i];
-    if (!answer || answer.length === 0) return `${q.header}: `;
-    return `${q.header}: ${answer.join(", ")}`;
-  });
-  return lines.join("\n");
-}
-
 export async function executeAskUser(
   input: AskUserInput,
   ctx: ToolExecutionContext,
 ): Promise<ToolExecutionResult> {
-  if (!ctx.askUser) {
-    return createToolErrorResult({ kind: "cancelled", message: "ask_user is not available" });
+  const askUser = ctx.askUser;
+  if (!askUser) {
+    await pauseForAskUser(input, ctx);
   }
 
   if (ctx.abort.aborted) {
@@ -61,7 +49,7 @@ export async function executeAskUser(
   let result: AskUserResult;
   try {
     result = await Promise.race([
-      ctx.askUser({
+      askUser!({
         toolName: ctx.toolName,
         toolCallId: ctx.toolCallId,
         questions: input.questions,
@@ -94,7 +82,7 @@ export async function executeAskUser(
         message: `ask_user received empty answer for question ${emptyIndex + 1}`,
       });
     }
-    const output = formatAnswers(result.answers, input.questions);
+    const output = formatAskUserAnswers(result.answers, input.questions);
     return { output, isError: false };
   }
 

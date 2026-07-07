@@ -155,11 +155,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     disposeSessionAgent: () => undefined,
     disposeAllSessionAgents: () => undefined,
     isSessionTombstoned: () => false,
-    requestPermission: async () => "timeout",
-    respondPermission: () => false,
-    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
-    respondQuestion: () => false,
-    cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
   } as unknown as AgentRuntime;
 

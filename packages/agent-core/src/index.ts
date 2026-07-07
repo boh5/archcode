@@ -60,4 +60,3 @@ export type {
   ToolConfirmationRequest,
   ToolConfirmationResult,
 } from "./tools/types";
-export type { AskUserResponse } from "./deferred";

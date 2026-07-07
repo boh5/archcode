@@ -1,10 +1,20 @@
-import { describe, expect, test } from "bun:test";
-import { storeManager } from "../../store/store";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { createSessionStore, storeManager } from "../../store/store";
+import { getSessionHitlPath } from "../../store/sessions-dir";
 import { askUserTool, AskUserInputSchema, executeAskUser } from "./ask-user";
 import { createRegistry } from "../registry";
 import type { AskUserCallback, AskUserQuestion, ToolExecutionContext } from "../types";
 import { createTestProjectContext } from "../test-project-context";
 import { SkillService } from "../../skills";
+import { SessionHitlPause } from "../../execution/session-hitl-pause";
+
+const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "ask-user");
+
+afterAll(async () => {
+  await rm(TMP_ROOT, { recursive: true, force: true });
+});
 
 const SINGLE_QUESTION: AskUserQuestion = {
   question: "What is your name?",
@@ -43,19 +53,36 @@ const MULTI_QUESTIONS: AskUserQuestion[] = [
 ];
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
-  return { store: {} as any,
-  toolName: "ask_user",
-  toolCallId: "call-1",
-  input: {},
-  step: 1,
-  abort: new AbortController().signal,
-  startedAt: Date.now(),
-  allowedTools: new Set(["ask_user"]),
-  agentSkills: [],
-  skillService: new SkillService({ builtinSkills: {} }),
-  workspaceRoot: "/tmp/test",
-  storeManager,
-    projectContext: createTestProjectContext("/tmp/test"), ...overrides,  };
+  const workspaceRoot = "/tmp/test";
+  return {
+    store: createSessionStore(crypto.randomUUID(), workspaceRoot),
+    toolName: "ask_user",
+    toolCallId: "call-1",
+    input: {},
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set(["ask_user"]),
+    agentSkills: [],
+    skillService: new SkillService({ builtinSkills: {} }),
+    workspaceRoot,
+    storeManager,
+    projectContext: createTestProjectContext(workspaceRoot),
+    ...overrides,
+  };
+}
+
+async function makeDurableCtx(overrides: Partial<ToolExecutionContext> = {}): Promise<ToolExecutionContext> {
+  await mkdir(TMP_ROOT, { recursive: true });
+  const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
+  const projectContext = createTestProjectContext(workspaceRoot);
+  await projectContext.hitl.load(workspaceRoot);
+  return makeCtx({
+    store: createSessionStore(crypto.randomUUID(), workspaceRoot),
+    workspaceRoot,
+    projectContext,
+    ...overrides,
+  });
 }
 
 describe("AskUserInputSchema", () => {
@@ -178,14 +205,27 @@ describe("AskUserInputSchema", () => {
 });
 
 describe("executeAskUser", () => {
-  test("returns isError when askUser callback is missing", async () => {
-    const ctx = makeCtx({ askUser: undefined });
-    const result = await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
+  test("creates durable Session HITL pause when askUser callback is missing", async () => {
+    const ctx = await makeDurableCtx({ askUser: undefined });
 
-    const parsed = JSON.parse(result.output);
-    expect(parsed.message).toBe("ask_user is not available");
-    expect(parsed.code).toBe("TOOL_CANCELLED");
-    expect(result.isError).toBe(true);
+    try {
+      await executeAskUser({ questions: [SINGLE_QUESTION] }, ctx);
+      throw new Error("Expected ask_user to pause for Session HITL");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SessionHitlPause);
+      if (!(error instanceof SessionHitlPause)) throw error;
+      const pause = error;
+      expect(pause.record.owner).toEqual({
+        projectSlug: "test-project",
+        ownerType: "session",
+        ownerId: ctx.store.getState().sessionId,
+      });
+      expect(pause.record.source).toEqual({ type: "ask_user", sessionId: ctx.store.getState().sessionId, toolCallId: "call-1" });
+      expect(pause.checkpoint).toMatchObject({ hitlId: pause.record.hitlId, toolCallId: "call-1", toolName: "ask_user" });
+
+      const hitlFile = await Bun.file(getSessionHitlPath(ctx.workspaceRoot, ctx.store.getState().sessionId)).json() as { pending: Array<{ hitlId: string }> };
+      expect(hitlFile.pending.map((record) => record.hitlId)).toContain(pause.record.hitlId);
+    }
   });
 
   test("returns answers as tool result for single question", async () => {

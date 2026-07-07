@@ -17,7 +17,6 @@ import {
 import type { AgentResult } from "../agents/types";
 import type { CommandResult } from "../commands/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
-import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
 import { getSessionDir } from "../store/sessions-dir";
@@ -25,7 +24,7 @@ import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
 import type { StoredMessage } from "../store/types";
-import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult, ToolExecutionOrigin } from "../tools/types";
+import type { ToolExecutionOrigin } from "../tools/types";
 import type { Logger } from "../logger";
 
 const ABORT_AND_WAIT_TIMEOUT_MS = 10000;
@@ -97,18 +96,6 @@ interface SessionExecutionManagerConfig {
   ) => boolean;
   readonly resolveRootSessionId: (sessionId: string, workspaceRoot: string) => Promise<string>;
   readonly buildSessionTree: (workspaceRoot: string, rootSessionId: string) => Promise<SessionTreeResponse>;
-  readonly requestPermission: (
-    workspaceRoot: string,
-    sessionId: string,
-    request: ToolConfirmationRequest,
-    abortSignal?: AbortSignal,
-  ) => Promise<ToolConfirmationResult>;
-  readonly requestQuestion: (
-    workspaceRoot: string,
-    sessionId: string,
-    request: AskUserRequest,
-  ) => Promise<AskUserResponse>;
-  readonly cleanupDeferredSession: (workspaceRoot: string, sessionId: string) => void;
   readonly trackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly untrackSession: (workspaceRoot: string, sessionId: string) => void;
   readonly logger: Logger;
@@ -417,7 +404,6 @@ export class SessionExecutionManager {
     }
 
     for (const id of sessionIds) {
-      this.#config.cleanupDeferredSession(workspaceRoot, id);
       this.#config.sessionAgentManager.dispose(workspaceRoot, id);
       this.#config.untrackSession(workspaceRoot, id);
       this.#detachIfIdle(workspaceRoot, id);
@@ -452,20 +438,6 @@ export class SessionExecutionManager {
       const loopOrigin = isToolExecutionOrigin(input.origin) ? input.origin : undefined;
       await agent.run(input.userMessage, {
         abort: execution.abortController.signal,
-        confirmPermission: (request, abortSignal) => {
-          if (loopOrigin !== undefined) {
-            void this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal).catch(() => undefined);
-            return Promise.resolve("timeout");
-          }
-          return this.#config.requestPermission(input.workspaceRoot, input.sessionId, request, abortSignal);
-        },
-        askUser: (request) => {
-          if (loopOrigin !== undefined) {
-            void this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request).catch(() => undefined);
-            return Promise.resolve({ isError: true, reason: "Loop run is waiting for user input" });
-          }
-          return this.#config.requestQuestion(input.workspaceRoot, input.sessionId, request);
-        },
         ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
         ...(loopOrigin === undefined ? {} : { origin: loopOrigin }),
       });
@@ -506,7 +478,6 @@ export class SessionExecutionManager {
 
     if (isCurrentExecution) {
       if (slotAcquired) this.#config.sessionAgentManager.releaseSlot(execution.workspaceRoot, execution.sessionId);
-      this.#config.cleanupDeferredSession(execution.workspaceRoot, execution.sessionId);
       this.#detachIfIdle(execution.workspaceRoot, execution.sessionId);
     }
   }
@@ -518,7 +489,6 @@ export class SessionExecutionManager {
 
     this.#markParentLinkCancelling(execution.workspaceRoot, execution.sessionId);
     execution.abortController.abort(new Error(reason));
-    this.#config.cleanupDeferredSession(execution.workspaceRoot, execution.sessionId);
   }
 
   async #abortAndWaitForSessions(workspaceRoot: string, sessionIds: readonly string[]): Promise<string[]> {

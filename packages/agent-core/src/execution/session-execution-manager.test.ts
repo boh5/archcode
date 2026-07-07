@@ -6,12 +6,10 @@ import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
 import type { CommandResult } from "../commands/types";
-import type { AskUserResponse } from "../deferred";
 import { SessionDeleteConflictError } from "../store/errors";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { getSessionDir, getSessionPath } from "../store/sessions-dir";
-import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import { SessionExecutionManager } from "./session-execution-manager";
 import { silentLogger } from "../logger";
 import type { SessionStoreState, ToolChildSessionLink } from "../store/types";
@@ -86,9 +84,6 @@ interface FakeManagerOptions {
   childRun?: Promise<AgentResult>;
   childRunStarted?: () => void;
   childRunMessage?: (message: string) => void;
-  requestPermission?: SessionExecutionManagerConfigForTest["requestPermission"];
-  requestQuestion?: SessionExecutionManagerConfigForTest["requestQuestion"];
-  cleanupDeferredSession?: () => void;
 }
 
 type SessionExecutionManagerConfigForTest = ConstructorParameters<typeof SessionExecutionManager>[0];
@@ -184,22 +179,16 @@ function makeFactory(overrides: Partial<AgentFactory> = {}): AgentFactory {
 function createManager(agents: Record<string, MockAgent>, options: FakeManagerOptions = {}) {
   const sessionAgentManager = createFakeManager(agents, options);
   const executionStoreManager = options.storeManager ?? storeManager;
-  const cleanupDeferredSession = mock(options.cleanupDeferredSession ?? (() => undefined));
-  const requestPermission = mock(options.requestPermission ?? (async (_root: string, _sessionId: string, _request: ToolConfirmationRequest): Promise<ToolConfirmationResult> => "approve_once"));
-  const requestQuestion = mock(options.requestQuestion ?? (async (_root: string, _sessionId: string, _request: AskUserRequest): Promise<AskUserResponse> => ({ answers: [] })));
   const trackSession = mock(() => undefined);
   const untrackSession = mock(() => undefined);
   const manager = new SessionExecutionManager({
     sessionAgentManager,
     ...storeCallbacks(executionStoreManager),
-    requestPermission,
-    requestQuestion,
-    cleanupDeferredSession,
     trackSession,
     untrackSession,
     logger: silentLogger,
   });
-  return { manager, sessionAgentManager, cleanupDeferredSession, requestPermission, requestQuestion, trackSession, untrackSession };
+  return { manager, sessionAgentManager, trackSession, untrackSession };
 }
 
 async function writeSessionFile(input: {
@@ -327,9 +316,6 @@ describe("SessionExecutionManager", () => {
         getOrCreate: mock(async () => await new Promise<Agent>(() => undefined)),
       } as unknown as SessionAgentManager,
       ...storeCallbacks(storeManager),
-      requestPermission: mock(async (): Promise<ToolConfirmationResult> => "approve_once"),
-      requestQuestion: mock(async (): Promise<AskUserResponse> => ({ answers: [] })),
-      cleanupDeferredSession: mock(() => undefined),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       logger: silentLogger,
@@ -361,40 +347,28 @@ describe("SessionExecutionManager", () => {
     expect(tool).toMatchObject({ type: "tool", state: "error", errorMessage: "Execution ended before tool result" });
   });
 
-  test("permission and question requests are cleaned up on cancel", async () => {
-    const permission = deferred<ToolConfirmationResult>();
-    const question = deferred<AskUserResponse>();
+  test("session runs do not inject legacy deferred permission or question callbacks", async () => {
+    const run = deferred<AgentResult>();
+    let runOptions: AgentRunOptions | AbortSignal | undefined;
     const agent = {
       store: storeManager.create("deferred-cancel", workspaceRoot),
       run: mock(async (_message: string, options?: AgentRunOptions | AbortSignal): Promise<AgentResult> => {
-        if (!options || options instanceof AbortSignal) throw new Error("expected run options");
-        await Promise.all([
-          options.confirmPermission?.({ toolName: "bash", toolCallId: "perm", input: {}, description: "confirm" }),
-          options.askUser?.({ toolName: "ask_user", toolCallId: "ask", questions: [] }),
-        ]);
-        return { text: "done", steps: 1 };
+        runOptions = options;
+        return await withAbort(run.promise, options instanceof AbortSignal ? options : options?.abort);
       }),
       dispose: mock(() => undefined),
     } as unknown as MockAgent;
-    const cleanupDeferredSession = mock(() => {
-      permission.resolve("timeout");
-      question.resolve({ isError: true, reason: "Cancelled" });
-    });
-    const { manager } = createManager({ "deferred-cancel": agent }, {
-      cleanupDeferredSession,
-      requestPermission: async (_root, _sessionId, _request, abortSignal) => {
-        abortSignal?.addEventListener("abort", () => permission.resolve("timeout"), { once: true });
-        return await permission.promise;
-      },
-      requestQuestion: async () => await question.promise,
-    });
+    const { manager } = createManager({ "deferred-cancel": agent });
 
     const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "deferred-cancel", userMessage: "work" });
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!runOptions || runOptions instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
+    expect(runOptions.confirmPermission).toBeUndefined();
+    expect(runOptions.askUser).toBeUndefined();
     expect(manager.abort(workspaceRoot, "deferred-cancel")).toBe(true);
+    run.resolve({ text: "done", steps: 1 });
     await execution.promise;
 
-    expect(cleanupDeferredSession).toHaveBeenCalledWith(workspaceRoot, "deferred-cancel");
     expect(agent.store.getState().executions.at(-1)?.status).toBe("cancelled");
   });
 
@@ -459,9 +433,6 @@ describe("SessionExecutionManager", () => {
     const managerB = new SessionExecutionManager({
       sessionAgentManager,
       ...storeCallbacks(storeManager),
-      requestPermission: mock(async (): Promise<ToolConfirmationResult> => "approve_once"),
-      requestQuestion: mock(async (): Promise<AskUserResponse> => ({ answers: [] })),
-      cleanupDeferredSession: mock(() => undefined),
       trackSession: mock(() => undefined),
       untrackSession: mock(() => undefined),
       logger: silentLogger,
@@ -513,19 +484,16 @@ describe("SessionExecutionManager", () => {
     expect(manager.isRunning(workspaceRoot, "abort-all-two")).toBe(false);
   });
 
-  test("bridges run options to core permission and question services", async () => {
+  test("startExecution omits legacy permission and question service callbacks", async () => {
     const agent = new MockAgent("callbacks", Promise.resolve({ text: "done", steps: 1 }));
-    const { manager, requestPermission, requestQuestion } = createManager({ callbacks: agent });
+    const { manager } = createManager({ callbacks: agent });
 
     const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "callbacks", userMessage: "work" });
     await execution.promise;
     const options = agent.runMock.mock.calls[0]?.[1];
     if (!options || options instanceof AbortSignal) throw new Error("Expected AgentRunOptions");
-    await options.confirmPermission?.({ toolName: "bash", toolCallId: "call", input: {}, description: "confirm" });
-    await options.askUser?.({ toolName: "ask_user", toolCallId: "ask", questions: [] });
-
-    expect(requestPermission).toHaveBeenCalled();
-    expect(requestQuestion).toHaveBeenCalled();
+    expect(options.confirmPermission).toBeUndefined();
+    expect(options.askUser).toBeUndefined();
   });
 
   test("startChildExecution validates through factory and runs a child session", async () => {

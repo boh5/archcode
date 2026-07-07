@@ -21,6 +21,7 @@ import {
   kindFromCode,
   normalizeToolErrorResult,
 } from "./errors";
+import { pauseForPermission, SessionHitlPause } from "../execution/session-hitl-pause";
 
 export class ToolRegistry {
   private _descriptors: Map<string, AnyToolDescriptor>;
@@ -218,11 +219,12 @@ export class ToolRegistry {
           });
         }
 
-        try {
-          const output = await descriptor.execute(currentInput, ctx);
-          result = normalizeExecuteOutput(output);
-        } catch (err) {
-          this._logger.warn("tool.execute.failed", {
+      try {
+        const output = await descriptor.execute(currentInput, ctx);
+        result = normalizeExecuteOutput(output);
+      } catch (err) {
+        if (err instanceof SessionHitlPause) throw err;
+        this._logger.warn("tool.execute.failed", {
             context: { tool: descriptor.name },
             error: String(err),
           });
@@ -247,6 +249,7 @@ export class ToolRegistry {
           }
         }
       } catch (err) {
+        if (err instanceof SessionHitlPause) throw err;
         this._logger.warn("tool.pipeline.failed", {
           context: { tool: descriptor.name },
           error: String(err),
@@ -301,11 +304,23 @@ export class ToolRegistry {
       return undefined;
     }
 
-    if (!ctx.confirmPermission) {
-      return createPermissionErrorResult(
-        "TOOL_PERMISSION_CONFIRMATION_UNAVAILABLE",
-        unsatisfiedAsk.reason ?? `Tool "${ctx.toolName}" requires confirmation`,
-      );
+    const confirmationRequest = {
+      toolName: ctx.toolName,
+      toolCallId: ctx.toolCallId,
+      input: ctx.redactedInput ?? redactValue(input),
+      description: descriptor.description,
+      reason: unsatisfiedAsk.prompt ?? unsatisfiedAsk.reason,
+      ...(unsatisfiedAsk.approval ? { approval: unsatisfiedAsk.approval } : {}),
+      ...(ctx.agentName ? { agentName: ctx.agentName } : {}),
+      ...(ctx.currentDepth !== undefined ? { currentDepth: ctx.currentDepth } : {}),
+      ...(unsatisfiedAsk.display ? { decisionDisplay: unsatisfiedAsk.display } : {}),
+      ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
+      ...(ctx.origin ? { origin: ctx.origin } : {}),
+    };
+
+    const confirmPermission = ctx.confirmPermission;
+    if (!confirmPermission) {
+      await pauseForPermission(confirmationRequest, ctx);
     }
 
     if (ctx.abort.aborted) {
@@ -316,19 +331,7 @@ export class ToolRegistry {
     }
 
     try {
-      const confirmation = await ctx.confirmPermission({
-        toolName: ctx.toolName,
-        toolCallId: ctx.toolCallId,
-        input: ctx.redactedInput ?? redactValue(input),
-        description: descriptor.description,
-        reason: unsatisfiedAsk.prompt ?? unsatisfiedAsk.reason,
-        ...(unsatisfiedAsk.approval ? { approval: unsatisfiedAsk.approval } : {}),
-        ...(ctx.agentName ? { agentName: ctx.agentName } : {}),
-        ...(ctx.currentDepth !== undefined ? { currentDepth: ctx.currentDepth } : {}),
-        ...(unsatisfiedAsk.display ? { decisionDisplay: unsatisfiedAsk.display } : {}),
-        ...(unsatisfiedAsk.ruleId ? { ruleId: unsatisfiedAsk.ruleId } : {}),
-        ...(ctx.origin ? { origin: ctx.origin } : {}),
-      }, ctx.abort);
+      const confirmation = await confirmPermission!(confirmationRequest, ctx.abort);
 
       if (ctx.abort.aborted || confirmation === "timeout") {
         return createPermissionErrorResult(

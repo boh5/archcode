@@ -57,11 +57,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
     disposeAllSessionAgents: mock(() => undefined),
     isSessionTombstoned: mock(() => false),
     dispatchCommand: dispatch,
-    requestPermission: mock(async () => "timeout"),
-    respondPermission: mock(() => false),
-    requestQuestion: mock(async () => ({ isError: true, reason: "Cancelled" })),
-    respondQuestion: mock(() => false),
-    cleanupDeferredSession: mock(() => undefined),
     notifyRuntimeShutdown: mock(() => undefined),
   } as unknown as AgentRuntime;
 }

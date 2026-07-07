@@ -874,25 +874,11 @@ function observedArtifactsFromInspection(inspection: LoopWorktreeInspection, cle
 }
 
 function sessionHasPendingUserInteraction(session: SessionFile): boolean {
-  if ((session.pendingInteractions ?? []).some((interaction) => interaction.status === "pending")) return true;
-  const pendingPermissions = new Set<string>();
-  const pendingQuestions = new Set<string>();
+  if ((session.blockedByHitlIds ?? []).length > 0 || session.blockedHitl !== undefined) return true;
   const pendingHitl = new Set<string>();
-  const terminalPermissionStatuses = new Map<string, unknown>();
-  const terminalQuestionStatuses = new Map<string, unknown>();
   const terminalHitlStatuses = new Map<string, unknown>();
   for (const envelope of session.events ?? []) {
     const payload = envelope.payload as Record<string, unknown> | undefined;
-    if (payload?.type === "permission.request" && typeof payload.permissionId === "string") pendingPermissions.add(payload.permissionId);
-    if (payload?.type === "permission.terminal" && typeof payload.permissionId === "string") {
-      pendingPermissions.delete(payload.permissionId);
-      terminalPermissionStatuses.set(payload.permissionId, payload.status);
-    }
-    if (payload?.type === "question.request" && typeof payload.questionId === "string") pendingQuestions.add(payload.questionId);
-    if (payload?.type === "question.terminal" && typeof payload.questionId === "string") {
-      pendingQuestions.delete(payload.questionId);
-      terminalQuestionStatuses.set(payload.questionId, payload.status);
-    }
     if (payload?.type === "hitl.request") {
       const request = payload.request as Record<string, unknown> | undefined;
       if (typeof request?.hitlId === "string") pendingHitl.add(request.hitlId);
@@ -902,10 +888,6 @@ function sessionHasPendingUserInteraction(session: SessionFile): boolean {
       terminalHitlStatuses.set(payload.hitlId, payload.status);
     }
   }
-  return pendingPermissions.size > 0
-    || pendingQuestions.size > 0
-    || pendingHitl.size > 0
-    || [...terminalPermissionStatuses.values()].some((status) => status !== "resolved")
-    || [...terminalQuestionStatuses.values()].some((status) => status !== "resolved")
+  return pendingHitl.size > 0
     || [...terminalHitlStatuses.values()].some((status) => status !== "resolved");
 }

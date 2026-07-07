@@ -10,6 +10,7 @@ import { redactValue } from "../../tools/security";
 import { MissingProjectContextError } from "../errors";
 import { classifyLlmError, runLlmStream } from "../../llm";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "./loop-hooks";
+import { SessionHitlPause } from "../../execution/session-hitl-pause";
 
 const DEFAULT_MAX_STEPS = 50;
 const ZERO_OUTPUT_SHORT_ATTEMPTS = 3;
@@ -411,6 +412,17 @@ export async function runQueryLoop(
 
     return { text: lastText, steps };
   } catch (err) {
+    if (err instanceof SessionHitlPause) {
+      runEndStatus = "waiting_for_human";
+      store.getState().append({
+        type: "execution-end",
+        status: "waiting_for_human",
+        blockedByHitlIds: [err.record.hitlId],
+        blockedToolCallId: err.checkpoint.toolCallId,
+        blockedHitl: err.checkpoint,
+      });
+      return { text: lastText, steps };
+    }
     failed = true;
     runEndStatus = abort.aborted ? "aborted" : "failed";
     logger.error("query.loop.fatal", {
@@ -913,6 +925,32 @@ async function executeToolCalls(
     }
   }
 
+  const completedToolResults: Array<{ toolCallId: string; toolName: string; output: string; isError: boolean; meta?: Record<string, unknown> }> = [];
+  const durableHitlMode = confirmPermission === undefined && askUser === undefined;
+  if (durableHitlMode) {
+    await executeToolCallsSequentially({
+      toolCalls: executableToolCalls,
+      registry,
+      store,
+      step,
+      abort,
+      allowedTools,
+      projectContext,
+      startChildExecution,
+      cancelChildSession,
+      resumeChildSession,
+      abortSessionExecutionAndWait,
+      agentName,
+      agentSkills,
+      skillService,
+      storeManager,
+      executionOrigin,
+      currentDepth,
+      completedToolResults,
+    });
+    return;
+  }
+
   const batches = partitionToolCalls(executableToolCalls, registry);
 
   for (let i = 0; i < batches.length; i++) {
@@ -959,6 +997,13 @@ async function executeToolCalls(
             ...(agentName ? { agentName } : {}),
             ...(currentDepth !== undefined ? { currentDepth } : {}),
             ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
+            hitlCheckpoint: {
+              toolCalls: executableToolCalls,
+              completedToolResults,
+              pendingToolCalls: executableToolCalls.slice(executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId)),
+              blockedToolIndex: executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId),
+              ...(store.getState().currentAssistantMessageId === undefined ? {} : { assistantMessageId: store.getState().currentAssistantMessageId }),
+            },
             onInputResolved(redactedInput) {
               store.getState().append({
                 type: "tool-input-resolved",
@@ -979,6 +1024,7 @@ async function executeToolCalls(
             },
           });
           const result = await registry.execute(toolCall, ctx);
+          completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
           appendToolResult(store, toolCall, result.output, result.isError, result.meta);
         }),
       );
@@ -1018,6 +1064,13 @@ async function executeToolCalls(
         ...(agentName ? { agentName } : {}),
         ...(currentDepth !== undefined ? { currentDepth } : {}),
         ...(executionOrigin === undefined ? {} : { origin: executionOrigin }),
+        hitlCheckpoint: {
+          toolCalls: executableToolCalls,
+          completedToolResults,
+          pendingToolCalls: executableToolCalls.slice(executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId)),
+          blockedToolIndex: executableToolCalls.findIndex((candidate) => candidate.toolCallId === toolCall.toolCallId),
+          ...(store.getState().currentAssistantMessageId === undefined ? {} : { assistantMessageId: store.getState().currentAssistantMessageId }),
+        },
         onInputResolved(redactedInput) {
           store.getState().append({
             type: "tool-input-resolved",
@@ -1038,8 +1091,84 @@ async function executeToolCalls(
         },
       });
       const result = await registry.execute(toolCall, ctx);
+      completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
       appendToolResult(store, toolCall, result.output, result.isError, result.meta);
     }
+  }
+}
+
+async function executeToolCallsSequentially(input: {
+  toolCalls: ToolCallArray;
+  registry: ToolRegistry;
+  store: StoreApi<SessionStoreState>;
+  step: number;
+  abort: AbortSignal;
+  allowedTools: readonly string[];
+  projectContext: QueryLoopOptions["projectContext"];
+  startChildExecution: NonNullable<QueryLoopOptions["startChildExecution"]> | undefined;
+  cancelChildSession: NonNullable<QueryLoopOptions["cancelChildSession"]> | undefined;
+  resumeChildSession: NonNullable<QueryLoopOptions["resumeChildSession"]> | undefined;
+  abortSessionExecutionAndWait: NonNullable<QueryLoopOptions["abortSessionExecutionAndWait"]> | undefined;
+  agentName: string | undefined;
+  agentSkills: QueryLoopOptions["agentSkills"];
+  skillService: QueryLoopOptions["skillService"];
+  storeManager: QueryLoopOptions["storeManager"];
+  executionOrigin: QueryLoopOptions["origin"];
+  currentDepth?: number;
+  completedToolResults: Array<{ toolCallId: string; toolName: string; output: string; isError: boolean; meta?: Record<string, unknown> }>;
+}): Promise<void> {
+  for (let index = 0; index < input.toolCalls.length; index++) {
+    const toolCall = input.toolCalls[index]!;
+    if (input.abort.aborted) {
+      appendToolResult(input.store, toolCall, "Aborted", true, undefined);
+      continue;
+    }
+
+    const ctx = createToolExecutionContext({
+      store: input.store,
+      toolName: toolCall.toolName,
+      toolCallId: toolCall.toolCallId,
+      input: toolCall.input,
+      redactedInput: redactValue(toolCall.input),
+      step: input.step,
+      abort: input.abort,
+      startedAt: Date.now(),
+      allowedTools: new Set(input.allowedTools),
+      projectContext: input.projectContext,
+      agentSkills: input.agentSkills,
+      skillService: input.skillService,
+      storeManager: input.storeManager,
+      ...(input.startChildExecution ? { startChildExecution: input.startChildExecution } : {}),
+      ...(input.cancelChildSession ? { cancelChildSession: input.cancelChildSession } : {}),
+      ...(input.resumeChildSession ? { resumeChildSession: input.resumeChildSession } : {}),
+      ...(input.abortSessionExecutionAndWait ? { abortSessionExecutionAndWait: input.abortSessionExecutionAndWait } : {}),
+      ...(input.agentName ? { agentName: input.agentName } : {}),
+      ...(input.currentDepth !== undefined ? { currentDepth: input.currentDepth } : {}),
+      ...(input.executionOrigin === undefined ? {} : { origin: input.executionOrigin }),
+      hitlCheckpoint: {
+        toolCalls: input.toolCalls,
+        completedToolResults: input.completedToolResults,
+        pendingToolCalls: input.toolCalls.slice(index),
+        blockedToolIndex: index,
+        ...(input.store.getState().currentAssistantMessageId === undefined ? {} : { assistantMessageId: input.store.getState().currentAssistantMessageId }),
+      },
+      onInputResolved(redactedInput) {
+        input.store.getState().append({ type: "tool-input-resolved", toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, input: redactedInput });
+      },
+      onToolAttempt(attempt) {
+        input.store.getState().append({
+          type: "tool-attempt",
+          toolCallId: attempt.toolCallId,
+          toolName: attempt.toolName,
+          attemptId: attempt.attemptId,
+          timestamp: attempt.timestamp,
+          destructive: attempt.destructive,
+        });
+      },
+    });
+    const result = await input.registry.execute(toolCall, ctx);
+    input.completedToolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
+    appendToolResult(input.store, toolCall, result.output, result.isError, result.meta);
   }
 }
 

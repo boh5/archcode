@@ -61,9 +61,29 @@ const SessionExecutionRecordSchema = z.strictObject({
   error: z.string().optional(),
 });
 
+const HitlSourceSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
+  z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.enum(["after_plan", "before_complete"]) }),
+  z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
+  z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
+  z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
+  z.strictObject({ type: z.literal("loop_approval"), loopId: z.string(), approvalPoint: z.string() }),
+  z.strictObject({ type: z.literal("loop_blocker"), loopId: z.string(), runId: z.string().optional(), reason: z.string() }),
+  z.strictObject({ type: z.literal("loop_retry"), loopId: z.string(), runId: z.string(), attempt: z.number().int().nonnegative() }),
+  z.strictObject({ type: z.literal("loop_question"), loopId: z.string(), questionKey: z.string() }),
+]);
+
 const SessionHitlCheckpointSchema = z.strictObject({
   version: z.literal(1),
   hitlId: z.string().trim().min(1),
+  blockingKey: z.string().trim().min(1).optional(),
+  source: HitlSourceSchema.optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+  step: z.number().optional(),
+  assistantMessageId: z.string().optional(),
+  displayInput: z.unknown().optional(),
   blockedAt: z.string(),
   reason: z.string().optional(),
 });
@@ -185,6 +205,7 @@ const PendingToolPartSchema = z.strictObject({
   attemptId: z.string().optional(),
   attemptTimestamp: z.number().optional(),
   attemptDestructive: z.boolean().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const RunningToolPartSchema = z.strictObject({
@@ -199,6 +220,7 @@ const RunningToolPartSchema = z.strictObject({
   attemptId: z.string().optional(),
   attemptTimestamp: z.number().optional(),
   attemptDestructive: z.boolean().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 const CompletedToolPartSchema = z.strictObject({

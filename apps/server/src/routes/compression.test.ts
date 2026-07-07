@@ -97,11 +97,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry) {
     readLoopStateMarkdown: async () => "",
     startLoopSchedulers: async () => undefined,
     stopLoopSchedulers: async () => undefined,
-    requestPermission: async () => "timeout",
-    respondPermission: () => false,
-    requestQuestion: async () => ({ isError: true, reason: "Cancelled" }),
-    respondQuestion: () => false,
-    cleanupDeferredSession: () => undefined,
     notifyRuntimeShutdown: () => undefined,
   } as unknown as AgentRuntime;
 

@@ -34,14 +34,11 @@ import type {
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
-import { DeferredPermissionService, DeferredQuestionService } from "./deferred";
-import type { AskUserResponse, DeferredSessionEvent } from "./deferred";
-import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "./tools/types";
-import { SessionExecutionManager } from "./execution";
+import { SessionExecutionManager, SessionHitlResumeAdapter } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
-import type { ResumeRecoverySummary } from "./hitl/resume-coordinator";
+import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import { createGitHubConnector } from "./integrations/github";
 import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
@@ -141,16 +138,6 @@ export interface AgentRuntime {
   readLoopStateMarkdown(workspaceRoot: string, loopId: string): Promise<string>;
   startLoopSchedulers(): Promise<void>;
   stopLoopSchedulers(): Promise<void>;
-  requestPermission(
-    workspaceRoot: string,
-    sessionId: string,
-    request: ToolConfirmationRequest,
-    abortSignal?: AbortSignal,
-  ): Promise<ToolConfirmationResult>;
-  respondPermission(permissionId: string, response: ToolConfirmationResult): boolean;
-  requestQuestion(workspaceRoot: string, sessionId: string, request: AskUserRequest): Promise<AskUserResponse>;
-  respondQuestion(questionId: string, response: AskUserResponse): boolean;
-  cleanupDeferredSession(workspaceRoot: string, sessionId: string): void;
   notifyRuntimeShutdown(reason: string): void;
 }
 
@@ -225,10 +212,30 @@ export async function createRuntime(
       },
     };
     const hitl = new HitlService(hitlEvents);
-    const contextResolver = new ProjectContextResolver({
+    let contextResolver!: ProjectContextResolver;
+    contextResolver = new ProjectContextResolver({
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
       hitlFactory: (workspaceRoot) => new HitlService({ events: hitlEvents, workspaceRoot }),
       sessionStoreManager,
+      resumeCoordinatorFactory: ({ workspaceRoot, hitl }) => new ResumeCoordinator({
+        hitl,
+        adapters: {
+          session: new SessionHitlResumeAdapter({
+            workspaceRoot,
+            storeManager: sessionStoreManager,
+            toolRegistry,
+            projectContextResolver: contextResolver,
+            skillService,
+            getAgent: (agentWorkspaceRoot, sessionId) => sessionAgentManager.getOrCreate(agentWorkspaceRoot, sessionId),
+            startChildExecution: (childWorkspaceRoot, request) => executionManager.startChildExecution(childWorkspaceRoot, request),
+            cancelChildSession: (childWorkspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(childWorkspaceRoot, parentSessionId, childSessionId),
+            resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
+            abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
+          }),
+        },
+        logger: runtimeLogger.child({ module: "projects" }),
+      }),
+      resumeAdapters: { session: { resume: async () => { throw new Error("Session HITL adapter factory was not used"); } } },
       logger: runtimeLogger.child({ module: "projects" }),
     });
     const sessionAgentManager = new SessionAgentManager({
@@ -242,18 +249,6 @@ export async function createRuntime(
       logger,
     });
     const activeSessionKeys = new Map<string, { workspaceRoot: string; sessionId: string }>();
-    const submitDeferredEvent = (
-      workspaceRoot: string,
-      sessionId: string,
-      event: DeferredSessionEvent,
-    ): void => {
-      const store = sessionStoreManager.get(sessionId, workspaceRoot);
-      store?.getState().append(event);
-    };
-    const deferredEvents = { submitDeferredEvent };
-    const permissionService = new DeferredPermissionService(deferredEvents);
-    const questionService = new DeferredQuestionService(deferredEvents);
-
     async function dispatchCommand(
       workspaceRoot: string,
       sessionId: string,
@@ -263,35 +258,8 @@ export async function createRuntime(
       return await executionManager.dispatchCommand(workspaceRoot, sessionId, name, args);
     }
 
-    function requestPermission(
-      workspaceRoot: string,
-      sessionId: string,
-      request: ToolConfirmationRequest,
-      abortSignal?: AbortSignal,
-    ): Promise<ToolConfirmationResult> {
-      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
-      return permissionService.request(sessionId, workspaceRoot, request, abortSignal);
-    }
-
-    function requestQuestion(
-      workspaceRoot: string,
-      sessionId: string,
-      request: AskUserRequest,
-    ): Promise<AskUserResponse> {
-      activeSessionKeys.set(scopedKey(workspaceRoot, sessionId), { workspaceRoot, sessionId });
-      return questionService.request(sessionId, workspaceRoot, request);
-    }
-
-    function cleanupDeferredSession(workspaceRoot: string, sessionId: string): void {
-      permissionService.cleanup(sessionId, workspaceRoot);
-      questionService.cleanup(sessionId, workspaceRoot);
-      activeSessionKeys.delete(scopedKey(workspaceRoot, sessionId));
-    }
-
     function notifyRuntimeShutdown(reason: string): void {
-      for (const { workspaceRoot, sessionId } of activeSessionKeys.values()) {
-        submitDeferredEvent(workspaceRoot, sessionId, { type: "shutdown", reason });
-      }
+      runtimeLogger.info("runtime.shutdown", { message: reason, meta: { activeSessions: activeSessionKeys.size } });
     }
 
     const trackSession = (workspaceRoot: string, sessionId: string): void => {
@@ -309,9 +277,6 @@ export async function createRuntime(
       deleteSessionStore: (sessionId, workspaceRoot, deleteOptions) => sessionStoreManager.delete(sessionId, workspaceRoot, deleteOptions),
       resolveRootSessionId: (sessionId, workspaceRoot) => sessionStoreManager.resolveRootSessionId(sessionId, workspaceRoot),
       buildSessionTree: (workspaceRoot, rootSessionId) => sessionStoreManager.buildSessionTree(workspaceRoot, rootSessionId),
-      requestPermission,
-      requestQuestion,
-      cleanupDeferredSession,
       trackSession,
       untrackSession,
       logger,
@@ -605,11 +570,6 @@ export async function createRuntime(
       readLoopStateMarkdown,
       startLoopSchedulers,
       stopLoopSchedulers,
-      requestPermission,
-      respondPermission: (permissionId, response) => permissionService.respond(permissionId, response),
-      requestQuestion,
-      respondQuestion: (questionId, response) => questionService.respond(questionId, response),
-      cleanupDeferredSession,
       notifyRuntimeShutdown,
     };
   } catch (err) {
