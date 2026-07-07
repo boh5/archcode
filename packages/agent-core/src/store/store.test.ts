@@ -59,7 +59,7 @@ function renderedStructuredSummary(): string {
 }
 
 function sessionFilePath(sessionId: string): string {
-  return join(TMP_DIR, `${sessionId}.json`);
+  return join(TMP_DIR, sessionId, "session.json");
 }
 
 async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {

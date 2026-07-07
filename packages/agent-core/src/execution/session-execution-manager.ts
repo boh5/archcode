@@ -20,7 +20,7 @@ import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } 
 import type { AskUserResponse } from "../deferred";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
-import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
+import { getSessionDir } from "../store/sessions-dir";
 import { SessionDeleteConflictError } from "../store/errors";
 import { scopedKey } from "../store/key";
 import type { Reminder, SessionRole, SessionStoreState } from "../store/types";
@@ -424,13 +424,14 @@ export class SessionExecutionManager {
     }
 
     if (sessionId === rootSessionId) {
-      await removeIfExists(getRootSessionPath(workspaceRoot, rootSessionId));
-      await rm(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true, force: true });
+      for (const id of sessionIds) {
+        await rm(getSessionDir(workspaceRoot, id), { recursive: true, force: true });
+      }
       for (const id of sessionIds) this.#config.deleteSessionStore(id, workspaceRoot);
       this.#config.deleteSessionStore(rootSessionId, workspaceRoot, { forgetWorkspaceIndex: true });
     } else {
       for (const id of sessionIds) {
-        await removeIfExists(getSessionPath(workspaceRoot, rootSessionId, id));
+        await rm(getSessionDir(workspaceRoot, id), { recursive: true, force: true });
       }
       for (const id of sessionIds) this.#config.deleteSessionStore(id, workspaceRoot);
     }
@@ -811,10 +812,6 @@ async function waitForExecutionToStop(execution: ActiveSessionExecution | Pendin
     setTimeout(() => reject(new Error(`Timed out waiting for session "${execution.sessionId}" to abort`)), ABORT_AND_WAIT_TIMEOUT_MS);
   });
   await Promise.race([execution.promise ?? Promise.resolve(), timeout]);
-}
-
-async function removeIfExists(path: string): Promise<void> {
-  if (await Bun.file(path).exists()) await rm(path);
 }
 
 function flattenSessionTree(node: SessionTreeNode): string[] {

@@ -5,7 +5,7 @@ export interface ExecutionStartEvent {
 
 export interface ExecutionEndEvent {
   type: "execution-end";
-  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted";
+  status: "completed" | "max_steps" | "failed" | "aborted" | "cancelled" | "timed_out" | "interrupted" | "waiting_for_human";
   error?: string;
 }
 
@@ -31,6 +31,13 @@ export interface SessionExecutionRecord {
   endedAt?: number;
   durationMs?: number;
   error?: string;
+}
+
+export interface SessionHitlCheckpoint {
+  version: 1;
+  hitlId: string;
+  blockedAt: string;
+  reason?: string;
 }
 
 export type SessionTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
@@ -694,8 +701,8 @@ export interface SessionProjection {
   modelInfo?: SessionModelInfo | null;
   /** Goal states indexed by goalId. Populated by goal.state_change events. */
   goals?: Record<string, GoalState>;
-  /** Pending HITL requests. Append-only via hitl.request, updated via hitl.resolved. */
-  hitlRequests?: HitlRequest[];
+  /** Owner-local HITL records projected from hitl.request/hitl.resolved stream events. */
+  hitlRequests?: HitlRecord[];
   /** Loop states indexed by loopId. Populated by loop.state_change events. */
   loops?: Record<string, LoopState>;
   /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
@@ -793,6 +800,8 @@ export interface Session {
   eventCursor?: number;
   modelInfo?: SessionModelInfo | null;
   agentName?: string;
+  blockedHitl?: SessionHitlCheckpoint;
+  blockedByHitlIds?: string[];
 }
 
 export type DiffLineType = "context" | "add" | "delete";
@@ -1015,6 +1024,16 @@ export interface GoalRetryState {
   lastAttempt?: GoalRetryAttemptMetadata;
 }
 
+export type HitlAttentionStatus = "clear" | "waiting_for_human";
+
+export interface GoalHitlCheckpoint {
+  version: 1;
+  hitlId: string;
+  blockedAt: string;
+  phase?: GoalPhase;
+  reason?: string;
+}
+
 export type ApprovalPoint = "after_plan" | "before_complete";
 
 export interface GoalState {
@@ -1037,7 +1056,11 @@ export interface GoalState {
   author: string;      // done condition author (orchestrator/plan/user)
   lockedBy?: string;   // locker (user id)
   mainSessionId?: string;  // orchestrator session
+  loopId?: string; // parent Loop, when a Loop creates or owns this Goal
   childSessionIds: string[];  // plan/build/review/explore/librarian
+  attentionStatus?: HitlAttentionStatus;
+  blockedByHitlIds?: string[];
+  resumeCheckpoint?: GoalHitlCheckpoint;
   lockedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -1052,14 +1075,31 @@ export type GoalStreamEvent =
   | { type: "goal.escalation"; goalId: string; reason: string };
 
 // ─── HITL Types ───
-// 3 kinds: question (with options) / approval (tool gate) / review (bulk artifact review)
-// No separate "decision" kind: structurally same as question, semantic difference at prompt layer
 
-export type HitlKind = "question" | "approval" | "review";
+export const HITL_RECENT_TERMINAL_LIMIT = 20;
 
-export type HitlTrigger = "approval_point" | "agent_request";
+export type HitlOwnerType = "session" | "goal" | "loop";
 
-export type HitlStatus = "pending" | "resolved" | "cancelled" | "timeout";
+export interface HitlOwnerKey {
+  projectSlug: string;
+  ownerType: HitlOwnerType;
+  ownerId: string;
+  workspaceRoot?: never;
+}
+
+export type HitlStatus = "pending" | "resume_claimed" | "resolved" | "cancelled" | "resume_failed";
+
+export type HitlSource =
+  | { type: "ask_user"; sessionId: string; toolCallId?: string }
+  | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
+  | { type: "goal_approval"; goalId: string; approvalPoint: ApprovalPoint }
+  | { type: "goal_review"; goalId: string }
+  | { type: "goal_budget"; goalId: string; approvalPoint?: string }
+  | { type: "goal_question"; goalId: string; questionKey: string }
+  | { type: "loop_approval"; loopId: string; approvalPoint: string }
+  | { type: "loop_blocker"; loopId: string; runId?: string; reason: string }
+  | { type: "loop_retry"; loopId: string; runId: string; attempt: number }
+  | { type: "loop_question"; loopId: string; questionKey: string };
 
 export interface HitlDisplayPayload {
   title: string;
@@ -1068,68 +1108,72 @@ export interface HitlDisplayPayload {
   redacted: true;
 }
 
-export interface HitlRequest {
-  id: string;
-  sessionId: string;   // originating session
-  goalId?: string;
-  loopId?: string;     // optional loop integration source
-  kind: HitlKind;
-  prompt: string;
-  payload: HitlPayload;  // kind-specific
-  displayPayload?: HitlDisplayPayload;
-  trigger: HitlTrigger;  // hard constraint vs soft request
-  decisionKey?: string;
-  status: HitlStatus;
-  createdAt: string;
-  updatedAt?: string;
-  resolvedAt?: string;
-  resolvedBy?: string;
-  response?: HitlResponse;
+export interface HitlResumeMetadata {
+  claimedAt?: string;
+  claimedBy?: string;
+  failedAt?: string;
+  failureReason?: string;
+  attempts?: number;
 }
 
-export type HitlPayload =
-  // question: may have no options (free text) or options (structured choice). When options exist, may include recommendedOption + rationale.
-  | { kind: "question"; options?: Array<{ label: string; description?: string }>; multiple?: boolean; custom?: boolean; recommendedOption?: string; rationale?: string }
-  // approval: permission module needs human review. HITL presents yes/no and returns decision.
-  // deny → tool not executed; approve_always → persisted — these are permission module's responsibility, not HITL.
-  | { kind: "approval"; action: string; context: Record<string, unknown> }
-  // review: architect batch-review of artifacts. Verdict drives Goal state machine.
-  | { kind: "review"; artifacts: GoalArtifactFile[] };
-
 export type HitlResponse =
-  // question: answer flows back into conversation context. No options → free text; with options → selected label(s).
-  | { kind: "question"; answers: string[]; comment?: string }
-  // approval: user decision. HITL returns approved/approveAlways/comment;
-  // permission module decides based on this value whether to allow/deny/persist scope.
-  | { kind: "approval"; approved: boolean; approveAlways?: boolean; comment?: string }
-  // review: DONE completes the Goal; NOT_DONE drives retry/escalation.
-  | { kind: "review"; outcome: GoalReviewOutcome; comment?: string; report?: GoalReviewReport };
+  | { type: "question_answer"; answers: string[]; comment?: string; answeredBy?: string }
+  | { type: "permission_decision"; decision: "approve_once" | "approve_always" | "deny"; comment?: string; decidedBy?: string }
+  | { type: "approval_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
+  | { type: "review_outcome"; outcome: GoalReviewOutcome; comment?: string; report?: GoalReviewReport; reviewedBy?: string }
+  | { type: "cancel"; reason: string; cancelledBy?: string };
 
 export interface HitlRecord {
-  id: string;
-  projectId: string;
-  sessionId: string;
-  goalId?: string;
-  loopId?: string;
-  kind: HitlKind;
-  trigger: HitlTrigger;
-  decisionKey: string;
+  hitlId: string;
+  owner: HitlOwnerKey;
+  blockingKey: string;
+  source: HitlSource;
   status: HitlStatus;
-  prompt: string;
   displayPayload: HitlDisplayPayload;
-  payload: HitlPayload;
+  response?: HitlResponse;
+  resume?: HitlResumeMetadata;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
-  resolvedBy?: string;
-  response?: HitlResponse;
+}
+
+export interface HitlFile {
+  version: 1;
+  owner: HitlOwnerKey;
+  pending: HitlRecord[];
+  recentTerminal: HitlRecord[];
+  updatedAt: string;
+}
+
+export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel" | "retry_resume";
+
+export interface HitlProjectionContext {
+  rootSessionId?: string;
+  parentSessionId?: string;
+  goalId?: string;
+  loopId?: string;
+  projectionPath?: string[];
+}
+
+export interface HitlProjection {
+  hitlId: string;
+  project: { slug: string; name?: string };
+  owner: HitlOwnerKey;
+  ancestry?: HitlProjectionContext;
+  source: HitlSource;
+  status: HitlStatus;
+  displayPayload: HitlDisplayPayload;
+  allowedActions: HitlAllowedAction[];
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
 }
 
 // ─── HITL Stream Events ───
 
 export type HitlStreamEvent =
-  | { type: "hitl.request"; request: HitlRequest }
-  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "timeout">; response?: HitlResponse };
+  | { type: "hitl.request"; request: HitlRecord }
+  | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed">; response?: HitlResponse };
 
 // ─── Loop Types ───
 
@@ -1293,7 +1337,7 @@ export interface LoopConfig {
   cleanupPolicy?: LoopCleanupPolicy;
 }
 
-export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded";
+export type LoopRunReportStatus = "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "budget_exceeded" | "needs_user";
 
 export type LoopRunTrigger = "manual" | "interval" | "cron" | LoopTriggerSpec["kind"];
 
@@ -1353,6 +1397,8 @@ export interface LoopJobSummary {
   attempts: number;
   rerunAfterCurrent?: boolean;
   blockedReason?: string;
+  blockedByHitlIds?: string[];
+  attentionStatus?: HitlAttentionStatus;
   worktreePath?: string;
   baseSha?: string;
   resolvedHeadSha?: string;
@@ -1400,6 +1446,8 @@ export interface LoopRunReport {
   resolvedHeadSha?: string;
   missedCount?: number;
   blockedReason?: string;
+  blockedByHitlIds?: string[];
+  attentionStatus?: HitlAttentionStatus;
   cleanupState?: LoopCleanupState;
   observedArtifacts?: LoopWorktreeArtifact[];
 }
@@ -1427,6 +1475,8 @@ export interface LoopState {
   latestIntegrations?: LoopIntegrationSnapshot;
   currentJob?: LoopJobSummary;
   queuedJobs?: LoopJobSummary[];
+  blockedByHitlIds?: string[];
+  attentionStatus?: HitlAttentionStatus;
   triggerHealth?: LoopTriggerHealth[];
   cleanupState?: LoopCleanupState;
 }

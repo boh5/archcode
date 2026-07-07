@@ -290,6 +290,8 @@ export const LoopJobSummarySchema = z.strictObject({
   attempts: z.number().int().nonnegative(),
   rerunAfterCurrent: z.boolean().optional(),
   blockedReason: LoopTextSchema.optional(),
+  blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
+  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
   worktreePath: LoopTextSchema.optional(),
   baseSha: ShaSchema.optional(),
   resolvedHeadSha: ShaSchema.optional(),
@@ -328,7 +330,7 @@ export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   cleanupPolicy: LoopCleanupPolicySchema.optional(),
 });
 
-export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded"]);
+export const LoopRunReportStatusSchema = z.enum(["running", "succeeded", "failed", "skipped", "cancelled", "budget_exceeded", "needs_user"]);
 export const LoopRunTriggerSchema = z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]);
 
 export const LoopRunReportSchema = z.strictObject({
@@ -359,6 +361,8 @@ export const LoopRunReportSchema = z.strictObject({
   resolvedHeadSha: ShaSchema.optional(),
   missedCount: z.number().int().nonnegative().optional(),
   blockedReason: LoopTextSchema.optional(),
+  blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
+  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
   observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
 }) satisfies z.ZodType<ProtocolLoopRunReport>;
@@ -386,6 +390,8 @@ export const LoopStateSchema = z.strictObject({
   latestIntegrations: LoopIntegrationSnapshotSchema.optional(),
   currentJob: LoopJobSummarySchema.optional(),
   queuedJobs: z.array(LoopJobSummarySchema).max(100).optional(),
+  blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
+  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
   triggerHealth: z.array(LoopTriggerHealthSchema).max(50).optional(),
   cleanupState: LoopCleanupStateSchema.optional(),
 }) satisfies z.ZodType<ProtocolLoopState>;
@@ -705,6 +711,16 @@ export class LoopStateManager {
       return await resolveContainedPath(relative, this.loopsRoot());
     } catch (error) {
       if (error instanceof SafeLoopPathError) throw new LoopPathError(relative);
+      throw error;
+    }
+  }
+
+  async loopHitlPath(loopId: string): Promise<string> {
+    this.assertLoopId(loopId);
+    try {
+      return await resolveContainedPath(join(loopId, "hitl.json"), this.loopsRoot());
+    } catch (error) {
+      if (error instanceof SafeLoopPathError) throw new LoopPathError(loopId);
       throw error;
     }
   }

@@ -16,6 +16,7 @@ import type {
   GoalRetryState as ProtocolGoalRetryState,
   GoalRepairContext as ProtocolGoalRepairContext,
   RetryPolicy as ProtocolRetryPolicy,
+  GoalHitlCheckpoint as ProtocolGoalHitlCheckpoint,
 } from "@archcode/protocol";
 
 import type { Logger } from "../logger";
@@ -242,6 +243,14 @@ export const GoalRetryStateSchema = z.strictObject({
   lastAttempt: GoalRetryAttemptMetadataSchema.optional(),
 }) satisfies z.ZodType<ProtocolGoalRetryState>;
 
+export const GoalHitlCheckpointSchema = z.strictObject({
+  version: z.literal(1),
+  hitlId: z.string().trim().min(1),
+  blockedAt: z.string(),
+  phase: GoalPhaseSchema.optional(),
+  reason: z.string().optional(),
+}) satisfies z.ZodType<ProtocolGoalHitlCheckpoint>;
+
 export const GoalStateSchema = z.strictObject({
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
@@ -262,7 +271,11 @@ export const GoalStateSchema = z.strictObject({
   author: z.string().trim().min(1),
   lockedBy: z.string().trim().min(1).optional(),
   mainSessionId: z.string().trim().min(1).optional(),
+  loopId: z.string().uuid().optional(),
   childSessionIds: z.array(z.string().trim().min(1)),
+  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
+  blockedByHitlIds: z.array(z.string().trim().min(1)).optional(),
+  resumeCheckpoint: GoalHitlCheckpointSchema.optional(),
   lockedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -279,6 +292,7 @@ export type GoalState = ProtocolGoalState;
 export type GoalTokenBudgetState = ProtocolGoalTokenBudgetState;
 export type GoalRepairContext = ProtocolGoalRepairContext;
 export type GoalRetryState = ProtocolGoalRetryState;
+export type GoalHitlCheckpoint = ProtocolGoalHitlCheckpoint;
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 3,
@@ -616,6 +630,18 @@ export class GoalStateManager {
       return await resolveContainedPath(relative, this.goalsRoot());
     } catch (error) {
       if (error instanceof SafeGoalPathError) throw new GoalPathError(relative);
+      throw error;
+    }
+  }
+
+  async goalHitlPath(goalId: string): Promise<string> {
+    if (!GoalUuidSchema.safeParse(goalId).success) {
+      throw new GoalInvalidIdError(goalId);
+    }
+    try {
+      return await resolveContainedPath(join(goalId, "hitl.json"), this.goalsRoot());
+    } catch (error) {
+      if (error instanceof SafeGoalPathError) throw new GoalPathError(goalId);
       throw error;
     }
   }

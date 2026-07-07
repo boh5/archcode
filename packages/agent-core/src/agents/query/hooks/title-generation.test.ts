@@ -17,7 +17,7 @@ const TEST_TMP = join(import.meta.dir, "__test_tmp__", "title-generation-hook");
 const WORKSPACE_ROOT = join(TEST_TMP, "workspace");
 
 async function readPersistedTitle(sessionId: string): Promise<string | null> {
-  const path = join(TEST_TMP, `${sessionId}.json`);
+  const path = join(TEST_TMP, sessionId, "session.json");
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await Bun.file(path).exists()) {
       const parsed = JSON.parse(await Bun.file(path).text()) as { title?: string | null };

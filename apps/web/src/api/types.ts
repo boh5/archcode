@@ -20,10 +20,10 @@ export type {
   DoneResult,
   RetryPolicy,
   ApprovalPoint,
-  HitlRequest,
+  HitlRecord,
   HitlResponse,
-  HitlKind,
-  HitlPayload,
+  HitlDisplayPayload,
+  HitlSource,
   DiffLineType,
   DiffLine,
   DiffHunk,
@@ -60,10 +60,10 @@ export type {
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───
-// Server augments GoalState/HitlRequest with project metadata and exposes
+// Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalArtifactFile, GoalState, HitlKind, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+import type { GoalArtifactFile, GoalState, HitlDisplayPayload, HitlOwnerKey, HitlSource, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {
@@ -72,12 +72,7 @@ export type DashboardGoal = GoalState & {
 };
 
 /** Redacted display payload from server HITL list routes. Raw payload is never exposed. */
-export interface DashboardHitlDisplayPayload {
-  title: string;
-  summary?: string;
-  fields?: Array<{ label: string; value: string }>;
-  redacted: true;
-}
+export type DashboardHitlKind = "question" | "approval" | "review";
 
 export interface DashboardHitlTrigger {
   projectSlug?: string;
@@ -92,11 +87,16 @@ export interface DashboardHitlTrigger {
 /** HITL item with project metadata. Uses redacted displayPayload only; raw payload is never included. */
 export interface DashboardHitlItem {
   hitlId: string;
+  owner?: HitlOwnerKey;
+  blockingKey?: string;
+  source?: HitlSource;
+  displayPayload: HitlDisplayPayload;
+  createdAt: string | number;
+  updatedAt?: string;
+  /** Display-safe compatibility fields used by existing dashboard views. No raw payload/input is exposed. */
   sessionId: string;
-  kind: HitlKind;
-  displayPayload: DashboardHitlDisplayPayload;
+  kind: DashboardHitlKind;
   trigger: DashboardHitlTrigger;
-  createdAt: number;
   approvalKey?: string;
   projectSlug: string;
   projectName: string;

@@ -11,13 +11,13 @@ import type {
   SessionTreeResponse,
 } from "@archcode/protocol";
 import { readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import type { Logger } from "../logger";
 import { NotRootSessionError, SessionFileNotFoundError } from "./errors";
 import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
 import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
-import { __hasSessionsDirOverrideForTest, getRootSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { __hasSessionsDirOverrideForTest, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
   type ReasoningPart,
   type SessionEventEnvelope,
@@ -157,6 +157,8 @@ export class SessionStoreManager {
       goalId,
       loopId,
       sessionRole,
+      blockedHitl: undefined,
+      blockedByHitlIds: undefined,
       isRunning: false,
       isStreamingModel: false,
       readSnapshots: new Map(),
@@ -367,12 +369,8 @@ export class SessionStoreManager {
       const parsed = await readSessionFileForTree(entry.sessionId, workspaceRoot, rootSessionId, entry.filePath, diagnostics);
       if (parsed === undefined) continue;
 
-      if (parsed.sessionId !== entry.sessionId) {
-        pushDiagnostic(diagnostics, "session_id_mismatch", parsed.sessionId, entry.filePath,
-          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`);
-        continue;
-      }
       if (parsed.rootSessionId !== rootSessionId) {
+        if (parsed.parentSessionId === undefined && parsed.rootSessionId === parsed.sessionId) continue;
         pushDiagnostic(diagnostics, "root_mismatch", parsed.sessionId, entry.filePath,
           `Root session ID mismatch: expected "${rootSessionId}", found "${parsed.rootSessionId}" in file`);
         continue;
@@ -385,6 +383,11 @@ export class SessionStoreManager {
       if (sessions.has(parsed.sessionId)) {
         pushDiagnostic(diagnostics, "duplicate_session", parsed.sessionId, entry.filePath,
           `Duplicate session ID "${parsed.sessionId}" found while building tree`);
+        continue;
+      }
+      if (parsed.sessionId !== entry.sessionId) {
+        pushDiagnostic(diagnostics, "session_id_mismatch", parsed.sessionId, entry.filePath,
+          `Session ID mismatch: expected "${entry.sessionId}", found "${parsed.sessionId}" in file`);
         continue;
       }
 
@@ -402,7 +405,7 @@ export class SessionStoreManager {
       const parentSessionId = summary.parentSessionId;
       if (parentSessionId === undefined || !sessions.has(parentSessionId)) {
         invalidIds.add(summary.sessionId);
-        pushDiagnostic(diagnostics, "missing_parent", summary.sessionId, getSessionPath(workspaceRoot, rootSessionId, summary.sessionId),
+        pushDiagnostic(diagnostics, "missing_parent", summary.sessionId, getSessionPath(workspaceRoot, summary.sessionId),
           `Parent session "${parentSessionId ?? "<missing>"}" for "${summary.sessionId}" was not found`);
       }
     }
@@ -412,7 +415,7 @@ export class SessionStoreManager {
       const cycle = findParentCycle(summary.sessionId, rootSessionId, sessions);
       if (cycle.length === 0) continue;
       for (const cycleSessionId of cycle) invalidIds.add(cycleSessionId);
-      pushDiagnostic(diagnostics, "cycle", summary.sessionId, getSessionPath(workspaceRoot, rootSessionId, summary.sessionId),
+      pushDiagnostic(diagnostics, "cycle", summary.sessionId, getSessionPath(workspaceRoot, summary.sessionId),
         `Cycle detected in session tree: ${cycle.join(" -> ")}`);
     }
 
@@ -467,6 +470,8 @@ export class SessionStoreManager {
         goalId: parsed.goalId,
         loopId: parsed.loopId,
         sessionRole: parsed.sessionRole,
+        blockedHitl: parsed.blockedHitl,
+        blockedByHitlIds: parsed.blockedByHitlIds,
         isRunning: false,
         isStreamingModel: false,
         currentExecutionId: undefined,
@@ -543,30 +548,8 @@ export class SessionStoreManager {
   }
 
   async #scanWorkspaceDescendantsOnce(workspaceRoot: string): Promise<void> {
-    const rootSessionIds = new Set<string>();
-    for (const summary of await sessionFileInternals.listSessionSummaries(workspaceRoot)) {
-      rootSessionIds.add(summary.rootSessionId);
+    for (const summary of await sessionFileInternals.scanAllSessionSummaries(workspaceRoot)) {
       this.#registerRootSessionId(summary.sessionId, workspaceRoot, summary.rootSessionId);
-    }
-    for (const dirname of await sessionFileInternals.readTopLevelSessionDirNames(getSessionsDir(workspaceRoot))) {
-      rootSessionIds.add(dirname);
-    }
-
-    for (const rootSessionId of rootSessionIds) {
-      let descendants: Map<string, string>;
-      try {
-        descendants = await sessionFileInternals.scanDescendants(workspaceRoot, rootSessionId);
-      } catch (error) {
-        this.#logger.warn("session.descendant_scan.failed", {
-          error,
-          context: { sessionId: rootSessionId },
-          meta: { workspaceRoot },
-        });
-        continue;
-      }
-      for (const [childSessionId, childRootSessionId] of descendants) {
-        this.#registerRootSessionId(childSessionId, workspaceRoot, childRootSessionId);
-      }
     }
   }
 }
@@ -611,8 +594,47 @@ function reduceStoreEvent(
 }
 
 function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
-  return (!event.type.includes(".") || event.type.startsWith("compression.")) && event.type !== "shutdown";
+  return STREAM_EVENT_TYPES.has(event.type as StreamEvent["type"]);
 }
+
+const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
+  "execution-start",
+  "execution-end",
+  "user-message",
+  "system-notice",
+  "text-start",
+  "text-delta",
+  "text-end",
+  "reasoning-start",
+  "reasoning-delta",
+  "reasoning-end",
+  "tool-input-start",
+  "tool-call",
+  "tool-input-resolved",
+  "tool-attempt",
+  "tool-result",
+  "tool-child-session-link",
+  "step-start",
+  "step-end",
+  "loop-error",
+  "todo-write",
+  "reminder",
+  "reminder-consumed",
+  "llm-retry",
+  "llm-recovery",
+  "llm-recovery-failed",
+  "compression.block_committed",
+  "compression.block_failed",
+  "compression.ref_map_updated",
+  "goal.state_change",
+  "goal.done_check",
+  "goal.escalation",
+  "hitl.request",
+  "hitl.resolved",
+  "loop.state_change",
+  "loop.run_appended",
+  "compact",
+]);
 
 function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
   const latest = events.at(-1);
@@ -660,14 +682,15 @@ async function readDescendantSessionEntries(
   workspaceRoot: string,
   rootSessionId: string,
 ): Promise<Array<{ sessionId: string; filePath: string }>> {
-  const dir = getRootSessionDir(workspaceRoot, rootSessionId);
+  const dir = getSessionsDir(workspaceRoot);
   try {
-    return (await readdir(dir, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => ({
-        sessionId: basename(entry.name, ".json"),
-        filePath: join(dir, entry.name),
-      }));
+    const entries: Array<{ sessionId: string; filePath: string }> = [];
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === rootSessionId) continue;
+      const filePath = join(dir, entry.name, "session.json");
+      entries.push({ sessionId: entry.name, filePath });
+    }
+    return entries;
   } catch (error) {
     if (isMissingFileError(error)) return [];
     throw error;
@@ -744,6 +767,7 @@ const TERMINAL_EXECUTION_STATUSES = new Set<HydratedSessionFile["executions"][nu
   "cancelled",
   "timed_out",
   "interrupted",
+  "waiting_for_human",
 ]);
 
 const ACTIVE_CHILD_LINK_STATUSES = new Set(["linked", "running", "cancelling"]);

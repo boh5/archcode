@@ -4,14 +4,12 @@ import {
   getSessionsDir,
   __setSessionsDirForTest,
   assertSafeSessionId,
-  getRootSessionPath,
-  getRootSessionDir,
-  getChildSessionPath,
+  getSessionDir,
+  getSessionHitlPath,
   getSessionPath,
 } from "./sessions-dir";
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
-const CHILD_UUID = "660e8400-e29b-41d4-a716-446655440001";
 
 // ---------------------------------------------------------------------------
 // Existing tests (preserved)
@@ -177,124 +175,43 @@ describe("assertSafeSessionId", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getRootSessionPath
+// owner-local session paths
 // ---------------------------------------------------------------------------
 
-describe("getRootSessionPath", () => {
+describe("owner-local session paths", () => {
   afterEach(() => {
     __setSessionsDirForTest(undefined);
   });
 
-  test("returns .archcode/sessions/{sessionId}.json", () => {
-    const path = getRootSessionPath("/tmp/project", VALID_UUID);
-    expect(path).toBe(
-      join("/tmp/project", ".archcode", "sessions", `${VALID_UUID}.json`),
+  test("getSessionDir returns .archcode/sessions/{sessionId}", () => {
+    expect(getSessionDir("/tmp/project", VALID_UUID)).toBe(
+      join("/tmp/project", ".archcode", "sessions", VALID_UUID),
+    );
+  });
+
+  test("getSessionPath returns .archcode/sessions/{sessionId}/session.json", () => {
+    expect(getSessionPath("/tmp/project", VALID_UUID)).toBe(
+      join("/tmp/project", ".archcode", "sessions", VALID_UUID, "session.json"),
+    );
+  });
+
+  test("getSessionHitlPath returns .archcode/sessions/{sessionId}/hitl.json", () => {
+    expect(getSessionHitlPath("/tmp/project", VALID_UUID)).toBe(
+      join("/tmp/project", ".archcode", "sessions", VALID_UUID, "hitl.json"),
     );
   });
 
   test("respects test override of sessions dir", () => {
     __setSessionsDirForTest(() => "/tmp/override-sessions");
-    const path = getRootSessionPath("/any/root", VALID_UUID);
-    expect(path).toBe(join("/tmp/override-sessions", `${VALID_UUID}.json`));
+    expect(getSessionDir("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID));
+    expect(getSessionPath("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID, "session.json"));
+    expect(getSessionHitlPath("/any/root", VALID_UUID)).toBe(join("/tmp/override-sessions", VALID_UUID, "hitl.json"));
   });
 
-  test("rejects invalid session ID", () => {
-    expect(() => getRootSessionPath("/tmp/p", "../bad")).toThrow(
-      "Invalid session ID",
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getRootSessionDir
-// ---------------------------------------------------------------------------
-
-describe("getRootSessionDir", () => {
-  test("returns .archcode/sessions/{rootSessionId}", () => {
-    const path = getRootSessionDir("/tmp/project", VALID_UUID);
-    expect(path).toBe(
-      join("/tmp/project", ".archcode", "sessions", VALID_UUID),
-    );
-  });
-
-  test("rejects invalid root session ID", () => {
-    expect(() => getRootSessionDir("/tmp/p", "../bad")).toThrow(
-      "Invalid session ID",
-    );
-  });
-
-  test("rejects empty root session ID", () => {
-    expect(() => getRootSessionDir("/tmp/p", "")).toThrow(
-      "Invalid session ID",
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getChildSessionPath
-// ---------------------------------------------------------------------------
-
-describe("getChildSessionPath", () => {
-  test("returns .archcode/sessions/{rootSessionId}/{sessionId}.json", () => {
-    const path = getChildSessionPath("/tmp/project", VALID_UUID, CHILD_UUID);
-    expect(path).toBe(
-      join(
-        "/tmp/project",
-        ".archcode",
-        "sessions",
-        VALID_UUID,
-        `${CHILD_UUID}.json`,
-      ),
-    );
-  });
-
-  test("rejects invalid root session ID", () => {
-    expect(() => getChildSessionPath("/tmp/p", "../bad", CHILD_UUID)).toThrow(
-      "Invalid session ID",
-    );
-  });
-
-  test("rejects invalid child session ID", () => {
-    expect(() => getChildSessionPath("/tmp/p", VALID_UUID, "../bad")).toThrow(
-      "Invalid session ID",
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getSessionPath
-// ---------------------------------------------------------------------------
-
-describe("getSessionPath", () => {
-  test("returns root path when rootSessionId equals sessionId", () => {
-    const path = getSessionPath("/tmp/project", VALID_UUID, VALID_UUID);
-    expect(path).toBe(
-      join("/tmp/project", ".archcode", "sessions", `${VALID_UUID}.json`),
-    );
-  });
-
-  test("returns child path when rootSessionId differs from sessionId", () => {
-    const path = getSessionPath("/tmp/project", VALID_UUID, CHILD_UUID);
-    expect(path).toBe(
-      join(
-        "/tmp/project",
-        ".archcode",
-        "sessions",
-        VALID_UUID,
-        `${CHILD_UUID}.json`,
-      ),
-    );
-  });
-
-  test("rejects invalid rootSessionId", () => {
-    expect(() => getSessionPath("/tmp/p", "../bad", VALID_UUID)).toThrow(
-      "Invalid session ID",
-    );
-  });
-
-  test("rejects invalid sessionId", () => {
-    expect(() => getSessionPath("/tmp/p", VALID_UUID, "../bad")).toThrow(
-      "Invalid session ID",
-    );
+  test("rejects traversal and malformed IDs for all owner-local paths", () => {
+    expect(() => getSessionDir("/tmp/p", "../bad")).toThrow("Invalid session ID");
+    expect(() => getSessionPath("/tmp/p", "../bad")).toThrow("Invalid session ID");
+    expect(() => getSessionHitlPath("/tmp/p", "../bad")).toThrow("Invalid session ID");
+    expect(() => getSessionHitlPath("/tmp/p", "")).toThrow("Invalid session ID");
   });
 });

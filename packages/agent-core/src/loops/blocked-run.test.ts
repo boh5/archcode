@@ -355,14 +355,14 @@ function hitlRequestEvent(hitlId: string): SessionEventEnvelope {
   return envelope(1, {
     type: "hitl.request",
     request: {
-      id: hitlId,
-      sessionId: "session-1",
-      kind: "approval",
-      prompt: "Approve goal?",
-      payload: { kind: "approval", action: "goal.approval.before_complete", context: {} },
-      trigger: "approval_point",
+      hitlId,
+      owner: { projectSlug: "project-a", ownerType: "session", ownerId: "session-1" },
+      blockingKey: `session:session-1:approval:${hitlId}`,
+      source: { type: "ask_user", sessionId: "session-1" },
       status: "pending",
+      displayPayload: { title: "Approve goal?", redacted: true },
       createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
     },
   });
 }

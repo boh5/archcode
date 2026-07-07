@@ -165,9 +165,11 @@ function extractLoopIdFromPayload(payload: SessionEventPayload): string | undefi
   if ("loopId" in payload && typeof (payload as Record<string, unknown>).loopId === "string") {
     return (payload as Record<string, unknown>).loopId as string;
   }
-  // hitl.request nests loopId inside the request object
-  if (payload.type === "hitl.request" && typeof payload.request.loopId === "string") {
-    return payload.request.loopId;
+  // hitl.request nests loop ownership/source inside the request object.
+  if (payload.type === "hitl.request") {
+    if (payload.request.owner.ownerType === "loop") return payload.request.owner.ownerId;
+    const source = payload.request.source;
+    if ("loopId" in source && typeof source.loopId === "string") return source.loopId;
   }
   return undefined;
 }

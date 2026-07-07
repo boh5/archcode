@@ -895,7 +895,7 @@ function sessionHasPendingUserInteraction(session: SessionFile): boolean {
     }
     if (payload?.type === "hitl.request") {
       const request = payload.request as Record<string, unknown> | undefined;
-      if (typeof request?.id === "string") pendingHitl.add(request.id);
+      if (typeof request?.hitlId === "string") pendingHitl.add(request.hitlId);
     }
     if (payload?.type === "hitl.resolved" && typeof payload.hitlId === "string") {
       pendingHitl.delete(payload.hitlId);

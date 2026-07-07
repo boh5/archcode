@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import type { SessionEventEnvelope, SessionStoreState, StoredMessage } from "./types";
 import type { SessionModelInfo } from "@archcode/protocol";
-import { getRootSessionDir, getRootSessionPath, getSessionPath, getSessionsDir } from "./sessions-dir";
+import { getSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
 import type { SessionRole } from "./types";
 import {
   COMPRESSION_BLOCK_STATUSES,
@@ -55,10 +55,17 @@ const SessionStatsSchema = z.strictObject({
 const SessionExecutionRecordSchema = z.strictObject({
   id: z.string(),
   startedAt: z.number(),
-  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted"]),
+  status: z.enum(["running", "completed", "max_steps", "failed", "aborted", "cancelled", "timed_out", "interrupted", "waiting_for_human"]),
   endedAt: z.number().optional(),
   durationMs: z.number().optional(),
   error: z.string().optional(),
+});
+
+const SessionHitlCheckpointSchema = z.strictObject({
+  version: z.literal(1),
+  hitlId: z.string().trim().min(1),
+  blockedAt: z.string(),
+  reason: z.string().optional(),
 });
 
 const StoredTodoSchema = z.strictObject({
@@ -417,6 +424,8 @@ export const SessionFileSchema = z.strictObject({
   goalId: z.string().uuid().optional(),
   loopId: z.string().uuid().optional(),
   sessionRole: SessionRoleSchema.optional(),
+  blockedHitl: SessionHitlCheckpointSchema.optional(),
+  blockedByHitlIds: z.array(z.string().trim().min(1)).optional(),
   eventCursor: z.number().optional(),
 });
 
@@ -444,7 +453,7 @@ type PersistableSessionState = Pick<
   "sessionId" | "createdAt" | "agentName" | "modelInfo" | "title" | "messages" | "steps" | "stats" | "executions" | "todos" | "rootSessionId"
 > & Partial<Pick<
   SessionStoreState,
-  "compression" | "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "events"
+  "compression" | "pendingInteractions" | "reminders" | "childSessionLinks" | "parentSessionId" | "goalId" | "loopId" | "sessionRole" | "blockedHitl" | "blockedByHitlIds" | "events"
 >>;
 
 export function getAssistantText(messages: StoredMessage[]): string {
@@ -468,10 +477,8 @@ async function saveSessionTranscript(
   state: PersistableSessionState,
   workspaceRoot: string,
 ): Promise<void> {
-  const finalPath = getSessionPath(workspaceRoot, state.rootSessionId, state.sessionId);
-  const dir = state.rootSessionId === state.sessionId
-    ? getSessionsDir(workspaceRoot)
-    : getRootSessionDir(workspaceRoot, state.rootSessionId);
+  const finalPath = getSessionPath(workspaceRoot, state.sessionId);
+  const dir = getSessionDir(workspaceRoot, state.sessionId);
 
   try {
     await mkdir(dir, { recursive: true });
@@ -499,11 +506,13 @@ async function saveSessionTranscript(
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
     ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
+    ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
+    ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
     ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 
   const json = JSON.stringify(data, null, 2);
-  const tmpPath = join(dir, `${state.sessionId}.${randomUUID()}.json.tmp`);
+  const tmpPath = join(dir, `session.${randomUUID()}.json.tmp`);
 
   try {
     await Bun.write(tmpPath, json);
@@ -521,11 +530,9 @@ async function saveSessionTranscript(
 async function readSessionFile(
   sessionId: string,
   workspaceRoot: string,
-  rootSessionId?: string,
+  _rootSessionId?: string,
 ): Promise<HydratedSessionFile> {
-  const filePath = rootSessionId === undefined
-    ? getRootSessionPath(workspaceRoot, sessionId)
-    : getSessionPath(workspaceRoot, rootSessionId, sessionId);
+  const filePath = getSessionPath(workspaceRoot, sessionId);
   const parsed = await readValidatedSessionFile(filePath);
 
   if (parsed.sessionId !== sessionId) {
@@ -559,18 +566,21 @@ function toSessionFile(state: PersistableSessionState & Pick<SessionStoreState, 
     ...(state.goalId === undefined ? {} : { goalId: state.goalId }),
     ...(state.loopId === undefined ? {} : { loopId: state.loopId }),
     ...(state.sessionRole === undefined ? {} : { sessionRole: state.sessionRole }),
+    ...(state.blockedHitl === undefined ? {} : { blockedHitl: state.blockedHitl }),
+    ...(state.blockedByHitlIds === undefined ? {} : { blockedByHitlIds: state.blockedByHitlIds }),
     ...(state.modelInfo === undefined ? {} : { modelInfo: state.modelInfo }),
   };
 }
 
 async function listSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
   const dir = getSessionsDir(workspaceRoot);
-  const names = await readTopLevelSessionFileNames(dir);
+  const names = await readTopLevelSessionDirNames(dir);
   const sessions: Array<{ summary: SessionSummary; sortKey: number }> = [];
 
   for (const name of names) {
     try {
-      const parsed = await readSessionFile(basename(name, ".json"), workspaceRoot);
+      const parsed = await readSessionFile(name, workspaceRoot);
+      if (parsed.parentSessionId !== undefined || parsed.rootSessionId !== parsed.sessionId) continue;
       const timestamps = readSessionTimestamps(parsed);
       sessions.push({
         summary: {
@@ -601,20 +611,23 @@ async function listSessionSummaries(workspaceRoot: string): Promise<SessionSumma
 }
 
 async function scanDescendants(workspaceRoot: string, rootSessionId: string): Promise<Map<string, string>> {
-  const dir = getRootSessionDir(workspaceRoot, rootSessionId);
-  const names = await readTopLevelSessionFileNames(dir);
+  const dir = getSessionsDir(workspaceRoot);
+  const names = await readTopLevelSessionDirNames(dir);
   const descendants = new Map<string, string>();
 
   for (const name of names) {
-    const filePath = join(dir, name);
+    const filePath = getSessionPath(workspaceRoot, name);
     try {
       const parsed = await readValidatedSessionFile(filePath);
+      if (parsed.sessionId === rootSessionId) continue;
       if (parsed.rootSessionId !== rootSessionId) {
+        continue;
+      }
+      if (parsed.parentSessionId === undefined) {
         throw new Error(
-          `Root session ID mismatch: expected "${rootSessionId}", found "${parsed.rootSessionId}" in file`,
+          `Descendant session "${parsed.sessionId}" is missing parentSessionId`,
         );
       }
-      if (parsed.sessionId === rootSessionId) continue;
       descendants.set(parsed.sessionId, parsed.rootSessionId);
     } catch (err) {
       console.warn(
@@ -626,15 +639,36 @@ async function scanDescendants(workspaceRoot: string, rootSessionId: string): Pr
   return descendants;
 }
 
-async function readTopLevelSessionFileNames(dir: string): Promise<string[]> {
-  try {
-    return (await readdir(dir, { withFileTypes: true }))
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name);
-  } catch (error) {
-    if (isMissingFileError(error)) return [];
-    throw error;
+async function scanAllSessionSummaries(workspaceRoot: string): Promise<SessionSummary[]> {
+  const dir = getSessionsDir(workspaceRoot);
+  const names = await readTopLevelSessionDirNames(dir);
+  const sessions: SessionSummary[] = [];
+
+  for (const name of names) {
+    try {
+      const parsed = await readSessionFile(name, workspaceRoot);
+      const timestamps = readSessionTimestamps(parsed);
+      sessions.push({
+        sessionId: parsed.sessionId,
+        rootSessionId: parsed.rootSessionId,
+        ...(parsed.parentSessionId === undefined ? {} : { parentSessionId: parsed.parentSessionId }),
+        ...(parsed.goalId === undefined ? {} : { goalId: parsed.goalId }),
+        ...(parsed.loopId === undefined ? {} : { loopId: parsed.loopId }),
+        ...(parsed.sessionRole === undefined ? {} : { sessionRole: parsed.sessionRole }),
+        agentName: parsed.agentName,
+        ...(parsed.modelInfo === undefined ? {} : { modelInfo: parsed.modelInfo }),
+        title: parsed.title ?? null,
+        createdAt: parsed.createdAt,
+        ...((timestamps.lastUpdatedAt ?? timestamps.updatedAt) === undefined ? {} : { lastUpdatedAt: timestamps.lastUpdatedAt ?? timestamps.updatedAt }),
+      });
+    } catch (err) {
+      console.warn(
+        `Skipping invalid session file "${name}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
+
+  return sessions;
 }
 
 async function readTopLevelSessionDirNames(dir: string): Promise<string[]> {
@@ -671,6 +705,7 @@ export const sessionFileInternals = {
   readSessionFile,
   toSessionFile,
   listSessionSummaries,
+  scanAllSessionSummaries,
   scanDescendants,
   readTopLevelSessionDirNames,
 };

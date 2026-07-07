@@ -42,7 +42,7 @@ function makeTaskContext(
 }
 
 async function readPersistedSession(sessionId: string): Promise<Record<string, unknown>> {
-  const path = join(TEST_TMP, `${sessionId}.json`);
+  const path = join(TEST_TMP, sessionId, "session.json");
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await Bun.file(path).exists()) {
       return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;

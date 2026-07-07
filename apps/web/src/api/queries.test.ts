@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, HitlRequest, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import type { GoalState, HitlRecord, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal, DashboardLoop } from "./types";
 import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
@@ -223,16 +223,16 @@ describe("web session query contracts", () => {
 
   test("hitlQueryOptions fetches global pending HITL requests", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const hitl: HitlRequest[] = [
+    const hitl: HitlRecord[] = [
       {
-        id: "hitl-1",
-        sessionId: "session-1",
-        kind: "approval",
-        prompt: "Approve?",
-        payload: { kind: "approval", action: "run_tool", context: {} },
-        trigger: "agent_request",
+        hitlId: "hitl-1",
+        owner: { projectSlug: "archcode", ownerType: "session", ownerId: "session-1" },
+        blockingKey: "session:session-1:tool:call-1",
+        source: { type: "tool_permission", sessionId: "session-1", toolCallId: "call-1", toolName: "run_tool" },
         status: "pending",
+        displayPayload: { title: "Approve?", redacted: true },
         createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
@@ -242,7 +242,7 @@ describe("web session query contracts", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const opts = hitlQueryOptions();
-    const result = await (opts as unknown as QueryOptionWithFn<HitlRequest[]>).queryFn();
+    const result = await (opts as unknown as QueryOptionWithFn<HitlRecord[]>).queryFn();
 
     expect([...opts.queryKey]).toEqual(["hitl", "pending"]);
     expect(result).toEqual(hitl);
@@ -251,17 +251,16 @@ describe("web session query contracts", () => {
 
   test("projectHitlQueryOptions fetches project-scoped HITL requests", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const hitl: HitlRequest[] = [
+    const hitl: HitlRecord[] = [
       {
-        id: "hitl-2",
-        sessionId: "session-1",
-        goalId: "goal-1",
-        kind: "review",
-        prompt: "Review artifacts",
-        payload: { kind: "review", artifacts: [] },
-        trigger: "approval_point",
+        hitlId: "hitl-2",
+        owner: { projectSlug: "archcode", ownerType: "goal", ownerId: "goal-1" },
+        blockingKey: "goal:goal-1:review",
+        source: { type: "goal_review", goalId: "goal-1" },
         status: "pending",
+        displayPayload: { title: "Review artifacts", redacted: true },
         createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
@@ -271,7 +270,7 @@ describe("web session query contracts", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const opts = projectHitlQueryOptions("archcode");
-    const result = await (opts as unknown as QueryOptionWithFn<HitlRequest[]>).queryFn();
+    const result = await (opts as unknown as QueryOptionWithFn<HitlRecord[]>).queryFn();
 
     expect([...opts.queryKey]).toEqual(["projects", "archcode", "hitl"]);
     expect(result).toEqual(hitl);

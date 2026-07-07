@@ -72,7 +72,7 @@ describe("AgentRuntime Loop wiring", () => {
       sessionRole: "main",
       title: "Loop session",
     });
-    const persisted = await readPersistedSession(join(fixture.sessionsDir, `${session.sessionId}.json`));
+    const persisted = await readPersistedSession(join(fixture.sessionsDir, session.sessionId, "session.json"));
     const summaries = await fixture.runtime.listSessions(fixture.workspaceRoot);
 
     expect(session.loopId).toBe(loopId);
@@ -136,7 +136,7 @@ describe("AgentRuntime Loop wiring", () => {
     expect(typeof report?.sessionId).toBe("string");
     const sessionId = report?.sessionId;
     if (sessionId === undefined) throw new Error("Expected Goal loop report to include sessionId");
-    const persisted = await readPersistedSession(join(fixture.sessionsDir, `${sessionId}.json`));
+    const persisted = await readPersistedSession(join(fixture.sessionsDir, sessionId, "session.json"));
     expect(persisted).toMatchObject({
       sessionId,
       goalId: report?.goalId,

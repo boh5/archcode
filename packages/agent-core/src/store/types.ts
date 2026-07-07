@@ -9,6 +9,7 @@ import type {
   SessionEventPayload,
   SessionStats,
   SessionExecutionRecord,
+  SessionHitlCheckpoint,
   ToolChildSessionLink,
   PendingInteraction,
 } from "@archcode/protocol";
@@ -60,6 +61,7 @@ export type {
   SessionTodo,
   SessionTodoStatus,
   SessionProjection,
+  SessionHitlCheckpoint,
   SessionEventEnvelope,
   SessionEventPayload,
   PermissionRequestEvent,
@@ -107,6 +109,8 @@ export interface SessionStoreState {
   goalId?: string;
   loopId?: string;
   sessionRole?: SessionRole;
+  blockedHitl?: SessionHitlCheckpoint;
+  blockedByHitlIds?: string[];
 
   // Running state
   executionCount: number;

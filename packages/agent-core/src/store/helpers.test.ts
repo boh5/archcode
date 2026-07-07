@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAssistantText, sessionFileInternals } from "./helpers";
@@ -32,14 +32,11 @@ function uniqueSessionId(label: string): string {
 }
 
 function sessionFilePath(sessionId: string): string {
-  return join(TMP_DIR, `${sessionId}.json`);
-}
-
-function childSessionFilePath(rootSessionId: string, sessionId: string): string {
-  return join(TMP_DIR, rootSessionId, `${sessionId}.json`);
+  return join(TMP_DIR, sessionId, "session.json");
 }
 
 async function writeSessionFile(sessionId: string, data: unknown): Promise<void> {
+  await mkdir(join(TMP_DIR, sessionId), { recursive: true });
   await Bun.write(
     sessionFilePath(sessionId),
     JSON.stringify(
@@ -52,6 +49,11 @@ async function writeSessionFile(sessionId: string, data: unknown): Promise<void>
       2,
     ),
   );
+}
+
+async function writeRawSessionFile(sessionId: string, content: string): Promise<void> {
+  await mkdir(join(TMP_DIR, sessionId), { recursive: true });
+  await Bun.write(sessionFilePath(sessionId), content);
 }
 
 function textPart(id: string, text: string, completedAt?: number): StoredPart {
@@ -425,16 +427,17 @@ describe("session transcript serialization", () => {
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
-  test("root save writes only the top-level session file", async () => {
+  test("root save writes only owner-local session.json", async () => {
     const sessionId = uniqueSessionId("root-layout");
 
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
 
     expect(await Bun.file(sessionFilePath(sessionId)).exists()).toBe(true);
+    expect(await Bun.file(join(TMP_DIR, `${sessionId}.json`)).exists()).toBe(false);
     expect(await Bun.file(join(TMP_DIR, sessionId, `${sessionId}.json`)).exists()).toBe(false);
   });
 
-  test("child save writes under root session directory", async () => {
+  test("child save writes to its own owner directory with ancestry metadata", async () => {
     const rootSessionId = uniqueSessionId("root-layout");
     const childSessionId = uniqueSessionId("child-layout");
 
@@ -443,8 +446,11 @@ describe("session transcript serialization", () => {
       TMP_DIR,
     );
 
-    expect(await Bun.file(sessionFilePath(childSessionId)).exists()).toBe(false);
-    expect(await Bun.file(childSessionFilePath(rootSessionId, childSessionId)).exists()).toBe(true);
+    expect(await Bun.file(sessionFilePath(childSessionId)).exists()).toBe(true);
+    expect(await Bun.file(join(TMP_DIR, rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
+    const raw = JSON.parse(await Bun.file(sessionFilePath(childSessionId)).text()) as Record<string, unknown>;
+    expect(raw.rootSessionId).toBe(rootSessionId);
+    expect(raw.parentSessionId).toBe(rootSessionId);
   });
 
   test("listSessionSummaries returns only top-level root sessions", async () => {
@@ -500,6 +506,36 @@ describe("session transcript serialization", () => {
       [childA, rootSessionId],
       [childB, rootSessionId],
     ]));
+  });
+
+  test("scanDescendants ignores unrelated roots without warning", async () => {
+    const rootSessionId = uniqueSessionId("root-scan");
+    const childId = uniqueSessionId("child-scan");
+    const unrelatedRootId = uniqueSessionId("unrelated-root");
+    const unrelatedChildId = uniqueSessionId("unrelated-child");
+    const warn = mock(() => {});
+    const originalWarn = console.warn;
+    console.warn = warn;
+
+    try {
+      await sessionFileInternals.saveSessionTranscript(persistedState(rootSessionId), TMP_DIR);
+      await sessionFileInternals.saveSessionTranscript(
+        persistedState(childId, [], [], [], createEmptySessionStats(), [], [], rootSessionId, rootSessionId),
+        TMP_DIR,
+      );
+      await sessionFileInternals.saveSessionTranscript(persistedState(unrelatedRootId), TMP_DIR);
+      await sessionFileInternals.saveSessionTranscript(
+        persistedState(unrelatedChildId, [], [], [], createEmptySessionStats(), [], [], unrelatedRootId, unrelatedRootId),
+        TMP_DIR,
+      );
+
+      const descendants = await sessionFileInternals.scanDescendants(TMP_DIR, rootSessionId);
+
+      expect(descendants).toEqual(new Map([[childId, rootSessionId]]));
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test("roundtrips completed text, incomplete text, reasoning, and all tool part variants", async () => {
@@ -614,7 +650,7 @@ describe("session transcript serialization", () => {
     );
 
     await sessionFileInternals.saveSessionTranscript(state, TMP_DIR);
-    const raw = await Bun.file(childSessionFilePath(rootSessionId, sessionId)).text();
+    const raw = await Bun.file(sessionFilePath(sessionId)).text();
     const parsed: Record<string, unknown> = JSON.parse(raw);
     const loaded = await storeManager.getOrLoad(sessionId, TMP_DIR);
 
@@ -770,13 +806,15 @@ describe("session transcript serialization", () => {
     await sessionFileInternals.saveSessionTranscript(persistedState(sessionId), TMP_DIR);
     const files = await readdir(TMP_DIR);
 
-    expect(files).toContain(`${sessionId}.json`);
-    expect(files).not.toContain(`${sessionId}.json.tmp`);
+    expect(files).toContain(sessionId);
+    expect(files).not.toContain(`${sessionId}.json`);
+    expect(files).not.toContain(`session.${sessionId}.json.tmp`);
+    expect(await Bun.file(sessionFilePath(sessionId)).exists()).toBe(true);
   });
 
   test("load rejects corrupted JSON", async () => {
     const sessionId = uniqueSessionId("corrupted");
-    await Bun.write(sessionFilePath(sessionId), "{not json");
+    await writeRawSessionFile(sessionId, "{not json");
 
     await expect(storeManager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });

@@ -7,7 +7,7 @@ import type {
   CompressionRefMapSnapshot,
   GoalState,
   GoalStatus,
-  HitlRequest,
+  HitlRecord,
   LoopState,
   Reminder,
   SessionMessage,
@@ -1442,16 +1442,16 @@ describe("Goal stream event reducers", () => {
 });
 
 describe("HITL stream event reducers", () => {
-  function makeHitlRequest(overrides: Partial<HitlRequest> = {}): HitlRequest {
+  function makeHitlRequest(overrides: Partial<HitlRecord> = {}): HitlRecord {
     return {
-      id: "hitl-1",
-      sessionId: "session-1",
-      kind: "question",
-      prompt: "Proceed with implementation?",
-      payload: { kind: "question" },
-      trigger: "agent_request",
+      hitlId: "hitl-1",
+      owner: { projectSlug: "project-a", ownerType: "session", ownerId: "session-1" },
+      blockingKey: "session:session-1:ask:hitl-1",
+      source: { type: "ask_user", sessionId: "session-1" },
       status: "pending",
+      displayPayload: { title: "Proceed with implementation?", redacted: true },
       createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z",
       ...overrides,
     };
   }
@@ -1466,14 +1466,14 @@ describe("HITL stream event reducers", () => {
     }, createDeterministicContext());
 
     expect(result.hitlRequests).toHaveLength(1);
-    expect(result.hitlRequests![0]!.id).toBe("hitl-1");
+    expect(result.hitlRequests![0]!.hitlId).toBe("hitl-1");
     expect(result.hitlRequests![0]!.status).toBe("pending");
   });
 
   test("hitl.request appends to existing hitlRequests", () => {
-    const existing = makeHitlRequest({ id: "hitl-0", prompt: "First" });
+    const existing = makeHitlRequest({ hitlId: "hitl-0", displayPayload: { title: "First", redacted: true } });
     const state = createProjection({ hitlRequests: [existing] });
-    const request = makeHitlRequest({ id: "hitl-1", prompt: "Second" });
+    const request = makeHitlRequest({ hitlId: "hitl-1", displayPayload: { title: "Second", redacted: true } });
 
     const result = reduceStreamEvent(state, {
       type: "hitl.request",
@@ -1481,14 +1481,14 @@ describe("HITL stream event reducers", () => {
     }, createDeterministicContext());
 
     expect(result.hitlRequests).toHaveLength(2);
-    expect(result.hitlRequests![0]!.id).toBe("hitl-0");
-    expect(result.hitlRequests![1]!.id).toBe("hitl-1");
+    expect(result.hitlRequests![0]!.hitlId).toBe("hitl-0");
+    expect(result.hitlRequests![1]!.hitlId).toBe("hitl-1");
   });
 
-  test("hitl.request deduplicates by id (updates existing)", () => {
-    const existing = makeHitlRequest({ id: "hitl-1", status: "pending", prompt: "Old prompt" });
+  test("hitl.request deduplicates by hitlId (updates existing)", () => {
+    const existing = makeHitlRequest({ hitlId: "hitl-1", status: "pending", displayPayload: { title: "Old prompt", redacted: true } });
     const state = createProjection({ hitlRequests: [existing] });
-    const updated = makeHitlRequest({ id: "hitl-1", status: "pending", prompt: "Updated prompt" });
+    const updated = makeHitlRequest({ hitlId: "hitl-1", status: "pending", displayPayload: { title: "Updated prompt", redacted: true } });
 
     const result = reduceStreamEvent(state, {
       type: "hitl.request",
@@ -1496,7 +1496,7 @@ describe("HITL stream event reducers", () => {
     }, createDeterministicContext());
 
     expect(result.hitlRequests).toHaveLength(1);
-    expect(result.hitlRequests![0]!.prompt).toBe("Updated prompt");
+    expect(result.hitlRequests![0]!.displayPayload.title).toBe("Updated prompt");
   });
 
   test("hitl.resolved updates status and response", () => {
@@ -1507,11 +1507,11 @@ describe("HITL stream event reducers", () => {
       type: "hitl.resolved",
       hitlId: "hitl-1",
       status: "resolved",
-      response: { kind: "question", answers: ["Yes"] },
+      response: { type: "question_answer", answers: ["Yes"] },
     }, createDeterministicContext());
 
     expect(result.hitlRequests![0]!.status).toBe("resolved");
-    expect(result.hitlRequests![0]!.response).toEqual({ kind: "question", answers: ["Yes"] });
+    expect(result.hitlRequests![0]!.response).toEqual({ type: "question_answer", answers: ["Yes"] });
     expect(result.hitlRequests![0]!.resolvedAt).toBeDefined();
   });
 
@@ -1542,17 +1542,17 @@ describe("HITL stream event reducers", () => {
     expect(result.hitlRequests![0]!.status).toBe("cancelled");
   });
 
-  test("hitl.resolved with timeout status sets status to timeout", () => {
+  test("hitl.resolved with resume_failed status records terminal failure", () => {
     const request = makeHitlRequest();
     const state = createProjection({ hitlRequests: [request] });
 
     const result = reduceStreamEvent(state, {
       type: "hitl.resolved",
       hitlId: "hitl-1",
-      status: "timeout",
+      status: "resume_failed",
     }, createDeterministicContext());
 
-    expect(result.hitlRequests![0]!.status).toBe("timeout");
+    expect(result.hitlRequests![0]!.status).toBe("resume_failed");
   });
 
   test("hitl.resolved is noop for unknown hitlId", () => {
@@ -1576,7 +1576,7 @@ describe("HITL stream event reducers", () => {
         type: "hitl.resolved",
         hitlId: "hitl-1",
         status: "resolved" as const,
-        response: { kind: "question" as const, answers: ["Yes"] },
+        response: { type: "question_answer" as const, answers: ["Yes"] },
       },
     ];
 

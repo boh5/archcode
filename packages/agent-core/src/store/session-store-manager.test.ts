@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot, type GoalState, type HitlRecord, type LoopState, type SessionProjection } from "@archcode/protocol";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError } from "./errors";
 import { sessionFileInternals } from "./helpers";
@@ -77,6 +77,15 @@ describe("SessionStoreManager", () => {
   async function readSessionJson(path: string): Promise<Record<string, unknown>> {
     await waitForFile(path);
     return JSON.parse(await Bun.file(path).text()) as Record<string, unknown>;
+  }
+
+  function canonicalSessionPath(sessionId: string): string {
+    return join(TMP_DIR, ".archcode", "sessions", sessionId, "session.json");
+  }
+
+  async function writeRawSessionFile(sessionId: string, content: string): Promise<void> {
+    await mkdir(join(TMP_DIR, ".archcode", "sessions", sessionId), { recursive: true });
+    await Bun.write(canonicalSessionPath(sessionId), content);
   }
 
   async function waitForSessionJson(
@@ -189,12 +198,96 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
 
     const persisted = await waitForSessionJson(
-      join(TMP_DIR, ".archcode", "sessions", `${id}.json`),
+      canonicalSessionPath(id),
       (json) => JSON.stringify(json).includes("Persisted compression summary"),
     );
 
     const compression = persisted.compression as { blocksByRef?: Record<string, { tokenEstimate?: { savedTokens?: number } }> };
     expect(compression.blocksByRef?.b1?.tokenEstimate?.savedTokens).toBe(75);
+  });
+
+  test("dotted protocol stream events reduce while server-only events stay out of reducer state", () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+    const goalState: GoalState = {
+      id: "goal-1",
+      projectId: "project-1",
+      title: "Goal",
+      status: "running",
+      phase: "build",
+      doneConditions: [],
+      doneResults: {},
+      reviewerAgent: "reviewer",
+      retryPolicy: { maxRetries: 0, backoffMs: 0, escalateOnFailure: false },
+      retryCount: 0,
+      approvalPoints: [],
+      author: "orchestrator",
+      childSessionIds: [],
+      createdAt: "2026-07-07T00:00:00.000Z",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+    };
+    const hitlRequest: HitlRecord = {
+      hitlId: "hitl-1",
+      owner: { projectSlug: "project-1", ownerType: "session", ownerId: id },
+      blockingKey: "ask-user:call-1",
+      source: { type: "ask_user", sessionId: id, toolCallId: "call-1" },
+      status: "pending",
+      displayPayload: { title: "Need input", redacted: true },
+      createdAt: "2026-07-07T00:00:00.000Z",
+      updatedAt: "2026-07-07T00:00:00.000Z",
+    };
+    const loopState: LoopState = {
+      loopId: "loop-1",
+      projectId: "project-1",
+      config: {
+        title: "Loop",
+        schedule: { kind: "manual" },
+        runKind: "goal",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 1 },
+        goalTemplate: {
+          title: "Goal",
+          author: "loop",
+          doneConditions: [],
+          retryPolicy: { maxRetries: 0, backoffMs: 0, escalateOnFailure: false },
+          approvalPoints: [],
+          reviewerAgent: "reviewer",
+          instructions: "Do it",
+        },
+      },
+      status: "active",
+      createdAt: 1,
+      updatedAt: 2,
+      runCount: 0,
+      stateVersion: 1,
+    };
+
+    store.getState().append({ type: "goal.state_change", goalId: "goal-1", status: "running", state: goalState });
+    store.getState().append({ type: "hitl.request", request: hitlRequest });
+    store.getState().append({
+      type: "hitl.resolved",
+      hitlId: "hitl-1",
+      status: "resolved",
+      response: { type: "question_answer", answers: ["yes"] },
+    });
+    store.getState().append({ type: "loop.state_change", loopId: "loop-1", status: "active", state: loopState });
+
+    const stateAfterDottedEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests" | "loops">;
+    expect(stateAfterDottedEvents.goals?.["goal-1"]).toEqual(goalState);
+    expect(stateAfterDottedEvents.hitlRequests).toMatchObject([
+      { hitlId: "hitl-1", status: "resolved", response: { type: "question_answer", answers: ["yes"] } },
+    ]);
+    expect(stateAfterDottedEvents.loops?.["loop-1"]).toEqual(loopState);
+
+    store.getState().append({ type: "permission.request", permissionId: "permission-1", toolName: "bash", args: {} });
+    store.getState().append({ type: "shutdown", reason: "test" });
+
+    const stateAfterServerOnlyEvents = store.getState() as ReturnType<typeof store.getState> & Pick<SessionProjection, "goals" | "hitlRequests" | "loops">;
+    expect(stateAfterServerOnlyEvents.goals).toEqual(stateAfterDottedEvents.goals);
+    expect(stateAfterServerOnlyEvents.hitlRequests).toEqual(stateAfterDottedEvents.hitlRequests);
+    expect(stateAfterServerOnlyEvents.loops).toEqual(stateAfterDottedEvents.loops);
   });
 
   test("get() returns undefined for unknown session", () => {
@@ -306,7 +399,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "tool-child-session-link", link });
 
     const raw = await waitForSessionJson(
-      join(TMP_DIR, ".archcode", "sessions", `${parentSessionId}.json`),
+      canonicalSessionPath(parentSessionId),
       (json) => Array.isArray(json.childSessionLinks) && json.childSessionLinks.length === 1,
     );
     expect(raw.childSessionLinks).toEqual([link]);
@@ -332,7 +425,7 @@ describe("SessionStoreManager", () => {
       destructive: true,
     });
 
-    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
+    const filePath = canonicalSessionPath(id);
     const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("attempt-1"));
     expect(JSON.stringify(raw)).toContain("attempt-1");
 
@@ -395,6 +488,36 @@ describe("SessionStoreManager", () => {
     expect(loaded.getState().executions[0]).toMatchObject({ status: "interrupted" });
   });
 
+  test("load reconciliation preserves waiting_for_human execution status", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    await sessionFileInternals.saveSessionTranscript(
+      {
+        sessionId: id,
+        createdAt: 1000,
+        agentName: "orchestrator",
+        title: null,
+        messages: [],
+        steps: [],
+        stats: createEmptySessionStats(),
+        executions: [{ id: "run-1", startedAt: 1000, status: "waiting_for_human", endedAt: 2000, durationMs: 1000 }],
+        todos: [],
+        childSessionLinks: [],
+        rootSessionId: id,
+      },
+      TMP_DIR,
+    );
+
+    const loaded = await manager.getOrLoad(id, TMP_DIR);
+
+    expect(loaded.getState().executions[0]).toMatchObject({
+      id: "run-1",
+      status: "waiting_for_human",
+      endedAt: 2000,
+      durationMs: 1000,
+    });
+  });
+
   test("persists completed tool results and does not downgrade them on restart", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const id = sessionId();
@@ -412,7 +535,7 @@ describe("SessionStoreManager", () => {
     });
     store.getState().append({ type: "tool-result", toolCallId: "call-1", toolName: "file_write", output: "written", isError: false });
 
-    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
+    const filePath = canonicalSessionPath(id);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes("written"));
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -438,7 +561,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
 
-    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
+    const filePath = canonicalSessionPath(id);
     const raw = await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
     expect(JSON.stringify(raw)).toContain(errorMsg);
   });
@@ -453,7 +576,7 @@ describe("SessionStoreManager", () => {
     store.getState().append({ type: "step-start", step: 0 });
     store.getState().append({ type: "loop-error", step: 0, error: errorMsg });
 
-    const filePath = join(TMP_DIR, ".archcode", "sessions", `${id}.json`);
+    const filePath = canonicalSessionPath(id);
     await waitForSessionJson(filePath, (json) => JSON.stringify(json).includes(errorMsg));
 
     const restarted = new SessionStoreManager({ logger: silentLogger });
@@ -542,7 +665,7 @@ describe("SessionStoreManager", () => {
     expect(file.title).toBe("child-title");
   });
 
-  test("create() persists child sessions directly under root without top-level transient file", async () => {
+  test("create() persists child sessions in their own owner directory without legacy files", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
@@ -562,7 +685,8 @@ describe("SessionStoreManager", () => {
       title: "child-title",
     });
     expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`)).exists()).toBe(false);
-    const childPath = join(TMP_DIR, ".archcode", "sessions", rootSessionId, `${childSessionId}.json`);
+    expect(await Bun.file(join(TMP_DIR, ".archcode", "sessions", rootSessionId, `${childSessionId}.json`)).exists()).toBe(false);
+    const childPath = canonicalSessionPath(childSessionId);
     await waitForFile(childPath);
     const childFile = JSON.parse(await Bun.file(childPath).text()) as Record<string, unknown>;
     expect(childFile).toMatchObject({ sessionId: childSessionId, rootSessionId, parentSessionId: rootSessionId });
@@ -572,7 +696,7 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     const childSessionId = sessionId();
-    const originalScanDescendants = sessionFileInternals.scanDescendants;
+    const originalScanAllSessionSummaries = sessionFileInternals.scanAllSessionSummaries;
     let scanCount = 0;
 
     await sessionFileInternals.saveSessionTranscript(
@@ -592,16 +716,16 @@ describe("SessionStoreManager", () => {
       TMP_DIR,
     );
 
-    sessionFileInternals.scanDescendants = async (...args) => {
+    sessionFileInternals.scanAllSessionSummaries = async (...args) => {
       scanCount += 1;
-      return await originalScanDescendants(...args);
+      return await originalScanAllSessionSummaries(...args);
     };
 
     try {
       await manager.getSessionFile(TMP_DIR, childSessionId);
       await manager.getSessionFile(TMP_DIR, childSessionId);
     } finally {
-      sessionFileInternals.scanDescendants = originalScanDescendants;
+      sessionFileInternals.scanAllSessionSummaries = originalScanAllSessionSummaries;
     }
 
     expect(scanCount).toBe(1);
@@ -646,8 +770,7 @@ describe("SessionStoreManager", () => {
   test("getOrLoad() throws on invalid JSON", async () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const sessionId = crypto.randomUUID();
-    const filePath = join(TMP_DIR, `${sessionId}.json`);
-    await Bun.write(filePath, "not json");
+    await writeRawSessionFile(sessionId, "not json");
     await expect(manager.getOrLoad(sessionId, TMP_DIR)).rejects.toThrow();
   });
 
@@ -771,8 +894,7 @@ describe("SessionStoreManager", () => {
     await writeSessionFile({ sessionId: validChildId, rootSessionId, parentSessionId: rootSessionId, title: "valid" });
     await writeSessionFile({ sessionId: missingParentId, rootSessionId, parentSessionId: absentParentId, title: "orphan" });
 
-    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
-    await Bun.write(join(rootDir, `${rootMismatchId}.json`), JSON.stringify({
+    await writeRawSessionFile(rootMismatchId, JSON.stringify({
       sessionId: rootMismatchId,
       createdAt: 1000,
       agentName: "explore",
@@ -786,7 +908,7 @@ describe("SessionStoreManager", () => {
       rootSessionId: otherRootId,
       parentSessionId: rootSessionId,
     }));
-    await Bun.write(join(rootDir, `${mismatchFileId}.json`), JSON.stringify({
+    await writeRawSessionFile(mismatchFileId, JSON.stringify({
       sessionId: mismatchJsonId,
       createdAt: 1000,
       agentName: "explore",
@@ -800,7 +922,7 @@ describe("SessionStoreManager", () => {
       rootSessionId,
       parentSessionId: rootSessionId,
     }));
-    await Bun.write(join(rootDir, `${invalidJsonId}.json`), "not json");
+    await writeRawSessionFile(invalidJsonId, "not json");
 
     const tree = await manager.buildSessionTree(TMP_DIR, rootSessionId);
 
@@ -819,8 +941,7 @@ describe("SessionStoreManager", () => {
     const fileSessionId = sessionId();
     const jsonSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
-    await Bun.write(join(rootDir, `${fileSessionId}.json`), JSON.stringify({
+    await writeRawSessionFile(fileSessionId, JSON.stringify({
       sessionId: jsonSessionId,
       createdAt: 1000,
       agentName: "explore",
@@ -849,8 +970,8 @@ describe("SessionStoreManager", () => {
     const manager = new SessionStoreManager({ logger: silentLogger });
     const rootSessionId = sessionId();
     await writeSessionFile({ sessionId: rootSessionId, title: "root" });
-    const rootDir = join(TMP_DIR, ".archcode", "sessions", rootSessionId);
-    await Bun.write(join(rootDir, `${rootSessionId}.json`), JSON.stringify({
+    const duplicateDirSessionId = sessionId();
+    await writeRawSessionFile(duplicateDirSessionId, JSON.stringify({
       sessionId: rootSessionId,
       createdAt: 1000,
       agentName: "explore",
@@ -952,8 +1073,13 @@ describe("SessionStoreManager", () => {
       parentSessionId: childSessionId,
     });
     const sessionsDirEntries = await readdir(join(TMP_DIR, ".archcode", "sessions"), { withFileTypes: true });
-    expect(sessionsDirEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([`${rootSessionId}.json`]);
-    expect(sessionsDirEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)).toEqual([rootSessionId]);
+    expect(sessionsDirEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)).toEqual([]);
+    expect(sessionsDirEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()).toEqual([
+      childSessionId,
+      grandchildSessionId,
+      rootSessionId,
+      siblingSessionId,
+    ].sort());
 
     const childAsRootManager = new SessionStoreManager({ logger: silentLogger });
     await Bun.write(join(TMP_DIR, ".archcode", "sessions", `${childSessionId}.json`), JSON.stringify({
@@ -961,6 +1087,7 @@ describe("SessionStoreManager", () => {
       rootSessionId: childSessionId,
       parentSessionId: rootSessionId,
     }));
+    await expect(childAsRootManager.getSessionFile(TMP_DIR, childSessionId)).resolves.toMatchObject({ rootSessionId });
     await expect(childAsRootManager.buildSessionTree(TMP_DIR, childSessionId)).rejects.toThrow(NotRootSessionError);
   });
 });

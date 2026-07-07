@@ -10,7 +10,7 @@ import type { AskUserResponse } from "../deferred";
 import { SessionDeleteConflictError } from "../store/errors";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
-import { getRootSessionDir, getRootSessionPath, getSessionPath } from "../store/sessions-dir";
+import { getSessionDir, getSessionPath } from "../store/sessions-dir";
 import type { AskUserRequest, ToolConfirmationRequest, ToolConfirmationResult } from "../tools/types";
 import { SessionExecutionManager } from "./session-execution-manager";
 import { silentLogger } from "../logger";
@@ -227,12 +227,8 @@ async function writeSessionFile(input: {
     rootSessionId,
     ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
   };
-  if (input.sessionId !== rootSessionId) {
-    await mkdir(getRootSessionDir(workspaceRoot, rootSessionId), { recursive: true });
-  } else {
-    await mkdir(join(workspaceRoot, ".archcode", "sessions"), { recursive: true });
-  }
-  await Bun.write(getSessionPath(workspaceRoot, rootSessionId, input.sessionId), JSON.stringify(file, null, 2));
+  await mkdir(getSessionDir(workspaceRoot, input.sessionId), { recursive: true });
+  await Bun.write(getSessionPath(workspaceRoot, input.sessionId), JSON.stringify(file, null, 2));
 }
 
 function makeChildLink(parentSessionId: string, childSessionId: string, childAgentName: string): ToolChildSessionLink {
@@ -1034,8 +1030,7 @@ describe("SessionExecutionManager", () => {
 
     await manager.deleteSession(workspaceRoot, rootId);
 
-    expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(false);
-    expect(await Bun.file(getRootSessionDir(workspaceRoot, rootId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionDir(workspaceRoot, rootId)).exists()).toBe(false);
     expect(sessionAgentManager.dispose).toHaveBeenCalledTimes(3);
     expect(untrackSession).toHaveBeenCalledTimes(3);
   });
@@ -1053,10 +1048,10 @@ describe("SessionExecutionManager", () => {
 
     await manager.deleteSession(workspaceRoot, childId);
 
-    expect(await Bun.file(getRootSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, grandchildId)).exists()).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, siblingId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, rootId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, childId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, grandchildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, siblingId)).exists()).toBe(true);
   });
 
   test("child subtree delete removes descendant IDs from the root index", async () => {
@@ -1090,10 +1085,10 @@ describe("SessionExecutionManager", () => {
 
     await childDeleteManager.deleteSession(workspaceRoot, firstChildId);
 
-    expect(await Bun.file(getRootSessionPath(workspaceRoot, firstRootId)).exists()).toBe(true);
-    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstChildId)).exists()).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstGrandchildId)).exists()).toBe(false);
-    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId, firstSiblingId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstRootId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstChildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstGrandchildId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionPath(workspaceRoot, firstSiblingId)).exists()).toBe(true);
     expect(childAgentManager.dispose).toHaveBeenCalledTimes(2);
     expect(untrackChildSession).toHaveBeenCalledTimes(2);
 
@@ -1108,8 +1103,7 @@ describe("SessionExecutionManager", () => {
 
     await rootDeleteManager.deleteSession(workspaceRoot, secondRootId);
 
-    expect(await Bun.file(getRootSessionPath(workspaceRoot, secondRootId)).exists()).toBe(false);
-    expect(await Bun.file(getRootSessionDir(workspaceRoot, secondRootId)).exists()).toBe(false);
+    expect(await Bun.file(getSessionDir(workspaceRoot, secondRootId)).exists()).toBe(false);
     expect(rootAgentManager.dispose).toHaveBeenCalledTimes(3);
     expect(untrackRootSession).toHaveBeenCalledTimes(3);
   });
@@ -1208,7 +1202,7 @@ describe("SessionExecutionManager", () => {
       globalThis.setTimeout = originalSetTimeout;
     }
 
-    expect(await Bun.file(getSessionPath(workspaceRoot, rootId, childId)).exists()).toBe(true);
+    expect(await Bun.file(getSessionPath(workspaceRoot, childId)).exists()).toBe(true);
     expect(sessionAgentManager.dispose).not.toHaveBeenCalled();
     expect(execution.abortController.signal.aborted).toBe(true);
   });
@@ -1224,7 +1218,7 @@ describe("SessionExecutionManager", () => {
     await storeManager.resolveRootSessionId(siblingId, workspaceRoot);
 
     storeManager.delete(childId, workspaceRoot);
-    await rm(getSessionPath(workspaceRoot, rootId, siblingId));
+    await rm(getSessionPath(workspaceRoot, siblingId));
 
     expect(await storeManager.resolveRootSessionId(siblingId, workspaceRoot)).toBe(rootId);
   });

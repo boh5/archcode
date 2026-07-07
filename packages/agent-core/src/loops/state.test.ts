@@ -207,11 +207,13 @@ describe("Loop schemas", () => {
     const report = LoopRunReportSchema.parse({
       runId: "run-1",
       loopId: VALID_LOOP_ID,
-      status: "budget_exceeded",
+      status: "needs_user",
       trigger: "manual",
       startedAt: 1_000,
       endedAt: 2_000,
       reason: "hard_budget_exceeded",
+      blockedByHitlIds: ["hitl-1"],
+      attentionStatus: "waiting_for_human",
       budgetUsage: {
         iterations: 8,
         inputTokens: 10,
@@ -256,8 +258,10 @@ describe("Loop schemas", () => {
       latestIntegrations: { errors: report.integrationErrors!, updatedAt: 2_000 },
     });
 
-    expect(report.status).toBe("budget_exceeded");
+    expect(report.status).toBe("needs_user");
     expect(report.reason).toBe("hard_budget_exceeded");
+    expect(report.blockedByHitlIds).toEqual(["hitl-1"]);
+    expect(report.attentionStatus).toBe("waiting_for_human");
     expect(state.config.toolProfileId).toBe("loop_github_pr_watch");
     expect(state.latestCollisions?.activeLeases[0]?.targetKey).toBe("pr:arch/code#42");
   });
@@ -306,6 +310,8 @@ describe("Loop schemas", () => {
         startedAt: 1_000,
         attempts: 1,
         blockedReason: "canonical checkout is dirty",
+        blockedByHitlIds: ["hitl-1"],
+        attentionStatus: "waiting_for_human",
         cleanupState: "preserved",
         observedArtifacts: report.observedArtifacts,
       },
@@ -320,6 +326,8 @@ describe("Loop schemas", () => {
     expect(report.observedArtifacts?.[0]?.path).toBe("report.md");
     expect(state.config.triggers?.[0]?.kind).toBe("on_ci_fail");
     expect(state.currentJob?.status).toBe("blocked");
+    expect(state.currentJob?.blockedByHitlIds).toEqual(["hitl-1"]);
+    expect(state.currentJob?.attentionStatus).toBe("waiting_for_human");
     expect(state.triggerHealth?.[0]?.status).toBe("healthy");
   });
 });
@@ -455,10 +463,19 @@ describe("LoopStateManager", () => {
     expect(resumed.nextRunAt).toBeUndefined();
   });
 
+  test("loopHitlPath resolves owner-local hitl.json", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+
+    expect(await manager.loopHitlPath(VALID_LOOP_ID)).toBe(
+      join(TMP_DIR, ".archcode", "loops", VALID_LOOP_ID, "hitl.json"),
+    );
+  });
+
   test("rejects path traversal loop ids and contained path escapes", async () => {
     const manager = new LoopStateManager(TMP_DIR);
 
     expect(await captureAsyncError(() => manager.read("../escape"))).toBeInstanceOf(LoopInvalidIdError);
+    expect(await captureAsyncError(() => manager.loopHitlPath("../escape"))).toBeInstanceOf(LoopInvalidIdError);
     expect(await captureAsyncError(() => manager.appendRunReport("../escape", report(VALID_LOOP_ID, "run", 1)))).toBeInstanceOf(LoopInvalidIdError);
     expect(await captureAsyncError(() => manager.resolveContainedPathForTest("../escape/state.json"))).toBeInstanceOf(LoopPathError);
     expect(existsSync(join(TMP_DIR, "escape"))).toBe(false);

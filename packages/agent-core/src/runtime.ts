@@ -27,9 +27,8 @@ import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
-  HitlPayload as ProtocolHitlPayload,
-  HitlRequest as ProtocolHitlRequest,
   HitlResponse as ProtocolHitlResponse,
+  HitlSource,
   HitlStreamEvent,
   McpServerStatus,
   SessionTreeResponse,
@@ -620,29 +619,41 @@ export async function createRuntime(
 
 function toProtocolHitlEvent(event: HitlEvent): HitlStreamEvent | undefined {
   if (event.type === "hitl.request") {
+    const ownerType = event.trigger.goalId !== undefined
+      ? "goal"
+      : event.trigger.loopId !== undefined
+        ? "loop"
+        : "session";
+    const ownerId = event.trigger.goalId ?? event.trigger.loopId ?? event.sessionId;
+    const source = protocolHitlSource(event);
     return {
       type: "hitl.request",
       request: {
-        id: event.hitlId,
-        sessionId: event.sessionId,
-        ...(event.trigger.goalId === undefined ? {} : { goalId: event.trigger.goalId }),
-        ...(event.trigger.loopId === undefined ? {} : { loopId: event.trigger.loopId }),
-        kind: event.kind,
-        prompt: hitlPrompt(event.payload),
-        payload: protocolHitlPayload(event.payload),
-        ...(event.displayPayload === undefined ? {} : { displayPayload: event.displayPayload }),
-        trigger: event.trigger.source?.startsWith("goal.") || event.kind !== "question" ? "approval_point" : "agent_request",
-        ...(event.approvalKey === undefined ? {} : { decisionKey: event.approvalKey }),
+        hitlId: event.hitlId,
+        owner: {
+          projectSlug: event.trigger.projectSlug ?? "unknown-project",
+          ownerType,
+          ownerId,
+        },
+        blockingKey: event.approvalKey ?? defaultHitlBlockingKey(event, source),
+        source,
         status: "pending",
+        displayPayload: event.displayPayload ?? {
+          title: hitlPrompt(event.payload),
+          summary: "Details redacted for display.",
+          redacted: true,
+        },
         createdAt: new Date(event.createdAt).toISOString(),
-      } satisfies ProtocolHitlRequest,
+        updatedAt: new Date(event.createdAt).toISOString(),
+      },
     };
   }
 
+  const status = event.status === "timeout" ? "cancelled" : event.status;
   return {
     type: "hitl.resolved",
     hitlId: event.hitlId,
-    status: event.status,
+    status,
     ...(event.status === "resolved" ? { response: protocolHitlResponse(event.kind, event.response) } : {}),
   };
 }
@@ -706,46 +717,56 @@ function hitlPrompt(payload: HitlPayload): string {
   return payload.message ?? payload.title ?? ("action" in payload ? payload.action : "Human input requested");
 }
 
-function protocolHitlPayload(payload: HitlPayload): ProtocolHitlPayload {
-  if (payload.kind === "question") {
+function protocolHitlSource(event: Extract<HitlEvent, { type: "hitl.request" }>): HitlSource {
+  if (event.kind === "approval" && event.trigger.toolCallId !== undefined) {
     return {
-      kind: "question",
-      ...(payload.options === undefined ? {} : { options: payload.options.map(({ label, description }) => ({ label, ...(description === undefined ? {} : { description }) })) }),
-      ...(payload.multiple === undefined ? {} : { multiple: payload.multiple }),
-      ...(payload.custom === undefined ? {} : { custom: payload.custom }),
-      ...(payload.recommendedOption === undefined ? {} : { recommendedOption: payload.recommendedOption }),
-      ...(payload.rationale === undefined ? {} : { rationale: payload.rationale }),
+      type: "tool_permission",
+      sessionId: event.sessionId,
+      toolCallId: event.trigger.toolCallId,
+      toolName: "tool",
     };
   }
-  if (payload.kind === "approval") {
-    return { kind: "approval", action: payload.action, context: payload.context };
+  if (event.trigger.goalId !== undefined && event.kind === "review") {
+    return { type: "goal_review", goalId: event.trigger.goalId };
   }
-  if (payload.kind === "review") {
-    return {
-      kind: "review",
-      artifacts: payload.artifacts.map((artifact) => ({
-        name: "review.md",
-        path: artifact.path,
-        mediaType: "text/markdown",
-      })),
-    };
+  if (event.trigger.goalId !== undefined && event.trigger.approvalPoint !== undefined) {
+    return { type: "goal_approval", goalId: event.trigger.goalId, approvalPoint: event.trigger.approvalPoint === "before_complete" ? "before_complete" : "after_plan" };
   }
-  return { kind: "question", custom: true };
+  if (event.trigger.goalId !== undefined) {
+    return { type: "goal_question", goalId: event.trigger.goalId, questionKey: event.approvalKey ?? event.hitlId };
+  }
+  if (event.trigger.loopId !== undefined && event.trigger.source?.includes("blocker")) {
+    return { type: "loop_blocker", loopId: event.trigger.loopId, reason: event.trigger.source };
+  }
+  if (event.trigger.loopId !== undefined && event.trigger.approvalPoint !== undefined) {
+    return { type: "loop_approval", loopId: event.trigger.loopId, approvalPoint: event.trigger.approvalPoint };
+  }
+  if (event.trigger.loopId !== undefined) {
+    return { type: "loop_question", loopId: event.trigger.loopId, questionKey: event.approvalKey ?? event.hitlId };
+  }
+  return { type: "ask_user", sessionId: event.sessionId, ...(event.trigger.toolCallId === undefined ? {} : { toolCallId: event.trigger.toolCallId }) };
+}
+
+function defaultHitlBlockingKey(event: Extract<HitlEvent, { type: "hitl.request" }>, source: HitlSource): string {
+  if (source.type === "tool_permission") return `session:${event.sessionId}:tool:${source.toolCallId}`;
+  if (source.type === "goal_approval") return `goal:${source.goalId}:approval:${source.approvalPoint}`;
+  if (source.type === "loop_blocker") return `loop:${source.loopId}:blocker:${source.reason}`;
+  return `${source.type}:${event.hitlId}`;
 }
 
 function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePayload): ProtocolHitlResponse {
   if (kind === "approval") {
     const approved = response.decision === "approved" || response.decision === "approve" || response.outcome === "DONE" || response.data?.approved === true;
+    const approveAlways = response.decision === "approve_always" || response.data?.approveAlways === true;
     return {
-      kind: "approval",
-      approved,
-      ...(response.data?.approveAlways === true ? { approveAlways: true } : {}),
+      type: "permission_decision",
+      decision: approveAlways ? "approve_always" : approved ? "approve_once" : "deny",
       ...(response.comment === undefined ? {} : { comment: response.comment }),
     };
   }
   if (kind === "review") {
     return {
-      kind: "review",
+      type: "review_outcome",
       outcome: response.outcome ?? (response.decision === "approved" ? "DONE" : "NOT_DONE"),
       ...(response.comment === undefined ? {} : { comment: response.comment }),
     };
@@ -754,7 +775,7 @@ function protocolHitlResponse(kind: HitlEvent["kind"], response: HitlResponsePay
     ? response.answers.map((answer) => String(answer))
     : response.decision === undefined ? [] : [response.decision];
   return {
-    kind: "question",
+    type: "question_answer",
     answers,
     ...(response.comment === undefined ? {} : { comment: response.comment }),
   };

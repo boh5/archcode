@@ -55,59 +55,39 @@ function assertPathContained(target: string, parent: string): void {
 }
 
 /**
- * Returns the file path for a root session JSON file.
- * Pattern: `.archcode/sessions/{sessionId}.json`
+ * Returns the canonical directory for one session owner.
+ * Pattern: `.archcode/sessions/{sessionId}`
  */
-export function getRootSessionPath(workspaceRoot: string, sessionId: string): string {
+export function getSessionDir(workspaceRoot: string, sessionId: string): string {
   assertSafeSessionId(sessionId);
   const sessionsDir = getSessionsDir(workspaceRoot);
-  const path = join(sessionsDir, `${sessionId}.json`);
+  const path = join(sessionsDir, sessionId);
   assertPathContained(path, sessionsDir);
   return path;
 }
 
 /**
- * Returns the directory path for a root session's descendant tree.
- * Pattern: `.archcode/sessions/{rootSessionId}`
+ * Returns the canonical session file path.
+ * Pattern: `.archcode/sessions/{sessionId}/session.json`
  */
-export function getRootSessionDir(workspaceRoot: string, rootSessionId: string): string {
-  assertSafeSessionId(rootSessionId);
-  const sessionsDir = getSessionsDir(workspaceRoot);
-  const path = join(sessionsDir, rootSessionId);
-  assertPathContained(path, sessionsDir);
-  return path;
-}
-
-/**
- * Returns the file path for a child session JSON file nested under its root.
- * Pattern: `.archcode/sessions/{rootSessionId}/{sessionId}.json`
- */
-export function getChildSessionPath(
-  workspaceRoot: string,
-  rootSessionId: string,
-  sessionId: string,
-): string {
-  assertSafeSessionId(rootSessionId);
+export function getSessionPath(workspaceRoot: string, sessionId: string): string {
   assertSafeSessionId(sessionId);
-  const sessionsDir = getSessionsDir(workspaceRoot);
-  const path = join(sessionsDir, rootSessionId, `${sessionId}.json`);
-  assertPathContained(path, sessionsDir);
+  const sessionDir = getSessionDir(workspaceRoot, sessionId);
+  const path = join(sessionDir, "session.json");
+  assertPathContained(path, sessionDir);
   return path;
 }
 
 /**
- * Returns the correct session file path based on whether the session
- * is the root (`rootSessionId === sessionId`) or a descendant.
+ * Returns the owner-local HITL file path for one session.
+ * Pattern: `.archcode/sessions/{sessionId}/hitl.json`
  */
-export function getSessionPath(
-  workspaceRoot: string,
-  rootSessionId: string,
-  sessionId: string,
-): string {
-  if (rootSessionId === sessionId) {
-    return getRootSessionPath(workspaceRoot, sessionId);
-  }
-  return getChildSessionPath(workspaceRoot, rootSessionId, sessionId);
+export function getSessionHitlPath(workspaceRoot: string, sessionId: string): string {
+  assertSafeSessionId(sessionId);
+  const sessionDir = getSessionDir(workspaceRoot, sessionId);
+  const path = join(sessionDir, "hitl.json");
+  assertPathContained(path, sessionDir);
+  return path;
 }
 
 export function __setSessionsDirForTest(

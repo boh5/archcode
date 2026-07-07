@@ -18,6 +18,7 @@ import {
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
+const VALID_LOOP_ID = "660e8400-e29b-41d4-a716-446655440001";
 
 const condition: DoneCondition = {
   id: "tests",
@@ -59,12 +60,25 @@ describe("GoalStateSchema", () => {
       retryCount: 0,
       approvalPoints: ["after_plan"],
       author: "orchestrator",
+      loopId: VALID_LOOP_ID,
       childSessionIds: [],
+      attentionStatus: "waiting_for_human",
+      blockedByHitlIds: ["hitl-1"],
+      resumeCheckpoint: {
+        version: 1,
+        hitlId: "hitl-1",
+        blockedAt: now,
+        phase: "plan",
+        reason: "approval required",
+      },
       createdAt: now,
       updatedAt: now,
     });
 
     expect(state.id).toBe(VALID_UUID);
+    expect(state.loopId).toBe(VALID_LOOP_ID);
+    expect(state.attentionStatus).toBe("waiting_for_human");
+    expect(state.resumeCheckpoint?.hitlId).toBe("hitl-1");
     expect(() => GoalStateSchema.parse({ ...state, workflowId: VALID_UUID })).toThrow();
   });
 
@@ -319,10 +333,21 @@ describe("GoalStateManager", () => {
     expect((await readdir(goalDir)).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 
+  test("goalHitlPath resolves owner-local hitl.json", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+
+    await manager.create("project-a", "HITL", "architect");
+
+    expect(await manager.goalHitlPath(VALID_UUID)).toBe(
+      join(TMP_DIR, ".archcode", "goals", VALID_UUID, "hitl.json"),
+    );
+  });
+
   test("path traversal attempt rejected", async () => {
     const manager = new GoalStateManager(TMP_DIR);
 
     expect(await captureAsyncError(() => manager.read("../escape"))).toBeInstanceOf(GoalInvalidIdError);
+    expect(await captureAsyncError(() => manager.goalHitlPath("../escape"))).toBeInstanceOf(GoalInvalidIdError);
     expect(await captureAsyncError(() => manager.read(VALID_UUID))).toBeInstanceOf(GoalNotFoundError);
     // Exercise the containment guard directly for corrupted caller paths that bypass UUID validation.
     expect(await captureAsyncError(() => manager.resolveContainedPathForTest("../escape/goal.json"))).toBeInstanceOf(GoalPathError);

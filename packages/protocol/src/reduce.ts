@@ -7,7 +7,7 @@ import type {
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
-  HitlRequest,
+  HitlRecord,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -651,7 +651,7 @@ export function reduceStreamEvent(
 
     case "hitl.request": {
       const hitlRequests = [...(state.hitlRequests ?? [])];
-      const existingIndex = hitlRequests.findIndex((r) => r.id === event.request.id);
+      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.request.hitlId);
 
       if (existingIndex !== -1) {
         hitlRequests[existingIndex] = event.request;
@@ -664,11 +664,11 @@ export function reduceStreamEvent(
 
     case "hitl.resolved": {
       const hitlRequests = state.hitlRequests?.slice() ?? [];
-      const existingIndex = hitlRequests.findIndex((r) => r.id === event.hitlId);
+      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.hitlId);
 
       if (existingIndex === -1) return {};
 
-      const update: Partial<HitlRequest> = {
+      const update: Partial<HitlRecord> = {
         status: event.status,
         ...(event.response ? { response: event.response } : {}),
       };
