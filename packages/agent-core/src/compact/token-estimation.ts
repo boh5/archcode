@@ -2,7 +2,7 @@ import type { ModelMessage } from "ai";
 import { normalizeUsage, type NormalizedUsage } from "@archcode/protocol";
 
 export const TOKEN_CHARS_RATIO = 4;
-export const COMPACT_THRESHOLD = 0.75;
+export const COMPACT_THRESHOLD = 0.85;
 export const COMPACT_MIN_NEW_MESSAGES = 5;
 
 function contentLength(content: ModelMessage["content"]): number {

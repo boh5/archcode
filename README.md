@@ -456,17 +456,17 @@ apps/server/src/                                   # Hono REST + SSE server with
 apps/web/                                          # Vite + React + Tailwind frontend
 packages/protocol/src/                             # Shared protocol types and stream event reducer (zero runtime deps)
 packages/utils/src/                                # Shared utility helpers (zero runtime deps)
-packages/agent-core/src/compression/               # Hybrid Compression runtime: dynamic ranges, hard-limit/emergency blocks, projection refs, originals
-packages/agent-core/src/compact/                   # Compatibility utilities and old session read/display support
+packages/agent-core/src/compression/               # DCP-like dynamic range compression, projection refs, originals, and nudges below hard threshold
+packages/agent-core/src/compact/                   # Mandatory legacy hard compact safety path for >=85% context pressure and /compact
 packages/agent-core/src/memory/                    # Persistent memory (atomic writes, frontmatter, index)
 packages/agent-core/src/lsp/                       # LSP client pool (18 language servers, 50+ ext mappings)
 packages/agent-core/src/llm/                       # Managed LLM runtime boundary, retry/recovery, adapter test seam
 packages/agent-core/src/tools/                     # 38 builtin tools: 24 base + 2 memory + 4 Goal + 8 GitHub connector tools
 ```
 
-**Hybrid Compression:** `packages/agent-core/src/compression/` is the active runtime architecture for reducing model context while preserving the canonical session transcript. Dynamic Range compression lets the model request a safe older range by projection ref (`mNNNN`) through the compression tool; Hard-Limit and Emergency compression run from query hooks and the manual `/compact` command when context pressure requires automatic system action. Compression blocks are stored in durable compression state as active/inactive/superseded block refs (`bN`) with structured summaries, protected refs, child block refs, and token estimates.
+**Context Compression:** ArchCode deliberately has two separate context-reduction mechanisms. `packages/agent-core/src/compression/` is the DCP-like dynamic compression runtime: it is part of the agent's in-conversation tool workflow, where the model may call the `compress` tool on safe visible refs (`mNNNN`/`bN`) and soft/strong nudges guide that behavior between 55% and 85% pressure. `packages/agent-core/src/compact/` is a different runtime safety mechanism: all agents use it as the mandatory hard safety path at `>=85%` context pressure, and the manual `/compact` command uses the same path. Hard compact runs from query hooks rather than model choice, emits a `compact` event, inserts a `CompactionPart`, marks the compacted prefix, and clears DCP compression projection state so dynamic compression blocks cannot remain layered over the forced compacted view.
 
-Model projection is ref-based only: canonical messages keep their original text and tool parts, while the model view injects session-local message refs and replaces covered ranges with `<compression-block ref="bN">` summaries. The server exposes an original-range API for expanding a block back to its covered canonical messages and sanitized tool-output previews; large persisted outputs are represented by safe refs instead of filesystem paths. The older `packages/agent-core/src/compact/` path remains for reusable utilities and compatibility with existing persisted sessions that contain `CompactEvent`, `CompactionPart`, `compacted` flags, `tailStartId`, or `<compact-summary>` display data.
+Dynamic compression projection is ref-based: canonical messages keep their original text and tool parts, while the model view can replace covered ranges with `<compression-block ref="bN">` summaries during normal below-threshold operation. Hard compact projection is summary-tail based: compacted prefix messages are omitted from model context and replaced by `<compact-summary>`, with the recent tail preserved verbatim. The server exposes an original-range API for DCP compression blocks; legacy hard compact sessions use `CompactEvent`, `CompactionPart`, `compacted` flags, `tailStartId`, and `<compact-summary>` display data.
 
 **Data flow:**
 ```

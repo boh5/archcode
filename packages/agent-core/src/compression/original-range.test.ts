@@ -13,7 +13,7 @@ function summary(childBlockRefs: CompressionSummary["childBlockRefs"] = []): Com
     sections: {
       "Current Objective": childBlockRefs.length > 0 ? "Continue task after child blocks" : "Continue task",
       "User Constraints": "Preserve constraints",
-      "Decisions Made": "Use Hybrid Compression coverage",
+      "Decisions Made": "Use DCP-like dynamic compression coverage",
       "Open Tasks": "Expose originals lazily",
       "Important Files": "packages/agent-core/src/compression/original-range.ts",
       "Tool Results": "Small outputs can be returned inline",
@@ -198,7 +198,7 @@ function nestedCompressedSession(): SessionFile {
 }
 
 describe("resolveCompressionOriginalRange", () => {
-  test("returns canonical covered messages and ids for a Hybrid Compression block", () => {
+  test("returns canonical covered messages and ids for a DCP-like dynamic compression block", () => {
     const result = resolveCompressionOriginalRange(compressedSession(), "b1");
 
     expect(result.ok).toBe(true);
@@ -241,7 +241,7 @@ describe("resolveCompressionOriginalRange", () => {
     expect(result.childBlockRefs).toEqual(["b1"]);
   });
 
-  test("returns not_found for unknown refs when Hybrid Compression state exists", () => {
+  test("returns not_found for unknown refs when dynamic compression state exists", () => {
     const result = resolveCompressionOriginalRange(compressedSession(), "b9");
 
     expect(result).toMatchObject({ ok: false, code: "not_found", blockRef: "b9" });

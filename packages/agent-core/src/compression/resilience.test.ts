@@ -7,7 +7,7 @@ import { SessionFileSchema } from "../store/helpers";
 import { storeManager } from "../store/store";
 import type { StoredMessage } from "../store/types";
 import { createCompactCommand } from "../commands/compact";
-import { createEmptyCompressionState, prepareHardLimitCompression } from "./index";
+import { createEmptyCompressionState } from "./index";
 
 const modelInfo = {
   model: { modelId: "mock" } as never,
@@ -27,25 +27,6 @@ afterEach(() => {
   setLlmAdapterForTest(undefined);
   storeManager.clearAll();
 });
-
-function summary() {
-  return {
-    version: 1 as const,
-    childBlockRefs: [],
-    sections: {
-      "Current Objective": "Continue the current task",
-      "User Constraints": "Preserve user constraints",
-      "Decisions Made": "Compression selected a safe prefix",
-      "Open Tasks": "Continue from visible tail",
-      "Important Files": "packages/agent-core/src/compression/resilience.test.ts",
-      "Tool Results": "None",
-      "Errors/Unknown Results": "None",
-      "Protected Refs": "None",
-      "Child Block Refs": "None",
-      "Resume Instructions": "Resume after the compression block",
-    },
-  };
-}
 
 function message(index: number): StoredMessage {
   return {
@@ -88,15 +69,19 @@ function sessionFileFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("compression resilience", () => {
-  test("single-flight manual compression prevents duplicate concurrent block commits", async () => {
-    let releaseSummary!: () => void;
-    const generateText = mock(async () => {
-      await new Promise<void>((resolve) => {
+  test("single-flight manual compact prevents duplicate concurrent hard compacts", async () => {
+    let releaseSummary!: (summary: string) => void;
+    const streamText = mock(() => ({
+      text: new Promise<string>((resolve) => {
         releaseSummary = resolve;
-      });
-      return { text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] };
-    });
-    setLlmAdapterForTest({ generateText: generateText as never });
+      }),
+      fullStream: (async function* () {})(),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ totalTokens: 1 }),
+      toolCalls: Promise.resolve([]),
+      toolResults: Promise.resolve([]),
+    }));
+    setLlmAdapterForTest({ streamText: streamText as never });
     const store = makeStore();
     const command = createCompactCommand(store, modelInfo);
 
@@ -104,46 +89,15 @@ describe("compression resilience", () => {
     await waitUntil(() => releaseSummary !== undefined);
     const second = await command.handler({ store, modelInfo, logger: silentLogger });
 
-    releaseSummary();
+    releaseSummary("## Current Objective\nContinue the current task");
     const firstResult = await first;
 
     expect(firstResult.success).toBe(true);
     expect(second).toEqual({ success: false, message: "Compact already in progress" });
-    expect(generateText).toHaveBeenCalledTimes(1);
-    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
-    expect(store.getState().events.filter((event) => event.kind === "compression.block_committed")).toHaveLength(1);
-  });
-
-  test("abort during summary leaves no partial active compression block", async () => {
-    const controller = new AbortController();
-    let adapterAbortSignal: AbortSignal | undefined;
-    const generateText = mock(async (options: { abortSignal?: AbortSignal }) => {
-      adapterAbortSignal = options.abortSignal;
-      expect(adapterAbortSignal).toBe(controller.signal);
-      expect(adapterAbortSignal?.aborted).toBe(false);
-
-      controller.abort(new DOMException("summary aborted", "AbortError"));
-      expect(adapterAbortSignal?.aborted).toBe(true);
-      throw new DOMException("summary aborted", "AbortError");
-    });
-    setLlmAdapterForTest({ generateText: generateText as never });
-    const store = makeStore();
-
-    const result = await prepareHardLimitCompression({
-      storeState: store.getState(),
-      model: modelInfo.model,
-      abort: controller.signal,
-      logger: silentLogger,
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected abort failure path");
-    expect(adapterAbortSignal).toBe(controller.signal);
-    expect(generateText).toHaveBeenCalledTimes(1);
-    expect(result.reason).toContain("summary aborted");
-    expect(result.state.activeBlockRefs).toEqual([]);
-    expect(Object.keys(result.state.blocksByRef)).toEqual([]);
+    expect(streamText).toHaveBeenCalledTimes(1);
     expect(store.getState().compression?.activeBlockRefs).toEqual([]);
+    expect(store.getState().events.filter((event) => event.kind === "compact")).toHaveLength(1);
+    expect(store.getState().events.filter((event) => event.kind === "compression.block_committed")).toHaveLength(0);
   });
 
   test("corrupt compression metadata is rejected instead of hydrating partial state", () => {

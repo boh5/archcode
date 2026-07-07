@@ -125,6 +125,7 @@ export class SessionStoreManager {
         || event.type === "llm-retry"
         || event.type === "llm-recovery"
         || event.type === "llm-recovery-failed"
+        || event.type === "compact"
         || event.type === "tool-child-session-link"
         || event.type === "question.request"
         || event.type === "question.terminal"

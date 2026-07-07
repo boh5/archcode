@@ -237,16 +237,16 @@ describe("parseStepUsage", () => {
 // ---------------------------------------------------------------------------
 
 describe("shouldAutoCompact", () => {
-  test("returns true when currentTokens is exactly 75% of contextLimit", () => {
-    expect(shouldAutoCompact(750, 1000)).toBe(true);
+  test("returns true when currentTokens is exactly 85% of contextLimit", () => {
+    expect(shouldAutoCompact(850, 1000)).toBe(true);
   });
 
-  test("returns true when currentTokens exceeds 75% of contextLimit", () => {
-    expect(shouldAutoCompact(800, 1000)).toBe(true);
+  test("returns true when currentTokens exceeds 85% of contextLimit", () => {
+    expect(shouldAutoCompact(900, 1000)).toBe(true);
   });
 
-  test("returns false when currentTokens is below 75% of contextLimit", () => {
-    expect(shouldAutoCompact(749, 1000)).toBe(false);
+  test("returns false when currentTokens is below 85% of contextLimit", () => {
+    expect(shouldAutoCompact(849, 1000)).toBe(false);
   });
 
   test("returns false when currentTokens is 0", () => {
@@ -262,9 +262,9 @@ describe("shouldAutoCompact", () => {
   });
 
   test("uses COMPACT_THRESHOLD constant", () => {
-    // Verify the threshold is 0.75
-    expect(COMPACT_THRESHOLD).toBe(0.75);
-    // Verify boundary: 750 = 1000 * 0.75 → should compact
+    // Verify the threshold is 0.85
+    expect(COMPACT_THRESHOLD).toBe(0.85);
+    // Verify boundary: 850 = 1000 * 0.85 → should compact
     expect(shouldAutoCompact(Math.floor(1000 * COMPACT_THRESHOLD), 1000)).toBe(true);
   });
 });
@@ -319,8 +319,8 @@ describe("exported constants", () => {
     expect(TOKEN_CHARS_RATIO).toBe(4);
   });
 
-  test("COMPACT_THRESHOLD is 0.75", () => {
-    expect(COMPACT_THRESHOLD).toBe(0.75);
+  test("COMPACT_THRESHOLD is 0.85", () => {
+    expect(COMPACT_THRESHOLD).toBe(0.85);
   });
 
   test("COMPACT_MIN_NEW_MESSAGES is 5", () => {

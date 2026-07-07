@@ -1,6 +1,5 @@
 import type {
   CompressionBlockPart,
-  CompressionBlockRef,
   CompressionBlockSnapshot,
   CompressionFailureSnapshot,
   CompressionRefMapSnapshot,
@@ -8,10 +7,7 @@ import type {
   CompactionPart,
   CompletedToolPart,
   ErrorToolPart,
-  GoalState,
   HitlRequest,
-  LoopState,
-  LoopRunReport,
   ReasoningPart,
   RecoveryNoticePart,
   RunningToolPart,
@@ -764,7 +760,7 @@ export function reduceStreamEvent(
         messages.splice(compactUpTo, 0, syntheticMessage);
       }
 
-      return { messages };
+      return { messages, compression: undefined, compressionBlocks: [] };
     }
   }
 }

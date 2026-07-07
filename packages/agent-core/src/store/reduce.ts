@@ -77,7 +77,13 @@ export function reduceStreamEvent(
   const partial = protocolReduceStreamEvent(protocolState, event, {
     timestamp: Date.now(),
     generateId: () => crypto.randomUUID(),
-  }) as Partial<SessionStoreState>;
+  }) as Partial<SessionStoreState> & { compressionBlocks?: unknown };
+
+  if (event.type === "compact") {
+    const { compressionBlocks: _compressionBlocks, ...runtimePartial } = partial;
+    void _compressionBlocks;
+    return { ...runtimePartial, compression: createEmptyCompressionState() };
+  }
 
   // Augment with runtime-only fields
   if (event.type === "todo-write") {

@@ -1,6 +1,5 @@
 import type { StoreApi } from "zustand";
-import type { CircuitBreaker } from "../compact/circuit-breaker";
-import { prepareHardLimitCompression } from "../compression";
+import { compact, commitCompact, type CircuitBreaker } from "../compact";
 import type { ModelCallOptions } from "../config/index";
 import { silentLogger, type Logger } from "../logger";
 import type { ModelInfo } from "../provider/model";
@@ -34,25 +33,27 @@ export function createCompactCommand(
         const activeModelOptions = ctx.modelOptions ?? modelOptions;
         const activeCircuitBreaker = ctx.circuitBreaker ?? circuitBreaker;
         const beforeMessages = activeStore.getState().messages.length;
-        const result = await prepareHardLimitCompression({
-          storeState: activeStore.getState(),
+        const state = activeStore.getState();
+        const result = await compact({
+          messages: state.messages,
+          contextLimit: activeModelInfo.limit.context,
           model: activeModelInfo.model,
           modelOptions: activeModelOptions,
-          abort: ctx.abort,
+          sessionId: state.sessionId,
           logger: activeLogger,
-          strategy: "hard-limit",
-          trigger: "manual_command",
-        });
+        }, ctx.abort);
 
-        activeStore.getState().append(result.event);
-        if (!result.ok) {
-          return { success: false, message: result.code === "no_safe_range" ? "No safe range to compact" : `Compact failed: ${result.reason}` };
+        if (result === null) {
+          return { success: false, message: "No safe range to compact" };
         }
 
+        const tailStartIndex = state.messages.findIndex((message) => message.id === result.tailStartId);
+        const compacted = tailStartIndex === -1 ? beforeMessages : tailStartIndex;
+        const tail = tailStartIndex === -1 ? 0 : Math.max(0, beforeMessages - tailStartIndex);
+
+        commitCompact(activeStore, result);
         activeCircuitBreaker?.reset();
 
-        const compacted = result.block.range.endIndex - result.block.range.startIndex + 1;
-        const tail = Math.max(0, beforeMessages - result.block.range.endIndex - 1);
         return {
           success: true,
           message: `Context compacted. ${compacted} messages summarized. ${tail} messages preserved in tail.`,

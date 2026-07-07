@@ -1,24 +1,16 @@
 export const SOFT_NUDGE_RATIO = 0.55;
 export const STRONG_NUDGE_RATIO = 0.70;
 export const HARD_COMPACT_RATIO = 0.85;
-export const EMERGENCY_COMPACT_RATIO = 0.92;
 
 export const COMPRESSION_SUMMARY_FORMAT_VERSION = 1;
 export const COMPRESSION_STATE_VERSION = 1;
 
-export const COMPRESSION_STRATEGIES = [
-  "dynamic-range",
-  "hard-limit",
-  "emergency-hard-limit",
-] as const;
+export const COMPRESSION_STRATEGIES = ["dynamic-range"] as const;
 
 export const COMPRESSION_TRIGGERS = [
   "model_tool_call",
   "soft_nudge_response",
   "strong_nudge_response",
-  "hard_threshold",
-  "emergency_threshold",
-  "manual_command",
 ] as const;
 
 export const COMPRESSION_BLOCK_STATUSES = ["active", "inactive", "superseded"] as const;
@@ -62,8 +54,7 @@ export const DCP_PARITY_ITEMS = [
   "typed_tool_output_deduplication_contract",
   "typed_purge_error_contract",
   "soft_and_strong_nudges",
-  "hard_limit_strategy",
-  "emergency_hard_limit_strategy",
+  "hard_compact_safety_boundary",
   "manual_compact_entry_contract",
   "ui_expandable_original_range_contract",
 ] as const;

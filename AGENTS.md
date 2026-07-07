@@ -104,7 +104,8 @@ packages/agent-core/src/
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
 ├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
 ├── commands/                   # CommandRegistry + /compact command
-├── compact/                    # 3-phase pipeline: selectPrefix → pruneOutputs → summarize (managed LLM stream). Circuit breaker + token estimation
+├── compression/                # DCP-like dynamic range compression: model tool action, refs, block state, soft/strong nudges below hard threshold
+├── compact/                    # Mandatory hard compact safety path at >=85% context pressure plus /compact command
 ├── memory/                     # MemoryFileManager (atomic writes, frontmatter, index), schemas, types, constants
 ├── goals/                      # Goal state, artifacts, Reviewer checks, retry, token budgets, isolated Goal memory
 ├── hitl/                       # Durable project-scoped approval/question queue and redacted display payloads
@@ -340,7 +341,7 @@ Zustand vanilla store per agent session. `append(StreamEvent)` → `reduceStream
 
 ## Context Compaction
 
-Auto-compact at `contextTokens ≥ limit × 0.75` + ≥ 5 new messages. 3-phase: `selectCompactablePrefix` (preserve current + 2 last rounds) → `pruneToolOutputs` (persist to disk) → `summarizePrefix` (managed LLM stream structured summary). Circuit breaker (3 failures). Also `/compact` command. Token estimation: `TOKEN_CHARS_RATIO=4`, `parseStepUsage()` normalizes AI SDK/OpenAI/Anthropic/Google formats. Emergency context-overflow compact automation is not part of the current LLM recovery refactor.
+ArchCode has two intentionally separate context-reduction paths. Dynamic DCP-like compression lives in `packages/agent-core/src/compression/`: it is an agent conversation/tool behavior where the model may call `compress` on visible `mNNNN`/`bN` refs, with soft/strong nudges injected from 55% up to the hard threshold. Forced hard compact lives in `packages/agent-core/src/compact/`: every agent's query hook runs this path at `contextTokens ≥ limit × 0.85`, and `/compact` uses the same path. Hard compact is the last safety mechanism to avoid context collapse, not a model-selected tool action: `selectCompactablePrefix` preserves the current + last 2 rounds, `pruneToolOutputs` persists outputs, `summarizePrefix` produces the compact summary, `commitCompact` emits a `compact` event, and DCP compression projection state is cleared so the two mechanisms do not layer over each other. Hysteresis remains ≥ 5 new messages and the circuit breaker opens after 3 failures/skips.
 
 ## Memory System
 

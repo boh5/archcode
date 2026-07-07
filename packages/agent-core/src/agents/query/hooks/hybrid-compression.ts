@@ -1,15 +1,10 @@
-import type { CircuitBreaker } from "../../../compact/circuit-breaker";
-import { createCircuitBreaker } from "../../../compact/circuit-breaker";
-import { COMPACT_MIN_NEW_MESSAGES } from "../../../compact/token-estimation";
+import { COMPACT_MIN_NEW_MESSAGES, compact, commitCompact, createCircuitBreaker, type CircuitBreaker } from "../../../compact";
 import type { Logger } from "../../../logger";
 import {
-  EMERGENCY_COMPACT_RATIO,
   HARD_COMPACT_RATIO,
   SOFT_NUDGE_RATIO,
   STRONG_NUDGE_RATIO,
   getCompressionTokenPressure,
-  prepareEmergencyCompression,
-  prepareHardLimitCompression,
 } from "../../../compression";
 import type { BeforeModelBuildContext, BeforeModelCallContext } from "../loop-hooks";
 
@@ -37,21 +32,28 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
     isCompressing = true;
     try {
       const state = ctx.store.getState();
-      const result = pressure.ratio >= EMERGENCY_COMPACT_RATIO
-        ? await prepareEmergencyCompression({ storeState: state, model: ctx.modelInfo.model, modelOptions: ctx.modelOptions, abort: ctx.abort, logger })
-        : await prepareHardLimitCompression({ storeState: state, model: ctx.modelInfo.model, modelOptions: ctx.modelOptions, abort: ctx.abort, logger });
+      const result = await compact({
+        messages: state.messages,
+        contextLimit: ctx.modelInfo.limit.context,
+        model: ctx.modelInfo.model,
+        modelOptions: ctx.modelOptions,
+        sessionId: state.sessionId,
+        logger,
+      }, ctx.abort);
 
-      ctx.store.getState().append(result.event);
-      if (result.ok) {
-        lastCommittedMessageCount = messageCount;
-        circuitBreaker.recordSuccess();
-      } else {
+      if (result === null) {
         circuitBreaker.recordFailure();
+        logger.debug("compact.auto.skipped", { context: { reason: "no_compactable_prefix", ratio: pressure.ratio } });
+        return;
       }
+
+      commitCompact(ctx.store, result);
+      lastCommittedMessageCount = ctx.store.getState().messages.length;
+      circuitBreaker.recordSuccess();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
       circuitBreaker.recordFailure();
-      logger.warn("compression.hybrid.failed", { error });
+      logger.warn("compact.auto.failed", { error });
     } finally {
       isCompressing = false;
     }
@@ -70,10 +72,10 @@ export function createHybridCompressionHook(logger: Logger): HybridCompressionHo
 function compressionNudgeMessage(strength: "soft" | "strong", ratio: number): ModelCallMessage {
   const percent = Math.floor(ratio * 100);
   const guidance = strength === "strong"
-    ? "Context pressure is high. Prefer using the compress tool on a safe older range after this response if it helps preserve working context. Do not compress the latest two rounds or protected content."
-    : "Context pressure is rising. Keep responses concise and consider whether an older safe range should be compressed later.";
+    ? "Context pressure is high. Dynamic compression is an in-conversation tool action: use the compress tool on a safe older range only if it helps before the hard safety threshold. Do not compress the latest two rounds or protected content."
+    : "Context pressure is rising. Keep responses concise and consider whether an older safe range should be dynamically compressed later.";
   return {
     role: "user",
-    content: [{ type: "text", text: `<system-reminder>\nHybrid compression ${strength} nudge at ${percent}% context pressure. ${guidance}\n</system-reminder>` }],
+    content: [{ type: "text", text: `<system-reminder>\nDynamic compression ${strength} nudge at ${percent}% context pressure. ${guidance}\n</system-reminder>` }],
   };
 }

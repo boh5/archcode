@@ -592,6 +592,7 @@ describe("reduceStreamEvent", () => {
     };
 
     const state = applyEvents(createProjection({ messages: [first, tail] }), [
+      { type: "compression.block_committed", block: makeCompressionBlock() },
       { type: "compact", summary: "summary", tailStartId: "tail" },
     ]);
 
@@ -601,6 +602,8 @@ describe("reduceStreamEvent", () => {
     expect(compaction.role).toBe("user");
     expect(partOfType(compaction, "compaction").summary).toBe("summary");
     expect(state.messages[2]!.id).toBe("tail");
+    expect(state.compression).toBeUndefined();
+    expect(state.compressionBlocks).toEqual([]);
   });
 
   test("stats remain unchanged after a compact event", () => {

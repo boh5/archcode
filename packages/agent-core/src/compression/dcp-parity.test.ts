@@ -117,25 +117,18 @@ const EXECUTABLE_DCP_PARITY_COVERAGE = {
       anchors: ["soft nudge", "strong nudge"],
     },
   ],
-  hard_limit_strategy: [
+  hard_compact_safety_boundary: [
     {
       file: "packages/agent-core/src/agents/query/hooks/hybrid-compression.test.ts",
-      testName: "commits hard-limit at exactly 85% when a safe range exists",
-      anchors: ["hard-limit", "hard_threshold"],
-    },
-  ],
-  emergency_hard_limit_strategy: [
-    {
-      file: "packages/agent-core/src/agents/query/hooks/hybrid-compression.test.ts",
-      testName: "commits emergency-hard-limit at exactly 92% when a safe range exists",
-      anchors: ["emergency-hard-limit", "emergency_threshold"],
+      testName: "runs legacy hard compact at exactly 85% when a safe range exists",
+      anchors: ["state.events.at(-1)?.kind).toBe(\"compact\")", "compression.block_committed"],
     },
   ],
   manual_compact_entry_contract: [
     {
       file: "packages/agent-core/src/commands/compact.test.ts",
-      testName: "manual hybrid compact commits compression block without old compact event",
-      anchors: ["manual_command", "compression.block_committed", "kind === \"compact\""],
+      testName: "manual compact emits compact event and compaction part without compression block",
+      anchors: ["CompactionPart", "events.at(-1)?.kind).toBe(\"compact\")", "compression.block_committed"],
     },
   ],
   ui_expandable_original_range_contract: [

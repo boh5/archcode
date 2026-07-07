@@ -300,15 +300,15 @@ describe("CompressionBlock", () => {
     resetStateSlots();
     const part = makeCompressionBlockPart({
       childBlockRefs: ["b2"],
-      strategy: "hard-limit",
-      trigger: "hard_threshold",
+      strategy: "dynamic-range",
+      trigger: "model_tool_call",
     });
     const el = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
     const text = textContent(el);
 
     expect(text).toContain("b1");
-    expect(text).toContain("Hard-Limit");
-    expect(text).toContain("hard threshold");
+    expect(text).toContain("Dynamic Range");
+    expect(text).toContain("model");
     expect(text).toContain("Keep going");
     expect(text).toContain("User Constraints");
     expect(text).toContain("m0001");
@@ -325,16 +325,6 @@ describe("CompressionBlock", () => {
 
     expect(text).toContain("Dynamic Range");
     expect(text).toContain("model");
-  });
-
-  test("renders emergency-hard-limit strategy", () => {
-    resetStateSlots();
-    const part = makeCompressionBlockPart({ strategy: "emergency-hard-limit", trigger: "emergency_threshold" });
-    const el = CompressionBlock({ part, projectSlug: "demo", sessionId: "sess-1", focusStoreSessionId: "session-1" });
-    const text = textContent(el);
-
-    expect(text).toContain("Emergency");
-    expect(text).toContain("emergency");
   });
 
   test("renders token savings and protected refs count from snapshot", () => {

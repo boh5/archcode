@@ -172,8 +172,8 @@ describe("compression protocol types", () => {
       id: "block-1",
       ref: "b1",
       status: "active",
-      strategy: "hard-limit",
-      trigger: "hard_threshold",
+      strategy: "dynamic-range",
+      trigger: "model_tool_call",
       range: {
         startMessageId: "msg-a",
         endMessageId: "msg-b",
@@ -213,7 +213,7 @@ describe("compression protocol types", () => {
     };
 
     expect(serializeRoundTrip(event)).toEqual(event);
-    expect(event.state?.blocksByRef.b1?.strategy).toBe("hard-limit");
+    expect(event.state?.blocksByRef.b1?.strategy).toBe("dynamic-range");
   });
 
   test("compression ref-map events and parts are discriminated", () => {
@@ -234,8 +234,8 @@ describe("compression protocol types", () => {
       id: "part-1",
       blockRef: "b1",
       status: "active",
-      strategy: "emergency-hard-limit",
-      trigger: "emergency_threshold",
+      strategy: "dynamic-range",
+      trigger: "soft_nudge_response",
       summary: "summary",
       startRef: "m0001",
       endRef: "m0002",

@@ -25,23 +25,16 @@ import { formatRelativeTime } from "../../lib/time-format";
 
 const STRATEGY_LABEL: Record<CompressionStrategy, string> = {
   "dynamic-range": "Dynamic Range",
-  "hard-limit": "Hard-Limit",
-  "emergency-hard-limit": "Emergency",
 };
 
 const STRATEGY_CLASS: Record<CompressionStrategy, string> = {
   "dynamic-range": "text-accent bg-accent-subtle",
-  "hard-limit": "text-warning bg-warning-muted",
-  "emergency-hard-limit": "text-error bg-error-muted",
 };
 
 const TRIGGER_LABEL: Record<CompressionTrigger, string> = {
   model_tool_call: "model",
   soft_nudge_response: "soft nudge",
   strong_nudge_response: "strong nudge",
-  hard_threshold: "hard threshold",
-  emergency_threshold: "emergency",
-  manual_command: "manual",
 };
 
 const STATUS_LABEL: Record<CompressionBlockStatus, string> = {

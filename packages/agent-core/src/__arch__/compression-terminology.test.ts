@@ -71,19 +71,32 @@ function expectNoViolations(violations: readonly Violation[]): void {
 }
 
 describe("compression architecture terminology", () => {
-  test("production hooks and commands do not call or import the retired compact runtime", () => {
+  test("production hard-threshold hooks and commands use legacy compact runtime", () => {
     const violations: Violation[] = [];
-    for (const file of productionHookAndCommandFiles) {
+    const hardThresholdFiles = [
+      "packages/agent-core/src/agents/query/hooks/hybrid-compression.ts",
+      "packages/agent-core/src/commands/compact.ts",
+    ] as const;
+
+    for (const file of hardThresholdFiles) {
       const source = stripComments(readProjectFile(file));
       const checks = [
-        { detail: "imports compact runtime module", pattern: /from\s+["'][^"']*compact\/compact["']/ },
-        { detail: "calls compact()", pattern: /\bcompact\s*\(/ },
-        { detail: "calls commitCompact()", pattern: /\bcommitCompact\s*\(/ },
-        { detail: "references CompactResult", pattern: /\bCompactResult\b/ },
+        { detail: "does not call compact()", pattern: /\bcompact\s*\(/ },
+        { detail: "does not call commitCompact()", pattern: /\bcommitCompact\s*\(/ },
       ];
       for (const { detail, pattern } of checks) {
-        if (pattern.test(source)) violations.push({ file, detail });
+        if (!pattern.test(source)) violations.push({ file, detail });
       }
+    }
+
+    const allProductionText = productionHookAndCommandFiles.map((file) => stripComments(readProjectFile(file))).join("\n");
+    const forbiddenSystemPathChecks = [
+      { detail: "imports prepareHardLimitCompression", pattern: /\bprepareHardLimitCompression\b/ },
+      { detail: "imports prepareEmergencyCompression", pattern: /\bprepareEmergencyCompression\b/ },
+      { detail: "branches on EMERGENCY_COMPACT_RATIO", pattern: /\bEMERGENCY_COMPACT_RATIO\b/ },
+    ];
+    for (const { detail, pattern } of forbiddenSystemPathChecks) {
+      if (pattern.test(allProductionText)) violations.push({ file: "production compression hooks/commands", detail });
     }
 
     expectNoViolations(violations);

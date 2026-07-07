@@ -1431,4 +1431,20 @@ describe("compression events", () => {
     expect(rendered).not.toContain("## Current Objective\\n## Current Objective");
     expect(rendered).not.toContain("Not provided by compression snapshot");
   });
+
+  test("compact event clears dynamic compression state before model projection", () => {
+    const store = createFreshStore("compact-clears-dynamic-compression");
+    store.getState().append({ type: "user-message", content: "old" });
+    store.getState().append({ type: "user-message", content: "tail" });
+    store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
+
+    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
+
+    store.getState().append({ type: "compact", summary: "summary", tailStartId: "missing" });
+
+    expect(store.getState().compression?.activeBlockRefs).toEqual([]);
+    expect(store.getState().compression?.blocksByRef).toEqual({});
+    expect(JSON.stringify(store.getState().toModelMessages())).not.toContain("compression-block");
+    expect(JSON.stringify(store.getState().toModelMessages())).toContain("compact-summary");
+  });
 });

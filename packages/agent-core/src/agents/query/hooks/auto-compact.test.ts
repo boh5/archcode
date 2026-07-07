@@ -7,11 +7,28 @@ import type { BeforeModelBuildContext } from "../loop-hooks";
 import { createAutoCompactHook } from "./auto-compact";
 
 const generateText = mock(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }));
+const streamText = mock(() => ({
+  text: Promise.resolve("## Current Objective\nContinue the current task"),
+  fullStream: (async function* () {})(),
+  finishReason: Promise.resolve("stop"),
+  usage: Promise.resolve({ totalTokens: 1 }),
+  toolCalls: Promise.resolve([]),
+  toolResults: Promise.resolve([]),
+}));
 
 beforeEach(() => {
   generateText.mockReset();
+  streamText.mockReset();
   generateText.mockImplementation(async () => ({ text: "", toolCalls: [{ toolName: "compression_summary", input: summary() }] }) as never);
-  setLlmAdapterForTest({ generateText: generateText as never });
+  streamText.mockImplementation(() => ({
+    text: Promise.resolve("## Current Objective\nContinue the current task"),
+    fullStream: (async function* () {})(),
+    finishReason: Promise.resolve("stop"),
+    usage: Promise.resolve({ totalTokens: 1 }),
+    toolCalls: Promise.resolve([]),
+    toolResults: Promise.resolve([]),
+  }) as never);
+  setLlmAdapterForTest({ generateText: generateText as never, streamText: streamText as never });
 });
 
 function summary() {
@@ -78,17 +95,16 @@ describe("createAutoCompactHook", () => {
     expect(typeof result.circuitBreaker.reset).toBe("function");
   });
 
-  test("delegates automatic compaction to Hybrid Compression", async () => {
+  test("delegates automatic high-threshold compaction to legacy hard compact", async () => {
     const store = createStore();
     const result = createAutoCompactHook(silentLogger);
 
     await result.hook(buildCtx(store, 850));
 
-    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
-    expect(store.getState().compression?.blocksByRef.b1?.strategy).toBe("hard-limit");
-    expect(store.getState().events.at(-1)?.kind).toBe("compression.block_committed");
-    expect(store.getState().events.some((event) => event.kind === "compact")).toBe(false);
-    expect(store.getState().messages.some((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"))).toBe(false);
+    expect(store.getState().events.at(-1)?.kind).toBe("compact");
+    expect(store.getState().events.some((event) => event.kind === "compression.block_committed")).toBe(false);
+    expect(store.getState().messages.some((storedMessage) => storedMessage.parts.some((part) => part.type === "compaction"))).toBe(true);
+    expect(store.getState().messages.slice(0, 2).every((storedMessage) => storedMessage.compacted === true)).toBe(true);
   });
 
   test("keeps circuitBreaker.reset available for manual command integration", () => {

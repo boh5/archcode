@@ -571,6 +571,26 @@ describe("compression events and snapshot hydration", () => {
     expect(state.messages.some((m) => m.compacted === true)).toBe(false);
   });
 
+  test("compact clears dynamic compression state and compression block parts", () => {
+    const store = createWebSessionStore("compress-compact", "demo");
+    const block = makeCompressionBlock();
+
+    store.getState().applyRemoteEnvelope({
+      ...event(0, { type: "compression.block_committed", block, state: makeCompressionState(block) }),
+      sessionId: "compress-compact",
+    });
+    expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
+    expect(store.getState().compressionBlocks).toHaveLength(1);
+
+    store.getState().applyRemoteEnvelope({
+      ...event(1, { type: "compact", summary: "summary", tailStartId: "missing" }),
+      sessionId: "compress-compact",
+    });
+
+    expect(store.getState().compression).toBeUndefined();
+    expect(store.getState().compressionBlocks).toEqual([]);
+  });
+
   test("reduces compression.block_failed into compression failures without compacted flags", () => {
     const store = createWebSessionStore("compress-fail", "demo");
 
@@ -659,7 +679,7 @@ describe("compression events and snapshot hydration", () => {
     expect(store.getState().nextEventId).toBe(2);
     expect(store.getState().compression?.activeBlockRefs).toEqual(["b1"]);
 
-    const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2", strategy: "hard-limit" });
+    const staleBlock = makeCompressionBlock({ ref: "b2", id: "block-2" });
     store.getState().initializeFromSnapshot({
       compression: makeCompressionState(staleBlock),
       compressionBlocks: [],

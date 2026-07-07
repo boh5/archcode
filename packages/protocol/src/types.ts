@@ -199,14 +199,11 @@ export interface CompactEvent {
 
 export type CompressionMessageRef = `m${string}`;
 export type CompressionBlockRef = `b${number}`;
-export type CompressionStrategy = "dynamic-range" | "hard-limit" | "emergency-hard-limit";
+export type CompressionStrategy = "dynamic-range";
 export type CompressionTrigger =
   | "model_tool_call"
   | "soft_nudge_response"
-  | "strong_nudge_response"
-  | "hard_threshold"
-  | "emergency_threshold"
-  | "manual_command";
+  | "strong_nudge_response";
 export type CompressionBlockStatus = "active" | "inactive" | "superseded";
 
 export interface CompressionRefMapSnapshot {
@@ -701,7 +698,7 @@ export interface SessionProjection {
   hitlRequests?: HitlRequest[];
   /** Loop states indexed by loopId. Populated by loop.state_change events. */
   loops?: Record<string, LoopState>;
-  /** Hybrid Compression state. New compression events update this instead of SessionMessage.compacted. */
+  /** DCP-like dynamic compression state. Cleared when hard compact emits a compact event. */
   compression?: CompressionStateSnapshot;
   /** Projection-only compression block display parts. Canonical messages remain unchanged. */
   compressionBlocks?: CompressionBlockPart[];
