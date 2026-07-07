@@ -36,7 +36,7 @@ export async function enforceGoalBudgetBeforeModelCall(ctx: GoalBudgetEnforcemen
   const resolved = await resolveGoalBudgetContext(ctx);
   if (resolved === undefined) return;
 
-  const { goal, sessionId, projectContext } = resolved;
+  const { goal, projectContext } = resolved;
   const budget = goal.tokenBudget;
   if (budget === undefined) return;
 
@@ -46,7 +46,7 @@ export async function enforceGoalBudgetBeforeModelCall(ctx: GoalBudgetEnforcemen
 
   const estimatedNextCallTokens = estimateNextModelCallTokens(ctx.modelOptions);
   if (shouldRequestWarningApproval(budget, estimatedNextCallTokens)) {
-    await requestBudgetApproval(projectContext, goal, sessionId, budget, estimatedNextCallTokens);
+    await requestBudgetApproval(projectContext, goal, budget, estimatedNextCallTokens);
   }
 }
 
@@ -103,36 +103,26 @@ function shouldRequestWarningApproval(budget: GoalTokenBudgetState, estimatedNex
 async function requestBudgetApproval(
   projectContext: ProjectContext,
   goal: GoalState,
-  sessionId: string,
   budget: GoalTokenBudgetState,
   estimatedNextCallTokens: number,
 ): Promise<void> {
-  const responsePromise = projectContext.hitl.request(
-    sessionId,
-    "approval",
-    {
-      kind: "approval",
+  const record = await projectContext.hitl.create({
+    owner: { projectSlug: projectContext.project.slug, ownerType: "goal", ownerId: goal.id },
+    blockingKey: `goal:${goal.id}:budget:${BUDGET_APPROVAL_POINT}`,
+    source: { type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT },
+    displayPayload: {
       title: "Approve Goal budget warning",
-      message: `Goal "${goal.title}" is projected to cross its token warning threshold before the next model call.`,
-      action: `goal.approval.${BUDGET_APPROVAL_POINT}`,
-      context: {
-        goalId: goal.id,
-        projectSlug: projectContext.project.slug,
-        approvalPoint: BUDGET_APPROVAL_POINT,
-        totalTokens: budget.totalTokens,
-        estimatedNextCallTokens,
-        warningThresholdTokens: budget.warningThresholdTokens,
-        maxTokens: budget.maxTokens,
-      },
-      options: [
-        { id: "approved", label: "Approve" },
-        { id: "acknowledged", label: "Acknowledge" },
-        { id: "denied", label: "Deny" },
+      summary: `Goal "${goal.title}" is projected to cross its token warning threshold before the next model call.`,
+      fields: [
+        { label: "Goal", value: goal.title },
+        { label: "Total tokens", value: String(budget.totalTokens) },
+        { label: "Estimated next call tokens", value: String(estimatedNextCallTokens) },
+        { label: "Warning threshold", value: String(budget.warningThresholdTokens ?? "unset") },
+        { label: "Maximum tokens", value: String(budget.maxTokens ?? "unset") },
       ],
-      recommendedOptionId: "approved",
+      redacted: true,
     },
-    { goalId: goal.id, projectSlug: projectContext.project.slug, source: `goal.approval.${BUDGET_APPROVAL_POINT}`, approvalPoint: BUDGET_APPROVAL_POINT },
-  );
+  });
 
   await writeBudgetLedger(projectContext, goal, budget, {
     event: "warning_pending",
@@ -140,45 +130,19 @@ async function requestBudgetApproval(
     reason: "Budget warning approval is pending",
     estimatedNextCallTokens,
   });
-  await pauseGoal(projectContext, goal, budget, "Budget warning approval is pending");
-  const response = await responsePromise;
-  const approved = response.status === "resolved" && isApprovedBudgetResponse(response.response);
-  if (!approved) {
-    const latest = await projectContext.goalState.read(goal.id);
-    await writeBudgetLedger(projectContext, latest, latest.tokenBudget ?? { ...budget, status: "paused" }, {
-      event: "warning_denied",
-      source: "before_model_call",
-      reason: "Budget warning approval denied",
-      estimatedNextCallTokens,
-    });
-    await pauseGoal(projectContext, goal, { ...budget, status: "paused" }, "Budget warning approval denied");
-    throw new GoalBudgetEnforcementStopError(goal.id, "Goal paused: budget warning approval denied");
-  }
-
-  const approvedAt = new Date().toISOString();
-  const latest = await projectContext.goalState.read(goal.id);
-  const latestBudget = latest.tokenBudget ?? budget;
-  const approvedGoal = await projectContext.goalState.updateTokenBudget(goal.id, {
-    ...latestBudget,
-    status: budgetStatus(latestBudget),
-    warningApprovalPoint: BUDGET_APPROVAL_POINT,
-    warningApprovalThresholdTokens: latestBudget.warningThresholdTokens,
-    warningApprovedAt: approvedAt,
-    warningApprovedTotalTokens: latestBudget.totalTokens,
-    updatedAt: approvedAt,
-  });
-  await writeBudgetLedger(projectContext, approvedGoal, approvedGoal.tokenBudget ?? latestBudget, {
-    event: "warning_approved",
-    source: "before_model_call",
-    reason: "Budget warning approval approved or acknowledged",
+  await projectContext.goalState.blockOnHitl(goal.id, {
+    version: 1,
+    hitlId: record.hitlId,
+    blockedAt: new Date().toISOString(),
+    phase: goal.phase,
+    kind: "goal_budget",
+    action: "awaitBudgetApproval",
+    approvalPoint: BUDGET_APPROVAL_POINT,
     estimatedNextCallTokens,
+    reason: "Budget warning approval is pending",
   });
-}
-
-function isApprovedBudgetResponse(response: { decision?: string; outcome?: string; data?: Record<string, unknown>; comment?: string }): boolean {
-  if (response.decision === "approved" || response.decision === "acknowledged") return true;
-  if (response.outcome === "DONE") return true;
-  return response.data?.approved === true || response.data?.acknowledged === true;
+  await pauseGoal(projectContext, goal, budget, "Budget warning approval is pending");
+  throw new GoalBudgetEnforcementStopError(goal.id, "Goal paused: budget warning approval is pending");
 }
 
 async function pauseForHardStop(

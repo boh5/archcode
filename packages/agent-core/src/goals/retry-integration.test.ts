@@ -5,9 +5,14 @@ import { join } from "node:path";
 import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
 
 import { GoalApprovalGate, type ReviewOutcome } from "../hitl/goal-gates";
-import type { HitlResponse } from "../hitl/types";
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
+import { HitlService } from "../hitl/service";
+import { silentLogger } from "../logger";
 import { setLlmAdapterForTest } from "../llm";
+import { LoopStateManager } from "../loops/state";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalArtifactManager } from "./artifacts";
+import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { GoalRunner, GoalRunnerError } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -21,12 +26,18 @@ const condition: DoneCondition = {
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
+let artifacts: GoalArtifactManager;
+let sessions: SessionStoreManager;
+let loops: LoopStateManager;
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
+  artifacts = new GoalArtifactManager(workspaceRoot);
+  sessions = new SessionStoreManager({ logger: silentLogger });
+  loops = new LoopStateManager(workspaceRoot);
   setLlmAdapterForTest({});
 });
 
@@ -34,15 +45,6 @@ afterAll(async () => {
   setLlmAdapterForTest(undefined);
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
-
-function reviewResponse(outcome: ReviewOutcome["outcome"], comment: string): HitlResponse {
-  return {
-    hitlId: crypto.randomUUID(),
-    kind: "review",
-    status: "resolved",
-    response: { outcome, comment },
-  };
-}
 
 function passingResult(conditionId = condition.id): DoneResult {
   return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
@@ -52,27 +54,49 @@ function failingResult(conditionId = condition.id): DoneResult {
   return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
 }
 
-function createRunner(options: { sessionIds?: string[] } = {}): GoalRunner {
+function createHitlService(): HitlService {
+  return new HitlService({
+    workspaceRoot,
+    project: { slug: "project-a", name: "Project A" },
+    sessions,
+    goalState: manager,
+    loopState: loops,
+  });
+}
+
+function createRunner(hitlService: HitlService, options: { sessionIds?: string[] } = {}): GoalRunner {
   const sessionIds = [...(options.sessionIds ?? ["main-session-1", "fresh-session-2", "fresh-session-3"])] as string[];
 
   return new GoalRunner({
     goalStateManager: manager,
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalArtifacts: artifacts,
     workspaceRoot,
-    hitlService: {
-      request: mock(async () => reviewResponse("DONE", "Approved")),
-      listPending: mock(() => []),
-    },
+    hitlService,
     createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
     isSessionActive: mock(async () => false),
   });
 }
 
-function createReviewGate(outcome: ReviewOutcome["outcome"], comment: string): GoalApprovalGate {
+function createReviewGate(hitlService: HitlService): GoalApprovalGate {
   return new GoalApprovalGate({
     goalStateManager: manager,
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    hitlService: { request: mock(async () => reviewResponse(outcome, comment)) },
+    goalArtifacts: artifacts,
+    hitlService,
+  });
+}
+
+function createCoordinator(hitlService: HitlService): ResumeCoordinator {
+  return new ResumeCoordinator({
+    hitl: hitlService,
+    adapters: {
+      goal: new GoalHitlResumeAdapter({
+        workspaceRoot,
+        goalStateManager: manager,
+        goalArtifacts: artifacts,
+        hitlService,
+        createRunner: () => createRunner(hitlService, { sessionIds: ["fresh-session-2"] }),
+      }),
+    },
   });
 }
 
@@ -107,15 +131,17 @@ async function expectGoalRunnerError(action: () => Promise<unknown>): Promise<vo
 describe("Goal retry integration", () => {
   test("reviewer rejection prevents completion", async () => {
     const goal = await lockedGoal(1);
-    const runner = createRunner({ sessionIds: ["main-session-1", "fresh-session-2"] });
-    const reviewGate = createReviewGate("NOT_DONE", "Output is broken");
+    const hitlService = createHitlService();
+    const runner = createRunner(hitlService, { sessionIds: ["main-session-1"] });
+    const reviewGate = createReviewGate(hitlService);
+    const coordinator = createCoordinator(hitlService);
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, condition.id, passingResult());
 
-    const outcome = await reviewGate.requestReview(goal.id, "main-session-1", [], goal.projectId);
-    const retry = await runner.handleFailedVerification(goal.id, outcome.comment ?? "Reviewer rejected");
+    const record = await reviewGate.requestReview(goal.id, [], goal.projectId);
+    await coordinator.respond(record.hitlId, { type: "review_outcome", outcome: "NOT_DONE", comment: "Output is broken" });
+    const retry = await waitForGoal(goal.id, (state) => state.status === "running" && state.retryCount === 1);
 
-    expect(outcome).toEqual({ outcome: "NOT_DONE", comment: "Output is broken" });
     await expectGoalRunnerError(() => runner.complete(goal.id));
     expect(retry.status).toBe("running");
     expect(retry.phase).toBe("plan");
@@ -127,7 +153,7 @@ describe("Goal retry integration", () => {
 
   test("failed done condition triggers retry with fresh context and preserves session audit chain", async () => {
     const goal = await lockedGoal(2);
-    const runner = createRunner({ sessionIds: ["main-session-1", "fresh-session-2"] });
+    const runner = createRunner(createHitlService(), { sessionIds: ["main-session-1", "fresh-session-2"] });
     await runToReview(goal.id, runner);
     await manager.updateSessionIds(goal.id, "main-session-1", ["child-session-1", "child-session-2"]);
     await runner.recordReviewerDoneResult(goal.id, condition.id, failingResult());
@@ -150,7 +176,7 @@ describe("Goal retry integration", () => {
 
   test("retry exhaustion transitions to escalated", async () => {
     const goal = await lockedGoal(1);
-    const runner = createRunner({ sessionIds: ["main-session-1", "fresh-session-2"] });
+    const runner = createRunner(createHitlService(), { sessionIds: ["main-session-1", "fresh-session-2"] });
     await runToReview(goal.id, runner);
     await runner.recordReviewerDoneResult(goal.id, condition.id, failingResult());
 
@@ -171,3 +197,12 @@ describe("Goal retry integration", () => {
     expect(escalated.lastError).toBe("Still failing after retry");
   });
 });
+
+async function waitForGoal(goalId: string, predicate: (goal: GoalState) => boolean): Promise<GoalState> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const goal = await manager.read(goalId);
+    if (predicate(goal)) return goal;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for Goal state");
+}

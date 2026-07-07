@@ -7,9 +7,11 @@ import type { DoneCondition, GoalTokenBudgetState } from "@archcode/protocol";
 import type { ModelCallOptions } from "../config/provider";
 import { HitlService } from "../hitl/service";
 import type { HitlEvent } from "../hitl/types";
+import { LoopStateManager } from "../loops/state";
 import type { ModelInfo } from "../provider/model";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { createSessionStore, storeManager } from "../store/store";
 import { createRegistry } from "../tools";
 import { createTestProjectContext } from "../tools/test-project-context";
@@ -17,7 +19,7 @@ import { silentLogger } from "../logger";
 import { setLlmAdapterForTest } from "../llm";
 import { runQueryLoop } from "../agents/query/loop";
 import type { QueryLoopOptions } from "../agents/query/types";
-import { BUDGET_APPROVAL_POINT, createGoalBudgetEnforcementHooks, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
+import { BUDGET_APPROVAL_POINT, GoalBudgetEnforcementStopError, createGoalBudgetEnforcementHooks, enforceGoalBudgetBeforeModelCall } from "./budget-enforcement";
 import type { GoalState } from "./state";
 
 type StreamTextFn = typeof import("ai").streamText;
@@ -47,8 +49,15 @@ beforeEach(async () => {
   hitlEvents = [];
   projectContext = createTestProjectContext(workspaceRoot);
   projectContext.hitl = new HitlService({
-    submitHitlEvent(sessionId, event) {
-      hitlEvents.push({ sessionId, event });
+    workspaceRoot,
+    project: projectContext.project,
+    sessions: new SessionStoreManager({ logger: silentLogger }),
+    goalState: projectContext.goalState,
+    loopState: new LoopStateManager(workspaceRoot),
+    events: {
+      submitHitlEvent(sessionId, event) {
+        hitlEvents.push({ sessionId, event });
+      },
     },
   });
   await projectContext.hitl.load(workspaceRoot);
@@ -64,35 +73,37 @@ describe("Goal budget enforcement", () => {
     const goal = await createRunningGoal(budget({ totalTokens: 890, warningThresholdTokens: 900, maxTokens: 1000 }));
     const store = createGoalStore(goal.id);
     const streamText = mockUnexpectedStreamText();
-    const run = runQueryLoop(makeOptions(store, { maxOutputTokens: 50 }), "Continue Goal");
+    const run = runQueryLoop(makeOptions(store, { maxOutputTokens: 50 }), "Continue Goal").catch((error: unknown) => error);
 
-    const pending = await waitForPendingBudgetApproval();
+    const pending = await waitForPendingBudgetApproval(goal.id);
     const paused = await waitForGoalStatus(goal.id, "paused");
 
-    expect(pending.trigger.approvalPoint).toBe(BUDGET_APPROVAL_POINT);
-    expect(pending.approvalKey).toBe(`${projectContext.project.slug}:${goal.id}:session-budget:approval_point:${BUDGET_APPROVAL_POINT}`);
+    expect(pending.source).toEqual({ type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT });
+    expect(pending.owner).toEqual({ projectSlug: projectContext.project.slug, ownerType: "goal", ownerId: goal.id });
     expect(paused.status).toBe("paused");
+    expect(paused.attentionStatus).toBe("waiting_for_human");
+    expect(paused.blockedByHitlIds).toEqual([pending.hitlId]);
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_budget", action: "awaitBudgetApproval", approvalPoint: BUDGET_APPROVAL_POINT });
     expect(paused.tokenBudget).toMatchObject({ status: "paused", totalTokens: 890 });
     expect(streamText).toHaveBeenCalledTimes(0);
 
-    projectContext.hitl.cancel(pending.hitlId, "test cleanup", projectContext.project.slug);
-    await run;
+    expect(await run).toMatchObject({ text: "", steps: 0 });
   });
 
-  test("approval denial pauses Goal before any model call", async () => {
+  test("budget warning blocks without waiting for an in-memory approval response", async () => {
     const goal = await createRunningGoal(budget({ totalTokens: 890, warningThresholdTokens: 900, maxTokens: 1000 }));
     const store = createGoalStore(goal.id);
     const streamText = mockUnexpectedStreamText();
-    const run = runQueryLoop(makeOptions(store, { maxOutputTokens: 50 }), "Continue Goal");
+    const run = await runQueryLoop(makeOptions(store, { maxOutputTokens: 50 }), "Continue Goal").catch((error: unknown) => error);
 
-    const pending = await waitForPendingBudgetApproval();
-    projectContext.hitl.respond(pending.hitlId, { decision: "denied", comment: "Stop spending tokens" }, projectContext.project.slug);
-    await run;
+    const pending = await waitForPendingBudgetApproval(goal.id);
 
     const paused = await projectContext.goalState.read(goal.id);
     expect(streamText).toHaveBeenCalledTimes(0);
+    expect(run).toMatchObject({ text: "", steps: 0 });
     expect(paused.status).toBe("paused");
-    expect(paused.lastError).toBe("Budget warning approval denied");
+    expect(paused.lastError).toBe("Budget warning approval is pending");
+    expect(paused.blockedByHitlIds).toEqual([pending.hitlId]);
   });
 
   test("hard limit pauses Goal, writes budget ledger, and prevents an additional model call", async () => {
@@ -134,27 +145,22 @@ describe("Goal budget enforcement", () => {
     expect(ledger).toContain("Total token count | 1010");
   });
 
-  test("acknowledged budget warning records approval and is not requested repeatedly without claiming running", async () => {
+  test("duplicate budget warning reuses the active owner-local blocking key", async () => {
     const goal = await createRunningGoal(budget({ totalTokens: 890, warningThresholdTokens: 900, maxTokens: 1000 }));
     const store = createGoalStore(goal.id);
-    const first = enforceGoalBudgetBeforeModelCall({ store, projectContext, modelOptions: { maxOutputTokens: 50 } });
-    const pending = await waitForPendingBudgetApproval();
-
-    projectContext.hitl.respond(pending.hitlId, { decision: "acknowledged", comment: "Budget accepted" }, projectContext.project.slug);
-    await first;
-    await enforceGoalBudgetBeforeModelCall({ store, projectContext, modelOptions: { maxOutputTokens: 50 } });
+    const first = await enforceGoalBudgetBeforeModelCall({ store, projectContext, modelOptions: { maxOutputTokens: 50 } }).catch((error: unknown) => error);
+    const pending = await waitForPendingBudgetApproval(goal.id);
+    await projectContext.goalState.resumeStatusAfterHitl(goal.id, "running");
+    const second = await enforceGoalBudgetBeforeModelCall({ store, projectContext, modelOptions: { maxOutputTokens: 50 } }).catch((error: unknown) => error);
 
     const persisted = await projectContext.goalState.read(goal.id);
-    const requestEvents = hitlEvents.filter((entry) => entry.event.type === "hitl.request");
-    expect(requestEvents).toHaveLength(1);
-    expect(projectContext.hitl.listPending(projectContext.project.slug, goal.id)).toHaveLength(0);
+    const pendingAfterSecond = await projectContext.hitl.list({ scope: "goal", ownerId: goal.id });
+    expect(first).toBeInstanceOf(GoalBudgetEnforcementStopError);
+    expect(second).toBeInstanceOf(GoalBudgetEnforcementStopError);
+    expect(hitlEvents).toHaveLength(0);
+    expect(pendingAfterSecond.map((record) => record.hitlId)).toEqual([pending.hitlId]);
     expect(persisted.status).toBe("paused");
     expect(persisted.lastError).toBe("Budget warning approval is pending");
-    expect(persisted.tokenBudget).toMatchObject({
-      warningApprovalPoint: BUDGET_APPROVAL_POINT,
-      warningApprovalThresholdTokens: 900,
-      warningApprovedTotalTokens: 890,
-    });
   });
 });
 
@@ -235,10 +241,10 @@ function mockStreamTextOnce(round: {
   return streamText;
 }
 
-async function waitForPendingBudgetApproval() {
+async function waitForPendingBudgetApproval(goalId: string) {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const pending = projectContext.hitl.listPending(projectContext.project.slug).find((request) => {
-      return request.trigger.approvalPoint === BUDGET_APPROVAL_POINT;
+    const pending = (await projectContext.hitl.list({ scope: "goal", ownerId: goalId })).find((request) => {
+      return request.source.type === "goal_budget" && request.source.approvalPoint === BUDGET_APPROVAL_POINT;
     });
     if (pending) return pending;
     await new Promise((resolve) => setTimeout(resolve, 1));

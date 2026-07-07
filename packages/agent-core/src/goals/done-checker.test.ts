@@ -366,7 +366,19 @@ describe("goal_evidence check_done tool", () => {
       goalStateManager: manager,
       goalArtifacts: createTestProjectContext(workspaceRoot).goalArtifacts,
       workspaceRoot,
-      hitlService: { request: async () => ({ hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "approved" } }), listPending: () => [] },
+      hitlService: {
+        create: async (input) => ({
+          hitlId: crypto.randomUUID(),
+          owner: input.owner,
+          blockingKey: input.blockingKey,
+          source: input.source,
+          status: "pending",
+          displayPayload: input.displayPayload,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        list: async () => [],
+      },
       createSession: async () => "retry-session",
     });
     const result = await evaluateCondition(goal.doneConditions[0]!, workspaceRoot);

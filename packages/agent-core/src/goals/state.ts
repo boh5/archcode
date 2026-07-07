@@ -243,13 +243,43 @@ export const GoalRetryStateSchema = z.strictObject({
   lastAttempt: GoalRetryAttemptMetadataSchema.optional(),
 }) satisfies z.ZodType<ProtocolGoalRetryState>;
 
-export const GoalHitlCheckpointSchema = z.strictObject({
+const GoalHitlCheckpointBaseSchema = z.strictObject({
   version: z.literal(1),
   hitlId: z.string().trim().min(1),
   blockedAt: z.string(),
   phase: GoalPhaseSchema.optional(),
   reason: z.string().optional(),
-}) satisfies z.ZodType<ProtocolGoalHitlCheckpoint>;
+});
+
+export const GoalHitlCheckpointSchema = z.union([
+  GoalHitlCheckpointBaseSchema.extend({
+    kind: z.literal("goal_approval"),
+    action: z.literal("advancePhase"),
+    from: z.literal("plan"),
+    to: z.literal("build"),
+    approvalPoint: z.literal("after_plan"),
+  }),
+  GoalHitlCheckpointBaseSchema.extend({
+    kind: z.literal("goal_approval"),
+    action: z.literal("complete"),
+    approvalPoint: z.literal("before_complete"),
+  }),
+  GoalHitlCheckpointBaseSchema.extend({
+    kind: z.literal("goal_review"),
+    action: z.literal("finalizeReviewerReview"),
+  }),
+  GoalHitlCheckpointBaseSchema.extend({
+    kind: z.literal("goal_budget"),
+    action: z.literal("awaitBudgetApproval"),
+    approvalPoint: z.string().trim().min(1),
+    estimatedNextCallTokens: z.number().int().nonnegative().optional(),
+  }),
+  GoalHitlCheckpointBaseSchema.extend({
+    kind: z.literal("goal_question"),
+    action: z.literal("answerQuestion"),
+    questionKey: z.string().trim().min(1),
+  }),
+]) satisfies z.ZodType<ProtocolGoalHitlCheckpoint>;
 
 export const GoalStateSchema = z.strictObject({
   id: GoalUuidSchema,
@@ -582,6 +612,35 @@ export class GoalStateManager {
     return updated;
   }
 
+  async blockOnHitl(goalId: string, checkpoint: GoalHitlCheckpoint): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const parsedCheckpoint = GoalHitlCheckpointSchema.parse(checkpoint);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      attentionStatus: "waiting_for_human",
+      blockedByHitlIds: [parsedCheckpoint.hitlId],
+      resumeCheckpoint: parsedCheckpoint,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async clearHitlBlocker(goalId: string, hitlId: string): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const blockedByHitlIds = state.blockedByHitlIds?.filter((id) => id !== hitlId);
+    const clearCheckpoint = state.resumeCheckpoint?.hitlId === hitlId;
+    const updated = GoalStateSchema.parse({
+      ...state,
+      attentionStatus: blockedByHitlIds !== undefined && blockedByHitlIds.length > 0 ? "waiting_for_human" : "clear",
+      blockedByHitlIds: blockedByHitlIds !== undefined && blockedByHitlIds.length > 0 ? blockedByHitlIds : undefined,
+      resumeCheckpoint: clearCheckpoint ? undefined : state.resumeCheckpoint,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
   async recordReviewOutcome(
     goalId: string,
     reviewReport: ProtocolGoalReviewReport,
@@ -603,6 +662,31 @@ export class GoalStateManager {
     const updated = GoalStateSchema.parse({
       ...state,
       tokenBudget: GoalTokenBudgetStateSchema.parse(budget),
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async resumeStatusAfterHitl(goalId: string, status: Extract<GoalStatus, "running" | "verifying" | "reviewed">): Promise<GoalState> {
+    const state = await this.read(goalId);
+    if (state.status !== "paused") {
+      throw new GoalStateError(goalId, `Cannot resume HITL checkpoint from status ${state.status}`);
+    }
+    const updated = GoalStateSchema.parse({
+      ...state,
+      status,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.write(updated);
+    return updated;
+  }
+
+  async updateLoopId(goalId: string, loopId: string): Promise<GoalState> {
+    const state = await this.read(goalId);
+    const updated = GoalStateSchema.parse({
+      ...state,
+      loopId,
       updatedAt: new Date().toISOString(),
     });
     await this.write(updated);

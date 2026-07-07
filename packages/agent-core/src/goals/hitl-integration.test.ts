@@ -2,12 +2,16 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult } from "@archcode/protocol";
+import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
 
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
-import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "../hitl/types";
+import { silentLogger } from "../logger";
 import { setLlmAdapterForTest } from "../llm";
+import { LoopStateManager } from "../loops/state";
+import { SessionStoreManager } from "../store/session-store-manager";
 import { GoalArtifactManager } from "./artifacts";
+import { GoalHitlResumeAdapter } from "./hitl-resume-adapter";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
 
@@ -21,12 +25,18 @@ const condition: DoneCondition = {
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
+let artifacts: GoalArtifactManager;
+let sessions: SessionStoreManager;
+let loops: LoopStateManager;
 
 beforeEach(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
   await mkdir(TMP_ROOT, { recursive: true });
   workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   manager = new GoalStateManager(workspaceRoot);
+  artifacts = new GoalArtifactManager(workspaceRoot);
+  sessions = new SessionStoreManager({ logger: silentLogger });
+  loops = new LoopStateManager(workspaceRoot);
   setLlmAdapterForTest({
     streamText: mock(),
     generateText: mock(),
@@ -54,19 +64,39 @@ async function lockedGoal(approvalPoints: Array<"after_plan" | "before_complete"
   return manager.lock(goal.id, "architect");
 }
 
-function createRunner(hitlService: HitlService, options: { timeoutMs?: number } = {}): GoalRunner {
+function createHitlService(): HitlService {
+  return new HitlService({
+    workspaceRoot,
+    project: { slug: "project-a", name: "Project A" },
+    sessions,
+    goalState: manager,
+    loopState: loops,
+  });
+}
+
+function createRunner(hitlService: HitlService): GoalRunner {
   return new GoalRunner({
     goalStateManager: manager,
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
+    goalArtifacts: artifacts,
     workspaceRoot,
-    hitlService: {
-      request: mock((sessionId: string, kind: HitlKind, payload: HitlPayload, trigger: HitlTrigger): Promise<HitlResponse> => {
-        return hitlService.request(sessionId, kind, payload, { ...trigger, timeoutMs: options.timeoutMs });
-      }),
-      listPending: mock((projectSlug?: string, goalId?: string, loopId?: string) => hitlService.listPending(projectSlug, goalId, loopId)),
-    },
+    hitlService,
     createSession: mock(async () => `main-session-${crypto.randomUUID()}`),
     isSessionActive: mock(async () => true),
+  });
+}
+
+function createCoordinator(hitlService: HitlService): ResumeCoordinator {
+  return new ResumeCoordinator({
+    hitl: hitlService,
+    adapters: {
+      goal: new GoalHitlResumeAdapter({
+        workspaceRoot,
+        goalStateManager: manager,
+        goalArtifacts: artifacts,
+        hitlService,
+        createRunner: () => createRunner(hitlService),
+      }),
+    },
   });
 }
 
@@ -80,113 +110,118 @@ async function readyForCompletion(runner: GoalRunner, goalId: string): Promise<v
 
 async function waitForPending(hitlService: HitlService, goalId: string): Promise<string> {
   for (let attempt = 0; attempt < 25; attempt += 1) {
-    const pending = hitlService.listPending("project-a", goalId);
+    const pending = await hitlService.list({ scope: "goal", ownerId: goalId });
     if (pending[0]) return pending[0].hitlId;
     await sleep(5);
   }
   throw new Error("Expected pending HITL request");
 }
 
+async function waitForNoActiveHitl(hitlService: HitlService, goalId: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const active = await hitlService.list({ scope: "goal", ownerId: goalId });
+    if (active.length === 0) return;
+    await sleep(5);
+  }
+  throw new Error("Timed out waiting for active Goal HITL records to clear");
+}
+
+async function waitForGoal(goalId: string, predicate: (goal: GoalState) => boolean): Promise<GoalState> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const goal = await manager.read(goalId);
+    if (predicate(goal)) return goal;
+    await sleep(5);
+  }
+  throw new Error("Timed out waiting for Goal state");
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-async function withoutUnhandledRejections<T>(action: () => Promise<T>): Promise<T> {
-  const unhandled: unknown[] = [];
-  const onUnhandled = (reason: unknown): void => {
-    unhandled.push(reason);
-  };
-  process.on("unhandledRejection", onUnhandled);
-  try {
-    const result = await action();
-    await flushMicrotasks();
-    expect(unhandled).toEqual([]);
-    return result;
-  } finally {
-    process.removeListener("unhandledRejection", onUnhandled);
-  }
-}
-
-describe("GoalRunner HITL integration", () => {
-  test("denied after_plan approval blocks build and leaves the goal paused in plan", async () => {
-    const hitlService = new HitlService();
+describe("GoalRunner owner-local HITL integration", () => {
+  test("owner-local after_plan approval pauses with checkpoint and resumes exactly once to build", async () => {
+    const hitlService = createHitlService();
+    const coordinator = createCoordinator(hitlService);
     const runner = createRunner(hitlService);
     const goal = await lockedGoal(["after_plan"]);
     await runner.start(goal.id);
 
-    const advancing = withoutUnhandledRejections(() => runner.advancePhase(goal.id, "build"));
+    const paused = await runner.advancePhase(goal.id, "build");
     const hitlId = await waitForPending(hitlService, goal.id);
-    expect(hitlService.respond(hitlId, { decision: "denied" })).toBe(true);
 
-    const paused = await advancing;
     expect(paused.status).toBe("paused");
     expect(paused.phase).toBe("plan");
-    expect(await manager.read(goal.id)).toMatchObject({ status: "paused", phase: "plan" });
-    expect(hitlService.listPending("project-a", goal.id)).toEqual([]);
+    expect(await manager.read(goal.id)).toMatchObject({
+      status: "paused",
+      phase: "plan",
+      attentionStatus: "waiting_for_human",
+      blockedByHitlIds: [hitlId],
+      resumeCheckpoint: {
+        kind: "goal_approval",
+        action: "advancePhase",
+        from: "plan",
+        to: "build",
+        approvalPoint: "after_plan",
+        hitlId,
+      },
+    });
+    expect(await Bun.file(join(workspaceRoot, ".archcode", "goals", goal.id, "hitl.json")).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceRoot, ".archcode", "hitl-queue.json")).exists()).toBe(false);
+
+    const first = await coordinator.respond(hitlId, { type: "approval_decision", decision: "approved", comment: "ship it" });
+    const duplicate = await coordinator.respond(hitlId, { type: "approval_decision", decision: "approved" });
+    expect(first.scheduled).toBe(true);
+    expect(duplicate.scheduled).toBe(false);
+
+    const resumed = await waitForGoal(goal.id, (state) => state.status === "running" && state.phase === "build");
+    expect(resumed).toMatchObject({
+      status: "running",
+      phase: "build",
+      attentionStatus: "clear",
+    });
+    expect(resumed.blockedByHitlIds).toBeUndefined();
+    expect(resumed.resumeCheckpoint).toBeUndefined();
   });
 
-  test("denied before_complete approval blocks completion and leaves the goal paused in review", async () => {
-    const hitlService = new HitlService();
+  test("owner-local denied before_complete approval records outcome and keeps goal paused", async () => {
+    const hitlService = createHitlService();
+    const coordinator = createCoordinator(hitlService);
     const runner = createRunner(hitlService);
     const goal = await lockedGoal(["before_complete"]);
     await readyForCompletion(runner, goal.id);
 
-    const completing = withoutUnhandledRejections(() => runner.complete(goal.id));
+    const paused = await runner.complete(goal.id);
     const hitlId = await waitForPending(hitlService, goal.id);
-    expect(hitlService.respond(hitlId, { decision: "denied" })).toBe(true);
+    expect(paused).toMatchObject({ status: "paused", phase: "review" });
 
-    const paused = await completing;
-    expect(paused.status).toBe("paused");
-    expect(paused.phase).toBe("review");
-    expect(await manager.read(goal.id)).toMatchObject({ status: "paused", phase: "review" });
-    expect(hitlService.listPending("project-a", goal.id)).toEqual([]);
+    await coordinator.respond(hitlId, { type: "approval_decision", decision: "denied", comment: "missing release notes" });
+    const current = await waitForGoal(goal.id, (state) => state.resumeCheckpoint === undefined);
+
+    expect(current).toMatchObject({ status: "paused", phase: "review", attentionStatus: "clear" });
+    expect(current.lastError).toContain("missing release notes");
+    const approvals = await artifacts.readArtifact(goal.id, "approvals.md");
+    expect(approvals).toContain("before_complete");
+    expect(approvals).toContain("denied");
   });
 
-  test("HITL cancel resolves pending approval and pauses the goal without leaking requests", async () => {
-    const hitlService = new HitlService();
+  test("owner-local cancelled after_plan approval clears blocker and leaves paused artifact outcome", async () => {
+    const hitlService = createHitlService();
+    const coordinator = createCoordinator(hitlService);
     const runner = createRunner(hitlService);
     const goal = await lockedGoal(["after_plan"]);
     await runner.start(goal.id);
 
-    const advancing = withoutUnhandledRejections(() => runner.advancePhase(goal.id, "build"));
+    await runner.advancePhase(goal.id, "build");
     const hitlId = await waitForPending(hitlService, goal.id);
-    expect(hitlService.cancel(hitlId, "User cancelled approval")).toBe(true);
 
-    const paused = await advancing;
-    expect(paused.status).toBe("paused");
-    expect(paused.phase).toBe("plan");
-    expect(hitlService.has(hitlId)).toBe(false);
-    expect(hitlService.respond(hitlId, { decision: "approved" })).toBe(false);
-    expect(hitlService.listPending("project-a", goal.id)).toEqual([]);
-  });
+    await coordinator.cancel(hitlId, "User cancelled approval");
+    const current = await waitForGoal(goal.id, (state) => state.resumeCheckpoint === undefined);
 
-  test("HITL timeout option does not auto-cancel durable pending approval", async () => {
-    const hitlService = new HitlService();
-    const runner = createRunner(hitlService, { timeoutMs: 5 });
-    const goal = await lockedGoal(["after_plan"]);
-    await runner.start(goal.id);
-
-    const advancing = withoutUnhandledRejections(() => runner.advancePhase(goal.id, "build"));
-    const hitlId = await waitForPending(hitlService, goal.id);
-    await sleep(15);
-
-    expect(hitlService.has(hitlId)).toBe(true);
-    expect(hitlService.listPending("project-a", goal.id)).toEqual([
-      expect.objectContaining({ hitlId, status: "pending" }),
-    ]);
-    expect(hitlService.cancel(hitlId, "test cleanup")).toBe(true);
-
-    const paused = await advancing;
-    expect(paused.status).toBe("paused");
-    expect(paused.phase).toBe("plan");
-    expect(hitlService.has(hitlId)).toBe(false);
-    expect(hitlService.respond(hitlId, { decision: "approved" })).toBe(false);
-    expect(hitlService.listPending("project-a", goal.id)).toEqual([]);
-    expect(await manager.read(goal.id)).toMatchObject({ status: "paused", phase: "plan" });
+    expect(current).toMatchObject({ status: "paused", phase: "plan", attentionStatus: "clear" });
+    await waitForNoActiveHitl(hitlService, goal.id);
+    expect(await hitlService.list({ scope: "goal", ownerId: goal.id })).toEqual([]);
+    const approvals = await artifacts.readArtifact(goal.id, "approvals.md");
+    expect(approvals).toContain("cancelled");
   });
 });

@@ -217,7 +217,19 @@ async function recordPassingEvidence(goalId: string): Promise<GoalState> {
   const runner = new GoalRunner({
     goalStateManager: manager,
     goalArtifacts: new GoalArtifactManager(TMP_DIR),
-    hitlService: { request: async () => ({ hitlId: "approved", kind: "approval", status: "resolved", response: { data: { approved: true } } }), listPending: () => [] },
+    hitlService: {
+      create: async (input) => ({
+        hitlId: crypto.randomUUID(),
+        owner: input.owner,
+        blockingKey: input.blockingKey,
+        source: input.source,
+        status: "pending",
+        displayPayload: input.displayPayload,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      list: async () => [],
+    },
     workspaceRoot: TMP_DIR,
     createSession: async () => "main-session",
   });

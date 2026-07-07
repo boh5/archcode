@@ -14,7 +14,7 @@ import type {
 } from "@archcode/protocol";
 
 import { GoalApprovalGate } from "../hitl/goal-gates";
-import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "../hitl/types";
+import type { HitlService } from "../hitl/service";
 import type { SessionRole } from "../store/types";
 import type { GoalArtifactManager } from "./artifacts";
 import {
@@ -25,10 +25,7 @@ import {
 } from "./artifact-lifecycle";
 import type { GoalStateManager } from "./state";
 
-type HitlGateway = {
-  request(sessionId: string, kind: HitlKind, payload: HitlPayload, trigger: HitlTrigger): Promise<HitlResponse>;
-  listPending(projectSlug?: string, goalId?: string, loopId?: string): unknown[];
-};
+type HitlGateway = Pick<HitlService, "create" | "list">;
 
 export interface GoalRunnerOptions {
   goalStateManager: GoalStateManager;
@@ -66,6 +63,14 @@ export interface GoalRunnerStartOptions {
 export interface FailedVerificationOptions {
   readonly abort?: AbortSignal;
   readonly waitForBackoff?: boolean;
+}
+
+export interface GoalPhaseAdvanceOptions {
+  readonly skipApproval?: boolean;
+}
+
+export interface GoalCompleteOptions {
+  readonly skipApproval?: boolean;
 }
 
 export class GoalRunnerError extends Error {
@@ -151,6 +156,9 @@ export class GoalRunner {
 
   async start(goalId: string, options: GoalRunnerStartOptions = {}): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
+    if (options.loopId !== undefined && current.loopId !== options.loopId) {
+      await this.#goalStateManager.updateLoopId(goalId, options.loopId);
+    }
     const sessionId = current.mainSessionId ?? await this.#createSession({
       goalId,
       ...(options.loopId === undefined ? {} : { loopId: options.loopId }),
@@ -185,17 +193,17 @@ export class GoalRunner {
     return this.#goalStateManager.updateSessionIds(phaseReset.id, mainSessionId, phaseReset.childSessionIds);
   }
 
-  async advancePhase(goalId: string, nextPhase: GoalPhase): Promise<GoalState> {
+  async advancePhase(goalId: string, nextPhase: GoalPhase, options: GoalPhaseAdvanceOptions = {}): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
     this.#assertRunning(current);
     this.#assertNextPhase(current, nextPhase);
 
-    if (current.phase === "plan" && nextPhase === "build" && current.approvalPoints.includes("after_plan")) {
+    if (!options.skipApproval && current.phase === "plan" && nextPhase === "build" && current.approvalPoints.includes("after_plan")) {
       if (!current.mainSessionId) {
         throw new GoalRunnerError(goalId, "Cannot request after_plan approval without a main session");
       }
-      const outcome = await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "after_plan", current.title, current.projectId);
-      if (!outcome.approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
+      await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "after_plan", current.title, current.projectId);
+      return this.#goalStateManager.transitionStatus(goalId, "paused");
     }
 
     if (current.phase === "build" && nextPhase === "review") {
@@ -268,7 +276,7 @@ export class GoalRunner {
     return this.#scheduleAndMaybeStartRetry(failed, repairContext.summary, options);
   }
 
-  async complete(goalId: string): Promise<GoalState> {
+  async complete(goalId: string, options: GoalCompleteOptions = {}): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
     if (current.status !== "reviewed") {
       throw new GoalRunnerError(goalId, `Cannot complete goal from status ${current.status}`);
@@ -278,12 +286,12 @@ export class GoalRunner {
     }
     this.#assertReviewerEvidence(current);
 
-    if (current.approvalPoints.includes("before_complete")) {
+    if (!options.skipApproval && current.approvalPoints.includes("before_complete")) {
       if (!current.mainSessionId) {
         throw new GoalRunnerError(goalId, "Cannot request before_complete approval without a main session");
       }
-      const outcome = await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "before_complete", current.title, current.projectId);
-      if (!outcome.approved) return this.#goalStateManager.transitionStatus(goalId, "paused");
+      await this.#approvalGate.requestApproval(current.id, current.mainSessionId, "before_complete", current.title, current.projectId);
+      return this.#goalStateManager.transitionStatus(goalId, "paused");
     }
 
     const completed = await this.#goalStateManager.transitionStatus(goalId, "completed");
@@ -344,7 +352,7 @@ export class GoalRunner {
     for (const goal of goals) {
       if (goal.status !== "running" && goal.status !== "verifying") continue;
 
-      if (this.#hitlService.listPending(goal.projectId, goal.id).length > 0) {
+      if (goal.attentionStatus === "waiting_for_human" || (goal.blockedByHitlIds?.length ?? 0) > 0) {
         recovered.push(await this.#goalStateManager.transitionStatus(goal.id, "paused"));
         continue;
       }

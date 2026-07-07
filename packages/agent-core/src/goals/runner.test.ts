@@ -2,9 +2,8 @@ import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult } from "@archcode/protocol";
+import type { DoneCondition, DoneResult, HitlRecord } from "@archcode/protocol";
 
-import type { HitlResponse } from "../hitl/types";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner, GoalRunnerError } from "./runner";
 import { GoalStateManager } from "./state";
@@ -37,14 +36,6 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function approvedResponse(): HitlResponse {
-  return { hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "approved" } };
-}
-
-function deniedResponse(): HitlResponse {
-  return { hitlId: crypto.randomUUID(), kind: "approval", status: "resolved", response: { decision: "denied" } };
-}
-
 function passingResult(conditionId = condition.id): DoneResult {
   return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
@@ -68,13 +59,10 @@ async function expectGoalRunnerError(action: () => Promise<unknown>): Promise<vo
 }
 
 function createRunner(options: {
-  approval?: HitlResponse;
   sessionIds?: string[];
-  pendingHitlGoalIds?: string[];
   activeSessionIds?: string[];
 } = {}): GoalRunner {
   const sessionIds = [...(options.sessionIds ?? ["main-session-1", "main-session-2", "main-session-3"])] as string[];
-  const pendingHitlGoalIds = new Set(options.pendingHitlGoalIds ?? []);
   const activeSessionIds = new Set(options.activeSessionIds ?? []);
 
     return new GoalRunner({
@@ -82,15 +70,17 @@ function createRunner(options: {
       goalArtifacts: new GoalArtifactManager(workspaceRoot),
       workspaceRoot,
     hitlService: {
-      request: mock(async () => options.approval ?? approvedResponse()),
-      listPending: mock((_projectSlug?: string, goalId?: string) => pendingHitlGoalIds.has(goalId ?? "") ? [{
+      create: mock(async (input): Promise<HitlRecord> => ({
         hitlId: crypto.randomUUID(),
-        sessionId: "pending-session",
-        kind: "approval",
-        payload: { title: "Approval", message: "Approve?" },
-        trigger: { goalId, projectSlug: _projectSlug },
-        createdAt: Date.now(),
-      }] : []),
+        owner: input.owner,
+        blockingKey: input.blockingKey,
+        source: input.source,
+        status: "pending",
+        displayPayload: input.displayPayload,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      list: mock(async () => []),
     },
     createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
     isSessionActive: mock(async (sessionId: string) => activeSessionIds.has(sessionId)),
@@ -187,14 +177,14 @@ describe("GoalRunner", () => {
 
   it("runs the happy path with approval gates, reviewer evidence, and completion", async () => {
     const goal = await lockedGoal(["after_plan", "before_complete"]);
-    const runner = createRunner({ approval: approvedResponse() });
+    const runner = createRunner();
 
     const running = await runner.start(goal.id);
     expect(running.status).toBe("running");
     expect(running.phase).toBe("plan");
     expect(running.mainSessionId).toBe("main-session-1");
 
-    const build = await runner.advancePhase(goal.id, "build");
+    const build = await runner.advancePhase(goal.id, "build", { skipApproval: true });
     expect(build.phase).toBe("build");
 
     const review = await runner.advancePhase(goal.id, "review");
@@ -206,7 +196,7 @@ describe("GoalRunner", () => {
     const reviewed = await runner.review(goal.id);
     expect(reviewed.status).toBe("reviewed");
 
-    const completed = await runner.complete(goal.id);
+    const completed = await runner.complete(goal.id, { skipApproval: true });
     expect(completed.status).toBe("completed");
   });
 
@@ -239,21 +229,24 @@ describe("GoalRunner", () => {
     expect(await manager.read(goal.id)).toMatchObject({ status: "running", mainSessionId: "main-session" });
   });
 
-  it("pauses when after_plan approval is denied", async () => {
+  it("pauses with checkpoint when after_plan approval is required", async () => {
     const goal = await lockedGoal(["after_plan"]);
-    const runner = createRunner({ approval: deniedResponse() });
+    const runner = createRunner();
     await runner.start(goal.id);
 
     const paused = await runner.advancePhase(goal.id, "build");
 
     expect(paused.status).toBe("paused");
     expect(paused.phase).toBe("plan");
-    expect(paused.lastError).toBe("Approval after_plan denied");
+    expect(paused.lastError).toBe("Waiting for after_plan approval");
+    expect(paused.attentionStatus).toBe("waiting_for_human");
+    expect(paused.blockedByHitlIds).toHaveLength(1);
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "advancePhase", approvalPoint: "after_plan" });
   });
 
-  it("pauses when before_complete approval is denied", async () => {
+  it("pauses with checkpoint when before_complete approval is required", async () => {
     const goal = await lockedGoal(["before_complete"]);
-    const runner = createRunner({ approval: deniedResponse() });
+    const runner = createRunner();
     await runner.start(goal.id);
     await runner.advancePhase(goal.id, "build");
     await runner.advancePhase(goal.id, "review");
@@ -264,7 +257,10 @@ describe("GoalRunner", () => {
 
     expect(paused.status).toBe("paused");
     expect(paused.phase).toBe("review");
-    expect(paused.lastError).toBe("Approval before_complete denied");
+    expect(paused.lastError).toBe("Waiting for before_complete approval");
+    expect(paused.attentionStatus).toBe("waiting_for_human");
+    expect(paused.blockedByHitlIds).toHaveLength(1);
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
   });
 
   it("does not complete without reviewer done evidence", async () => {
@@ -304,7 +300,7 @@ describe("GoalRunner", () => {
 
     it("preserves before_complete approval behavior for final DONE", async () => {
       const goal = await lockedGoalWithConditions(reviewerDoneConditions, ["before_complete"]);
-      const runner = createRunner({ approval: deniedResponse() });
+      const runner = createRunner();
       await runToReview(goal.id, runner);
       for (const doneCondition of reviewerDoneConditions) {
         await runner.recordReviewerDoneResult(goal.id, doneCondition.id, passingResult(doneCondition.id));
@@ -315,7 +311,8 @@ describe("GoalRunner", () => {
       expect(paused.status).toBe("paused");
       expect(paused.phase).toBe("review");
       expect(paused.reviewReport?.outcome).toBe("DONE");
-      expect(paused.lastError).toBe("Approval before_complete denied");
+      expect(paused.lastError).toBe("Waiting for before_complete approval");
+      expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
     });
 
     it("returns NOT_DONE with structured repair context for missing required evidence", async () => {
@@ -409,11 +406,22 @@ describe("GoalRunner", () => {
     await manager.lock(pending.id, "architect");
     const runner = createRunner({
       activeSessionIds: ["pending-session"],
-      pendingHitlGoalIds: [pending.id],
       sessionIds: ["missing-session", "pending-session"],
     });
     await runner.start(noSession.id);
     await runner.start(pending.id);
+    await manager.blockOnHitl(pending.id, {
+      version: 1,
+      hitlId: "pending-hitl",
+      blockedAt: new Date().toISOString(),
+      phase: "plan",
+      kind: "goal_approval",
+      action: "advancePhase",
+      from: "plan",
+      to: "build",
+      approvalPoint: "after_plan",
+      reason: "approval required",
+    });
 
     const recovered = await runner.recoverInterruptedGoals(workspaceRoot);
 

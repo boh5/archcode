@@ -68,6 +68,7 @@ export class HitlService {
   #goalState: GoalStateManager | undefined;
   #loopState: LoopStateManager | undefined;
   readonly #pendingCompat = new Map<string, PendingCompatRequest>();
+  readonly #localOwners = new Map<string, HitlOwnerKey>();
 
   constructor(eventsOrOptions: HitlEventSubmitter | HitlServiceOptions = { submitHitlEvent: () => {} }) {
     const options = isHitlEventSubmitter(eventsOrOptions)
@@ -112,6 +113,7 @@ export class HitlService {
       updatedAt: now,
     };
     const result = await (await this.#storeFor(input.owner)).create(record);
+    this.#localOwners.set(ownerKey(result.record.owner), result.record.owner);
     return result.record;
   }
 
@@ -342,7 +344,10 @@ export class HitlService {
 
   async #knownOwners(): Promise<HitlOwnerKey[]> {
     const context = this.#aggregationContext();
-    return await collectKnownHitlOwners(context);
+    const owners = new Map<string, HitlOwnerKey>();
+    for (const owner of this.#localOwners.values()) owners.set(ownerKey(owner), owner);
+    for (const owner of await collectKnownHitlOwners(context)) owners.set(ownerKey(owner), owner);
+    return [...owners.values()];
   }
 
   #aggregationContext() {

@@ -36,6 +36,7 @@ import type {
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { SessionExecutionManager, SessionHitlResumeAdapter } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
+import { GoalHitlResumeAdapter } from "./goals/hitl-resume-adapter";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
 import { ResumeCoordinator, type ResumeRecoverySummary } from "./hitl/resume-coordinator";
@@ -217,7 +218,7 @@ export async function createRuntime(
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
       hitlFactory: (workspaceRoot) => new HitlService({ events: hitlEvents, workspaceRoot }),
       sessionStoreManager,
-      resumeCoordinatorFactory: ({ workspaceRoot, hitl }) => new ResumeCoordinator({
+      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, goalArtifacts, loopState }) => new ResumeCoordinator({
         hitl,
         adapters: {
           session: new SessionHitlResumeAdapter({
@@ -232,10 +233,27 @@ export async function createRuntime(
             resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
             abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
           }),
+          goal: new GoalHitlResumeAdapter({
+            workspaceRoot,
+            goalStateManager: goalState,
+            goalArtifacts,
+            hitlService: hitl,
+            createRunner: () => new GoalRunner({
+              goalStateManager: goalState,
+              goalArtifacts,
+              hitlService: hitl,
+              workspaceRoot,
+              createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, createOptions)).sessionId,
+              isSessionActive: async (sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
+            }),
+          }),
         },
         logger: runtimeLogger.child({ module: "projects" }),
       }),
-      resumeAdapters: { session: { resume: async () => { throw new Error("Session HITL adapter factory was not used"); } } },
+      resumeAdapters: {
+        session: { resume: async () => { throw new Error("Session HITL adapter factory was not used"); } },
+        goal: { resume: async () => { throw new Error("Goal HITL adapter factory was not used"); } },
+      },
       logger: runtimeLogger.child({ module: "projects" }),
     });
     const sessionAgentManager = new SessionAgentManager({

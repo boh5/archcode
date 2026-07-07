@@ -1,9 +1,9 @@
-import type { DoneResult, GoalReviewOutcome } from "@archcode/protocol";
+import type { ApprovalPoint, GoalHitlCheckpoint, GoalReviewOutcome, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import type { GoalArtifactManager } from "../goals/artifacts";
 import { writeGoalApprovalArtifactEvent } from "../goals/artifact-lifecycle";
 import type { GoalStateManager } from "../goals/state";
-import type { HitlKind, HitlPayload, HitlResponse, HitlTrigger } from "./types";
+import type { CreateHitlRecordInput } from "./service";
 
 export type ApprovalOutcome = {
   approved: boolean;
@@ -21,8 +21,8 @@ export type ReviewOutcome = {
   comment?: string;
 };
 
-type GoalHitlGateway = {
-  request(sessionId: string, kind: HitlKind, payload: HitlPayload, trigger: HitlTrigger): Promise<HitlResponse>;
+export type GoalHitlGateway = {
+  create(input: CreateHitlRecordInput): Promise<HitlRecord>;
 };
 
 export interface GoalApprovalGateOptions {
@@ -45,94 +45,88 @@ export class GoalApprovalGate {
   async requestApproval(
     goalId: string,
     sessionId: string,
-    approvalPoint: "after_plan" | "before_complete",
+    approvalPoint: ApprovalPoint,
     goalTitle: string,
     projectSlug: string,
-  ): Promise<ApprovalOutcome> {
+  ): Promise<HitlRecord> {
     await this.#recordApprovalArtifact(goalId, {
       approvalPoint,
       sessionId,
       status: "requested",
     });
-    const response = await this.#hitlService.request(
-      sessionId,
-      "approval",
-      {
-        kind: "approval",
+    const record = await this.#hitlService.create({
+      owner: { projectSlug, ownerType: "goal", ownerId: goalId },
+      blockingKey: `goal:${goalId}:approval:${approvalPoint}`,
+      source: { type: "goal_approval", goalId, approvalPoint },
+      displayPayload: {
         title: approvalPoint === "after_plan" ? "Approve goal plan" : "Approve goal completion",
-        message: approvalPoint === "after_plan"
+        summary: approvalPoint === "after_plan"
           ? `Approve moving goal "${goalTitle}" from plan to build?`
           : `Approve completing goal "${goalTitle}"?`,
-        action: `goal.approval.${approvalPoint}`,
-        context: { goalId, projectSlug, approvalPoint, goalTitle },
-        options: [
-          { id: "approved", label: "Approve" },
-          { id: "denied", label: "Deny" },
+        fields: [
+          { label: "Goal", value: goalTitle },
+          { label: "Approval point", value: approvalPoint },
+          { label: "Recommended option", value: "approved" },
         ],
-        recommendedOptionId: "approved",
+        redacted: true,
       },
-      { goalId, projectSlug, source: `goal.approval.${approvalPoint}`, approvalPoint },
-    );
+    });
+    await this.#goalStateManager.blockOnHitl(goalId, approvalCheckpoint(record.hitlId, approvalPoint));
+    await this.#goalStateManager.updateLastError(goalId, `Waiting for ${approvalPoint} approval`);
+    return record;
+  }
 
+  async requestReview(
+    goalId: string,
+    artifacts: ReviewArtifact[],
+    projectSlug: string,
+  ): Promise<HitlRecord> {
+    const record = await this.#hitlService.create({
+      owner: { projectSlug, ownerType: "goal", ownerId: goalId },
+      blockingKey: `goal:${goalId}:review`,
+      source: { type: "goal_review", goalId },
+      displayPayload: {
+        title: "Review goal artifacts",
+        summary: "Review the artifacts produced for this goal.",
+        fields: artifacts.map((artifact) => ({ label: artifact.path, value: artifact.description })),
+        redacted: true,
+      },
+    });
+    await this.#goalStateManager.blockOnHitl(goalId, {
+      version: 1,
+      hitlId: record.hitlId,
+      blockedAt: new Date().toISOString(),
+      kind: "goal_review",
+      action: "finalizeReviewerReview",
+      reason: "Reviewer HITL outcome required",
+    });
+    await this.#goalStateManager.updateLastError(goalId, "Waiting for reviewer HITL outcome");
+    const current = await this.#goalStateManager.read(goalId);
+    if (current.status !== "paused") await this.#goalStateManager.transitionStatus(goalId, "paused");
+    return record;
+  }
+
+  async recordApprovalResponse(
+    goalId: string,
+    approvalPoint: ApprovalPoint,
+    sessionId: string,
+    response: HitlResponse,
+  ): Promise<ApprovalOutcome> {
     const outcome = approvalOutcomeFromResponse(response);
-    await this.#recordApprovalOutcome(goalId, approvalPoint, response, outcome);
+    const label = response.type === "approval_decision" ? outcome.decision : response.type;
+    const detail = outcome.comment ?? (response.type === "cancel" ? response.reason : undefined);
+    const message = detail
+      ? `Approval ${approvalPoint} ${label}: ${detail}`
+      : `Approval ${approvalPoint} ${label}`;
+    await this.#goalStateManager.updateLastError(goalId, message);
     await this.#recordApprovalArtifact(goalId, {
       approvalPoint,
       sessionId,
       status: approvalArtifactStatus(response, outcome),
       decision: outcome.decision,
-      comment: outcome.comment ?? (response.status === "resolved" ? undefined : response.reason),
+      comment: detail,
     });
     return outcome;
-  }
-
-  async requestReview(
-    goalId: string,
-    sessionId: string,
-    artifacts: ReviewArtifact[],
-    projectSlug: string,
-  ): Promise<ReviewOutcome> {
-    const response = await this.#hitlService.request(
-      sessionId,
-      "review",
-      {
-        kind: "review",
-        title: "Review goal artifacts",
-        message: "Review the artifacts produced for this goal.",
-        artifacts,
-      },
-      { goalId, projectSlug, source: "goal.review", approvalPoint: "review" },
-    );
-
-    const outcome = reviewOutcomeFromResponse(response);
-    await this.#recordReviewOutcome(goalId, outcome);
-    return outcome;
-  }
-
-  async #recordApprovalOutcome(
-    goalId: string,
-    approvalPoint: "after_plan" | "before_complete",
-    response: HitlResponse,
-    outcome: ApprovalOutcome,
-  ): Promise<void> {
-    const label = response.status === "resolved"
-      ? (outcome.decision ?? (outcome.approved ? "approved" : "denied"))
-      : response.status;
-    const detail = outcome.comment ?? (response.status === "resolved" ? undefined : response.reason);
-    const message = detail
-      ? `Approval ${approvalPoint} ${label}: ${detail}`
-      : `Approval ${approvalPoint} ${label}`;
-    await this.#goalStateManager.updateLastError(goalId, message);
-  }
-
-  async #recordReviewOutcome(goalId: string, outcome: ReviewOutcome): Promise<void> {
-    const result: DoneResult = {
-      conditionId: "reviewer_approval",
-      passed: outcome.outcome === "DONE",
-      evidence: outcome.comment ?? `Review outcome: ${outcome.outcome}`,
-      checkedAt: new Date().toISOString(),
-    };
-    await this.#goalStateManager.recordDoneResult(goalId, "reviewer_approval", result);
   }
 
   async #recordApprovalArtifact(goalId: string, event: {
@@ -149,31 +143,30 @@ export class GoalApprovalGate {
   }
 }
 
-function approvalOutcomeFromResponse(response: HitlResponse): ApprovalOutcome {
-  if (response.status !== "resolved") return { approved: false };
-
-  const decision = response.response.decision
-    ?? (typeof response.response.data?.approved === "boolean"
-      ? (response.response.data.approved ? "approved" : "denied")
-      : undefined);
-  const approved = decision === "approved" || response.response.outcome === "DONE";
-  return withoutUndefined({ approved, decision, comment: response.response.comment });
+export function approvalOutcomeFromResponse(response: HitlResponse): ApprovalOutcome {
+  if (response.type !== "approval_decision") {
+    return withoutUndefined({ approved: false, comment: response.type === "cancel" ? response.reason : undefined });
+  }
+  return withoutUndefined({ approved: response.decision === "approved", decision: response.decision, comment: response.comment });
 }
 
-function reviewOutcomeFromResponse(response: HitlResponse): ReviewOutcome {
-  if (response.status !== "resolved") {
-    return { outcome: "NOT_DONE", comment: response.reason };
+export function reviewOutcomeFromResponse(response: HitlResponse): ReviewOutcome {
+  if (response.type !== "review_outcome") {
+    return { outcome: "NOT_DONE", comment: response.type === "cancel" ? response.reason : undefined };
   }
-
-  return withoutUndefined({
-    outcome: response.response.outcome ?? (response.response.decision === "approved" ? "DONE" : "NOT_DONE"),
-    comment: response.response.comment,
-  });
+  return withoutUndefined({ outcome: response.outcome, comment: response.comment });
 }
 
 function approvalArtifactStatus(response: HitlResponse, outcome: ApprovalOutcome): "approved" | "denied" | "cancelled" | "timeout" {
-  if (response.status === "cancelled" || response.status === "timeout") return response.status;
+  if (response.type === "cancel") return "cancelled";
   return outcome.approved ? "approved" : "denied";
+}
+
+function approvalCheckpoint(hitlId: string, approvalPoint: ApprovalPoint): GoalHitlCheckpoint {
+  const base = { version: 1 as const, hitlId, blockedAt: new Date().toISOString(), kind: "goal_approval" as const };
+  return approvalPoint === "after_plan"
+    ? { ...base, action: "advancePhase", from: "plan", to: "build", approvalPoint, phase: "plan", reason: "After-plan approval required" }
+    : { ...base, action: "complete", approvalPoint, phase: "review", reason: "Before-complete approval required" };
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {

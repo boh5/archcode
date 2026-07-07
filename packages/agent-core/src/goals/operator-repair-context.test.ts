@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import type { DoneCondition, DoneResult, GoalRepairContext } from "@archcode/protocol";
 
-import type { HitlResponse } from "../hitl/types";
 import { buildSystemPrompt } from "../prompt/builder";
 import type { PromptContext } from "../prompt/types";
 import { GoalArtifactManager } from "./artifacts";
@@ -52,18 +51,21 @@ function makePromptContext(overrides: Partial<PromptContext>): PromptContext {
 
 function createRunner(sessionIds: string[] = ["main-session-1", "fresh-session-2"]): GoalRunner {
   const ids = [...sessionIds];
-  const approved: HitlResponse = {
-    hitlId: crypto.randomUUID(),
-    kind: "approval",
-    status: "resolved",
-    response: { decision: "approved" },
-  };
   return new GoalRunner({
     goalStateManager: manager,
     goalArtifacts: new GoalArtifactManager(workspaceRoot),
     hitlService: {
-      request: mock(async (): Promise<HitlResponse> => approved),
-      listPending: mock(() => []),
+      create: mock(async (input) => ({
+        hitlId: crypto.randomUUID(),
+        owner: input.owner,
+        blockingKey: input.blockingKey,
+        source: input.source,
+        status: "pending" as const,
+        displayPayload: input.displayPayload,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })),
+      list: mock(async () => []),
     },
     workspaceRoot,
     createSession: mock(async () => ids.shift() ?? `session-${crypto.randomUUID()}`),

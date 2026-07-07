@@ -1040,13 +1040,21 @@ export interface GoalRetryState {
 
 export type HitlAttentionStatus = "clear" | "waiting_for_human";
 
-export interface GoalHitlCheckpoint {
+interface GoalHitlCheckpointBase {
   version: 1;
   hitlId: string;
   blockedAt: string;
   phase?: GoalPhase;
   reason?: string;
 }
+
+export type GoalHitlCheckpoint = GoalHitlCheckpointBase & (
+  | { kind: "goal_approval"; action: "advancePhase"; from: "plan"; to: "build"; approvalPoint: "after_plan" }
+  | { kind: "goal_approval"; action: "complete"; approvalPoint: "before_complete" }
+  | { kind: "goal_review"; action: "finalizeReviewerReview" }
+  | { kind: "goal_budget"; action: "awaitBudgetApproval"; approvalPoint: string; estimatedNextCallTokens?: number }
+  | { kind: "goal_question"; action: "answerQuestion"; questionKey: string }
+);
 
 export type ApprovalPoint = "after_plan" | "before_complete";
 

@@ -3,10 +3,9 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalTokenBudgetState } from "@archcode/protocol";
+import type { DoneCondition, DoneResult, GoalTokenBudgetState, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalApprovalGate } from "../hitl/goal-gates";
-import type { HitlResponse } from "../hitl/types";
 import { writeGoalBudgetArtifact } from "./artifact-lifecycle";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
@@ -143,12 +142,14 @@ describe("Goal artifact lifecycle", () => {
     const gate = new GoalApprovalGate({
       goalStateManager: manager,
       goalArtifacts: artifacts,
-      hitlService: { request: mock(async () => approvalResponse("denied", "Needs more evidence")) },
+      hitlService: { create: mock(async (input) => createHitlRecord(input)) },
     });
 
-    const outcome = await gate.requestApproval(goal.id, "main-session-approval", "after_plan", goal.title, goal.projectId);
+    const record = await gate.requestApproval(goal.id, "main-session-approval", "after_plan", goal.title, goal.projectId);
+    const outcome = await gate.recordApprovalResponse(goal.id, "after_plan", "main-session-approval", approvalResponse("denied", "Needs more evidence"));
 
     expect(outcome.approved).toBe(false);
+    expect(record.source).toMatchObject({ type: "goal_approval", approvalPoint: "after_plan" });
     const approvals = await artifacts.readArtifact(goal.id, "approvals.md");
     expect(approvals).toContain("# Approval History");
     expect(approvals).toContain("after_plan | requested");
@@ -180,8 +181,8 @@ function createRunner(options: { sessionIds?: string[] } = {}): GoalRunner {
     goalArtifacts: artifacts,
     workspaceRoot,
     hitlService: {
-      request: mock(async () => approvalResponse("approved")),
-      listPending: mock(() => []),
+      create: mock(async (input) => createHitlRecord(input)),
+      list: mock(async () => []),
     },
     createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
     isSessionActive: mock(async () => false),
@@ -210,13 +211,26 @@ async function runToReview(goalId: string, runner: GoalRunner): Promise<void> {
   await runner.advancePhase(goalId, "review");
 }
 
-function approvalResponse(decision: string, comment?: string): HitlResponse {
+function createHitlRecord(input: {
+  owner: HitlRecord["owner"];
+  blockingKey: string;
+  source: HitlRecord["source"];
+  displayPayload: HitlRecord["displayPayload"];
+}): HitlRecord {
   return {
     hitlId: crypto.randomUUID(),
-    kind: "approval",
-    status: "resolved",
-    response: { decision, comment },
+    owner: input.owner,
+    blockingKey: input.blockingKey,
+    source: input.source,
+    status: "pending",
+    displayPayload: input.displayPayload,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
+}
+
+function approvalResponse(decision: "approved" | "denied", comment?: string): HitlResponse {
+  return { type: "approval_decision", decision, ...(comment === undefined ? {} : { comment }) };
 }
 
 function specComplianceFailureResult(): DoneResult {

@@ -30,7 +30,7 @@ export interface ProjectContextResolverOptions {
   /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
   sessionStoreManager?: SessionStoreManager;
   /** Factory primarily for testing alternate ResumeCoordinator construction. */
-  resumeCoordinatorFactory?: (input: { workspaceRoot: string; hitl: HitlService; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
+  resumeCoordinatorFactory?: (input: { workspaceRoot: string; hitl: HitlService; goalState: GoalStateManager; goalArtifacts: GoalArtifactManager; loopState: LoopStateManager; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
   /** Owner-specific adapters registered by later HITL runtime tasks. */
   resumeAdapters?: ResumeCoordinatorAdapters;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
@@ -50,7 +50,7 @@ export class ProjectContextResolver {
   readonly #loopStateFactory: (workspaceRoot: string) => LoopStateManager;
   readonly #hitlFactory: (workspaceRoot: string) => HitlService;
   readonly #sessionStoreManager?: SessionStoreManager;
-  readonly #resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
+  readonly #resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; goalState: GoalStateManager; goalArtifacts: GoalArtifactManager; loopState: LoopStateManager; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
   readonly #resumeAdapters?: ResumeCoordinatorAdapters;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
@@ -108,6 +108,7 @@ export class ProjectContextResolver {
     await approvals.load(workspaceRoot);
     const project = await this.#projectInfoFactory(workspaceRoot) ?? this.#createPlaceholderProjectInfo(workspaceRoot);
     const goalState = this.#goalStateFactory(workspaceRoot);
+    const goalArtifacts = this.#goalArtifactsFactory(workspaceRoot);
     const loopState = this.#loopStateFactory(workspaceRoot);
     const hitl = this.#hitlFactory(workspaceRoot);
     hitl.configure({
@@ -118,7 +119,7 @@ export class ProjectContextResolver {
       loopState,
     });
     await hitl.load(workspaceRoot);
-    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, adapters: this.#resumeAdapters });
+    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, goalState, goalArtifacts, loopState, adapters: this.#resumeAdapters });
     if (this.#sessionStoreManager !== undefined && hasResumeAdapters(this.#resumeAdapters)) {
       await hitlResumeCoordinator.recover();
     }
@@ -126,7 +127,7 @@ export class ProjectContextResolver {
     return {
       project,
       goalState,
-      goalArtifacts: this.#goalArtifactsFactory(workspaceRoot),
+      goalArtifacts,
       goalMemory: this.#goalMemoryFactory(workspaceRoot),
       loopState,
       hitl,
