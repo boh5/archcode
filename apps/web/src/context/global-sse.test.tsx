@@ -4,6 +4,7 @@ import type {
   GoalState,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
+  GlobalSSEHitlChangedEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
@@ -127,6 +128,22 @@ describe("parseSSEEvent", () => {
     expect(parsed.serverName).toBe("context7");
     expect(parsed.status).toEqual(status);
     expect(parsed.createdAt).toBe(1700000000000);
+  });
+
+  test("parses hitl.changed event", () => {
+    const event: GlobalSSEHitlChangedEvent = {
+      type: "hitl.changed",
+      projectSlug: "proj",
+      ownerType: "session",
+      ownerId: "session-1",
+      hitlId: "hitl-1",
+      sessionId: "session-1",
+      createdAt: 1700000000000,
+    };
+
+    const result = parseSSEEvent("hitl.changed", JSON.stringify(event));
+
+    expect(result).toEqual(event);
   });
 
   test("returns null for malformed JSON", () => {
@@ -321,6 +338,50 @@ describe("handleSSEEvent", () => {
     });
   });
 
+  test("invalidates scoped HITL and hinted session query on hitl.changed", () => {
+    const event: GlobalSSEHitlChangedEvent = {
+      type: "hitl.changed",
+      projectSlug: "proj",
+      ownerType: "session",
+      ownerId: "session-1",
+      sessionId: "session-1",
+      hitlId: "hitl-1",
+      createdAt: Date.now(),
+    };
+
+    handleSSEEvent({ event: "hitl.changed", data: JSON.stringify(event) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(4);
+  });
+
+  test("invalidates scoped HITL and hinted goal/loop queries on hitl.changed", () => {
+    const event: GlobalSSEHitlChangedEvent = {
+      type: "hitl.changed",
+      projectSlug: "proj",
+      ownerType: "loop",
+      ownerId: "loop-1",
+      hitlId: "hitl-1",
+      goalId: "goal-1",
+      loopId: "loop-1",
+      createdAt: Date.now(),
+    };
+
+    handleSSEEvent({ event: "hitl.changed", data: JSON.stringify(event) }, deps);
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "goals", "goal-1"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1", "runs"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(12);
+  });
+
   test("invalidates loop queries on loop.state_change", () => {
     const loopState = createLoopState("loop-1", "active");
     const envelope: GlobalSessionEventEnvelope = {
@@ -417,9 +478,10 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    // HITL invalidation: hitl, projectHitl, session = 3 calls
+    // HITL invalidation: hitl, projectHitl, scoped HITL prefix, session = 4 calls
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
     // Loop guardrail invalidation: 9 calls
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1"] });
@@ -430,8 +492,8 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["loops", "active"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "kill-state"] });
-    // Total: 3 HITL + 9 loop = 12
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(12);
+    // Total: 4 HITL + 9 loop = 13
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(13);
   });
 
   test("invalidates session query on reset event", () => {

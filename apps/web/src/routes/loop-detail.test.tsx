@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
+import type { HitlProjection, LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
 import { LoopDetailRoute } from "./loop-detail";
 import { EditLoopForm } from "../components/features/CreateLoopDialog";
 
@@ -1086,6 +1086,77 @@ describe("LoopDetailRoute", () => {
       await waitFor(() => {
         expect(container.textContent).toContain("Missing loop route parameters");
       });
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("renders visible HITL section with loop-scoped projections", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+
+    const loopHitl: HitlProjection[] = [
+      {
+        hitlId: "loop-hitl-1",
+        project: { slug: "demo", name: "Demo" },
+        owner: { projectSlug: "demo", ownerType: "loop", ownerId: "loop-1" },
+        source: { type: "loop_approval", loopId: "loop-1", approvalPoint: "explicit_per_run" },
+        status: "pending",
+        displayPayload: { title: "Approve loop run?", redacted: true },
+        allowedActions: ["approve", "deny", "cancel"],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        hitlId: "child-session-hitl",
+        project: { slug: "demo", name: "Demo" },
+        owner: { projectSlug: "demo", ownerType: "session", ownerId: "child-session" },
+        ancestry: { loopId: "loop-1" },
+        source: { type: "ask_user", sessionId: "child-session" },
+        status: "pending",
+        displayPayload: { title: "Which option?", redacted: true },
+        allowedActions: ["answer", "cancel"],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    const baseSetup = setupLoopDetailFetch({ killState: { globalKillActive: false } });
+
+    const hitlFetchMock = mock(async (inputValue: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const path = toPath(inputValue);
+      if (path.includes("/api/projects/demo/hitl") && path.includes("scope=loop")) {
+        return Response.json({ hitl: loopHitl });
+      }
+      return baseSetup.fetchMock(inputValue, init);
+    });
+    Object.defineProperty(globalThis, "fetch", { value: hitlFetchMock, configurable: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderLoopDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        const hitlSection = container.querySelector('[data-testid="loop-hitl-section"]');
+        expect(hitlSection).not.toBeNull();
+      });
+
+      const hitlSection = container.querySelector('[data-testid="loop-hitl-section"]')!;
+      expect(hitlSection.textContent).toContain("HITL");
+      expect(hitlSection.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(2);
+      expect(hitlSection.textContent).toContain("Approve loop run?");
+      expect(hitlSection.textContent).toContain("Which option?");
+      expect(hitlSection.textContent).toContain("child-session");
+      expect(hitlSection.textContent).toContain("loop-1");
     } finally {
       await act(async () => {
         reactRoot.unmount();

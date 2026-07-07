@@ -1,4 +1,4 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery, useQueries } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import type {
   LoopBudgetSnapshot,
@@ -6,7 +6,6 @@ import type {
 } from "@archcode/protocol";
 import type {
   DashboardGoal,
-  DashboardHitlItem,
   DashboardLoop,
   DiffFile,
   DirectoryListResponse,
@@ -14,6 +13,10 @@ import type {
   GoalArtifactReadResponse,
   GoalArtifactsListResponse,
   GoalState,
+  HitlListResponse,
+  HitlProjection,
+  HitlScope,
+  HitlStatusFilter,
   LoopIntegrationStatusSnapshot,
   LoopKillState,
   LoopRunReport,
@@ -36,6 +39,13 @@ export const queryKeys = {
     ["projects", slug, "goals", goalId, "artifacts", artifactName] as const,
   hitl: ["hitl", "pending"] as const,
   projectHitl: (slug: string) => ["projects", slug, "hitl"] as const,
+  scopedHitl: (
+    slug: string,
+    scope: HitlScope,
+    ownerId: string | undefined,
+    includeChildren: boolean,
+    status: HitlStatusFilter,
+  ) => ["projects", slug, "hitl", scope, ownerId ?? "", includeChildren, status] as const,
   sessions: (slug: string) => ["projects", slug, "sessions"] as const,
   session: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId] as const,
   focusedSession: (slug: string, sessionId: string) => ["projects", slug, "sessions", sessionId, "focused"] as const,
@@ -158,26 +168,51 @@ export function goalArtifactQueryOptions(slug: string, goalId: string, artifactN
   });
 }
 
-export function hitlQueryOptions() {
-  return queryOptions({
-    queryKey: queryKeys.hitl,
-    queryFn: async () => {
-      const response = await apiFetch<{ hitl: DashboardHitlItem[] }>("/api/hitl?status=pending");
-      return response.hitl;
-    },
-  });
-}
-
 export function projectHitlQueryOptions(slug: string) {
   return queryOptions({
     queryKey: queryKeys.projectHitl(slug),
     queryFn: async () => {
-      const response = await apiFetch<{ hitl: DashboardHitlItem[] }>(
-        `/api/projects/${encodeURIComponent(slug)}/hitl`,
+      const params = new URLSearchParams();
+      params.set("scope", "project");
+      params.set("status", "pending");
+      const response = await apiFetch<HitlListResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/hitl?${params.toString()}`,
       );
       return response.hitl;
     },
     enabled: slug.length > 0,
+  });
+}
+
+export interface UseHitlOptions {
+  slug: string;
+  scope: HitlScope;
+  ownerId?: string;
+  includeChildren?: boolean;
+  status?: HitlStatusFilter;
+}
+
+export function scopedHitlQueryOptions({
+  slug,
+  scope,
+  ownerId,
+  includeChildren = false,
+  status = "pending",
+}: UseHitlOptions) {
+  return queryOptions({
+    queryKey: queryKeys.scopedHitl(slug, scope, ownerId, includeChildren, status),
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("scope", scope);
+      if (ownerId) params.set("ownerId", ownerId);
+      if (includeChildren) params.set("includeChildren", "true");
+      params.set("status", status);
+      const response = await apiFetch<HitlListResponse>(
+        `/api/projects/${encodeURIComponent(slug)}/hitl?${params.toString()}`,
+      );
+      return response.hitl;
+    },
+    enabled: slug.length > 0 && (scope === "project" || (ownerId?.length ?? 0) > 0),
   });
 }
 
@@ -253,8 +288,8 @@ export function useGoalArtifact(slug: string, goalId: string, artifactName: stri
   return useQuery(goalArtifactQueryOptions(slug, goalId, artifactName));
 }
 
-export function useHitl() {
-  return useQuery(hitlQueryOptions());
+export function useScopedHitl(options: UseHitlOptions) {
+  return useQuery(scopedHitlQueryOptions(options));
 }
 
 export function useActiveGoals() {
@@ -263,6 +298,27 @@ export function useActiveGoals() {
 
 export function useProjectHitl(slug: string) {
   return useQuery(projectHitlQueryOptions(slug));
+}
+
+export function useDashboardHitl() {
+  const projectsQuery = useProjects();
+  const slugs = (projectsQuery.data ?? []).map((p) => p.slug);
+  const results = useQueries({
+    queries: slugs.map((slug) => scopedHitlQueryOptions({ slug, scope: "project", status: "pending" })),
+    combine: (queryResults) => {
+      const all: HitlProjection[] = [];
+      let loading = false;
+      for (const r of queryResults) {
+        if (r.isLoading) loading = true;
+        if (r.data) all.push(...r.data);
+      }
+      return { data: all, isLoading: loading };
+    },
+  });
+  return {
+    data: results.data,
+    isLoading: projectsQuery.isLoading || results.isLoading,
+  };
 }
 
 export function useDiff(slug: string) {

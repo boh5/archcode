@@ -24,6 +24,12 @@ export type {
   HitlResponse,
   HitlDisplayPayload,
   HitlSource,
+  HitlProjection,
+  HitlProjectionContext,
+  HitlAllowedAction,
+  HitlOwnerKey,
+  HitlOwnerType,
+  HitlStatus,
   DiffLineType,
   DiffLine,
   DiffHunk,
@@ -63,7 +69,71 @@ export type {
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalArtifactFile, GoalState, HitlDisplayPayload, HitlOwnerKey, HitlSource, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+import type { ApprovalPoint, GoalArtifactFile, GoalState, HitlAllowedAction, HitlDisplayPayload, HitlOwnerKey, HitlProjection, HitlSource, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+
+// ─── Unified HITL API types ───
+
+/** Scope filter for the canonical HITL list route. */
+export type HitlScope = "project" | "session" | "goal" | "loop";
+
+/** Status filter for the canonical HITL list route. */
+export type HitlStatusFilter = "pending" | "recent" | "all";
+
+/** Response of GET /api/projects/:slug/hitl?scope=...&ownerId=...&includeChildren=...&status=... */
+export interface HitlListResponse {
+  hitl: HitlProjection[];
+}
+
+/** Convert a legacy DashboardHitlItem into a HitlProjection for unified rendering. */
+export function dashboardHitlItemToProjection(item: DashboardHitlItem): HitlProjection {
+  const source = dashboardHitlItemToSource(item);
+  const owner: HitlOwnerKey = {
+    projectSlug: item.projectSlug,
+    ownerType: "session",
+    ownerId: item.sessionId,
+  };
+  return {
+    hitlId: item.hitlId,
+    project: { slug: item.projectSlug, name: item.projectName },
+    owner,
+    ancestry: item.trigger.goalId || item.trigger.loopId
+      ? {
+          goalId: item.trigger.goalId,
+          loopId: item.trigger.loopId,
+        }
+      : undefined,
+    source,
+    status: item.status,
+    displayPayload: item.displayPayload,
+    allowedActions: dashboardHitlAllowedActions(item),
+    createdAt: typeof item.createdAt === "number" ? new Date(item.createdAt).toISOString() : item.createdAt,
+    updatedAt: typeof item.createdAt === "number" ? new Date(item.createdAt).toISOString() : item.createdAt,
+  };
+}
+
+function dashboardHitlItemToSource(item: DashboardHitlItem): HitlSource {
+  const trigger = item.trigger;
+  if (item.kind === "question") {
+    return { type: "ask_user", sessionId: item.sessionId, toolCallId: trigger.toolCallId };
+  }
+  if (item.kind === "review") {
+    return { type: "goal_review", goalId: trigger.goalId ?? "" };
+  }
+  const approvalPoint = (trigger.approvalPoint ?? "after_plan") as ApprovalPoint;
+  if (trigger.source?.startsWith("goal.")) {
+    return { type: "goal_approval", goalId: trigger.goalId ?? "", approvalPoint };
+  }
+  if (trigger.loopId) {
+    return { type: "loop_approval", loopId: trigger.loopId, approvalPoint };
+  }
+  return { type: "goal_approval", goalId: trigger.goalId ?? "", approvalPoint };
+}
+
+function dashboardHitlAllowedActions(item: DashboardHitlItem): HitlAllowedAction[] {
+  if (item.kind === "question") return ["answer", "cancel"];
+  if (item.kind === "review") return ["approve", "deny", "cancel"];
+  return ["approve", "deny", "cancel"];
+}
 
 /** Goal with project metadata, returned by GET /api/goals?status=active. */
 export type DashboardGoal = GoalState & {

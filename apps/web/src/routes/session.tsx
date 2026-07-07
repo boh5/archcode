@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChatMessages } from "../components/composite/ChatMessages";
-import { AttentionQueue } from "../components/features/AttentionQueue";
+import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
-import { useFocusedSession, useSession } from "../api/queries";
+import { useFocusedSession, useScopedHitl, useSession } from "../api/queries";
 import { getWebSessionStore, markSessionForeground, useSessionStore } from "../store/session-store";
 
 export function SessionRoute() {
@@ -18,6 +18,20 @@ export function SessionRoute() {
   const { data: session } = useSession(slug, sessionId);
   const focusSessionId = useSessionStore(sessionId, (s) => s.focusSessionId, slug);
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
+  const { data: sessionHitl, isLoading: sessionHitlLoading } = useScopedHitl({
+    slug,
+    scope: "session",
+    ownerId: sessionId,
+    includeChildren: true,
+    status: "pending",
+  });
+  const { data: focusedHitl, isLoading: focusedHitlLoading } = useScopedHitl({
+    slug,
+    scope: "session",
+    ownerId: focusSessionId ?? undefined,
+    includeChildren: true,
+    status: "pending",
+  });
 
   // Initialize child session store from focused session snapshot
   useEffect(() => {
@@ -171,7 +185,14 @@ export function SessionRoute() {
             Loading sub-agent session...
           </div>
         ) : (
-          <ChatMessages slug={slug} sessionId={focusSessionId} />
+          <>
+            <ChatMessages slug={slug} sessionId={focusSessionId} />
+            <HitlInbox
+              projections={focusedHitl ?? []}
+              isLoading={focusedHitlLoading}
+              emptyMessage="No pending approvals for this session"
+            />
+          </>
         )}
       </div>
     );
@@ -186,7 +207,11 @@ export function SessionRoute() {
         onToggleDetail={() => {}}
       />
       <ChatMessages slug={slug} sessionId={sessionId} />
-      <AttentionQueue slug={slug} sessionId={sessionId} />
+      <HitlInbox
+        projections={sessionHitl ?? []}
+        isLoading={sessionHitlLoading}
+        emptyMessage="No pending approvals for this session"
+      />
       <ChatInput slug={slug} sessionId={sessionId} />
     </div>
   );

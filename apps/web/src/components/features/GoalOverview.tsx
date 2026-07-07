@@ -1,6 +1,6 @@
-import { CheckCircle2, XCircle, Circle, RotateCcw, AlertTriangle, Bell, Loader2 } from "lucide-react";
-import { useProjectHitl } from "../../api/queries";
-import { HitlCard } from "./HitlCard";
+import { CheckCircle2, XCircle, Circle, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
+import { useScopedHitl } from "../../api/queries";
+import { HitlInbox } from "./HitlCard";
 import type { DoneCondition, DoneResult, GoalState } from "../../api/types";
 
 interface GoalOverviewProps {
@@ -20,39 +20,21 @@ export function GoalOverview({ goal, slug }: GoalOverviewProps) {
 }
 
 function ApprovalQueueSection({ slug, goalId }: { slug: string; goalId: string }) {
-  const { data: hitl, isLoading } = useProjectHitl(slug);
-  const goalItems = (hitl ?? []).filter((item) => item.trigger.goalId === goalId);
+  const { data: hitl, isLoading } = useScopedHitl({
+    slug,
+    scope: "goal",
+    ownerId: goalId,
+    includeChildren: true,
+    status: "pending",
+  });
 
   return (
     <div data-testid="goal-approval-queue">
-      <div className="flex items-center gap-2 mb-2">
-        <Bell size={13} className="text-warning" aria-hidden="true" />
-        <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-          Approval Queue
-        </h3>
-        {goalItems.length > 0 && (
-          <span className="bg-warning-muted text-warning px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
-            {goalItems.length}
-          </span>
-        )}
-      </div>
-
-      {isLoading ? (
-        <div className="flex items-center gap-2 text-[12.5px] text-text-tertiary py-3">
-          <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-          Loading approval queue…
-        </div>
-      ) : goalItems.length === 0 ? (
-        <div className="text-[12.5px] text-text-tertiary py-3 border border-border-subtle rounded-md px-3.5 bg-bg-surface">
-          No pending approvals for this goal
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {goalItems.map((item) => (
-            <HitlCard key={item.hitlId} item={item} />
-          ))}
-        </div>
-      )}
+      <HitlInbox
+        projections={hitl ?? []}
+        isLoading={isLoading}
+        emptyMessage="No pending approvals for this goal"
+      />
     </div>
   );
 }

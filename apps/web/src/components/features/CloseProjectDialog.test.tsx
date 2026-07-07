@@ -109,8 +109,6 @@ mock.module("../../api/mutations", () => ({
   useAddProject: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useUpdateProjectName: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   useCreateSession: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
-  usePostPermissionResponse: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
-  usePostQuestionAnswer: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
   usePostCommand: () => ({ mutate: mock(() => {}), isPending: false, error: null }),
 }));
 

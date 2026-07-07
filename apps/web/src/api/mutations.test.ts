@@ -198,6 +198,41 @@ describe("web HITL mutation API calls", () => {
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  test("respondHitl never calls /api/questions endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url).not.toMatch(/^\/api\/questions\//);
+      expect(url).not.toMatch(/^\/api\/questions\b/);
+      expect(url).toBe("/api/projects/demo/hitl/hitl-q1/respond");
+      return jsonResponse({ ok: true, hitlId: "hitl-q1" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/demo/hitl/hitl-q1/respond", {
+      method: "POST",
+      body: { answers: ["yes"] },
+    });
+    expect(result).toEqual({ ok: true, hitlId: "hitl-q1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("cancelHitl never calls /api/permissions endpoint", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url).not.toMatch(/^\/api\/permissions\//);
+      expect(url).not.toMatch(/^\/api\/permissions\b/);
+      expect(url).toBe("/api/projects/demo/hitl/hitl-perm/cancel");
+      return jsonResponse({ ok: true, hitlId: "hitl-perm" });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await apiFetch("/api/projects/demo/hitl/hitl-perm/cancel", { method: "POST" });
+    expect(result).toEqual({ ok: true, hitlId: "hitl-perm" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("web loop mutation invalidation helpers", () => {
@@ -503,5 +538,17 @@ describe("web has no agent-core imports", () => {
     ).text();
     expect(content).not.toContain("@archcode/agent-core");
     expect(content).not.toContain("@archcode/server");
+  });
+});
+
+describe("web mutations do not call legacy permission/question endpoints", () => {
+  test("mutations.ts has no /api/permissions or /api/questions calls", async () => {
+    const content = await Bun.file(
+      new URL("./mutations.ts", import.meta.url),
+    ).text();
+    expect(content).not.toContain("/api/permissions");
+    expect(content).not.toContain("/api/questions");
+    expect(content).not.toContain("usePostPermissionResponse");
+    expect(content).not.toContain("usePostQuestionAnswer");
   });
 });

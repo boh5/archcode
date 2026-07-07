@@ -11,9 +11,7 @@ import type {
   LoopKillState,
   LoopRunReport,
   LoopState,
-  PermissionDecision,
   Project,
-  QuestionAnswerBody,
   RetryPolicy,
   Session,
 } from "./types";
@@ -92,30 +90,6 @@ export function usePostMessage() {
       {
         method: "POST",
         body: { text: content },
-      },
-    ),
-  });
-}
-
-export function usePostPermissionResponse() {
-  return useMutation({
-    mutationFn: async ({ id, decision }: { id: string; decision: PermissionDecision }) => apiFetch<void>(
-      `/api/permissions/${encodeURIComponent(id)}`,
-      {
-        method: "POST",
-        body: { response: decision },
-      },
-    ),
-  });
-}
-
-export function usePostQuestionAnswer() {
-  return useMutation({
-    mutationFn: async ({ id, body }: { id: string; body: QuestionAnswerBody }) => apiFetch<void>(
-      `/api/questions/${encodeURIComponent(id)}`,
-      {
-        method: "POST",
-        body,
       },
     ),
   });
@@ -315,6 +289,18 @@ export function useCancelHitl() {
       await queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
     },
   });
+}
+
+/** Invalidate all HITL query keys for a project slug (project + all owner scopes). */
+export function invalidateHitlForProject(
+  qc: { invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void> },
+  slug: string,
+): Promise<void[]> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.hitl }),
+    qc.invalidateQueries({ queryKey: queryKeys.projectHitl(slug) }),
+    qc.invalidateQueries({ queryKey: ["projects", slug, "hitl"], exact: false }),
+  ]);
 }
 
 // ─── Loop Mutations ───

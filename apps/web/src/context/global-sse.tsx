@@ -9,6 +9,7 @@ import type {
   GlobalSSEEvent,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
+  GlobalSSEHitlChangedEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   SessionEventPayload,
@@ -34,6 +35,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "lagged":
       case "shutdown":
       case "mcp_status":
+      case "hitl.changed":
         return parsed;
       default:
         return null;
@@ -46,7 +48,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
 export interface SSEEventHandlerDeps {
   findStore: typeof findWebSessionStore;
   createStore: typeof createWebSessionStore;
-  invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void>;
+  invalidateQueries: (opts: { queryKey: readonly unknown[]; exact?: boolean }) => Promise<void>;
   onShutdown: () => void;
   onHeartbeat: (createdAt: number) => void;
   refreshMcpStatus: () => void;
@@ -95,6 +97,7 @@ export function handleSSEEvent(
       if (isHitlPayload(envelope.payload)) {
         deps.invalidateQueries({ queryKey: queryKeys.hitl });
         deps.invalidateQueries({ queryKey: queryKeys.projectHitl(envelope.slug) });
+        deps.invalidateQueries({ queryKey: ["projects", envelope.slug, "hitl"], exact: false });
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
@@ -139,7 +142,26 @@ export function handleSSEEvent(
       useMcpStatusStore.getState().updateServer(mcpEvent.serverName, mcpEvent.status);
       break;
     }
+    case "hitl.changed": {
+      invalidateHitlChangedQueries(deps, parsed as GlobalSSEHitlChangedEvent);
+      break;
+    }
   }
+}
+
+function invalidateHitlChangedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlChangedEvent): void {
+  deps.invalidateQueries({ queryKey: queryKeys.hitl });
+  deps.invalidateQueries({ queryKey: queryKeys.projectHitl(event.projectSlug) });
+  deps.invalidateQueries({ queryKey: ["projects", event.projectSlug, "hitl"], exact: false });
+
+  const sessionId = event.sessionId ?? (event.ownerType === "session" ? event.ownerId : undefined);
+  if (sessionId) deps.invalidateQueries({ queryKey: queryKeys.session(event.projectSlug, sessionId) });
+
+  const goalId = event.goalId ?? (event.ownerType === "goal" ? event.ownerId : undefined);
+  if (goalId) deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, goalId) });
+
+  const loopId = event.loopId ?? (event.ownerType === "loop" ? event.ownerId : undefined);
+  if (loopId) invalidateLoopQueries(deps, event.projectSlug, loopId);
 }
 
 function isGoalPayload(
@@ -181,6 +203,15 @@ function invalidateLoopGuardrailQueries(
   loopId: string,
   sessionId: string,
 ): void {
+  invalidateLoopQueries(deps, slug, loopId);
+  deps.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) });
+}
+
+function invalidateLoopQueries(
+  deps: { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => Promise<void> },
+  slug: string,
+  loopId: string,
+): void {
   deps.invalidateQueries({ queryKey: queryKeys.loop(slug, loopId) });
   deps.invalidateQueries({ queryKey: queryKeys.loopRuns(slug, loopId) });
   deps.invalidateQueries({ queryKey: queryKeys.loopBudget(slug, loopId) });
@@ -189,7 +220,6 @@ function invalidateLoopGuardrailQueries(
   deps.invalidateQueries({ queryKey: queryKeys.projectLoops(slug) });
   deps.invalidateQueries({ queryKey: queryKeys.activeLoops });
   deps.invalidateQueries({ queryKey: queryKeys.loopKillState(slug) });
-  deps.invalidateQueries({ queryKey: queryKeys.session(slug, sessionId) });
 }
 
 export function GlobalSSEProvider({ children }: { children: ReactNode }) {

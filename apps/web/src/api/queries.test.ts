@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { GoalState, HitlRecord, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
+import type { GoalState, HitlProjection, LoopRunReport, LoopState, SessionSummary, SessionTreeResponse } from "@archcode/protocol";
 import type { DashboardGoal, DashboardLoop } from "./types";
-import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, hitlQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
+import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOptions, goalQueryOptions, goalsQueryOptions, loopBudgetQueryOptions, loopCollisionsQueryOptions, loopIntegrationsQueryOptions, loopKillStateQueryOptions, loopQueryOptions, loopRunsQueryOptions, loopStateQueryOptions, loopsQueryOptions, projectHitlQueryOptions, queryKeys, sessionTreeQueryOptions, sessionsQueryOptions } from "./queries";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
@@ -221,64 +221,53 @@ describe("web session query contracts", () => {
     ]);
   });
 
-  test("hitlQueryOptions fetches global pending HITL requests", async () => {
+  test("projectHitlQueryOptions fetches project-scoped HITL via canonical scoped endpoint", async () => {
     globalThis.document = { cookie: "" } as Document;
-    const hitl: HitlRecord[] = [
-      {
-        hitlId: "hitl-1",
-        owner: { projectSlug: "archcode", ownerType: "session", ownerId: "session-1" },
-        blockingKey: "session:session-1:tool:call-1",
-        source: { type: "tool_permission", sessionId: "session-1", toolCallId: "call-1", toolName: "run_tool" },
-        status: "pending",
-        displayPayload: { title: "Approve?", redacted: true },
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-      },
-    ];
-    const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/hitl?status=pending");
-      return jsonResponse({ hitl });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const opts = hitlQueryOptions();
-    const result = await (opts as unknown as QueryOptionWithFn<HitlRecord[]>).queryFn();
-
-    expect([...opts.queryKey]).toEqual(["hitl", "pending"]);
-    expect(result).toEqual(hitl);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("projectHitlQueryOptions fetches project-scoped HITL requests", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const hitl: HitlRecord[] = [
+    const hitl: HitlProjection[] = [
       {
         hitlId: "hitl-2",
+        project: { slug: "archcode", name: "ArchCode" },
         owner: { projectSlug: "archcode", ownerType: "goal", ownerId: "goal-1" },
-        blockingKey: "goal:goal-1:review",
         source: { type: "goal_review", goalId: "goal-1" },
         status: "pending",
         displayPayload: { title: "Review artifacts", redacted: true },
+        allowedActions: ["approve", "deny", "cancel"],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/hitl");
+      const url = String(input);
+      expect(url).toBe("/api/projects/archcode/hitl?scope=project&status=pending");
       return jsonResponse({ hitl });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const opts = projectHitlQueryOptions("archcode");
-    const result = await (opts as unknown as QueryOptionWithFn<HitlRecord[]>).queryFn();
+    const result = await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
 
     expect([...opts.queryKey]).toEqual(["projects", "archcode", "hitl"]);
     expect(result).toEqual(hitl);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("queryKeys.hitl is keyed correctly", () => {
-    expect(queryKeys.hitl).toEqual(["hitl", "pending"]);
+  test("projectHitlQueryOptions never fetches global /api/hitl?status=pending", async () => {
+    globalThis.document = { cookie: "" } as Document;
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url).not.toBe("/api/hitl?status=pending");
+      expect(url).not.toMatch(/^\/api\/hitl\b/);
+      expect(url).toBe("/api/projects/archcode/hitl?scope=project&status=pending");
+      return jsonResponse({ hitl: [] });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const opts = projectHitlQueryOptions("archcode");
+    await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("queryKeys.projectHitl is keyed correctly", () => {
     expect(queryKeys.projectHitl("archcode")).toEqual(["projects", "archcode", "hitl"]);
   });
 

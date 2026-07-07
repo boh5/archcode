@@ -1,6 +1,6 @@
-import { Target, Bell, Loader2, CircleDot, RotateCcw } from "lucide-react";
-import { useActiveGoals, useActiveLoops, useHitl } from "../api/queries";
-import { HitlCard } from "../components/features/HitlCard";
+import { Target, Loader2, CircleDot, RotateCcw } from "lucide-react";
+import { useActiveGoals, useActiveLoops, useDashboardHitl } from "../api/queries";
+import { HitlInbox } from "../components/features/HitlCard";
 import type { DashboardGoal, DashboardLoop, GoalPhase, GoalStatus, LoopRunReport, LoopStatus } from "../api/types";
 
 const STATUS_BADGE: Record<GoalStatus, string> = {
@@ -31,7 +31,9 @@ const LOOP_STATUS_BADGE: Record<LoopStatus, string> = {
 export function Dashboard() {
   const { data: goals, isLoading: goalsLoading } = useActiveGoals();
   const { data: loops, isLoading: loopsLoading } = useActiveLoops();
-  const { data: hitl, isLoading: hitlLoading } = useHitl();
+  const { data: hitl, isLoading: hitlLoading } = useDashboardHitl();
+
+  const projections = hitl ?? [];
 
   return (
     <div className="h-full overflow-y-auto bg-bg-base">
@@ -100,32 +102,11 @@ export function Dashboard() {
         </section>
 
         <section data-testid="dashboard-approval-queue" className="flex flex-col gap-2.5">
-          <div className="flex items-center gap-2">
-            <Bell size={15} className="text-warning" aria-hidden="true" />
-            <h2 className="text-[15px] font-semibold text-text-primary">Approval Queue</h2>
-            {hitl && hitl.length > 0 && (
-              <span className="bg-warning-muted text-warning px-[7px] py-[1px] rounded-[10px] text-[11px] font-semibold">
-                {hitl.length}
-              </span>
-            )}
-          </div>
-
-          {hitlLoading ? (
-            <div className="flex items-center gap-2 text-[13px] text-text-tertiary py-4">
-              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-              Loading approval queue…
-            </div>
-          ) : !hitl || hitl.length === 0 ? (
-            <div className="text-[13px] text-text-tertiary py-4 border border-border-subtle rounded-md px-4 bg-bg-surface">
-              No pending approvals
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {hitl.map((item) => (
-                <HitlCard key={item.hitlId} item={item} />
-              ))}
-            </div>
-          )}
+          <HitlInbox
+            projections={projections}
+            isLoading={hitlLoading}
+            emptyMessage="No pending approvals"
+          />
         </section>
       </div>
     </div>

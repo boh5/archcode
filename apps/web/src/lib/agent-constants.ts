@@ -1,5 +1,5 @@
 // Agent display constants — single source of truth for agent type metadata
-// used across ChatMessages, AttentionQueue, DelegationCard, and Sidebar.
+// used across ChatMessages, DelegationCard, and Sidebar.
 // Uses semantic Tailwind classes (bg-agent-X/text-agent-X) backed by
 // CSS custom properties defined in globals.css.
 
@@ -65,9 +65,8 @@ export const AGENT_ICON_COLORS: Record<AgentType, string> = {
   explorer: "bg-agent-explorer/20 text-agent-explorer",
 };
 
-// ─── Badge colors (used in AttentionQueue) ───
-// Same semantic tokens as AGENT_ICON_COLORS — AttentionQueue previously
-// used raw hex with /20 opacity; semantic classes handle both themes.
+// ─── Badge colors (semantic tokens shared with AGENT_ICON_COLORS) ───
+// Same semantic tokens as AGENT_ICON_COLORS.
 
 export const AGENT_BADGE_COLORS: Record<AgentType, string> = AGENT_ICON_COLORS;
 

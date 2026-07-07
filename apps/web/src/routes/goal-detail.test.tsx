@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult, DashboardHitlItem } from "../api/types";
+import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult, HitlProjection } from "../api/types";
 import { GoalDetailRoute } from "./goal-detail";
 
 // ─── Test helpers ───
@@ -137,31 +137,29 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
   };
 }
 
-function makeHitlItem(overrides: Partial<DashboardHitlItem> = {}): DashboardHitlItem {
+function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
   return {
     hitlId: "hitl-1",
-    sessionId: "session-1",
-    kind: "approval",
-    displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
-    trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
-    createdAt: 1_000,
-    projectSlug: "demo",
-    projectName: "Demo Project",
+    project: { slug: "demo", name: "Demo Project" },
+    owner: { projectSlug: "demo", ownerType: "session", ownerId: "session-1" },
+    source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
     status: "pending",
+    displayPayload: { title: "Approve?", summary: "Please approve", redacted: true },
+    allowedActions: ["approve", "deny", "cancel"],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
 
-/** Fetch mock that serves the current goal plus a list of project-scoped HITL items. */
 function installGoalHitlFetchMock(opts: {
   goal: GoalState;
-  hitl: DashboardHitlItem[];
+  hitl: HitlProjection[];
 }): ReturnType<typeof mock> {
   const fetchMock = mock(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = typeof input === "string" ? input : new URL(input instanceof URL ? input.href : input.url).href;
 
-    // Project-scoped HITL list route must be checked before the generic goal route.
-    if (url.endsWith("/api/projects/demo/hitl") || url.includes("/api/projects/demo/hitl?")) {
+    if (url.includes("/api/projects/demo/hitl") && url.includes("scope=goal")) {
       return Response.json({ hitl: opts.hitl });
     }
     if (url.includes("/api/projects/demo/hitl/") && init?.method === "POST") {
@@ -1111,9 +1109,8 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-goal-1",
-      kind: "approval",
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
       displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
-      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
     });
 
     installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
@@ -1136,7 +1133,7 @@ describe("GoalDetailRoute", () => {
       expect(queue.textContent).toContain("Approve budget?");
       expect(queue.textContent).toContain("Confirm spend");
       expect(queue.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);
-      expect(queue.querySelector('[data-testid="hitl-context-session"]')?.getAttribute("href")).toBe("/projects/demo/sessions/session-1");
+      expect(queue.querySelector('[data-testid="hitl-owner-link"]')?.getAttribute("href")).toBe("/projects/demo/sessions/session-1");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -1154,16 +1151,11 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
     const ownItem = makeHitlItem({
       hitlId: "hitl-own",
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
       displayPayload: { title: "Own approval", redacted: true },
-      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.after_plan" },
-    });
-    const otherItem = makeHitlItem({
-      hitlId: "hitl-other",
-      displayPayload: { title: "Other goal approval", redacted: true },
-      trigger: { projectSlug: "demo", goalId: "goal-other", source: "goal.approval.after_plan" },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [ownItem, otherItem] });
+    installGoalHitlFetchMock({ goal, hitl: [ownItem] });
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1181,7 +1173,6 @@ describe("GoalDetailRoute", () => {
 
       const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
       expect(queueText).toContain("Own approval");
-      expect(queueText).not.toContain("Other goal approval");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -1197,13 +1188,8 @@ describe("GoalDetailRoute", () => {
     if (!container) throw new Error("Missing test root");
 
     const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
-    const unrelatedItem = makeHitlItem({
-      hitlId: "hitl-unrelated",
-      displayPayload: { title: "Unrelated", redacted: true },
-      trigger: { projectSlug: "demo", goalId: "goal-other", source: "test" },
-    });
 
-    installGoalHitlFetchMock({ goal, hitl: [unrelatedItem] });
+    installGoalHitlFetchMock({ goal, hitl: [] });
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1221,7 +1207,6 @@ describe("GoalDetailRoute", () => {
 
       const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
       expect(queueText.toLowerCase()).toContain("no pending approvals");
-      expect(queueText).not.toContain("Unrelated");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -1239,7 +1224,7 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
     const redactedItem = makeHitlItem({
       hitlId: "hitl-redacted",
-      kind: "approval",
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
       displayPayload: {
         title: "Approve budget [REDACTED]",
         summary: "Budget approval [REDACTED]",
@@ -1249,18 +1234,9 @@ describe("GoalDetailRoute", () => {
         ],
         redacted: true,
       },
-      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.approval_budget_1", approvalPoint: "approval_budget_1" },
     });
-    const unsafeApiItem: DashboardHitlItem & { payload: unknown } = {
-      ...redactedItem,
-      hitlId: "hitl-unsafe",
-      payload: {
-        title: "RAW payload sk-test-secret-goal",
-        context: { apiKey: "sk-test-secret-goal", connection: "apiKey=sk-test-secret-goal" },
-      },
-    };
 
-    installGoalHitlFetchMock({ goal, hitl: [redactedItem, unsafeApiItem] });
+    installGoalHitlFetchMock({ goal, hitl: [redactedItem] });
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1273,7 +1249,7 @@ describe("GoalDetailRoute", () => {
       await waitFor(() => {
         const queue = container.querySelector('[data-testid="goal-approval-queue"]');
         expect(queue).not.toBeNull();
-        expect(queue!.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(2);
+        expect(queue!.querySelectorAll('[data-testid="hitl-card"]')).toHaveLength(1);
       });
 
       const queueText = container.querySelector('[data-testid="goal-approval-queue"]')!.textContent ?? "";
@@ -1299,9 +1275,8 @@ describe("GoalDetailRoute", () => {
     const goal = makeGoal({ id: "goal-1", status: "running", phase: "build" });
     const matchingItem = makeHitlItem({
       hitlId: "hitl-cancel-target",
-      kind: "approval",
+      source: { type: "goal_approval", goalId: "goal-1", approvalPoint: "after_plan" },
       displayPayload: { title: "Approve?", redacted: true },
-      trigger: { projectSlug: "demo", goalId: "goal-1", source: "goal.approval.after_plan" },
     });
 
     const fetchMock = installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
