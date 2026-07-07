@@ -1,53 +1,19 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { HitlOwnerKey } from "@archcode/protocol";
 
+import { GoalStateManager } from "../goals/state";
+import { silentLogger } from "../logger";
+import { LoopStateManager } from "../loops/state";
+import { SessionStoreManager } from "../store/session-store-manager";
+import { getSessionHitlPath } from "../store/sessions-dir";
 import { HitlService } from "./service";
-import type { HitlEvent, HitlPayload, HitlResponsePayload, HitlTrigger } from "./types";
+import type { HitlEvent } from "./types";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "service");
 
-const basePayload: HitlPayload = {
-  title: "Approve plan",
-  message: "The Goal is ready to move from plan to build.",
-  details: { phase: "plan" },
-};
-
-const baseTrigger: HitlTrigger = {
-  projectSlug: "archcode",
-  goalId: "goal-1",
-  loopId: "loop-1",
-  source: "goal.approvalPoint.after_plan",
-};
-
-const approvePayload: HitlResponsePayload = {
-  decision: "approve",
-  comment: "Looks good",
-};
-
-function createService() {
-  const events: Array<{ sessionId: string; event: HitlEvent }> = [];
-  const service = new HitlService({
-    submitHitlEvent(sessionId: string, event: HitlEvent) {
-      events.push({ sessionId, event });
-    },
-  });
-
-  return { service, events, sessionId: `session-${crypto.randomUUID()}` };
-}
-
-async function createLoadedService(workspaceRoot: string) {
-  const created = createService();
-  await created.service.load(workspaceRoot);
-  return created;
-}
-
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-describe("HitlService", () => {
+describe("HitlService owner-local storage", () => {
   beforeEach(async () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
     await mkdir(TMP_ROOT, { recursive: true });
@@ -57,211 +23,156 @@ describe("HitlService", () => {
     await rm(TMP_ROOT, { recursive: true, force: true });
   });
 
-  test("request creates a pending approval and emits hitl.request", () => {
-    const { service, events, sessionId } = createService();
+  test("creates Session, Goal, and Loop HITL records beside their owners", async () => {
+    const { service, workspaceRoot, goalState, loopState } = await createLoadedService();
+    const sessionOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: crypto.randomUUID() };
+    const goalOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: crypto.randomUUID() };
+    const loopOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "loop", ownerId: crypto.randomUUID() };
 
-    const promise = service.request(sessionId, "approval", basePayload, baseTrigger);
-    const requestEvent = events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
+    await service.create(input(sessionOwner, "session-block"));
+    await service.create(input(goalOwner, "goal-block"));
+    await service.create(input(loopOwner, "loop-block"));
 
-    expect(service.has(requestEvent.hitlId)).toBe(true);
-    expect(service.listPending()).toHaveLength(1);
-    expect(service.listPending("archcode", "goal-1", "loop-1")).toHaveLength(1);
-    expect(requestEvent).toMatchObject({
-      type: "hitl.request",
-      sessionId,
-      kind: "approval",
-      payload: basePayload,
-      trigger: baseTrigger,
-    });
-
-    service.cancel(requestEvent.hitlId, "test cleanup");
-    return expect(promise).resolves.toMatchObject({ status: "cancelled" });
+    expect(await Bun.file(getSessionHitlPath(workspaceRoot, sessionOwner.ownerId)).exists()).toBe(true);
+    expect(await Bun.file(await goalState.goalHitlPath(goalOwner.ownerId)).exists()).toBe(true);
+    expect(await Bun.file(await loopState.loopHitlPath(loopOwner.ownerId)).exists()).toBe(true);
+    expect(await Bun.file(join(workspaceRoot, ".archcode", "hitl-queue.json")).exists()).toBe(false);
   });
 
-  test("respond resolves the request promise and emits hitl.resolved", async () => {
-    const { service, events, sessionId } = createService();
-    const promise = service.request(sessionId, "approval", basePayload, baseTrigger);
-    const requestEvent = events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
+  test("lookup scans known owners and reports missing or ambiguous ids", async () => {
+    const { service, sessions, workspaceRoot } = await createLoadedService();
+    const firstSession = crypto.randomUUID();
+    const secondSession = crypto.randomUUID();
+    sessions.create(firstSession, workspaceRoot);
+    sessions.create(secondSession, workspaceRoot);
+    await waitForSession(workspaceRoot, firstSession);
+    await waitForSession(workspaceRoot, secondSession);
 
-    expect(service.respond(requestEvent.hitlId, approvePayload)).toBe(true);
+    const firstOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: firstSession };
+    const secondOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: secondSession };
+    await service.create({ ...input(firstOwner, "first"), hitlId: "duplicated-hitl" });
+    await service.create({ ...input(secondOwner, "second"), hitlId: "duplicated-hitl" });
 
-    const response = await promise;
-    expect(response).toEqual({
-      hitlId: requestEvent.hitlId,
-      kind: "approval",
-      status: "resolved",
-      response: approvePayload,
-    });
-    expect(service.has(requestEvent.hitlId)).toBe(false);
-    expect(events.map((entry) => entry.event.type)).toEqual(["hitl.request", "hitl.resolved"]);
-    expect(events.at(-1)?.event).toMatchObject({
-      type: "hitl.resolved",
-      sessionId,
-      hitlId: requestEvent.hitlId,
-      kind: "approval",
-      status: "resolved",
-      response: approvePayload,
-    });
+    expect(await service.lookup("missing-hitl")).toEqual({ status: "missing" });
+    expect(await service.lookup("duplicated-hitl")).toMatchObject({ status: "ambiguous", hitlId: "duplicated-hitl" });
   });
 
-  test("cancel resolves cancelled and removes pending request", async () => {
-    const { service, events, sessionId } = createService();
-    const promise = service.request(sessionId, "review", basePayload, baseTrigger);
-    const requestEvent = events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
-
-    expect(service.cancel(requestEvent.hitlId, "Goal paused")).toBe(true);
-
-    const response = await promise;
-    expect(response).toEqual({
-      hitlId: requestEvent.hitlId,
-      kind: "review",
-      status: "cancelled",
-      reason: "Goal paused",
-    });
-    expect(service.has(requestEvent.hitlId)).toBe(false);
-    expect(events.at(-1)?.event).toMatchObject({
-      type: "hitl.resolved",
-      sessionId,
-      hitlId: requestEvent.hitlId,
-      status: "cancelled",
-      reason: "Goal paused",
-    });
-  });
-
-  test("timeout resolves timeout and ignores later responses", async () => {
-    const { service, events } = createService();
-    const promise = service.request("session-timeout", "question", basePayload, {
-      ...baseTrigger,
-      timeoutMs: 1,
-    });
-    const requestEvent = events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
-
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    await flushMicrotasks();
-
-    const response = await promise;
-    expect(response).toEqual({
-      hitlId: requestEvent.hitlId,
-      kind: "question",
-      status: "timeout",
-      reason: "Timed out",
-    });
-    expect(service.has(requestEvent.hitlId)).toBe(false);
-    expect(service.respond(requestEvent.hitlId, approvePayload)).toBe(false);
-    expect(events.at(-1)?.event).toMatchObject({
-      type: "hitl.resolved",
-      hitlId: requestEvent.hitlId,
-      status: "timeout",
-    });
-  });
-
-  test("abort signal resolves cancelled", async () => {
-    const { service, events } = createService();
-    const abortController = new AbortController();
-    const promise = service.request("session-abort", "question", basePayload, {
-      ...baseTrigger,
-      abortSignal: abortController.signal,
-    });
-    const requestEvent = events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
-
-    abortController.abort();
-    await flushMicrotasks();
-
-    const response = await promise;
-    expect(response).toEqual({
-      hitlId: requestEvent.hitlId,
-      kind: "question",
-      status: "cancelled",
-      reason: "Aborted",
-    });
-    expect(service.has(requestEvent.hitlId)).toBe(false);
-    expect(events.at(-1)?.event).toMatchObject({ status: "cancelled", reason: "Aborted" });
-  });
-
-  test("pre-aborted request emits request and resolved events without entering pending queue", async () => {
-    const { service, events } = createService();
-    const abortController = new AbortController();
-    abortController.abort();
-
-    const promise = service.request("session-pre-abort", "question", basePayload, {
-      ...baseTrigger,
-      abortSignal: abortController.signal,
-    });
-
-    const response = await promise;
-    expect(response).toMatchObject({ status: "cancelled", reason: "Aborted" });
-    expect(service.listPending()).toHaveLength(0);
-    expect(events.map((entry) => entry.event.type)).toEqual(["hitl.request", "hitl.resolved"]);
-  });
-
-  test("shutdown resolves all pending requests as cancelled", async () => {
-    const { service, events } = createService();
-    const first = service.request("session-1", "approval", basePayload, baseTrigger);
-    const second = service.request("session-2", "review", basePayload, {
-      ...baseTrigger,
-      goalId: "goal-2",
-    });
+  test("shutdown does not cancel durable pending HITL", async () => {
+    const { service, sessions, workspaceRoot } = await createLoadedService();
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await waitForSession(workspaceRoot, sessionId);
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
+    const created = await service.create(input(owner, "shutdown-block"));
 
     service.shutdown();
 
-    const firstResponse = await first;
-    const secondResponse = await second;
-    expect(firstResponse).toMatchObject({ status: "cancelled", reason: "Shutdown" });
-    expect(secondResponse).toMatchObject({ status: "cancelled", reason: "Shutdown" });
-    expect(service.listPending()).toHaveLength(0);
-    expect(events.filter((entry) => entry.event.type === "hitl.resolved")).toHaveLength(2);
+    const reloaded = await createLoadedService(workspaceRoot, sessions);
+    const lookup = await reloaded.service.lookup(created.hitlId);
+    expect(lookup).toMatchObject({ status: "found", record: { hitlId: created.hitlId, status: "pending" } });
   });
 
-  test("listPending filters by project, goal, and loop", () => {
-    const { service, events } = createService();
-    service.request("session-1", "approval", basePayload, baseTrigger);
-    service.request("session-2", "review", basePayload, {
-      ...baseTrigger,
-      projectSlug: "other-project",
-      goalId: "goal-2",
-      loopId: undefined,
+  test("legacy request reuses an existing active blocking key without emitting a phantom hitlId", async () => {
+    const events: Array<{ sessionId: string; event: HitlEvent }> = [];
+    const { service, sessions, workspaceRoot } = await createLoadedService(undefined, undefined, events);
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await waitForSession(workspaceRoot, sessionId);
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
+    const existing = await service.create({
+      ...input(owner, `session:${sessionId}:ask:tool-call`),
+      hitlId: "existing-hitl",
+      source: { type: "ask_user", sessionId, toolCallId: "tool-call" },
     });
 
-    expect(service.listPending()).toHaveLength(2);
-    expect(service.listPending("archcode")).toHaveLength(1);
-    expect(service.listPending("archcode", "goal-1")).toHaveLength(1);
-    expect(service.listPending("archcode", "goal-2")).toHaveLength(0);
-    expect(service.listPending(undefined, undefined, "loop-1")).toHaveLength(1);
+    const pending = service.request(
+      sessionId,
+      "question",
+      { title: "Need input", message: "Answer", details: {} },
+      { projectSlug: "archcode", source: "tool-call" },
+    );
+    await waitFor(() => events.some((entry) => entry.event.type === "hitl.request"));
 
-    for (const event of events) {
-      if (event.event.type === "hitl.request") service.cancel(event.event.hitlId, "test cleanup");
-    }
+    const requestEvent = events.find((entry) => entry.event.type === "hitl.request")?.event;
+    expect(requestEvent).toMatchObject({ type: "hitl.request", hitlId: existing.hitlId });
+    expect(service.listPending("archcode").map((request) => request.hitlId)).toEqual([existing.hitlId]);
+
+    expect(service.respond(existing.hitlId, { answers: ["yes"] }, "archcode")).toBe(true);
+    expect(await pending).toMatchObject({ hitlId: existing.hitlId, status: "resolved" });
   });
 
-  test("respond and cancel return false for missing requests", () => {
-    const { service } = createService();
+  test("cancelOwner marks active owner records cancelled with owner_deleted", async () => {
+    const { service, sessions, workspaceRoot } = await createLoadedService();
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await waitForSession(workspaceRoot, sessionId);
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
+    const created = await service.create(input(owner, "owner-delete-block"));
 
-    expect(service.respond("missing", approvePayload)).toBe(false);
-    expect(service.cancel("missing")).toBe(false);
-  });
+    expect((await service.list()).map((projection) => projection.hitlId)).toContain(created.hitlId);
 
-  test("recreated service lists durable pending records without resuming old Promise", async () => {
-    const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
-    const first = await createLoadedService(workspaceRoot);
-    const promise = first.service.request("session-reload", "approval", basePayload, baseTrigger);
-    const requestEvent = first.events.at(0)?.event;
-    if (requestEvent?.type !== "hitl.request") throw new Error("hitl request event missing");
-    await first.service.flush();
+    const cancelled = await service.cancelOwner(owner, "owner_deleted");
 
-    const recreated = await createLoadedService(workspaceRoot);
-    const [pending] = recreated.service.listPending("archcode", "goal-1");
-
-    expect(pending).toMatchObject({ hitlId: requestEvent.hitlId, status: "pending" });
-    expect(recreated.service.respond(requestEvent.hitlId, approvePayload, "archcode")).toBe(true);
-    const raceResult = await Promise.race([
-      promise.then(() => "resolved"),
-      new Promise((resolve) => setTimeout(() => resolve("still-pending"), 5)),
-    ]);
-    expect(raceResult).toBe("still-pending");
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]).toMatchObject({ hitlId: created.hitlId, status: "cancelled", response: { type: "cancel", reason: "owner_deleted" } });
+    expect((await service.list()).map((projection) => projection.hitlId)).not.toContain(created.hitlId);
+    expect(await service.list({ scope: "project", status: "all" })).toContainEqual(expect.objectContaining({
+      hitlId: created.hitlId,
+      status: "cancelled",
+    }));
+    expect(await service.lookup(created.hitlId)).toMatchObject({
+      status: "found",
+      record: { status: "cancelled", response: { type: "cancel", reason: "owner_deleted" } },
+    });
   });
 });
+
+async function createLoadedService(
+  workspaceRoot?: string,
+  sessions = new SessionStoreManager({ logger: silentLogger }),
+  events?: Array<{ sessionId: string; event: HitlEvent }>,
+) {
+  workspaceRoot ??= await mkdtemp(join(TMP_ROOT, "workspace-"));
+  const goalState = new GoalStateManager(workspaceRoot, silentLogger);
+  const loopState = new LoopStateManager(workspaceRoot, silentLogger);
+  const service = new HitlService({
+    workspaceRoot,
+    project: { slug: "archcode", name: "ArchCode" },
+    sessions,
+    goalState,
+    loopState,
+    events: events === undefined ? undefined : { submitHitlEvent: (sessionId, event) => events.push({ sessionId, event }) },
+  });
+  await service.load(workspaceRoot);
+  return { service, workspaceRoot, sessions, goalState, loopState };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error("condition was not met");
+}
+
+function input(owner: HitlOwnerKey, blockingKey: string) {
+  return {
+    owner,
+    blockingKey,
+    source: owner.ownerType === "session"
+      ? { type: "ask_user" as const, sessionId: owner.ownerId }
+      : owner.ownerType === "goal"
+        ? { type: "goal_approval" as const, goalId: owner.ownerId, approvalPoint: "after_plan" as const }
+        : { type: "loop_approval" as const, loopId: owner.ownerId, approvalPoint: "manual" },
+    displayPayload: { title: "Needs input", redacted: true as const },
+  };
+}
+
+async function waitForSession(workspaceRoot: string, sessionId: string): Promise<void> {
+  const path = join(workspaceRoot, ".archcode", "sessions", sessionId, "session.json");
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await Bun.file(path).exists()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error(`session was not persisted: ${sessionId}`);
+}

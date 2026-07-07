@@ -225,7 +225,8 @@ export async function createRuntime(
     const hitl = new HitlService(hitlEvents);
     const contextResolver = new ProjectContextResolver({
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
-      hitlFactory: () => new HitlService(hitlEvents),
+      hitlFactory: (workspaceRoot) => new HitlService({ events: hitlEvents, workspaceRoot }),
+      sessionStoreManager,
       logger: runtimeLogger.child({ module: "projects" }),
     });
     const sessionAgentManager = new SessionAgentManager({

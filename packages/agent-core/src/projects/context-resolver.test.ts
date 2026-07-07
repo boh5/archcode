@@ -8,6 +8,7 @@ import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { LoopStateManager, type LoopConfig } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
+import { SessionStoreManager } from "../store/session-store-manager";
 import type { PermissionApprovalScope } from "../tools/permission/policy-types";
 import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
@@ -236,18 +237,19 @@ describe("ProjectContextResolver", () => {
     expect(await Bun.file(join(workspaceB, ".archcode", "goals", goalA.id, "goal.json")).exists()).toBe(false);
   });
 
-  test("HITL queue is loaded from the project workspace after context recreation", async () => {
+  test("owner-local HITL is loaded from the project workspace after context recreation", async () => {
     const workspace = await makeWorkspace("hitl-reload");
-    const resolver = new ProjectContextResolver();
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
     const first = await resolver.resolve(workspace);
+    const goal = await first.goalState.create(first.project.slug, "Needs approval", "architect");
 
-    first.hitl.request(
-      "session-1",
-      "approval",
-      { kind: "approval", action: "continue", context: { approvalPoint: "after_plan" }, title: "Continue?", message: "Approve next step" },
-      { projectSlug: first.project.slug, goalId: "goal-1", source: "goal.approval.after_plan", approvalPoint: "after_plan" },
-    );
-    const [created] = first.hitl.listPending(first.project.slug, "goal-1");
+    const created = await first.hitl.create({
+      owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },
+      blockingKey: `goal:${goal.id}:approval:after_plan`,
+      source: { type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" },
+      displayPayload: { title: "Continue?", redacted: true },
+    });
     expect(created).toBeDefined();
     await first.hitl.flush();
 
@@ -255,9 +257,10 @@ describe("ProjectContextResolver", () => {
     const second = await resolver.resolve(workspace);
 
     expect(second.hitl).not.toBe(first.hitl);
-    expect(second.hitl.listPending(first.project.slug, "goal-1")).toEqual([
-      expect.objectContaining({ hitlId: created!.hitlId, status: "pending" }),
-    ]);
+    expect(await second.hitl.lookup(created.hitlId)).toMatchObject({
+      status: "found",
+      record: { hitlId: created.hitlId, status: "pending" },
+    });
   });
 
   test("custom Goal/HITL factories are used per resolved context", async () => {

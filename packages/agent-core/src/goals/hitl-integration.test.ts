@@ -165,7 +165,7 @@ describe("GoalRunner HITL integration", () => {
     expect(hitlService.listPending("project-a", goal.id)).toEqual([]);
   });
 
-  test("HITL timeout resolves pending approval, pauses the goal, and leaves no promise leak", async () => {
+  test("HITL timeout option does not auto-cancel durable pending approval", async () => {
     const hitlService = new HitlService();
     const runner = createRunner(hitlService, { timeoutMs: 5 });
     const goal = await lockedGoal(["after_plan"]);
@@ -173,6 +173,13 @@ describe("GoalRunner HITL integration", () => {
 
     const advancing = withoutUnhandledRejections(() => runner.advancePhase(goal.id, "build"));
     const hitlId = await waitForPending(hitlService, goal.id);
+    await sleep(15);
+
+    expect(hitlService.has(hitlId)).toBe(true);
+    expect(hitlService.listPending("project-a", goal.id)).toEqual([
+      expect.objectContaining({ hitlId, status: "pending" }),
+    ]);
+    expect(hitlService.cancel(hitlId, "test cleanup")).toBe(true);
 
     const paused = await advancing;
     expect(paused.status).toBe("paused");

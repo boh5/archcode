@@ -1,14 +1,16 @@
 export { HitlService } from "./service";
 export { GoalApprovalGate } from "./goal-gates";
-export { DurableHitlQueue, deterministicApprovalKey, hitlQueuePath } from "./durable-queue";
+export { HitlOwnerStore } from "./owner-store";
+export { resolveHitlOwnerPath } from "./owner-paths";
+export { aggregateHitlProjections } from "./aggregation";
 export type { ApprovalOutcome, GoalApprovalGateOptions, ReviewArtifact, ReviewOutcome } from "./goal-gates";
 export type {
-  DurableHitlDisplayPayload,
-  DurableHitlMutationResult,
-  DurableHitlRecord,
-  DurableHitlStatus,
-  DurableHitlTriggerType,
-} from "./durable-queue";
+  CreateHitlRecordInput,
+  HitlLookupResult,
+  HitlServiceManagers,
+  HitlServiceOptions,
+} from "./service";
+export type { HitlAggregationQuery, HitlAggregationScope } from "./aggregation";
 export type {
   HitlEvent,
   HitlEventSubmitter,

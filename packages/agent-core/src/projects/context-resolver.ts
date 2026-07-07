@@ -9,6 +9,7 @@ import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { silentLogger } from "../logger";
 import type { Logger } from "../logger";
+import type { SessionStoreManager } from "../store/session-store-manager";
 import { ProjectApprovalManager } from "../tools/permission/project-approvals";
 import type { ProjectContext, ProjectInfo } from "./types";
 
@@ -25,6 +26,8 @@ export interface ProjectContextResolverOptions {
   loopStateFactory?: (workspaceRoot: string) => LoopStateManager;
   /** Factory primarily for testing alternate HitlService construction. */
   hitlFactory?: (workspaceRoot: string) => HitlService;
+  /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
+  sessionStoreManager?: SessionStoreManager;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
@@ -41,6 +44,7 @@ export class ProjectContextResolver {
   readonly #goalMemoryFactory: (workspaceRoot: string) => GoalMemoryManager;
   readonly #loopStateFactory: (workspaceRoot: string) => LoopStateManager;
   readonly #hitlFactory: (workspaceRoot: string) => HitlService;
+  readonly #sessionStoreManager?: SessionStoreManager;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
@@ -59,7 +63,8 @@ export class ProjectContextResolver {
     this.#loopStateFactory = options.loopStateFactory ?? ((workspaceRoot) => {
       return new LoopStateManager(workspaceRoot, this.#logger.child({ module: "loops.state" }));
     });
-    this.#hitlFactory = options.hitlFactory ?? (() => new HitlService());
+    this.#sessionStoreManager = options.sessionStoreManager;
+    this.#hitlFactory = options.hitlFactory ?? ((workspaceRoot) => new HitlService({ workspaceRoot }));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
         project: join(workspaceRoot, ".archcode", "memory"),
@@ -92,16 +97,25 @@ export class ProjectContextResolver {
   async #buildContext(workspaceRoot: string): Promise<ProjectContext> {
     const approvals = this.#approvalsFactory();
     await approvals.load(workspaceRoot);
-    const hitl = this.#hitlFactory(workspaceRoot);
-    await hitl.load(workspaceRoot);
     const project = await this.#projectInfoFactory(workspaceRoot) ?? this.#createPlaceholderProjectInfo(workspaceRoot);
+    const goalState = this.#goalStateFactory(workspaceRoot);
+    const loopState = this.#loopStateFactory(workspaceRoot);
+    const hitl = this.#hitlFactory(workspaceRoot);
+    hitl.configure({
+      workspaceRoot,
+      project,
+      sessions: this.#sessionStoreManager,
+      goalState,
+      loopState,
+    });
+    await hitl.load(workspaceRoot);
 
     return {
       project,
-      goalState: this.#goalStateFactory(workspaceRoot),
+      goalState,
       goalArtifacts: this.#goalArtifactsFactory(workspaceRoot),
       goalMemory: this.#goalMemoryFactory(workspaceRoot),
-      loopState: this.#loopStateFactory(workspaceRoot),
+      loopState,
       hitl,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
