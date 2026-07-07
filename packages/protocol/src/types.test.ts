@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type {
+  CompressionBlockCommittedEvent,
+  CompressionBlockPart,
+  CompressionBlockSnapshot,
+  CompressionRefMapUpdatedEvent,
+  CompressionStateSnapshot,
   DoneCondition,
   GoalArtifactFile,
   GoalPhase,
@@ -158,6 +163,88 @@ describe("global SSE wire protocol types", () => {
     };
 
     expect(serializeRoundTrip(event)).toEqual(event);
+  });
+});
+
+describe("compression protocol types", () => {
+  test("compression events and state snapshots serialize", () => {
+    const block: CompressionBlockSnapshot = {
+      id: "block-1",
+      ref: "b1",
+      status: "active",
+      strategy: "hard-limit",
+      trigger: "hard_threshold",
+      range: {
+        startMessageId: "msg-a",
+        endMessageId: "msg-b",
+        startRef: "m0001",
+        endRef: "m0002",
+        startIndex: 0,
+        endIndex: 1,
+      },
+      summary: "summary",
+      childBlockRefs: [],
+      protectedRefs: ["m0002"],
+      tokenEstimate: { originalTokens: 100, summaryTokens: 20, savedTokens: 80, estimatedAt: 1 },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const state: CompressionStateSnapshot = {
+      version: 1,
+      refMap: {
+        messageRefsById: { "msg-a": "m0001", "msg-b": "m0002" },
+        messageIdsByRef: { m0001: "msg-a", m0002: "msg-b" },
+        blockRefsById: { "block-1": "b1" },
+        blockIdsByRef: { b1: "block-1" },
+        nextMessageIndex: 3,
+        nextBlockIndex: 2,
+      },
+      blocksByRef: { b1: block },
+      activeBlockRefs: ["b1"],
+      inactiveBlockRefs: [],
+      supersededBlockRefs: [],
+      failures: [],
+      updatedAt: 1,
+    };
+    const event: CompressionBlockCommittedEvent = {
+      type: "compression.block_committed",
+      block,
+      state,
+    };
+
+    expect(serializeRoundTrip(event)).toEqual(event);
+    expect(event.state?.blocksByRef.b1?.strategy).toBe("hard-limit");
+  });
+
+  test("compression ref-map events and parts are discriminated", () => {
+    const event: CompressionRefMapUpdatedEvent = {
+      type: "compression.ref_map_updated",
+      refMap: {
+        messageRefsById: { "msg-a": "m0001" },
+        messageIdsByRef: { m0001: "msg-a" },
+        blockRefsById: {},
+        blockIdsByRef: {},
+        nextMessageIndex: 2,
+        nextBlockIndex: 1,
+      },
+      updatedAt: 10,
+    };
+    const part: CompressionBlockPart = {
+      type: "compression-block",
+      id: "part-1",
+      blockRef: "b1",
+      status: "active",
+      strategy: "emergency-hard-limit",
+      trigger: "emergency_threshold",
+      summary: "summary",
+      startRef: "m0001",
+      endRef: "m0002",
+      childBlockRefs: [],
+      committedAt: 10,
+    };
+
+    expect(serializeRoundTrip(event)).toEqual(event);
+    expect(serializeRoundTrip(part)).toEqual(part);
   });
 });
 

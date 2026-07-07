@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
 import { SessionStoreManager } from "./session-store-manager";
 import { NotRootSessionError } from "./errors";
 import { sessionFileInternals } from "./helpers";
@@ -21,6 +21,23 @@ afterEach(async () => {
 describe("SessionStoreManager", () => {
   function sessionId(): string {
     return crypto.randomUUID();
+  }
+
+  function compressionBlockSnapshot(): CompressionBlockSnapshot {
+    return {
+      id: "block-1",
+      ref: "b1",
+      status: "active",
+      strategy: "dynamic-range",
+      trigger: "model_tool_call",
+      range: { startMessageId: "msg-1", endMessageId: "msg-2", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
+      summary: "Persisted compression summary",
+      childBlockRefs: [],
+      protectedRefs: ["m0002"],
+      tokenEstimate: { originalTokens: 100, summaryTokens: 25, savedTokens: 75, estimatedAt: 1234 },
+      createdAt: 1000,
+      updatedAt: 1001,
+    };
   }
 
   async function writeSessionFile(input: {
@@ -162,6 +179,22 @@ describe("SessionStoreManager", () => {
     expect(store.getState().pendingInteractions).toMatchObject([
       { id: "question-1", status: "answered", answer: { content: "yes" } },
     ]);
+  });
+
+  test("compression events persist compression state to disk", async () => {
+    const manager = new SessionStoreManager({ logger: silentLogger });
+    const id = sessionId();
+    const store = manager.create(id, TMP_DIR);
+
+    store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
+
+    const persisted = await waitForSessionJson(
+      join(TMP_DIR, ".archcode", "sessions", `${id}.json`),
+      (json) => JSON.stringify(json).includes("Persisted compression summary"),
+    );
+
+    const compression = persisted.compression as { blocksByRef?: Record<string, { tokenEstimate?: { savedTokens?: number } }> };
+    expect(compression.blocksByRef?.b1?.tokenEstimate?.savedTokens).toBe(75);
   });
 
   test("get() returns undefined for unknown session", () => {

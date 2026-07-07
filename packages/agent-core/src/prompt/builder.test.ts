@@ -68,4 +68,14 @@ describe("buildSystemPrompt", () => {
     expect(result.indexOf("## Tools")).toBeLessThan(result.indexOf("## Environment"));
     expect(result.indexOf("## Environment")).toBeLessThan(result.indexOf("## Project Context"));
   });
+
+  test("includes compression protocol instructions only when compress is allowed", async () => {
+    const withoutCompress = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read"] }));
+    const withCompress = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read", "compress"] }));
+
+    expect(withoutCompress).not.toContain("## Compression Protocol");
+    expect(withCompress).toContain("## Compression Protocol");
+    expect(withCompress).toContain("startId/endId must be mNNNN refs or known bN block refs");
+    expect(withCompress).toContain("(b1) exactly once");
+  });
 });

@@ -239,6 +239,10 @@ function streamCallMessages(fn: ReturnType<typeof createMockStreamText>, callInd
   return args.messages as ModelMessage[];
 }
 
+function wrappedMessage(ref: string, text: string): string {
+  return `<message ref="${ref}">\n${text}\n</message>`;
+}
+
 function streamCallOptions(fn: ReturnType<typeof createMockStreamText>, callIndex: number): Parameters<StreamTextFn>[0] {
   const args = fn.mock.calls[callIndex]?.[0];
   if (!args) throw new Error("Expected streamText options");
@@ -323,7 +327,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     await runQueryLoop(makeOptions(), "Hello world");
 
     expect(streamCallMessages(streamFn, 0)).toEqual([
-      { role: "user", content: "Hello world" },
+      { role: "user", content: wrappedMessage("m0001", "Hello world") },
     ]);
   });
 
@@ -349,12 +353,14 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     );
 
     expect(streamCallMessages(streamFn, 1)).toEqual([
-      { role: "user", content: "Use tool" },
+      { role: "user", content: wrappedMessage("m0001", "Use tool") },
       {
         role: "assistant",
         content: [
+          { type: "text", text: '<message ref="m0002">' },
           { type: "text", text: "Calling" },
           { type: "tool-call", toolCallId: "tc-1", toolName: "echo", input: { message: "ping" } },
+          { type: "text", text: "</message>" },
         ],
       },
       {
@@ -379,9 +385,13 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
     await runQueryLoop(makeOptions({ store }), "Second question");
 
     expect(streamCallMessages(streamFn, 1)).toEqual([
-      { role: "user", content: "First question" },
-      { role: "assistant", content: [{ type: "text", text: "First answer" }] },
-      { role: "user", content: "Second question" },
+      { role: "user", content: wrappedMessage("m0001", "First question") },
+      { role: "assistant", content: [
+        { type: "text", text: '<message ref="m0002">' },
+        { type: "text", text: "First answer" },
+        { type: "text", text: "</message>" },
+      ] },
+      { role: "user", content: wrappedMessage("m0003", "Second question") },
     ]);
   });
 
@@ -1159,7 +1169,7 @@ describe("runQueryLoop store-source-of-truth behavior", () => {
       );
 
       expect(streamCallMessages(streamFn, 0)).toEqual([
-        { role: "user", content: "Hi" },
+        { role: "user", content: wrappedMessage("m0001", "Hi") },
         { role: "user", content: "ephemeral reminder" },
       ]);
       expect(store.getState().messages).toHaveLength(2);
@@ -2691,7 +2701,7 @@ describe("runQueryLoop slash commands", () => {
 
     expect(result).toEqual({ text: "continued answer", steps: 0 });
     expect(streamCallMessages(streamFn, 0)).toEqual([
-      { role: "user", content: "Use Skill git-master now" },
+      { role: "user", content: wrappedMessage("m0002", "Use Skill git-master now") },
     ]);
     expect(store.getState().messages[0]!.parts[0]).toMatchObject({
       type: "system-notice",
@@ -2777,7 +2787,7 @@ describe("runQueryLoop slash commands", () => {
 
     expect(result).toEqual({ text: "normal answer", steps: 0 });
     expect(handler).not.toHaveBeenCalled();
-    expect(streamCallMessages(streamFn, 0)).toEqual([{ role: "user", content: "/compact now" }]);
+    expect(streamCallMessages(streamFn, 0)).toEqual([{ role: "user", content: wrappedMessage("m0001", "/compact now") }]);
   });
 
   test("unknown slash command stores system notice and skips model call", async () => {

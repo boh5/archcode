@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent, GoalState } from "@archcode/protocol";
+import type { CompressionBlockCommittedEvent, GlobalSSEEvent, GoalState } from "@archcode/protocol";
 import { Hono } from "hono";
 import { createServerApp, createServerEventRuntime } from "../app";
 import { errorHandler } from "../error-handler";
@@ -207,6 +207,38 @@ describe("global events route", () => {
     await execution.promise;
   });
 
+  test("bridges compression block commits through existing global SSE consumers", async () => {
+    const runtime = createRuntimeWithManualSubscriptions();
+    const serverRuntime = createServerEventRuntime(runtime);
+    const response = await createApp(globalEventBus).request("/api/events");
+
+    const execution = serverRuntime.startSessionExecution({
+      slug: "proj",
+      workspaceRoot: "/workspace",
+      sessionId: "session-1",
+      userMessage: "compress context",
+    });
+    runtime.emitSession("session-1", {
+      type: "event",
+      slug: "proj",
+      sessionId: "session-1",
+      eventId: 12,
+      createdAt: 1700000000001,
+      kind: "compression.block_committed",
+      payload: compressionBlockCommittedEvent(),
+      agentName: "orchestrator",
+    });
+
+    const text = await readUntil(response, (chunk) => chunk.includes("compression.block_committed"));
+    expect(text).toContain("event: event");
+    expect(text).toContain("id: proj:session-1:12");
+    expect(text).toContain('"block":{"id":"block-1","ref":"b1"');
+    expect(text).not.toContain("original messages");
+
+    runtime.resolveExecution();
+    await execution.promise;
+  });
+
   test("server app no longer registers the old per-session SSE endpoint", async () => {
     const { app } = createServerApp({} as AgentRuntime, { dev: true });
 
@@ -236,6 +268,32 @@ function createRuntimeWithManualSubscriptions() {
   return runtime as unknown as AgentRuntime & {
     emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
     resolveExecution: () => void;
+  };
+}
+
+function compressionBlockCommittedEvent(): CompressionBlockCommittedEvent {
+  return {
+    type: "compression.block_committed",
+    block: {
+      id: "block-1",
+      ref: "b1",
+      status: "active",
+      strategy: "dynamic-range",
+      trigger: "model_tool_call",
+      range: {
+        startMessageId: "msg-1",
+        endMessageId: "msg-2",
+        startRef: "m0001",
+        endRef: "m0002",
+        startIndex: 0,
+        endIndex: 1,
+      },
+      summary: "compressed summary",
+      childBlockRefs: [],
+      protectedRefs: [],
+      createdAt: 100,
+      updatedAt: 100,
+    },
   };
 }
 

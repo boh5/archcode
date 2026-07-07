@@ -420,6 +420,13 @@ export class GoalStateManager {
         if (projectId && state.projectId !== projectId) continue;
         states.push(state);
       } catch (error) {
+        if (error instanceof GoalNotFoundError && error.goalId === goalId) {
+          this.#logger.debug("goals.list.missing.skipped", {
+            context: { path: join(goalsRoot, goalId, "goal.json") },
+            error: logError(error),
+          });
+          continue;
+        }
         if (error instanceof GoalStateError) {
           this.#logger.debug("goals.list.parse.skipped", {
             context: { path: join(goalsRoot, goalId, "goal.json") },

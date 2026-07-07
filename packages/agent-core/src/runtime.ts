@@ -25,6 +25,7 @@ import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
+import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   HitlPayload as ProtocolHitlPayload,
   HitlRequest as ProtocolHitlRequest,
@@ -105,6 +106,7 @@ export interface AgentRuntime {
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
   getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile>;
+  resolveCompressionOriginalRange(workspaceRoot: string, sessionId: string, blockRef: string): Promise<CompressionOriginalRangeResult>;
   listSessions(workspaceRoot: string): Promise<SessionSummary[]>;
   startSessionExecution(input: StartSessionExecutionInput): ActiveSessionExecution;
   abortSessionExecution(workspaceRoot: string, sessionId: string): boolean;
@@ -566,6 +568,7 @@ export async function createRuntime(
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),
       getSessionFile: (workspaceRoot, sessionId) => sessionStoreManager.getSessionFile(workspaceRoot, sessionId),
+      resolveCompressionOriginalRange: (workspaceRoot, sessionId, blockRef) => sessionStoreManager.resolveCompressionOriginalRange(workspaceRoot, sessionId, blockRef),
       listSessions: (workspaceRoot) => sessionStoreManager.listSessionSummaries(workspaceRoot),
       startSessionExecution: (input) => executionManager.startExecution(input),
       abortSessionExecution: (workspaceRoot, sessionId) => executionManager.abort(workspaceRoot, sessionId),

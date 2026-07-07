@@ -5,6 +5,7 @@ import { MarkdownContent } from "../primitives/MarkdownContent";
 import { ToolCard } from "./ToolCard";
 import { DelegationCard } from "./DelegationCard";
 import type { DelegationCardProps } from "./DelegationCard";
+import { CompressionBlock } from "./CompressionBlock";
 import {
   AGENT_DISPLAY_NAMES,
   AGENT_DOT_CLASS,
@@ -22,6 +23,7 @@ import type {
   ToolPart,
   ToolChildSessionLink,
   ToolChildSessionLinkStatus,
+  CompressionBlockPart,
 } from "@archcode/protocol";
 import { TOOL_DELEGATE } from "@archcode/protocol";
 import { RecoveryNotice } from "./RecoveryNotice";
@@ -127,13 +129,17 @@ function SystemNoticeBlock({ part }: { part: SystemNoticePart }) {
   );
 }
 
-function CompactionBlock() {
+function CompactionBlock({ part }: { part: { type: "compaction"; summary: string; tailStartId: string; compactedAt: number } }) {
   return (
-    <div className="flex items-center gap-3 my-1">
-      <div className="flex-1 h-px bg-border-subtle" />
-      <Info size={12} className="text-text-muted shrink-0" />
-      <span className="text-[11px] text-text-muted">Context compacted</span>
-      <div className="flex-1 h-px bg-border-subtle" />
+    <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden my-2.5 shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-bg-elevated border-b border-border-subtle">
+        <Info size={12} className="text-text-muted shrink-0" />
+        <span className="text-[11px] text-text-muted font-medium">Legacy context compaction</span>
+        <span className="text-[11px] text-text-muted ml-auto">{formatRelativeTime(part.compactedAt)}</span>
+      </div>
+      <div className="px-3 py-2 text-[12px] text-text-secondary leading-relaxed whitespace-pre-wrap">
+        {part.summary}
+      </div>
     </div>
   );
 }
@@ -235,7 +241,7 @@ export function PartRenderer({ part, projectSlug, focusStoreSessionId, childSess
     case "system-notice":
       return <SystemNoticeBlock part={part} />;
     case "compaction":
-      return <CompactionBlock />;
+      return <CompactionBlock part={part} />;
     case "recovery-notice":
       return <RecoveryNotice part={part} />;
     default:
@@ -253,6 +259,8 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
   const focusStoreSessionId = useSessionStore(sessionId, (s) => s.rootSessionId, slug);
   const childSessionLinks = useSessionStore(sessionId, (s) => s.childSessionLinks, slug);
   const agentName = useSessionStore(sessionId, (s) => s.agentName, slug);
+  const compressionBlocks = useSessionStore(sessionId, (s) => s.compressionBlocks ?? [], slug);
+  const compression = useSessionStore(sessionId, (s) => s.compression, slug);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -269,13 +277,13 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
     if (isNearBottom && sentinelRef.current) {
       sentinelRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-  }, [messages, isNearBottom]);
+  }, [messages, compressionBlocks, isNearBottom]);
 
   function getAgentName(): string {
     return agentName;
   }
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && compressionBlocks.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full items-center justify-center text-text-muted text-sm">
         No messages yet
@@ -283,13 +291,44 @@ export function ChatMessages({ slug, sessionId }: ChatMessagesProps) {
     );
   }
 
+  type StreamEntry =
+    | { kind: "message"; message: SessionMessage }
+    | { kind: "compression"; block: CompressionBlockPart };
+
+  const entries: StreamEntry[] = [];
+  for (const message of messages) {
+    entries.push({ kind: "message", message });
+  }
+  for (const block of compressionBlocks) {
+    entries.push({ kind: "compression", block });
+  }
+  entries.sort((a, b) => {
+    const aTime = a.kind === "message" ? a.message.createdAt : a.block.committedAt;
+    const bTime = b.kind === "message" ? b.message.createdAt : b.block.committedAt;
+    return aTime - bTime;
+  });
+
   return (
     <div
       ref={scrollRef}
       onScroll={handleScroll}
       className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 max-w-3xl mx-auto w-full"
     >
-      {messages.map((msg) => {
+      {entries.map((entry) => {
+        if (entry.kind === "compression") {
+          return (
+            <CompressionBlock
+              key={`compression-${entry.block.blockRef}-${entry.block.id}`}
+              part={entry.block}
+              projectSlug={slug}
+              sessionId={sessionId}
+              focusStoreSessionId={focusStoreSessionId}
+              snapshot={compression?.blocksByRef[entry.block.blockRef]}
+              childSessionLinks={childSessionLinks}
+            />
+          );
+        }
+        const msg = entry.message;
         if (msg.role === "user") {
           return <MsgUser key={msg.id} message={msg} />;
         }

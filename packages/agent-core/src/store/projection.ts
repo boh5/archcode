@@ -1,12 +1,30 @@
 import type { ModelMessage } from "ai";
 import type { StoredMessage, StoredPart } from "./types";
 import { redactValue } from "../tools/security";
+import {
+  buildMessageRefMap,
+  renderCompressionSummary,
+  type CompressionBlock,
+  type CompressionRefMap,
+  type CompressionState,
+  type MessageRef,
+} from "../compression";
 
 export type ProjectionMode = "model" | "full-history";
 
 export interface ProjectionOptions {
   mode?: ProjectionMode;
+  compression?: CompressionState;
 }
+
+export interface ModelMessagesProjection {
+  readonly messages: ModelMessage[];
+  readonly refMap?: CompressionRefMap;
+}
+
+type AssistantMessageContent = Extract<ModelMessage, { role: "assistant" }>["content"];
+type AssistantContentPart<T> = T extends readonly (infer Part)[] ? Exclude<Part, string> : never;
+type AssistantArrayContent = AssistantContentPart<AssistantMessageContent>[];
 
 const INTERRUPTION_RECOVERY_MARKER =
   "<interrupted-response-recovery>\nThe previous assistant response was interrupted. Its partial assistant text was preserved in session history for visibility only and was intentionally omitted from this model context. Do not treat the omitted partial text as completed assistant output; continue from the user's latest request and, if needed, recover by restating only verified context.\n</interrupted-response-recovery>";
@@ -15,10 +33,30 @@ export function toModelMessagesFromStoredMessages(
   messages: StoredMessage[],
   options?: ProjectionOptions,
 ): ModelMessage[] {
+  return projectModelMessagesFromStoredMessages(messages, options).messages;
+}
+
+export function projectModelMessagesFromStoredMessages(
+  messages: StoredMessage[],
+  options?: ProjectionOptions,
+): ModelMessagesProjection {
   const mode = options?.mode ?? "model";
+  const compressionProjection = mode === "model" && options?.compression !== undefined
+    ? createCompressionProjection(messages, options.compression)
+    : undefined;
   const modelMessages: ModelMessage[] = [];
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    const block = compressionProjection?.blocksByStartIndex.get(index);
+    if (block !== undefined) {
+      modelMessages.push({ role: "user", content: renderCompressionBlock(block) });
+      index = block.range.endIndex;
+      continue;
+    }
+
+    if (compressionProjection?.coveredIndexes.has(index)) continue;
+
     if (mode === "model" && message.compacted) {
       continue;
     }
@@ -43,14 +81,14 @@ export function toModelMessagesFromStoredMessages(
       }
 
       if (content.length > 0) {
-        modelMessages.push({ role: "user", content });
+        modelMessages.push({ role: "user", content: wrapUserContent(content, messageRefFor(message, index, compressionProjection)) });
       }
 
       continue;
     }
 
     if (mode === "full-history") {
-      const assistantContent: Extract<ModelMessage, { role: "assistant" }>["content"] = [];
+      const assistantContent: AssistantArrayContent = [];
       const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
       for (const part of message.parts) {
@@ -115,7 +153,7 @@ export function toModelMessagesFromStoredMessages(
       continue;
     }
 
-    const assistantContent: Extract<ModelMessage, { role: "assistant" }>["content"] = [];
+    const assistantContent: AssistantArrayContent = [];
     const toolContent: Extract<ModelMessage, { role: "tool" }>["content"] = [];
 
     for (const part of message.parts) {
@@ -169,7 +207,7 @@ export function toModelMessagesFromStoredMessages(
     }
 
     if (assistantContent.length > 0) {
-      modelMessages.push({ role: "assistant", content: assistantContent });
+      modelMessages.push({ role: "assistant", content: wrapAssistantContent(assistantContent, messageRefFor(message, index, compressionProjection)) });
     }
 
     if (toolContent.length > 0) {
@@ -177,7 +215,82 @@ export function toModelMessagesFromStoredMessages(
     }
   }
 
-  return modelMessages;
+  return {
+    messages: modelMessages,
+    ...(compressionProjection === undefined ? {} : { refMap: compressionProjection.refMap }),
+  };
+}
+
+interface CompressionProjection {
+  readonly shouldInjectRefs: boolean;
+  readonly refMap: CompressionRefMap;
+  readonly refsByMessageId: Map<string, MessageRef>;
+  readonly blocksByStartIndex: Map<number, CompressionBlock>;
+  readonly coveredIndexes: Set<number>;
+}
+
+function createCompressionProjection(
+  messages: readonly StoredMessage[],
+  compression: CompressionState,
+): CompressionProjection {
+  const refMap = buildMessageRefMap(messages.map((message) => message.id), compression.refMap);
+  const refsByMessageId = new Map<string, MessageRef>();
+  const shouldInjectRefs = messages.length > 0;
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    refsByMessageId.set(message.id, refMap.messageRefsById[message.id] ?? formatProjectionMessageRef(index + 1));
+  }
+
+  const activeBlocks = compression.activeBlockRefs
+    .map((ref) => compression.blocksByRef[ref])
+    .filter((block): block is CompressionBlock => block !== undefined && block.status === "active")
+    .sort((left, right) => left.range.startIndex - right.range.startIndex);
+
+  const blocksByStartIndex = new Map<number, CompressionBlock>();
+  const coveredIndexes = new Set<number>();
+  for (const block of activeBlocks) {
+    blocksByStartIndex.set(block.range.startIndex, block);
+    for (let coveredIndex = block.range.startIndex; coveredIndex <= block.range.endIndex; coveredIndex += 1) {
+      coveredIndexes.add(coveredIndex);
+    }
+  }
+
+  return { shouldInjectRefs, refMap, refsByMessageId, blocksByStartIndex, coveredIndexes };
+}
+
+function messageRefFor(
+  message: StoredMessage,
+  index: number,
+  projection: CompressionProjection | undefined,
+): MessageRef | undefined {
+  if (projection?.shouldInjectRefs !== true) return undefined;
+  return projection.refsByMessageId.get(message.id) ?? formatProjectionMessageRef(index + 1);
+}
+
+function wrapUserContent(content: string, ref: MessageRef | undefined): string {
+  if (ref === undefined) return content;
+  return `<message ref="${ref}">\n${content}\n</message>`;
+}
+
+function wrapAssistantContent(
+  content: AssistantArrayContent,
+  ref: MessageRef | undefined,
+): AssistantArrayContent {
+  if (ref === undefined) return content;
+  return [
+    { type: "text", text: `<message ref="${ref}">` },
+    ...content,
+    { type: "text", text: "</message>" },
+  ];
+}
+
+function renderCompressionBlock(block: CompressionBlock): string {
+  return `<compression-block ref="${block.ref}" strategy="${block.strategy}" start-ref="${block.range.startRef}" end-ref="${block.range.endRef}">\n${renderCompressionSummary(block.summary)}\n</compression-block>`;
+}
+
+function formatProjectionMessageRef(index: number): MessageRef {
+  return `m${index.toString().padStart(4, "0")}`;
 }
 
 function isDiscardedFromContext(part: StoredPart): boolean {

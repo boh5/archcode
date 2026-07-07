@@ -147,6 +147,16 @@ describe("GoalStateManager", () => {
     expect(new Set((await manager.listGoals()).map((goal) => goal.id))).toEqual(new Set([a1.id, b1.id, a2.id]));
   });
 
+  test("listGoals skips stale goal directories missing goal.json", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const valid = await manager.create("project-a", "Valid", "architect");
+    const staleGoalId = "78878538-b50c-4357-b6b8-087b1683adb4";
+    await mkdir(join(TMP_DIR, ".archcode", "goals", staleGoalId), { recursive: true });
+
+    expect(await captureAsyncError(() => manager.read(staleGoalId))).toBeInstanceOf(GoalNotFoundError);
+    expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([valid.id]);
+  });
+
   test("patch updates draft title, doneConditions, retryPolicy, and approvalPoints", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await manager.create("project-a", "Draft", "architect");

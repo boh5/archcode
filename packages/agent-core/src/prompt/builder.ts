@@ -7,6 +7,7 @@ import { buildProjectSection } from "./sections/project";
 import { buildRoleSection } from "./sections/roles";
 import { buildSkillsSection } from "./sections/skills";
 import { buildToolSection } from "./sections/tools";
+import { buildCompressionSection } from "./sections/compression";
 import { buildOperatorRepairContextSection } from "../goals/operator-repair-context";
 
 /**
@@ -29,7 +30,14 @@ export async function buildSystemPrompt(ctx: PromptContext): Promise<string> {
     sections.push(skillsSection);
   }
 
-  sections.push(buildToolSection(ctx), buildEnvSection(ctx.env));
+  sections.push(buildToolSection(ctx));
+
+  const compressionSection = buildCompressionSection(ctx);
+  if (compressionSection !== null) {
+    sections.push(compressionSection);
+  }
+
+  sections.push(buildEnvSection(ctx.env));
 
   const memorySection = await buildMemorySection(ctx);
   if (memorySection !== null) {

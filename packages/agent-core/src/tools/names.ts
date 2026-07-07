@@ -39,4 +39,5 @@ export {
   TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
+  TOOL_COMPRESS,
 } from "@archcode/protocol";

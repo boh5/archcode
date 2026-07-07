@@ -37,6 +37,7 @@ import {
   TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
+  TOOL_COMPRESS,
   TOOL_CATEGORY_MAP,
   getToolCategory,
   isBuiltinToolName,
@@ -81,6 +82,7 @@ const ALL_BUILTIN_NAMES = [
   TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_ARTIFACT_WRITE,
+  TOOL_COMPRESS,
 ] as const;
 
 describe("tool name constants", () => {
@@ -122,6 +124,7 @@ describe("tool name constants", () => {
     expect(TOOL_GOAL_EVIDENCE).toBe("goal_evidence");
     expect(TOOL_GOAL_ARTIFACT_READ).toBe("goal_artifact_read");
     expect(TOOL_GOAL_ARTIFACT_WRITE).toBe("goal_artifact_write");
+    expect(TOOL_COMPRESS).toBe("compress");
   });
 
   test("Goal builtin surface exposes only managed lifecycle, evidence, and artifact tools", () => {
@@ -190,7 +193,8 @@ describe("TOOL_CATEGORY_MAP", () => {
     for (const name of ALL_BUILTIN_NAMES) {
       const cat = TOOL_CATEGORY_MAP[name];
       expect(cat).toBeDefined();
-      expect(cat).not.toBe("other");
+      if (name === TOOL_COMPRESS) expect(cat).toBe("other");
+      else expect(cat).not.toBe("other");
     }
   });
 
@@ -213,6 +217,7 @@ describe("TOOL_CATEGORY_MAP", () => {
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_EVIDENCE]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_READ]).toBe("goal");
     expect(TOOL_CATEGORY_MAP[TOOL_GOAL_ARTIFACT_WRITE]).toBe("goal");
+    expect(TOOL_CATEGORY_MAP[TOOL_COMPRESS]).toBe("other");
   });
 });
 
@@ -254,6 +259,7 @@ describe("getToolCategory()", () => {
     expect(getToolCategory("goal_evidence")).toBe("goal");
     expect(getToolCategory("goal_artifact_read")).toBe("goal");
     expect(getToolCategory("goal_artifact_write")).toBe("goal");
+    expect(getToolCategory("compress")).toBe("other");
   });
 });
 
@@ -271,6 +277,7 @@ describe("isBuiltinToolName()", () => {
     expect(isBuiltinToolName("goal_evidence")).toBe(true);
     expect(isBuiltinToolName("goal_artifact_read")).toBe(true);
     expect(isBuiltinToolName("goal_artifact_write")).toBe(true);
+    expect(isBuiltinToolName("compress")).toBe(true);
   });
 
   test("returns false for unknown names", () => {

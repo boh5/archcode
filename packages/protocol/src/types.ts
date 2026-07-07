@@ -197,6 +197,103 @@ export interface CompactEvent {
   tailStartId: string;
 }
 
+export type CompressionMessageRef = `m${string}`;
+export type CompressionBlockRef = `b${number}`;
+export type CompressionStrategy = "dynamic-range" | "hard-limit" | "emergency-hard-limit";
+export type CompressionTrigger =
+  | "model_tool_call"
+  | "soft_nudge_response"
+  | "strong_nudge_response"
+  | "hard_threshold"
+  | "emergency_threshold"
+  | "manual_command";
+export type CompressionBlockStatus = "active" | "inactive" | "superseded";
+
+export interface CompressionRefMapSnapshot {
+  messageRefsById: Record<string, CompressionMessageRef>;
+  messageIdsByRef: Record<CompressionMessageRef, string>;
+  blockRefsById: Record<string, CompressionBlockRef>;
+  blockIdsByRef: Record<CompressionBlockRef, string>;
+  nextMessageIndex: number;
+  nextBlockIndex: number;
+}
+
+export interface CompressionRangeSnapshot {
+  startMessageId: string;
+  endMessageId: string;
+  startRef: CompressionMessageRef;
+  endRef: CompressionMessageRef;
+  startIndex: number;
+  endIndex: number;
+}
+
+export interface CompressionTokenEstimateSnapshot {
+  originalTokens: number;
+  summaryTokens: number;
+  savedTokens: number;
+  estimatedAt: number;
+}
+
+export interface CompressionBlockSnapshot {
+  id: string;
+  ref: CompressionBlockRef;
+  status: CompressionBlockStatus;
+  strategy: CompressionStrategy;
+  trigger: CompressionTrigger;
+  range: CompressionRangeSnapshot;
+  summary: string;
+  childBlockRefs: CompressionBlockRef[];
+  protectedRefs: Array<CompressionMessageRef | CompressionBlockRef>;
+  tokenEstimate?: CompressionTokenEstimateSnapshot;
+  createdAt: number;
+  updatedAt: number;
+  deactivatedAt?: number;
+  supersededBy?: CompressionBlockRef;
+}
+
+export interface CompressionFailureSnapshot {
+  id: string;
+  reason: string;
+  startRef?: CompressionMessageRef;
+  endRef?: CompressionMessageRef;
+  strategy?: CompressionStrategy;
+  failedAt: number;
+}
+
+export interface CompressionStateSnapshot {
+  version: 1;
+  refMap: CompressionRefMapSnapshot;
+  blocksByRef: Record<CompressionBlockRef, CompressionBlockSnapshot>;
+  activeBlockRefs: CompressionBlockRef[];
+  inactiveBlockRefs: CompressionBlockRef[];
+  supersededBlockRefs: CompressionBlockRef[];
+  failures: CompressionFailureSnapshot[];
+  updatedAt?: number;
+}
+
+export interface CompressionBlockCommittedEvent {
+  type: "compression.block_committed";
+  block: CompressionBlockSnapshot;
+  state?: CompressionStateSnapshot;
+}
+
+export interface CompressionBlockFailedEvent {
+  type: "compression.block_failed";
+  failure: CompressionFailureSnapshot;
+  state?: CompressionStateSnapshot;
+}
+
+export interface CompressionRefMapUpdatedEvent {
+  type: "compression.ref_map_updated";
+  refMap: CompressionRefMapSnapshot;
+  updatedAt?: number;
+}
+
+export type CompressionStreamEvent =
+  | CompressionBlockCommittedEvent
+  | CompressionBlockFailedEvent
+  | CompressionRefMapUpdatedEvent;
+
 export interface TodoWriteEvent {
   type: "todo-write";
   todos: SessionTodo[];
@@ -301,6 +398,7 @@ export type StreamEvent =
   | LlmRecoveryEvent
   | LlmRecoveryFailedEvent
   | CompactEvent
+  | CompressionStreamEvent
   | GoalStreamEvent
   | HitlStreamEvent
   | LoopStreamEvent;
@@ -513,6 +611,20 @@ export interface CompactionPart {
   compactedAt: number;
 }
 
+export interface CompressionBlockPart {
+  type: "compression-block";
+  id: string;
+  blockRef: CompressionBlockRef;
+  status: CompressionBlockStatus;
+  strategy: CompressionStrategy;
+  trigger: CompressionTrigger;
+  summary: string;
+  startRef: CompressionMessageRef;
+  endRef: CompressionMessageRef;
+  childBlockRefs: CompressionBlockRef[];
+  committedAt: number;
+}
+
 export interface SystemNoticePart {
   type: "system-notice";
   id: string;
@@ -589,6 +701,10 @@ export interface SessionProjection {
   hitlRequests?: HitlRequest[];
   /** Loop states indexed by loopId. Populated by loop.state_change events. */
   loops?: Record<string, LoopState>;
+  /** Hybrid Compression state. New compression events update this instead of SessionMessage.compacted. */
+  compression?: CompressionStateSnapshot;
+  /** Projection-only compression block display parts. Canonical messages remain unchanged. */
+  compressionBlocks?: CompressionBlockPart[];
 }
 
 export interface Project {

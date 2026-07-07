@@ -54,6 +54,10 @@ function createStore() {
   return createSessionStore(crypto.randomUUID());
 }
 
+function wrappedMessage(ref: string, text: string): string {
+  return `<message ref="${ref}">\n${text}\n</message>`;
+}
+
 function makeOptions(overrides: Partial<QueryLoopOptions> = {}): QueryLoopOptions {
   const workspaceRoot = import.meta.dir;
   return {
@@ -357,10 +361,12 @@ describe("query loop LLM stream recovery", () => {
     const tool = assistantMessages(store).flatMap((message) => message.parts).find((part) => part.type === "tool");
     expect(tool).toMatchObject({ type: "tool", state: "error", errorMessage: "Execution ended before tool result" });
     expect(store.getState().toModelMessages()).toEqual([
-      { role: "user", content: "Use tool" },
+      { role: "user", content: wrappedMessage("m0001", "Use tool") },
       { role: "assistant", content: [
+        { type: "text", text: '<message ref="m0002">' },
         { type: "tool-call", toolCallId: "tc-pending", toolName: "echo", input: undefined },
         { type: "text", text: "Recovered" },
+        { type: "text", text: "</message>" },
       ] },
       { role: "tool", content: [{ type: "tool-result", toolCallId: "tc-pending", toolName: "echo", output: { type: "error-text", value: "Execution ended before tool result" } }] },
     ]);

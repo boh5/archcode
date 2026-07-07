@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 import { createStore } from "zustand/vanilla";
 import type { ModelMessage } from "ai";
 import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptyCompressionState, resolveCompressionOriginalRange, type CompressionOriginalRangeResult } from "../compression";
 import type {
   SessionModelInfo,
   SessionTreeDiagnostic,
@@ -13,8 +14,8 @@ import { readdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Logger } from "../logger";
 import { NotRootSessionError, SessionFileNotFoundError } from "./errors";
-import { SessionFileSchema, sessionFileInternals, type SessionFile, type SessionSummary } from "./helpers";
-import { toModelMessagesFromStoredMessages } from "./projection";
+import { SessionFileSchema, sessionFileInternals, type HydratedSessionFile, type SessionSummary } from "./helpers";
+import { projectModelMessagesFromStoredMessages } from "./projection";
 import { reduceStreamEvent } from "./reduce";
 import { __hasSessionsDirOverrideForTest, getRootSessionDir, getSessionPath, getSessionsDir } from "./sessions-dir";
 import {
@@ -128,6 +129,9 @@ export class SessionStoreManager {
         || event.type === "question.request"
         || event.type === "question.terminal"
         || event.type === "loop-error"
+        || event.type === "compression.block_committed"
+        || event.type === "compression.block_failed"
+        || event.type === "compression.ref_map_updated"
       ) persist();
     };
 
@@ -141,6 +145,7 @@ export class SessionStoreManager {
       steps: [],
       stats: createEmptySessionStats(),
       executions: [],
+      compression: createEmptyCompressionState(),
       todos: [],
       pendingInteractions: [],
       reminders: [],
@@ -226,8 +231,16 @@ export class SessionStoreManager {
         set({ sessionRole });
         persist();
       },
-      toModelMessages: (): ModelMessage[] =>
-        toModelMessagesFromStoredMessages(get().messages),
+      toModelMessages: (): ModelMessage[] => {
+        const state = get();
+        const compression = state.compression ?? createEmptyCompressionState();
+        const projection = projectModelMessagesFromStoredMessages(state.messages, { compression });
+        if (projection.refMap !== undefined && projection.refMap !== compression.refMap) {
+          set({ compression: { ...compression, refMap: projection.refMap, updatedAt: Date.now() } });
+          persist();
+        }
+        return projection.messages;
+      },
     }));
 
     this.#registry.set(key, store);
@@ -261,17 +274,26 @@ export class SessionStoreManager {
     }
   }
 
-  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions = {}): Promise<SessionFile> {
+  async createSessionFile(workspaceRoot: string, options: CreateSessionOptions = {}): Promise<HydratedSessionFile> {
     const store = this.create(crypto.randomUUID(), workspaceRoot, options);
     return sessionFileInternals.toSessionFile(store.getState());
   }
 
-  async getSessionFile(workspaceRoot: string, sessionId: string): Promise<SessionFile> {
+  async getSessionFile(workspaceRoot: string, sessionId: string): Promise<HydratedSessionFile> {
     const existing = this.get(sessionId, workspaceRoot);
     if (existing) return sessionFileInternals.toSessionFile(existing.getState());
 
     const rootSessionId = await this.resolveRootSessionId(sessionId, workspaceRoot);
     return reconcileInterruptedSessionFile(await sessionFileInternals.readSessionFile(sessionId, workspaceRoot, rootSessionId));
+  }
+
+  async resolveCompressionOriginalRange(
+    workspaceRoot: string,
+    sessionId: string,
+    blockRef: string,
+  ): Promise<CompressionOriginalRangeResult> {
+    const session = await this.getSessionFile(workspaceRoot, sessionId);
+    return resolveCompressionOriginalRange(session, blockRef);
   }
 
   async setGoalId(sessionId: string, goalId: string | undefined, workspaceRoot?: string): Promise<SessionStoreState> {
@@ -433,6 +455,7 @@ export class SessionStoreManager {
         steps: parsed.steps,
         stats: parsed.stats,
         executions: parsed.executions,
+        compression: parsed.compression,
         executionCount: parsed.executions.length,
         todos: parsed.todos ?? [],
         pendingInteractions: parsed.pendingInteractions,
@@ -587,7 +610,7 @@ function reduceStoreEvent(
 }
 
 function isStreamEvent(event: SessionEventPayload): event is StreamEvent {
-  return !event.type.includes(".") && event.type !== "shutdown";
+  return (!event.type.includes(".") || event.type.startsWith("compression.")) && event.type !== "shutdown";
 }
 
 function nextEventIdFromEvents(events: readonly SessionEventEnvelope[]): number {
@@ -656,7 +679,7 @@ async function readSessionFileForTree(
   _rootSessionId: string,
   filePath: string,
   diagnostics: SessionTreeDiagnostic[],
-): Promise<SessionFile | undefined> {
+): Promise<HydratedSessionFile | undefined> {
   return await readRawSessionFileForTree(sessionId, filePath, diagnostics);
 }
 
@@ -664,7 +687,7 @@ async function readRawSessionFileForTree(
   sessionId: string,
   filePath: string,
   diagnostics: SessionTreeDiagnostic[],
-): Promise<SessionFile | undefined> {
+): Promise<HydratedSessionFile | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await Bun.file(filePath).text());
@@ -688,7 +711,7 @@ function readDiagnosticSessionId(value: unknown): string | undefined {
   return typeof sessionId === "string" ? sessionId : undefined;
 }
 
-function toSessionSummary(file: SessionFile): SessionSummary {
+function toSessionSummary(file: HydratedSessionFile): SessionSummary {
   const lastUpdatedAt = readLastUpdatedAt(file);
   return {
     sessionId: file.sessionId,
@@ -705,14 +728,14 @@ function toSessionSummary(file: SessionFile): SessionSummary {
   };
 }
 
-function readLastUpdatedAt(file: SessionFile): number | undefined {
-  const record = file as SessionFile & { lastUpdatedAt?: unknown; updatedAt?: unknown };
+function readLastUpdatedAt(file: HydratedSessionFile): number | undefined {
+  const record = file as HydratedSessionFile & { lastUpdatedAt?: unknown; updatedAt?: unknown };
   if (typeof record.lastUpdatedAt === "number") return record.lastUpdatedAt;
   if (typeof record.updatedAt === "number") return record.updatedAt;
   return undefined;
 }
 
-const TERMINAL_EXECUTION_STATUSES = new Set<SessionFile["executions"][number]["status"]>([
+const TERMINAL_EXECUTION_STATUSES = new Set<HydratedSessionFile["executions"][number]["status"]>([
   "completed",
   "max_steps",
   "failed",
@@ -724,7 +747,7 @@ const TERMINAL_EXECUTION_STATUSES = new Set<SessionFile["executions"][number]["s
 
 const ACTIVE_CHILD_LINK_STATUSES = new Set(["linked", "running", "cancelling"]);
 
-function reconcileInterruptedSessionFile(file: SessionFile): SessionFile {
+function reconcileInterruptedSessionFile(file: HydratedSessionFile): HydratedSessionFile {
   const now = Date.now();
   let changed = false;
   const executions = file.executions.map((execution) => {

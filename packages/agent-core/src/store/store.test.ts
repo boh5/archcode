@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createEmptySessionStats } from "@archcode/protocol";
+import { createEmptySessionStats, type CompressionBlockSnapshot } from "@archcode/protocol";
 import { BusyError, InvalidTodoStateError, type CompactionPart, type ReasoningPart, type Reminder, type StepInfo, type StoredMessage, type StoredTodo, type TextPart, type ToolPart } from "./types";
 import { createSessionStore, storeManager } from "./store";
 import { SessionStoreManager } from "./session-store-manager";
 import { silentLogger } from "../logger";
 import { __setSessionsDirForTest } from "./sessions-dir";
+import { COMPRESSION_SUMMARY_SECTION_NAMES } from "../compression";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "store");
 
@@ -32,6 +33,29 @@ function uniqueSessionId(label: string): string {
 
 function createFreshStore(label: string) {
   return storeManager.create(uniqueSessionId(label));
+}
+
+function compressionBlockSnapshot(): CompressionBlockSnapshot {
+  return {
+    id: "block-1",
+    ref: "b1",
+    status: "active",
+    strategy: "dynamic-range",
+    trigger: "model_tool_call",
+    range: { startMessageId: "msg-1", endMessageId: "msg-2", startRef: "m0001", endRef: "m0002", startIndex: 0, endIndex: 1 },
+    summary: "Old discussion summary",
+    childBlockRefs: [],
+    protectedRefs: ["m0002"],
+    tokenEstimate: { originalTokens: 100, summaryTokens: 20, savedTokens: 80, estimatedAt: 123 },
+    createdAt: 1000,
+    updatedAt: 1001,
+  };
+}
+
+function renderedStructuredSummary(): string {
+  return COMPRESSION_SUMMARY_SECTION_NAMES
+    .map((section) => `## ${section}\n${section} content`)
+    .join("\n\n");
 }
 
 function sessionFilePath(sessionId: string): string {
@@ -590,7 +614,9 @@ describe("todo-write events", () => {
     store.getState().append({ type: "user-message", content: "hello" });
 
     const projected = store.getState().toModelMessages();
-    expect(projected).toEqual([{ role: "user", content: "hello" }]);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]!.role).toBe("user");
+    expect(String(projected[0]!.content)).toContain("hello");
     expect(JSON.stringify(projected)).not.toContain("hidden from projection");
   });
 });
@@ -1039,8 +1065,32 @@ describe("Zustand integration and immutability", () => {
     const store = createFreshStore("projection");
     store.getState().append({ type: "user-message", content: "hello" });
     expect(store.getState().toModelMessages()).toEqual([
-      { role: "user", content: "hello" },
+      { role: "user", content: "<message ref=\"m0001\">\nhello\n</message>" },
     ]);
+  });
+
+  test("toModelMessages materializes stable compression message refs", () => {
+    const store = createFreshStore("projection-ref-map");
+    store.getState().append({ type: "user-message", content: "first" });
+
+    store.getState().toModelMessages();
+    const firstRefMap = store.getState().compression!.refMap;
+    const firstMessageId = store.getState().messages[0]!.id;
+
+    expect(firstRefMap.messageRefsById[firstMessageId]).toBe("m0001");
+    expect(firstRefMap.messageIdsByRef.m0001).toBe(firstMessageId);
+    expect(firstRefMap.nextMessageIndex).toBe(2);
+
+    store.getState().append({ type: "user-message", content: "second" });
+    const rendered = JSON.stringify(store.getState().toModelMessages());
+    const secondRefMap = store.getState().compression!.refMap;
+    const secondMessageId = store.getState().messages[1]!.id;
+
+    expect(secondRefMap.messageRefsById[firstMessageId]).toBe("m0001");
+    expect(secondRefMap.messageRefsById[secondMessageId]).toBe("m0002");
+    expect(secondRefMap.nextMessageIndex).toBe(3);
+    expect(rendered).toContain("m0001");
+    expect(rendered).toContain("m0002");
   });
 });
 
@@ -1340,5 +1390,45 @@ describe("compact event", () => {
     );
     expect(compactionMsg).toBeDefined();
     expect(compactionMsg!.compacted).toBeUndefined();
+  });
+});
+
+describe("compression events", () => {
+  test("compression.block_committed updates durable compression state without compacted flags", () => {
+    const store = createFreshStore("compression-commit");
+    store.getState().append({ type: "user-message", content: "old" });
+    store.getState().append({ type: "user-message", content: "tail" });
+
+    store.getState().append({ type: "compression.block_committed", block: compressionBlockSnapshot() });
+
+    const state = store.getState();
+    const compression = state.compression;
+    if (compression === undefined) throw new Error("Expected compression event to materialize compression state");
+
+    expect(compression.activeBlockRefs).toEqual(["b1"]);
+    expect(compression.blocksByRef.b1?.summary.version).toBe(1);
+    expect(compression.blocksByRef.b1?.tokenEstimate?.savedTokens).toBe(80);
+    expect(compression.protectedRefs[0]?.ref).toBe("m0002");
+    expect(state.messages.some((message) => message.compacted === true)).toBe(false);
+  });
+
+  test("compression.block_committed preserves rendered structured summaries without fallback sections", () => {
+    const store = createFreshStore("compression-structured-summary");
+    store.getState().append({ type: "user-message", content: "old" });
+    store.getState().append({ type: "user-message", content: "tail" });
+
+    store.getState().append({
+      type: "compression.block_committed",
+      block: { ...compressionBlockSnapshot(), summary: renderedStructuredSummary() },
+    });
+
+    const rendered = JSON.stringify(store.getState().toModelMessages());
+    const currentObjectiveMatches = rendered.match(/## Current Objective/g) ?? [];
+
+    expect(currentObjectiveMatches).toHaveLength(1);
+    expect(rendered).toContain("Current Objective content");
+    expect(rendered).toContain("Resume Instructions content");
+    expect(rendered).not.toContain("## Current Objective\\n## Current Objective");
+    expect(rendered).not.toContain("Not provided by compression snapshot");
   });
 });

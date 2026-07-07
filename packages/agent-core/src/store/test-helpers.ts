@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import { createEmptySessionStats } from "@archcode/protocol";
-import type { SessionRole, SessionStoreState } from "./types";
+import { createEmptyCompressionState } from "../compression";
+import type { SessionStoreState } from "./types";
 
 export function createMockStore(
   overrides?: Partial<SessionStoreState>,
@@ -14,6 +15,7 @@ export function createMockStore(
     steps: [],
     stats: createEmptySessionStats(),
     executions: [],
+    compression: createEmptyCompressionState(),
     todos: [],
     pendingInteractions: [],
     reminders: [],

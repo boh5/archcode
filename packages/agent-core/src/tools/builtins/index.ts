@@ -21,6 +21,7 @@ export { skillListTool, createSkillListTool, SkillListInputSchema } from "./skil
 export { skillReadTool, createSkillReadTool, SkillReadInputSchema } from "./skill-read";
 export { viewToolOutputTool } from "./view-tool-output";
 export { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
+export { compressTool, CompressInputSchema } from "./compress";
 
 import { fileReadTool } from "./file-read";
 import { fileWriteTool } from "./file-write";
@@ -42,6 +43,7 @@ import { viewToolOutputTool } from "./view-tool-output";
 import { astGrepSearchTool, astGrepReplaceTool } from "./ast-grep";
 import { skillListTool } from "./skill-list";
 import { skillReadTool } from "./skill-read";
+import { compressTool } from "./compress";
 
 export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
   return [
@@ -69,5 +71,6 @@ export function createBuiltinToolDescriptors(): AnyToolDescriptor[] {
     skillListTool,
     skillReadTool,
     viewToolOutputTool,
+    compressTool,
   ];
 }

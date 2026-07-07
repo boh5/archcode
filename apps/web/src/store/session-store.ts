@@ -3,6 +3,8 @@ import { useStore } from "zustand/react";
 import { createStore } from "zustand/vanilla";
 import { MAX_EVENTS, createEmptySessionStats, reduceStreamEvent } from "@archcode/protocol";
 import type {
+  CompressionBlockPart,
+  CompressionStateSnapshot,
   GlobalSessionEventEnvelope,
   PermissionTerminalEvent,
   QuestionTerminalEvent,
@@ -68,6 +70,8 @@ export interface WebSessionStoreState extends SessionProjection {
     eventCursor?: number;
     events?: SessionEventEnvelope[];
     modelInfo?: SessionModelInfo | null;
+    compression?: CompressionStateSnapshot;
+    compressionBlocks?: CompressionBlockPart[];
   }) => void;
 }
 
@@ -197,6 +201,9 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
     case "llm-recovery":
     case "llm-recovery-failed":
     case "compact":
+    case "compression.block_committed":
+    case "compression.block_failed":
+    case "compression.ref_map_updated":
     case "goal.state_change":
     case "goal.done_check":
     case "goal.escalation":
@@ -299,6 +306,8 @@ export function createWebSessionStore(
     todos: [],
     reminders: [],
     childSessionLinks: [],
+    compression: undefined,
+    compressionBlocks: [],
     // Mirrors persisted identity; tree relationships come from session-tree responses.
     rootSessionId: sessionId,
     parentSessionId: undefined,
@@ -443,6 +452,12 @@ export function createWebSessionStore(
         }
         if (data.modelInfo !== undefined) {
           updates.modelInfo = data.modelInfo;
+        }
+        if (data.compression !== undefined && !stale) {
+          updates.compression = data.compression;
+        }
+        if (data.compressionBlocks !== undefined && !stale) {
+          updates.compressionBlocks = data.compressionBlocks;
         }
         if (data.events !== undefined) {
           updates.events = data.events;

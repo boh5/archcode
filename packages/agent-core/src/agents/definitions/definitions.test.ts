@@ -16,6 +16,7 @@ import {
 import {
   TOOL_AST_GREP_REPLACE,
   TOOL_BASH,
+  TOOL_COMPRESS,
   TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
@@ -118,6 +119,7 @@ describe("agentDefinitions", () => {
     expect(tools).toContain(TOOL_GOAL_MANAGE);
     expect(tools).not.toContain(TOOL_GOAL_EVIDENCE);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).toContain(TOOL_COMPRESS);
     expect(tools).not.toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_DELEGATE);
     expect(orchestratorAgentDefinition.tools.delegateTargets).toEqual([
@@ -156,6 +158,7 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("lsp_diagnostics");
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
+    expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
     expect(planAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
@@ -168,6 +171,7 @@ describe("agentDefinitions", () => {
     expectNoTools(tools, [TOOL_GOAL_MANAGE, TOOL_GOAL_EVIDENCE]);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
+    expect(tools).toContain(TOOL_COMPRESS);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
   });
@@ -183,6 +187,7 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("lsp_diagnostics");
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
     expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
+    expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
   });
@@ -223,6 +228,7 @@ describe("agentDefinitions", () => {
         TOOL_GOAL_ARTIFACT_READ,
         TOOL_GOAL_ARTIFACT_WRITE,
       ]);
+      expect(definition.tools.tools).not.toContain(TOOL_COMPRESS);
       expect("delegateTargets" in definition.tools).toBe(false);
       expect("childPolicy" in definition).toBe(false);
       expect(definition.tools.tools).not.toContain(TOOL_DELEGATE);
