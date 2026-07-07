@@ -132,6 +132,22 @@ export class HitlService {
     return await (await this.#storeFor(found.owner)).claim(hitlId, response);
   }
 
+  async markResumeFailed(hitlId: string, reason: string): Promise<HitlRecord | undefined> {
+    const found = await this.lookup(hitlId);
+    if (found.status !== "found") return undefined;
+    return await (await this.#storeFor(found.owner)).markResumeFailed(hitlId, reason);
+  }
+
+  async finishResume(
+    hitlId: string,
+    status: Extract<HitlRecord["status"], "resolved" | "cancelled">,
+    response?: ProtocolHitlResponse,
+  ): Promise<HitlRecord | undefined> {
+    const found = await this.lookup(hitlId);
+    if (found.status !== "found") return undefined;
+    return await (await this.#storeFor(found.owner)).complete(hitlId, status, response);
+  }
+
   async complete(hitlId: string, response?: ProtocolHitlResponse): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
@@ -146,6 +162,14 @@ export class HitlService {
 
   async cancelOwner(owner: HitlOwnerKey, reason = "owner_deleted"): Promise<HitlRecord[]> {
     return await (await this.#storeFor(owner)).cancelActive(reason);
+  }
+
+  async ownerStore(owner: HitlOwnerKey): Promise<HitlOwnerStore> {
+    return await this.#storeFor(owner);
+  }
+
+  async knownOwners(): Promise<HitlOwnerKey[]> {
+    return await this.#knownOwners();
   }
 
   async list(query: HitlAggregationQuery = { scope: "project" }): Promise<HitlProjection[]> {

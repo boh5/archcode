@@ -41,6 +41,7 @@ import { SessionExecutionManager } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 import { GoalRunner } from "./goals/runner";
 import { HitlService } from "./hitl/service";
+import type { ResumeRecoverySummary } from "./hitl/resume-coordinator";
 import { createGitHubConnector } from "./integrations/github";
 import { LoopRunner } from "./loops/runner";
 import { LoopBudgetLedger } from "./loops/budget-ledger";
@@ -101,6 +102,7 @@ export interface AgentRuntime {
   readonly projectRegistry: ProjectRegistry;
   readonly contextResolver: ProjectContextResolver;
   readonly hitl: HitlService;
+  recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
@@ -564,6 +566,7 @@ export async function createRuntime(
       projectRegistry,
       contextResolver,
       hitl,
+      recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator?.recover(),
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),

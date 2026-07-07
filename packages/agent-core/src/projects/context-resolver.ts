@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
+import { ResumeCoordinator, type ResumeCoordinatorAdapters } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
 import { LoopStateManager } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
@@ -28,6 +29,10 @@ export interface ProjectContextResolverOptions {
   hitlFactory?: (workspaceRoot: string) => HitlService;
   /** Shared SessionStoreManager used for owner-local HITL lookup and aggregation. */
   sessionStoreManager?: SessionStoreManager;
+  /** Factory primarily for testing alternate ResumeCoordinator construction. */
+  resumeCoordinatorFactory?: (input: { workspaceRoot: string; hitl: HitlService; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
+  /** Owner-specific adapters registered by later HITL runtime tasks. */
+  resumeAdapters?: ResumeCoordinatorAdapters;
   /** Factory primarily for testing alternate MemoryFileManager construction. */
   memoryFactory?: (workspaceRoot: string) => MemoryFileManager;
   /** Factory primarily for testing ProjectApprovalManager load behavior. */
@@ -45,6 +50,8 @@ export class ProjectContextResolver {
   readonly #loopStateFactory: (workspaceRoot: string) => LoopStateManager;
   readonly #hitlFactory: (workspaceRoot: string) => HitlService;
   readonly #sessionStoreManager?: SessionStoreManager;
+  readonly #resumeCoordinatorFactory: (input: { workspaceRoot: string; hitl: HitlService; adapters?: ResumeCoordinatorAdapters }) => ResumeCoordinator;
+  readonly #resumeAdapters?: ResumeCoordinatorAdapters;
   readonly #memoryFactory: (workspaceRoot: string) => MemoryFileManager;
   readonly #approvalsFactory: () => ProjectApprovalManager;
 
@@ -64,6 +71,8 @@ export class ProjectContextResolver {
       return new LoopStateManager(workspaceRoot, this.#logger.child({ module: "loops.state" }));
     });
     this.#sessionStoreManager = options.sessionStoreManager;
+    this.#resumeCoordinatorFactory = options.resumeCoordinatorFactory ?? ((input) => new ResumeCoordinator({ hitl: input.hitl, adapters: input.adapters, logger: this.#logger }));
+    this.#resumeAdapters = options.resumeAdapters;
     this.#hitlFactory = options.hitlFactory ?? ((workspaceRoot) => new HitlService({ workspaceRoot }));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
@@ -109,6 +118,10 @@ export class ProjectContextResolver {
       loopState,
     });
     await hitl.load(workspaceRoot);
+    const hitlResumeCoordinator = this.#resumeCoordinatorFactory({ workspaceRoot, hitl, adapters: this.#resumeAdapters });
+    if (this.#sessionStoreManager !== undefined && hasResumeAdapters(this.#resumeAdapters)) {
+      await hitlResumeCoordinator.recover();
+    }
 
     return {
       project,
@@ -117,6 +130,7 @@ export class ProjectContextResolver {
       goalMemory: this.#goalMemoryFactory(workspaceRoot),
       loopState,
       hitl,
+      hitlResumeCoordinator,
       memory: this.#memoryFactory(workspaceRoot),
       approvals,
     };
@@ -132,4 +146,8 @@ export class ProjectContextResolver {
       addedAt: new Date().toISOString(),
     };
   }
+}
+
+function hasResumeAdapters(adapters: ResumeCoordinatorAdapters | undefined): boolean {
+  return adapters?.session !== undefined || adapters?.goal !== undefined || adapters?.loop !== undefined;
 }

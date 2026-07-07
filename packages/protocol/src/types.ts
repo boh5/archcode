@@ -1109,8 +1109,12 @@ export interface HitlDisplayPayload {
 }
 
 export interface HitlResumeMetadata {
+  claimId?: string;
   claimedAt?: string;
   claimedBy?: string;
+  intent?: "respond" | "cancel";
+  attempt?: number;
+  lastError?: string;
   failedAt?: string;
   failureReason?: string;
   attempts?: number;

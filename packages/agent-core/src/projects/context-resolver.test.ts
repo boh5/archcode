@@ -6,6 +6,7 @@ import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
+import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { LoopStateManager, type LoopConfig } from "../loops/state";
 import { MemoryFileManager } from "../memory/file-manager";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -151,6 +152,7 @@ describe("ProjectContextResolver", () => {
     expect(context.goalMemory.workspaceRoot).toBe(workspace);
     expect(context.loopState).toBeInstanceOf(LoopStateManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
+    expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
     expect(context.memory).toBeInstanceOf(MemoryFileManager);
     expect(context.memory.projectRoot).toBe(join(workspace, ".archcode", "memory"));
     expect(context.project.slug).toBe(basename(workspace));
@@ -191,6 +193,7 @@ describe("ProjectContextResolver", () => {
     expect(context.goalArtifacts).toBeInstanceOf(GoalArtifactManager);
     expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
+    expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
     expect(contextRecord.workflowState).toBeUndefined();
     expect(contextRecord.artifacts).toBeUndefined();
   });
@@ -263,6 +266,47 @@ describe("ProjectContextResolver", () => {
     });
   });
 
+  test("adapter-less context recreation does not auto-fail claimed HITL resumes", async () => {
+    const workspace = await makeWorkspace("hitl-claimed-no-adapter");
+    const sessions = new SessionStoreManager({ logger: silentLogger });
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspace);
+    await waitForSession(workspace, sessionId);
+    const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
+    const first = await resolver.resolve(workspace);
+    const owner = { projectSlug: first.project.slug, ownerType: "session" as const, ownerId: sessionId };
+    const created = await first.hitl.create({
+      owner,
+      blockingKey: `session:${sessionId}:ask:context-load`,
+      source: { type: "ask_user", sessionId, toolCallId: "context-load" },
+      displayPayload: { title: "Need answer", redacted: true },
+    });
+    const response = { type: "question_answer" as const, answers: ["resume after boot"] };
+    const claimed = await (await first.hitl.ownerStore(owner)).claim(created.hitlId, response, {
+      claimId: "claimed-before-context-reload",
+      claimedAt: new Date().toISOString(),
+      intent: "respond",
+      attempt: 1,
+    });
+
+    resolver.dispose(workspace);
+    const second = await resolver.resolve(workspace);
+
+    expect(await second.hitl.lookup(created.hitlId)).toMatchObject({
+      status: "found",
+      record: {
+        hitlId: created.hitlId,
+        status: "resume_claimed",
+        response,
+        resume: {
+          claimId: claimed.resume?.claimId,
+          intent: "respond",
+          attempt: 1,
+        },
+      },
+    });
+  });
+
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
@@ -291,6 +335,7 @@ describe("ProjectContextResolver", () => {
     expect(context.goalArtifacts).toBe(goalArtifacts);
     expect(context.goalMemory).toBe(goalMemory);
     expect(context.hitl).toBe(hitl);
+    expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
   });
 
   test("custom Loop factory is used per resolved context", async () => {
@@ -308,3 +353,12 @@ describe("ProjectContextResolver", () => {
     expect(context.loopState).toBe(loopState);
   });
 });
+
+async function waitForSession(workspaceRoot: string, sessionId: string): Promise<void> {
+  const path = join(workspaceRoot, ".archcode", "sessions", sessionId, "session.json");
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await Bun.file(path).exists()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error(`session was not persisted: ${sessionId}`);
+}

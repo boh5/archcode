@@ -44,8 +44,12 @@ const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
 ]);
 
 const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
+  claimId: z.string().optional(),
   claimedAt: z.string().optional(),
   claimedBy: z.string().optional(),
+  intent: z.enum(["respond", "cancel"]).optional(),
+  attempt: z.number().int().nonnegative().optional(),
+  lastError: z.string().optional(),
   failedAt: z.string().optional(),
   failureReason: z.string().optional(),
   attempts: z.number().int().nonnegative().optional(),
@@ -239,6 +243,7 @@ export class HitlOwnerStore {
     }
 
     const now = new Date().toISOString();
+    const previousAttempt = current.resume?.attempt ?? current.resume?.attempts ?? 0;
     const next = HitlRecordSchema.parse({
       ...current,
       status: "resume_claimed",
@@ -247,7 +252,7 @@ export class HitlOwnerStore {
         ...current.resume,
         ...resume,
         claimedAt: resume.claimedAt ?? now,
-        attempts: resume.attempts ?? ((current.resume?.attempts ?? 0) + 1),
+        attempt: resume.attempt ?? (previousAttempt + 1),
       },
       updatedAt: now,
     });
@@ -271,6 +276,7 @@ export class HitlOwnerStore {
         ...current.resume,
         failedAt: now,
         failureReason: reason,
+        lastError: reason,
       },
       updatedAt: now,
     });
