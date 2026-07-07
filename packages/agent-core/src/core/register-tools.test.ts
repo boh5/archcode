@@ -109,7 +109,7 @@ function makeLogger(): Logger & { debug: ReturnType<typeof mock> } {
 }
 
 describe("registerBuiltinTools", () => {
-  it("registers all 25 builtins including 4 LSP, 2 ast-grep, and compress tools", () => {
+  it("registers all 25 builtins including 4 LSP, 2 ast-grep, and active compression", () => {
     const descriptors = createBuiltinToolDescriptors();
     const names = descriptors.map((descriptor) => descriptor.name);
 

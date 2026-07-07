@@ -228,7 +228,7 @@ describe("agentDefinitions", () => {
         TOOL_GOAL_ARTIFACT_READ,
         TOOL_GOAL_ARTIFACT_WRITE,
       ]);
-      expect(definition.tools.tools).not.toContain(TOOL_COMPRESS);
+      expect(definition.tools.tools).toContain(TOOL_COMPRESS);
       expect("delegateTargets" in definition.tools).toBe(false);
       expect("childPolicy" in definition).toBe(false);
       expect(definition.tools.tools).not.toContain(TOOL_DELEGATE);
@@ -262,6 +262,14 @@ describe("agentDefinitions", () => {
     for (const definition of agentDefinitions) {
       expect("canBeDelegated" in definition).toBe(false);
       expect("canBeDelegated" in definition.tools).toBe(false);
+    }
+  });
+
+  test("all active definitions have automatic compact hooks and active compress access", () => {
+    for (const definition of agentDefinitions) {
+      expect(definition.hooks.autoCompact).toBe(true);
+      expect(definition.tools.tools).toContain(TOOL_COMPRESS);
+      expect(definition.tools.tools).not.toContain("compact");
     }
   });
 

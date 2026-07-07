@@ -2,6 +2,7 @@ import type { AgentDefinition } from "../factory-types";
 import { SKILL_TOOLS } from "../constants";
 import {
   TOOL_ASK_USER,
+  TOOL_COMPRESS,
   TOOL_FILE_READ,
   TOOL_GLOB,
   TOOL_GREP,
@@ -46,6 +47,7 @@ Concise evidence output:
       TOOL_MEMORY_READ,
       TOOL_ASK_USER,
       TOOL_TODO_WRITE,
+      TOOL_COMPRESS,
       ...SKILL_TOOLS,
     ],
   },

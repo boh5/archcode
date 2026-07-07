@@ -2,6 +2,7 @@ import type { AgentDefinition } from "../factory-types";
 import { SKILL_TOOLS } from "../constants";
 import {
   TOOL_AST_GREP_SEARCH,
+  TOOL_COMPRESS,
   TOOL_FILE_READ,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
@@ -53,6 +54,7 @@ Concise evidence output:
       TOOL_LSP_FIND_REFERENCES,
       TOOL_LSP_SYMBOLS,
       TOOL_TODO_WRITE,
+      TOOL_COMPRESS,
       ...SKILL_TOOLS,
     ],
   },

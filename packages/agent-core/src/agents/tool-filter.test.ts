@@ -10,14 +10,18 @@ import {
 import { TOOL_COMPRESS } from "../tools/names";
 
 describe("compress tool access matrix", () => {
-  test("core agents can use compress for context management", () => {
-    for (const definition of [orchestratorAgentDefinition, planAgentDefinition, buildAgentDefinition, reviewerAgentDefinition]) {
+  test("all agents use autoCompact hooks and expose DCP-style compress for context management", () => {
+    for (const definition of [
+      orchestratorAgentDefinition,
+      planAgentDefinition,
+      buildAgentDefinition,
+      reviewerAgentDefinition,
+      exploreAgentDefinition,
+      librarianAgentDefinition,
+    ]) {
+      expect(definition.hooks.autoCompact).toBe(true);
       expect(definition.tools.tools).toContain(TOOL_COMPRESS);
+      expect(definition.tools.tools).not.toContain("compact");
     }
-  });
-
-  test("read-only explore and librarian agents do not expose compress", () => {
-    expect(exploreAgentDefinition.tools.tools).not.toContain(TOOL_COMPRESS);
-    expect(librarianAgentDefinition.tools.tools).not.toContain(TOOL_COMPRESS);
   });
 });

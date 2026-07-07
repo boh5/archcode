@@ -69,13 +69,16 @@ describe("buildSystemPrompt", () => {
     expect(result.indexOf("## Environment")).toBeLessThan(result.indexOf("## Project Context"));
   });
 
-  test("includes compression protocol instructions only when compress is allowed", async () => {
-    const withoutCompress = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read"] }));
+  test("includes compression protocol instructions when compress is allowed", async () => {
+    const withoutCompression = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read"] }));
     const withCompress = await buildSystemPrompt(makeCtx({ allowedTools: ["file_read", "compress"] }));
 
-    expect(withoutCompress).not.toContain("## Compression Protocol");
+    expect(withoutCompression).not.toContain("## Compression Protocol");
+    expect(withoutCompression).not.toContain("model-callable tool");
     expect(withCompress).toContain("## Compression Protocol");
+    expect(withCompress).toContain("runtime compact hook before model calls");
     expect(withCompress).toContain("startId/endId must be mNNNN refs or known bN block refs");
     expect(withCompress).toContain("(b1) exactly once");
+    expect(withCompress).not.toContain("compact takes no input");
   });
 });
