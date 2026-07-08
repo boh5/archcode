@@ -6,7 +6,7 @@ import {
   TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_MANAGE,
   type DoneCondition,
-  type DoneResult,
+  type GoalDoneResult,
   type GoalArtifactName,
   type GoalPhase,
   type GoalReviewOutcome,
@@ -174,10 +174,10 @@ async function executeGoalEvidence(
   store: ReturnType<typeof createSessionStore>,
   goalId: string,
   conditionId: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const result = await executeGoalEvidenceRaw(store, goalId, conditionId);
   expect(result.isError).toBe(false);
-  return JSON.parse(result.output) as DoneResult;
+  return JSON.parse(result.output) as GoalDoneResult;
 }
 
 async function executeGoalEvidenceRaw(
@@ -281,7 +281,7 @@ function tokenBudget(totalTokens: number): GoalTokenBudgetState {
   };
 }
 
-function task18Spec(ac002Status: "satisfied" | "failed"): string {
+function dailyUseSpec(ac002Status: "satisfied" | "failed"): string {
   const ac002Evidence = ac002Status === "satisfied"
     ? "retry repaired artifact tabs and redacted approval queue coverage"
     : "Goal detail retry tab coverage missing";
@@ -526,14 +526,14 @@ describe("Goal integration happy path", () => {
     expect(sessionStore.getState().events.some((event) => event.kind === "goal.done_check")).toBe(true);
   });
 
-  test("Task 18 DONE daily-use flow locks plan, approves after plan, records spec evidence, and completes without raw model output", async () => {
+  test("daily-use DONE flow locks plan, approves after plan, records spec evidence, and completes without raw model output", async () => {
     mockGenerateText
       .mockImplementationOnce(async () => ({ text: `plan raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
       .mockImplementationOnce(async () => ({ text: `build raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }))
       .mockImplementationOnce(async () => ({ text: `review raw ${RAW_PRIVATE_MARKER}`, toolCalls: [] }));
     const { runner, hitl, coordinator } = await createHitlRunner({ sessionIds: ["daily-main-session"] });
     const sessionStore = createSessionStore("daily-main-session", workspaceRoot);
-    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
+    await Bun.write(join(workspaceRoot, "SPEC.md"), dailyUseSpec("satisfied"));
 
     const draft = await manager.create(
       "project-a",
@@ -549,9 +549,9 @@ describe("Goal integration happy path", () => {
     const running = await runner.start(locked.id);
     appendGoalStateChange(sessionStore, running);
 
-    const planOutput = await runLlmText({ model: dummyModel, prompt: `Plan Task 18 goal ${running.id}` });
+    const planOutput = await runLlmText({ model: dummyModel, prompt: `Plan daily-use goal ${running.id}` });
     expect(planOutput.text).toContain(RAW_PRIVATE_MARKER);
-    await artifacts.writeArtifact(running, "plan.md", "# Plan\n\nStructured Task 18 plan artifact, no raw model output.", { agentName: "plan" });
+    await artifacts.writeArtifact(running, "plan.md", "# Plan\n\nStructured daily-use plan artifact, no raw model output.", { agentName: "plan" });
 
     const build = await advancePlanToBuildWithApproval(runner, coordinator, hitl, running.id);
     appendGoalStateChange(sessionStore, build);
@@ -562,13 +562,13 @@ describe("Goal integration happy path", () => {
     expect(budgeted.tokenBudget).toMatchObject({ status: "ok", totalTokens: 890, maxTokens: 1000 });
     await requestBudgetApprovalThroughHook(coordinator, hitl, budgeted);
 
-    const buildOutput = await runLlmText({ model: dummyModel, prompt: `Build Task 18 goal ${build.id}` });
+    const buildOutput = await runLlmText({ model: dummyModel, prompt: `Build daily-use goal ${build.id}` });
     expect(buildOutput.text).toContain(RAW_PRIVATE_MARKER);
     const reviewPhase = await runner.advancePhase(build.id, "review");
     appendGoalStateChange(sessionStore, reviewPhase);
     expect(reviewPhase.phase).toBe("review");
 
-    const reviewOutput = await runLlmText({ model: dummyModel, prompt: `Review Task 18 goal ${reviewPhase.id}` });
+    const reviewOutput = await runLlmText({ model: dummyModel, prompt: `Review daily-use goal ${reviewPhase.id}` });
     expect(reviewOutput.text).toContain(RAW_PRIVATE_MARKER);
 
     const wrongStore = createSessionStore("wrong-session", workspaceRoot);
@@ -584,7 +584,7 @@ describe("Goal integration happy path", () => {
     expect(specResult.specCompliance?.criteria.map((criterion) => criterion.criterionId)).toEqual(["AC-001", "AC-002"]);
     expect(specResult.specCompliance?.criteria.every((criterion) => criterion.compliant)).toBe(true);
 
-    const pausedForCompletion = await runner.finalizeReviewerReview(reviewPhase.id, "DONE", { summary: "Reviewer verified Task 18 DONE criteria." });
+    const pausedForCompletion = await runner.finalizeReviewerReview(reviewPhase.id, "DONE", { summary: "Reviewer verified daily-use DONE criteria." });
     expect(pausedForCompletion).toMatchObject({ status: "paused", phase: "review" });
     const beforeCompletePending = await waitForPendingApproval(hitl, reviewPhase.id, "before_complete");
     const completionResponse = await coordinator.respond(beforeCompletePending.hitlId, { type: "approval_decision", decision: "approved", comment: "Completion approved" });
@@ -593,7 +593,7 @@ describe("Goal integration happy path", () => {
     appendGoalStateChange(sessionStore, completed);
 
     expect(completed.status).toBe("completed");
-    expect(completed.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified Task 18 DONE criteria." });
+    expect(completed.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified daily-use DONE criteria." });
     expect(completed.repairContext).toBeUndefined();
     expect((await readGoalStateFile(reviewPhase.id)).status).toBe("completed");
     await expectArtifacts(reviewPhase.id, ["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "final-report.md"]);
@@ -607,12 +607,12 @@ describe("Goal integration happy path", () => {
 
     expect(mockGenerateText).toHaveBeenCalledTimes(3);
     expect(generateTextPrompts()).toEqual([
-      `Plan Task 18 goal ${running.id}`,
-      `Build Task 18 goal ${build.id}`,
-      `Review Task 18 goal ${reviewPhase.id}`,
+      `Plan daily-use goal ${running.id}`,
+      `Build daily-use goal ${build.id}`,
+      `Review daily-use goal ${reviewPhase.id}`,
     ]);
-    await writeEvidenceFile("task-18-full-done.txt", [
-      "Task 18 DONE path evidence",
+    await writeEvidenceFile("daily-use-full-done.txt", [
+      "Daily-use DONE path evidence",
       `goalId=${reviewPhase.id}`,
       `status=${completed.status}`,
       `reviewOutcome=${completed.reviewReport?.outcome}`,
@@ -623,7 +623,7 @@ describe("Goal integration happy path", () => {
     ]);
   });
 
-  test("Task 18 NOT_DONE repair flow schedules retry, exposes structured context, then completes DONE on attempt 2", async () => {
+  test("NOT_DONE repair flow schedules retry, exposes structured context, then completes DONE on attempt 2", async () => {
     let nowMs = Date.parse("2026-07-03T12:00:00.000Z");
     const delayCalls: number[] = [];
     const { runner, hitl, coordinator } = await createHitlRunner({
@@ -635,7 +635,7 @@ describe("Goal integration happy path", () => {
         nowMs += ms;
       }),
     });
-    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("failed"));
+    await Bun.write(join(workspaceRoot, "SPEC.md"), dailyUseSpec("failed"));
 
     const goal = await manager.create(
       "project-a",
@@ -679,7 +679,7 @@ describe("Goal integration happy path", () => {
     expect(retryLogAfterNotDone).toContain("| 1 | running | Reviewer NOT_DONE: required Done Conditions need repair (AC-002). | retry-main-session-2 | not scheduled | not exhausted |");
     expect(await readArtifact("review.md", retry.id)).toContain("NOT_DONE");
 
-    await Bun.write(join(workspaceRoot, "SPEC.md"), task18Spec("satisfied"));
+    await Bun.write(join(workspaceRoot, "SPEC.md"), dailyUseSpec("satisfied"));
     const attempt2Build = await advancePlanToBuildWithApproval(runner, coordinator, hitl, retry.id);
     const attempt2Review = await runner.advancePhase(attempt2Build.id, "review");
     const attempt2Store = reviewerStore("retry-review-session-2", attempt2Review.id);
@@ -701,8 +701,8 @@ describe("Goal integration happy path", () => {
     await expectArtifacts(completed.id, ["plan.md", "build.md", "review.md", "spec-compliance.md", "approvals.md", "budget.md", "retry-log.md", "final-report.md"]);
     await expectNoRawPrivateMarker(completed.id);
 
-    await writeEvidenceFile("task-18-not-done-retry.txt", [
-      "Task 18 NOT_DONE retry evidence",
+    await writeEvidenceFile("daily-use-not-done-retry.txt", [
+      "Daily-use NOT_DONE retry evidence",
       `goalId=${completed.id}`,
       "attempt1=NOT_DONE AC-002 failed",
       `retryCount=${completed.retryCount}`,

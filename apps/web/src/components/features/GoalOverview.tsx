@@ -1,7 +1,7 @@
 import { CheckCircle2, XCircle, Circle, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
 import { HitlInbox } from "./HitlCard";
 import { useRealtimeHitl } from "../../store/hitl-store";
-import type { DoneCondition, DoneResult, GoalState } from "../../api/types";
+import type { DoneCondition, GoalDoneResult, GoalState } from "../../api/types";
 
 interface GoalOverviewProps {
   goal: GoalState;
@@ -95,7 +95,7 @@ function DoneConditionsSection({ goal }: { goal: GoalState }) {
   );
 }
 
-function DoneConditionRow({ condition, result }: { condition: DoneCondition; result?: DoneResult }) {
+function DoneConditionRow({ condition, result }: { condition: DoneCondition; result?: GoalDoneResult }) {
   const passed = result?.passed;
   const hasResult = result !== undefined;
 

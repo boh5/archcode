@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
@@ -24,8 +25,8 @@ export function createTestProjectContext(workspaceRoot: string): ProjectContext 
     loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".archcode", "memory"),
-      user: join(workspaceRoot, ".archcode", "user-memory"),
+      project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+      user: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
   };

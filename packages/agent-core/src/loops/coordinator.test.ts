@@ -39,18 +39,18 @@ describe("LoopJobCoordinator", () => {
   test("serializes jobs with the same branchKey even when capacity is free", async () => {
     const clock = new FakeClock(2_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    await enqueueBranch(queue, "same", 1, "archcode/workbench:feature/shared");
+    await enqueueBranch(queue, "same", 1, "test-owner/test-repo:feature/shared");
     clock.set(2_001);
-    await enqueueBranch(queue, "same-again", 2, "archcode/workbench:feature/shared");
+    await enqueueBranch(queue, "same-again", 2, "test-owner/test-repo:feature/shared");
     clock.set(2_002);
-    await enqueueBranch(queue, "other", 3, "archcode/workbench:feature/other");
+    await enqueueBranch(queue, "other", 3, "test-owner/test-repo:feature/other");
     const coordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 3 } });
 
     const started = await coordinator.dispatchReady();
     const running = await queue.list(["running"]);
 
     expect(started.map((job) => job.subjectKey)).toEqual(["branch:same", "branch:other"]);
-    expect(running.map((job) => job.branchKey)).toEqual(["archcode/workbench:feature/shared", "archcode/workbench:feature/other"]);
+    expect(running.map((job) => job.branchKey)).toEqual(["test-owner/test-repo:feature/shared", "test-owner/test-repo:feature/other"]);
     expect((await queue.list(["pending"])).map((job) => job.subjectKey)).toEqual(["branch:same-again"]);
   });
 
@@ -74,7 +74,7 @@ describe("LoopJobCoordinator", () => {
   test("recovers stale running jobs on startup and clears stuck serialization", async () => {
     const clock = new FakeClock(4_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    await enqueueBranch(queue, "stale", 1, "archcode/workbench:feature/stale");
+    await enqueueBranch(queue, "stale", 1, "test-owner/test-repo:feature/stale");
     const firstCoordinator = new LoopJobCoordinator({ queue, clock, config: { maxConcurrent: 1 }, leaseTtlMs: 100 });
     const [started] = await firstCoordinator.dispatchReady();
     expect(started?.status).toBe("running");
@@ -85,11 +85,11 @@ describe("LoopJobCoordinator", () => {
 
     const recovered = await restartedCoordinator.start();
     expect(recovered).toHaveLength(1);
-    expect(recovered[0]).toMatchObject({ status: "pending", branchKey: "archcode/workbench:feature/stale" });
+    expect(recovered[0]).toMatchObject({ status: "pending", branchKey: "test-owner/test-repo:feature/stale" });
     expect(recovered[0]?.leaseExpiresAt).toBeUndefined();
 
     const [redispatched] = await restartedCoordinator.dispatchReady();
-    expect(redispatched).toMatchObject({ status: "running", branchKey: "archcode/workbench:feature/stale" });
+    expect(redispatched).toMatchObject({ status: "running", branchKey: "test-owner/test-repo:feature/stale" });
 
     const parsed = LoopJobQueueFileSchema.parse(JSON.parse(await Bun.file(await restartedQueue.queuePath()).text()));
     expect(parsed.jobs[0]?.status).toBe("running");
@@ -133,8 +133,8 @@ describe("LoopJobCoordinator", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:rerun-exec",
-      branchKey: "archcode/workbench:feature/rerun-exec",
-      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "feature/rerun-exec" },
+      branchKey: "test-owner/test-repo:feature/rerun-exec",
+      collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "feature/rerun-exec" },
       worktreePath: "/tmp/old-trigger-worktree",
       baseSha: oldBaseSha,
       resolvedHeadSha: oldSha,
@@ -146,8 +146,8 @@ describe("LoopJobCoordinator", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:rerun-exec",
-      branchKey: "archcode/workbench:feature/rerun-exec",
-      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "feature/rerun-exec" },
+      branchKey: "test-owner/test-repo:feature/rerun-exec",
+      collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "feature/rerun-exec" },
       worktreePath: "/tmp/coalesced-trigger-worktree",
       baseSha: newBaseSha,
       resolvedHeadSha: newSha,
@@ -182,8 +182,8 @@ async function enqueueBranch(queue: LoopJobQueue, name: string, index: number, b
     loopId: LOOP_ID,
     triggerKind: "on_commit",
     subjectKey: `branch:${name}`,
-    branchKey: branchKey ?? `archcode/workbench:feature/${name}`,
-    collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: `feature/${name}` },
+    branchKey: branchKey ?? `test-owner/test-repo:feature/${name}`,
+    collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: `feature/${name}` },
     priority,
     resolvedHeadSha,
     eventSummary: { summary: `commit ${index}` },

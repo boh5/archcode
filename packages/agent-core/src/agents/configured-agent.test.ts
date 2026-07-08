@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { ModelInfo } from "../provider/model";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
 import { storeManager } from "../store/store";

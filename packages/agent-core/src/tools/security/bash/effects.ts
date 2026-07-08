@@ -1,4 +1,5 @@
 import { normalize } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { NormalizedShellInvocation, NormalizedShellRequest, ShellEffect } from "../../permission/policy-types";
 
 const PRIVILEGE_ESCALATION_COMMANDS = new Set(["sudo", "su", "doas", "pkexec", "runuser"]);
@@ -10,6 +11,12 @@ const CATASTROPHIC_DELETE_TARGETS = new Set(["/", "~", "$HOME", "${HOME}", "/Use
 const SPEC_LINKED_MUTATORS = new Set(["rm", "mv", "cp", "tee", "mkdir", "touch", "chmod", "chown"]);
 const CREDENTIAL_EXFIL_COMMANDS = new Set(["curl", "wget", "scp", "rsync", "nc", "netcat"]);
 const SECURITY_WRITE_COMMANDS = new Set(["iptables", "nft", "csrutil"]);
+const PROJECT_DIR_TEXT_PATTERN = new RegExp(`(^|[^A-Za-z0-9._-])(?:\\./)?${escapeRegExp(PROJECT_STATE_DIR_NAME)}(?=$|[^A-Za-z0-9._-])`);
+const INLINE_PROJECT_MUTATION_PATTERN = /\b(?:rmtree|remove|unlink|rmdir|rmSync|unlinkSync|rmdirSync|writeFile|writeFileSync|writeText|write_text|mkdir|mkdirSync|rename|renameSync|chmod|chmodSync|chown|chownSync|copyFile|copyFileSync)\b|\bopen\s*\([^)]*,\s*["'][^"']*[wax+]/;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function hasRecursiveForce(argv: string[]): boolean {
   let recursive = false;
@@ -36,12 +43,13 @@ function argAfter(argv: string[], option: string): string | undefined {
 
 function isProjectPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".archcode" || normalized.startsWith(".archcode/") || normalized.includes("/.archcode/") || normalized.endsWith("/.archcode");
+  return normalized === PROJECT_STATE_DIR_NAME || normalized.startsWith(`${PROJECT_STATE_DIR_NAME}/`) || normalized.includes(`/${PROJECT_STATE_DIR_NAME}/`) || normalized.endsWith(`/${PROJECT_STATE_DIR_NAME}`);
 }
 
 function isPermissionsPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".archcode/permissions.json" || normalized.endsWith("/.archcode/permissions.json");
+  const permissionsPath = `${PROJECT_STATE_DIR_NAME}/permissions.json`;
+  return normalized === permissionsPath || normalized.endsWith(`/${permissionsPath}`);
 }
 
 function hasCredentialPath(argv: string[]): boolean {
@@ -101,6 +109,21 @@ function isRemoteDownloadCommand(invocation: NormalizedShellInvocation): boolean
   return DOWNLOAD_COMMANDS.has(invocation.command) || invocation.argv.some((arg) => /^https?:\/\//.test(arg));
 }
 
+function inlineScriptPayload(invocation: NormalizedShellInvocation): string | undefined {
+  if (["python", "python3", "node", "ruby", "perl"].includes(invocation.command)) {
+    return argAfter(invocation.argv, "-c") ?? argAfter(invocation.argv, "-e");
+  }
+  if (["sh", "bash", "zsh"].includes(invocation.command)) {
+    return argAfter(invocation.argv, "-c");
+  }
+  return undefined;
+}
+
+function mutatesProjectPathFromInlineScript(invocation: NormalizedShellInvocation): boolean {
+  const payload = inlineScriptPayload(invocation);
+  return Boolean(payload && PROJECT_DIR_TEXT_PATTERN.test(payload) && INLINE_PROJECT_MUTATION_PATTERN.test(payload));
+}
+
 function invocationEffects(invocation: NormalizedShellInvocation, next?: NormalizedShellInvocation): ShellEffect[] {
   const effects: ShellEffect[] = [];
   const command = invocation.command;
@@ -154,6 +177,9 @@ function invocationEffects(invocation: NormalizedShellInvocation, next?: Normali
   }
   if (command === "git" && invocation.argv[1] === "clean" && invocation.argv.some(isProjectPath)) {
     effects.push(effect("protected-path", "Direct mutation of .archcode is blocked"));
+  }
+  if (mutatesProjectPathFromInlineScript(invocation)) {
+    effects.push(effect("protected-path", "Inline script mutation of .archcode is blocked", PROJECT_STATE_DIR_NAME));
   }
   if (["sh", "bash", "zsh", "eval", "source", ".", "npx", "bunx"].includes(command)) effects.push(effect("execute-code", `${command} may execute code`));
   for (const uncertain of invocation.uncertainty) effects.push(effect("parser-uncertain", uncertain.reason, uncertain.token));

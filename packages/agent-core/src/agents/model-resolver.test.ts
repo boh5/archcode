@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ArchCodeConfig } from "../config/index";
-import { ModelInfo, UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
+import { ModelInfo, UnknownQualifiedIdError, type ProviderRegistry } from "../provider/index";
 import { MissingAgentModelConfigError, UnknownModelVariantError } from "./errors";
 import { resolveAgentModel } from "./model-resolver";
 

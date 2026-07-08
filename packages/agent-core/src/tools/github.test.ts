@@ -28,6 +28,16 @@ import type { GitHubConnectorApi, GitHubResponse, GitHubWorkflowRunsPage } from 
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "github-tools");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
+const CONNECTOR_COVERAGE_BRANCH = "feature/connector-coverage";
+
+interface PullRequestChecksOutput {
+  type: string;
+  data: {
+    headBranch: string;
+    headSha: string;
+    workflowRuns: Array<{ id: number }>;
+  };
+}
 
 const LOOP_CONFIG: LoopConfig = {
   title: "GitHub guarded loop",
@@ -48,7 +58,7 @@ afterAll(async () => {
 });
 
 describe("GitHub connector-backed tools", () => {
-  test("registers the exact Task 11 tool names with read-only and effectful traits", () => {
+  test("registers the exact GitHub connector tool names with read-only and effectful traits", () => {
     const descriptors = createGitHubToolDescriptors({ connector: makeConnector() });
     const byName = new Map(descriptors.map((descriptor) => [descriptor.name, descriptor]));
 
@@ -81,7 +91,7 @@ describe("GitHub connector-backed tools", () => {
   test("routes read tools to the injected connector without network access", async () => {
     const connector = makeConnector();
     const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    const input = { owner: "archcode", repo: "workbench", number: 42 };
+    const input = { owner: "test-owner", repo: "test-repo", number: 42 };
 
     const result = await registry.execute(
       { toolName: TOOL_GITHUB_GET_PULL_REQUEST, toolCallId: "gh-pr", input },
@@ -90,27 +100,27 @@ describe("GitHub connector-backed tools", () => {
 
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.output)).toMatchObject({ type: "github.pull_request", data: { number: 42 } });
-    expect(connector.getPullRequest).toHaveBeenCalledWith("archcode", "workbench", 42);
+    expect(connector.getPullRequest).toHaveBeenCalledWith("test-owner", "test-repo", 42);
   });
 
   test("maps pull request checks to connector-supported PR metadata and workflow runs", async () => {
     const connector = makeConnector();
     const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    const input = { owner: "archcode", repo: "workbench", number: 42, perPage: 25 };
+    const input = { owner: "test-owner", repo: "test-repo", number: 42, perPage: 25 };
 
     const result = await registry.execute(
       { toolName: TOOL_GITHUB_GET_PULL_REQUEST_CHECKS, toolCallId: "gh-checks", input },
       context(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS, [TOOL_GITHUB_GET_PULL_REQUEST_CHECKS], input),
     );
 
-    const output = JSON.parse(result.output) as Record<string, any>;
+    const output = JSON.parse(result.output) as PullRequestChecksOutput;
     expect(result.isError).toBe(false);
     expect(output.type).toBe("github.pull_request_checks");
-    expect(output.data.headBranch).toBe("feature/task-11");
+    expect(output.data.headBranch).toBe(CONNECTOR_COVERAGE_BRANCH);
     expect(output.data.headSha).toBe("abc123");
     expect(output.data.workflowRuns[0].id).toBe(9001);
-    expect(connector.listWorkflowRuns).toHaveBeenCalledWith("archcode", "workbench", {
-      branch: "feature/task-11",
+    expect(connector.listWorkflowRuns).toHaveBeenCalledWith("test-owner", "test-repo", {
+      branch: CONNECTOR_COVERAGE_BRANCH,
       headSha: "abc123",
       perPage: 25,
     });
@@ -119,7 +129,7 @@ describe("GitHub connector-backed tools", () => {
   test("effectful tools request permission before connector execution", async () => {
     const connector = makeConnector();
     const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    const input = { owner: "archcode", repo: "workbench", issueNumber: 42, body: "Looks good" };
+    const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
     const confirmPermission = mock(async (request) => {
       expect(request.toolName).toBe(TOOL_GITHUB_CREATE_ISSUE_COMMENT);
       expect(request.ruleId).toBe("github.create_issue_comment");
@@ -129,7 +139,7 @@ describe("GitHub connector-backed tools", () => {
           kind: "tool-operation",
           toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT,
           operation: "create_issue_comment",
-          target: "archcode/workbench#42",
+          target: "test-owner/test-repo#42",
         },
       });
       return "approve_once" as const;
@@ -142,13 +152,13 @@ describe("GitHub connector-backed tools", () => {
 
     expect(result.isError).toBe(false);
     expect(confirmPermission).toHaveBeenCalledTimes(1);
-    expect(connector.createIssueComment).toHaveBeenCalledWith("archcode", "workbench", 42, "Looks good");
+    expect(connector.createIssueComment).toHaveBeenCalledWith("test-owner", "test-repo", 42, "Looks good");
   });
 
   test("permission denial blocks rerun connector execution", async () => {
     const connector = makeConnector();
     const registry = createRegistry(createGitHubToolDescriptors({ connector }));
-    const input = { owner: "archcode", repo: "workbench", runId: 9001, headBranch: "main" };
+    const input = { owner: "test-owner", repo: "test-repo", runId: 9001, headBranch: "main" };
 
     const result = await registry.execute(
       { toolName: TOOL_GITHUB_RERUN_WORKFLOW_RUN, toolCallId: "gh-rerun", input },
@@ -171,13 +181,13 @@ describe("GitHub connector-backed tools", () => {
     const contender = await stateManager.create("project-a", LOOP_CONFIG);
     const ledger = new CollisionLedger({ stateManager, workspaceRoot: TMP_DIR, leaseTtlMs: 60_000 });
     await ledger.acquire({
-      target: { type: "issue", owner: "archcode", repo: "workbench", number: 42 },
+      target: { type: "issue", owner: "test-owner", repo: "test-repo", number: 42 },
       loopId: holder.loopId,
       runId: "run-a",
       priority: 10,
       expiresAt: Date.now() + 60_000,
     });
-    const input = { owner: "archcode", repo: "workbench", issueNumber: 42, body: "Looks good" };
+    const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
     const confirmPermission = mock(async () => "approve_once" as const);
 
     const result = await registry.execute(
@@ -224,7 +234,7 @@ describe("GitHub connector-backed tools", () => {
       },
       updatedAt: Date.now(),
     });
-    const input = { owner: "archcode", repo: "workbench", issueNumber: 42, body: "Looks good" };
+    const input = { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Looks good" };
     const confirmPermission = mock(async () => "approve_once" as const);
 
     const result = await registry.execute(
@@ -278,8 +288,8 @@ function makeConnector(): GitHubConnectorApi & Record<string, ReturnType<typeof 
   return {
     getPullRequest: mock(async (_owner: string, _repo: string, number: number) => response({
       number,
-      title: "Task 11",
-      head: { ref: "feature/task-11", sha: "abc123" },
+      title: "Improve connector coverage",
+      head: { ref: CONNECTOR_COVERAGE_BRANCH, sha: "abc123" },
     })),
     listPullRequests: mock(async () => response([{ number: 1 }, { number: 2 }])),
     getPullRequestFiles: mock(async () => response([{ filename: "src/index.ts" }])),
@@ -287,7 +297,7 @@ function makeConnector(): GitHubConnectorApi & Record<string, ReturnType<typeof 
     createIssueComment: mock(async () => response({ id: 101, body: "created" }, 201)),
     listWorkflowRuns: mock(async () => response<GitHubWorkflowRunsPage>({
       total_count: 1,
-      workflow_runs: [{ id: 9001, head_branch: "feature/task-11", head_sha: "abc123", status: "completed" }],
+      workflow_runs: [{ id: 9001, head_branch: CONNECTOR_COVERAGE_BRANCH, head_sha: "abc123", status: "completed" }],
     })),
     getWorkflowRun: mock(async (_owner: string, _repo: string, runId: number) => response({ id: runId, status: "completed", conclusion: "success" })),
     rerunWorkflowRun: mock(async () => response(undefined, 201)),

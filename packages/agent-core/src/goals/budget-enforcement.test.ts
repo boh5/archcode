@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, GoalTokenBudgetState } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL, type DoneCondition, type GoalTokenBudgetState } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
 import { HitlService } from "../hitl/service";
@@ -75,7 +75,7 @@ describe("Goal budget enforcement", () => {
     expect(paused.status).toBe("paused");
     expect(paused.attentionStatus).toBe("waiting_for_human");
     expect(paused.blockedByHitlIds).toEqual([pending.hitlId]);
-    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_budget", action: "awaitBudgetApproval", approvalPoint: BUDGET_APPROVAL_POINT });
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_budget", action: GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL, approvalPoint: BUDGET_APPROVAL_POINT });
     expect(paused.tokenBudget).toMatchObject({ status: "paused", totalTokens: 890 });
     expect(streamText).toHaveBeenCalledTimes(0);
 

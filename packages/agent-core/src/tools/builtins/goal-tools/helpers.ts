@@ -1,4 +1,4 @@
-import type { DoneResult, GoalState } from "@archcode/protocol";
+import type { GoalDoneResult, GoalState } from "@archcode/protocol";
 
 import {
   GoalArtifactNameError,
@@ -75,7 +75,7 @@ export function formatGoalResult(goal: GoalState): string {
   return formatGoalToolResult(goal);
 }
 
-export function formatDoneResult(result: DoneResult): string {
+export function formatDoneResult(result: GoalDoneResult): string {
   return formatGoalToolResult(result);
 }
 

@@ -74,7 +74,7 @@ Any errors, failed attempts, or issues encountered.
 Be thorough but concise. Preserve all important context that would be needed to continue the conversation effectively. Do NOT include any content from the current incomplete user message — it will be preserved verbatim in the tail.`;
 
 // ---------------------------------------------------------------------------
-// Phase 1: Select compactable prefix
+// Select compactable prefix
 // ---------------------------------------------------------------------------
 
 interface TailBoundary {
@@ -193,7 +193,7 @@ function adjustBoundaryForToolAtomicity(messages: StoredMessage[], splitIndex: n
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2: Prune tool outputs in prefix (on deep-cloned messages)
+// Prune tool outputs in prefix (on deep-cloned messages)
 // ---------------------------------------------------------------------------
 
 async function pruneToolOutputs(
@@ -225,7 +225,7 @@ async function pruneToolOutputs(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Summarize prefix
+// Summarize prefix
 // ---------------------------------------------------------------------------
 
 async function summarizePrefix(

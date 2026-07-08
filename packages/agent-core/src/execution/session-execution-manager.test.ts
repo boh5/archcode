@@ -5,7 +5,7 @@ import { createEmptySessionStats } from "@archcode/protocol";
 import type { Agent, AgentResult, AgentRunOptions } from "../agents/types";
 import { AgentRunningError, ConcurrentLimitError, ConcurrentSessionLimitError, DelegateTargetNotAllowedError, DepthLimitError, ChildSessionNotFoundError, ChildSessionAgentMismatchError, ChildSessionParentMismatchError, ChildSessionNotDescendantError } from "../agents/errors";
 import type { SessionAgentManager } from "../agents/session-agent-manager";
-import type { CommandResult } from "../commands/types";
+import type { SlashCommandResult } from "../commands/types";
 import { SessionDeleteConflictError } from "../store/errors";
 import type { SessionFile } from "../store/helpers";
 import { SessionStoreManager } from "../store/session-store-manager";
@@ -53,7 +53,7 @@ class MockAgent implements Agent {
     this.store.getState().append({ type: "text-end" });
     return result;
   });
-  dispatchCommandMock?: (name: string, args?: string) => Promise<CommandResult>;
+  dispatchCommandMock?: (name: string, args?: string) => Promise<SlashCommandResult>;
 
   constructor(
     readonly sessionId: string,
@@ -69,7 +69,7 @@ class MockAgent implements Agent {
     return this.runMock(userMessage, options);
   }
 
-  async dispatchCommand(name: string, args?: string): Promise<CommandResult> {
+  async dispatchCommand(name: string, args?: string): Promise<SlashCommandResult> {
     if (!this.dispatchCommandMock) return { success: false, message: "missing" };
     return await this.dispatchCommandMock(name, args);
   }

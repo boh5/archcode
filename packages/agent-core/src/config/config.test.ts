@@ -409,8 +409,8 @@ describe("parseConfig", () => {
           enabled: true,
           tokenEnv: "ARCHCODE_GITHUB_TOKEN",
           apiBaseUrl: "https://api.github.com",
-          defaultOwner: "archcode",
-          defaultRepo: "workbench",
+          defaultOwner: "test-owner",
+          defaultRepo: "test-repo",
         },
       },
     });
@@ -419,8 +419,8 @@ describe("parseConfig", () => {
       enabled: true,
       tokenEnv: "ARCHCODE_GITHUB_TOKEN",
       apiBaseUrl: "https://api.github.com",
-      defaultOwner: "archcode",
-      defaultRepo: "workbench",
+      defaultOwner: "test-owner",
+      defaultRepo: "test-repo",
     });
   });
 

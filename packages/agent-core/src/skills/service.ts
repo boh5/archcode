@@ -1,12 +1,13 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import { BUILTIN_SKILL_BODIES } from "./builtin/manifest";
 import { assertSkillName, parseSkillMarkdown } from "./schema";
 import type { ResolvedSkill, SkillIndexEntry, SkillSource } from "./types";
 import { resolveContainedPath, SafePathError } from "../utils/safe-file";
 
-const PROJECT_SKILLS_DIR = join(".archcode", "skills");
+const PROJECT_SKILLS_DIR = join(PROJECT_STATE_DIR_NAME, "skills");
 const SKILL_FILE = "SKILL.md";
 
 export class SkillPathError extends Error {
@@ -69,7 +70,7 @@ export class SkillService {
   readonly #builtinSkills: Record<string, string>;
 
   constructor(options: SkillServiceOptions = {}) {
-    this.userSkillsRoot = resolve(options.userSkillsRoot ?? join(homedir(), ".archcode", "skills"));
+    this.userSkillsRoot = resolve(options.userSkillsRoot ?? join(homedir(), USER_DATA_DIR_NAME, "skills"));
     this.#builtinSkills = options.builtinSkills ?? BUILTIN_SKILL_BODIES;
   }
 

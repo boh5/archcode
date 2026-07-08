@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import type { ActiveSessionExecution, CommandResult, AgentRuntime } from "@archcode/agent-core";
+import type { ActiveSessionExecution, SlashCommandResult, AgentRuntime } from "@archcode/agent-core";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "commands-routes");
@@ -22,7 +22,7 @@ function makeExecution(sessionId: string, workspaceRoot: string): ActiveSessionE
 
 function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
   const running = new Set<string>();
-  const dispatch = mock(async (_workspaceRoot: string, sessionId: string, name: string, _args?: string): Promise<CommandResult | null> => {
+  const dispatch = mock(async (_workspaceRoot: string, sessionId: string, name: string, _args?: string): Promise<SlashCommandResult | null> => {
     if (!running.has(sessionId)) return null;
     if (name === "compact") return { success: true, message: "Context compacted" };
     return { success: false, message: `Unknown command: ${name}` };

@@ -1,7 +1,7 @@
 import type {
   ApprovalPoint,
   DoneCondition,
-  DoneResult,
+  GoalDoneResult,
   GoalPhase,
   GoalRepairContext,
   GoalRetryFailureMetadata,
@@ -213,7 +213,7 @@ export class GoalRunner {
     return this.#goalStateManager.updatePhase(goalId, nextPhase);
   }
 
-  async recordReviewerDoneResult(goalId: string, conditionId: string, result: DoneResult): Promise<GoalState> {
+  async recordReviewerDoneResult(goalId: string, conditionId: string, result: GoalDoneResult): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
     assertGoalReviewEvidencePhaseStatus(current);
     return persistReviewerDoneResult(this.#goalStateManager, current, conditionId, result);
@@ -222,7 +222,7 @@ export class GoalRunner {
   async recordAuthorizedReviewerDoneResult(
     goalId: string,
     conditionId: string,
-    result: DoneResult,
+    result: GoalDoneResult,
     authorization: GoalReviewerDoneAuthorization,
   ): Promise<GoalState> {
     const current = await this.#goalStateManager.read(goalId);
@@ -528,7 +528,7 @@ function buildRepairContext(goal: GoalState): GoalRepairContext {
 
 function reviewCriteriaForCondition(
   condition: DoneCondition,
-  result: DoneResult | undefined,
+  result: GoalDoneResult | undefined,
 ): GoalSpecComplianceCriterionEvidence[] {
   if (condition.kind === "spec_compliance" && result?.specCompliance) {
     return result.specCompliance.criteria;
@@ -543,7 +543,7 @@ function reviewCriteriaForCondition(
   }];
 }
 
-function repairIssuesForCondition(condition: DoneCondition, result: DoneResult | undefined): GoalRepairContext["issues"] {
+function repairIssuesForCondition(condition: DoneCondition, result: GoalDoneResult | undefined): GoalRepairContext["issues"] {
   if (result?.passed === true) return [];
 
   if (condition.kind === "spec_compliance" && result?.specCompliance) {
@@ -667,7 +667,7 @@ export async function recordAuthorizedReviewerDoneResult(
   goalStateManager: GoalStateManager,
   goalId: string,
   conditionId: string,
-  result: DoneResult,
+  result: GoalDoneResult,
   authorization: GoalReviewerDoneAuthorization,
 ): Promise<GoalState> {
   const current = await goalStateManager.read(goalId);
@@ -691,7 +691,7 @@ async function persistReviewerDoneResult(
   goalStateManager: GoalStateManager,
   goal: GoalState,
   conditionId: string,
-  result: DoneResult,
+  result: GoalDoneResult,
 ): Promise<GoalState> {
   await goalStateManager.recordDoneResult(goal.id, conditionId, result);
   if (goal.status === "running") return goalStateManager.transitionStatus(goal.id, "verifying");

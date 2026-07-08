@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { CACHE_NAMESPACE } from "@archcode/protocol";
 import type { BinarySpec, SupportedTargetTriple } from "./types";
 
 export interface BinaryCacheEnv {
@@ -27,7 +28,7 @@ export class UnsupportedBinaryPlatformError extends Error {
 
 export function getBinaryCacheBaseDir(env: BinaryCacheEnv = currentBinaryCacheEnv()): string {
   const base = env.XDG_CACHE_HOME ?? (env.HOME ? join(env.HOME, ".cache") : import.meta.dir);
-  return join(base, "archcode", "bin");
+  return join(base, CACHE_NAMESPACE, "bin");
 }
 
 export function getBinaryCacheDir(params: {

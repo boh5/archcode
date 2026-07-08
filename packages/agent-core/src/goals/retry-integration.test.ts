@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
+import type { DoneCondition, GoalDoneResult, GoalState } from "@archcode/protocol";
 
 import { GoalApprovalGate, type ReviewOutcome } from "../hitl/goal-gates";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -46,11 +46,11 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function passingResult(conditionId = condition.id): DoneResult {
+function passingResult(conditionId = condition.id): GoalDoneResult {
   return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
-function failingResult(conditionId = condition.id): DoneResult {
+function failingResult(conditionId = condition.id): GoalDoneResult {
   return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
 }
 

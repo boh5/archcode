@@ -1,6 +1,7 @@
 export { ModelInfo } from "./model";
 export {
-  Registry,
+  ProviderRegistry,
+  ProviderRegistry as Registry,
   createRegistry,
   UnknownQualifiedIdError,
 } from "./registry";

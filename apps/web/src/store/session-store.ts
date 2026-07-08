@@ -64,7 +64,7 @@ export interface WebSessionStoreState extends SessionProjection {
   }) => void;
 }
 
-interface RegistryEntry {
+interface SessionRegistryEntry {
   store: StoreApi<WebSessionStoreState>;
   slug: string | undefined;
   sessionId: string;
@@ -72,7 +72,7 @@ interface RegistryEntry {
   foreground: boolean;
 }
 
-const sessionRegistry = new Map<string, RegistryEntry>();
+const sessionRegistry = new Map<string, SessionRegistryEntry>();
 const pendingRemoteEvents = new WeakMap<StoreApi<WebSessionStoreState>, Map<number, GlobalSessionEventEnvelope>>();
 
 function scopedWebKey(slug: string, sessionId: string): string {
@@ -216,7 +216,7 @@ function drainBufferedRemoteEvents(store: StoreApi<WebSessionStoreState>): void 
   }
 }
 
-function isPinned(entry: RegistryEntry): boolean {
+function isPinned(entry: SessionRegistryEntry): boolean {
   const state = entry.store.getState();
   return (
     entry.foreground ||

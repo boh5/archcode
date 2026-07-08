@@ -1,10 +1,11 @@
 import { join, resolve, sep } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 let _override: ((workspaceRoot: string) => string) | undefined;
 
 export function getSessionsDir(workspaceRoot: string): string {
   if (_override) return _override(workspaceRoot);
-  return join(workspaceRoot, ".archcode", "sessions");
+  return join(workspaceRoot, PROJECT_STATE_DIR_NAME, "sessions");
 }
 
 /**

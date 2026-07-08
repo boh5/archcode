@@ -1,4 +1,4 @@
-import { normalizeUsage } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL, normalizeUsage } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
 import type { ProjectContext } from "../projects/types";
@@ -136,7 +136,7 @@ async function requestBudgetApproval(
     blockedAt: new Date().toISOString(),
     phase: goal.phase,
     kind: "goal_budget",
-    action: "awaitBudgetApproval",
+    action: GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL,
     approvalPoint: BUDGET_APPROVAL_POINT,
     estimatedNextCallTokens,
     reason: "Budget warning approval is pending",

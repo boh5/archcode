@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
+import { CACHE_NAMESPACE } from "@archcode/protocol";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 import { createProcessRunner, setProcessRunnerForTest } from "../process/runner";
@@ -201,7 +202,7 @@ function getInstallRoot(serverId: string): string {
 
 function getInstallBaseDir(): string {
   const base = Bun.env.XDG_CACHE_HOME ?? (Bun.env.HOME ? join(Bun.env.HOME, ".cache") : import.meta.dir);
-  return join(base, "archcode", "lsp-servers");
+  return join(base, CACHE_NAMESPACE, "lsp-servers");
 }
 
 async function runInstallerCommand(command: string[], options: ExecCommandOptions = {}): Promise<ExecCommandResult> {

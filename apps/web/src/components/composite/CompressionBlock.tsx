@@ -44,10 +44,10 @@ const STATUS_LABEL: Record<CompressionBlockStatus, string> = {
 };
 
 type ExpansionState =
-  | { phase: "collapsed" }
-  | { phase: "loading" }
-  | { phase: "loaded"; data: CompressionOriginalRangeSuccess }
-  | { phase: "error"; message: string };
+  | { status: "collapsed" }
+  | { status: "loading" }
+  | { status: "loaded"; data: CompressionOriginalRangeSuccess }
+  | { status: "error"; message: string };
 
 export interface CompressionBlockProps {
   part: CompressionBlockPart;
@@ -60,7 +60,7 @@ export interface CompressionBlockProps {
 
 export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessionId, snapshot, childSessionLinks = [] }: CompressionBlockProps) {
   const [expanded, setExpanded] = useState(false);
-  const [expansion, setExpansion] = useState<ExpansionState>({ phase: "collapsed" });
+  const [expansion, setExpansion] = useState<ExpansionState>({ status: "collapsed" });
 
   async function handleToggleOriginalRange(): Promise<void> {
     if (expanded) {
@@ -68,26 +68,26 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
       return;
     }
     setExpanded(true);
-    if (expansion.phase === "loaded" || expansion.phase === "loading") return;
+    if (expansion.status === "loaded" || expansion.status === "loading") return;
 
-    setExpansion({ phase: "loading" });
+    setExpansion({ status: "loading" });
     try {
       const data = await fetchCompressionOriginalRange(projectSlug, sessionId, part.blockRef);
-      setExpansion({ phase: "loaded", data });
+      setExpansion({ status: "loaded", data });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load original range";
-      setExpansion({ phase: "error", message });
+      setExpansion({ status: "error", message });
     }
   }
 
   async function handleRetry(): Promise<void> {
-    setExpansion({ phase: "loading" });
+    setExpansion({ status: "loading" });
     try {
       const data = await fetchCompressionOriginalRange(projectSlug, sessionId, part.blockRef);
-      setExpansion({ phase: "loaded", data });
+      setExpansion({ status: "loaded", data });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load original range";
-      setExpansion({ phase: "error", message });
+      setExpansion({ status: "error", message });
     }
   }
 
@@ -145,13 +145,13 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
 
       {expanded && (
         <div className="border-t border-border-subtle">
-          {expansion.phase === "loading" && (
+          {expansion.status === "loading" && (
             <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-text-muted">
               <LoaderCircle size={12} className="animate-spin" />
               <span>Loading original range…</span>
             </div>
           )}
-          {expansion.phase === "error" && (
+          {expansion.status === "error" && (
             <div className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-error">
               <AlertTriangle size={12} />
               <span className="flex-1">{expansion.message}</span>
@@ -165,7 +165,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               </button>
             </div>
           )}
-          {expansion.phase === "loaded" && (
+          {expansion.status === "loaded" && (
             <OriginalRangeView
               data={expansion.data}
               projectSlug={projectSlug}
@@ -173,7 +173,7 @@ export function CompressionBlock({ part, projectSlug, sessionId, focusStoreSessi
               childSessionLinks={childSessionLinks}
             />
           )}
-          {expansion.phase === "collapsed" && null}
+          {expansion.status === "collapsed" && null}
         </div>
       )}
     </div>

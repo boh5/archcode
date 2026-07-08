@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, HitlRecord, HitlResponse } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_ADVANCE_PHASE, GOAL_HITL_ACTION_FINALIZE_REVIEW, type DoneCondition, type HitlRecord, type HitlResponse } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "./goal-gates";
@@ -89,7 +89,7 @@ describe("GoalApprovalGate", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect((await goalStateManager.read(goal.id)).resumeCheckpoint).toMatchObject({
       kind: "goal_approval",
-      action: "advancePhase",
+      action: GOAL_HITL_ACTION_ADVANCE_PHASE,
       approvalPoint: "after_plan",
       hitlId: record.hitlId,
     });
@@ -133,7 +133,7 @@ describe("GoalApprovalGate", () => {
 
     expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
     const persisted = await goalStateManager.read(goal.id);
-    expect(persisted.resumeCheckpoint).toMatchObject({ kind: "goal_review", action: "finalizeReviewerReview", hitlId: record.hitlId });
+    expect(persisted.resumeCheckpoint).toMatchObject({ kind: "goal_review", action: GOAL_HITL_ACTION_FINALIZE_REVIEW, hitlId: record.hitlId });
     expect(persisted.doneResults.reviewer_approval).toBeUndefined();
   });
 

@@ -7,6 +7,7 @@ import type {
   GoalPhase,
   GoalState,
 } from "@archcode/protocol";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { containsSecretPattern } from "../security/patterns";
 import { atomicWrite, resolveContainedPath, SafePathError } from "../utils/safe-file";
@@ -162,7 +163,7 @@ export class GoalArtifactManager {
   }
 
   private goalsRoot(): string {
-    return resolve(this.workspaceRoot, ".archcode", "goals");
+    return resolve(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "goals");
   }
 }
 

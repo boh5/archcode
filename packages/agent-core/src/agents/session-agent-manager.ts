@@ -1,6 +1,6 @@
 import type { ArchCodeConfig } from "../config/index";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ProviderRegistry } from "../provider/index";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { scopedKey } from "../store/key";
 import type { SessionStoreState } from "../store/types";
@@ -13,7 +13,7 @@ import { createAgentFactory } from "./factory";
 import type { AgentFactory } from "./factory";
 import type { AgentDefinition } from "./factory-types";
 import type { Agent } from "./types";
-import type { CommandResult } from "../commands/types";
+import type { SlashCommandResult } from "../commands/types";
 import type { Logger } from "../logger";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 
@@ -158,7 +158,7 @@ export class SessionAgentManager {
     sessionId: string,
     name: string,
     args?: string,
-  ): Promise<CommandResult | null> {
+  ): Promise<SlashCommandResult | null> {
     const agent = this.get(workspaceRoot, sessionId);
     if (!agent?.dispatchCommand) return null;
 

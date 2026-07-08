@@ -183,8 +183,8 @@ function findConnectorMutatingToolDescriptorViolations(files: string[]): Violati
   return violations;
 }
 
-describe("Loop Phase 5 architecture guardrails", () => {
-  test("Loop Phase 5 surface explicitly includes confirmed scheduling, queue, worktree, and cleanup contracts", () => {
+describe("Loop hardening architecture guardrails", () => {
+  test("Loop surface explicitly includes confirmed scheduling, queue, worktree, and cleanup contracts", () => {
     const loopStateSource = readProductionSource(loopStateFile);
     const protocolSource = readProductionSource(protocolTypesFile);
 
@@ -225,7 +225,7 @@ describe("Loop Phase 5 architecture guardrails", () => {
     expect(existsSync(loopCleanupFile)).toBe(true);
   });
 
-  test("Loop Phase 4 surface keeps budget, PR collision, integration, and profile metadata first-class", () => {
+  test("Loop integration surface keeps budget, PR collision, integration, and profile metadata first-class", () => {
     const loopStateSource = readProductionSource(loopStateFile);
     const protocolSource = readProductionSource(protocolTypesFile);
 
@@ -296,7 +296,7 @@ describe("Loop Phase 5 architecture guardrails", () => {
     expectNoViolations(findConnectorMutatingToolDescriptorViolations(connectorDescriptorFiles));
   });
 
-  test("excluded Phase 5b concepts stay out of Loop production surfaces", () => {
+  test("excluded future customization concepts stay out of Loop production surfaces", () => {
     expectNoViolations(findTextViolations(loopProductionFiles, [
       /\bcustomPattern(?:Path|Registry|Profile|Script|Hooks?|Dsl|DSL)?\b/,
       /\bpattern(?:Registry|Profile|Script|Hooks?|Dsl|DSL)\b/,

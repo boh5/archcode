@@ -1,10 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 import type { StoreApi } from "zustand";
 import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import { CommandRegistry, createCompactCommand, createSkillCommand } from "../commands/index";
-import type { CommandResult } from "../commands/types";
+import type { SlashCommandResult } from "../commands/types";
 import type { MemoryExtractionConfig, ModelCallOptions } from "../config/index";
 import type { MemoryRoots } from "../memory";
 import { ProjectContextResolver } from "../projects/context-resolver";
@@ -12,7 +13,7 @@ import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
 import { shouldExposeOperatorRepairContext } from "../goals/operator-repair-context";
 import { createLoopBudgetEnforcementHooks } from "../loops/budget-hooks";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SkillService } from "../skills";
 import type { ResolvedSkill } from "../skills/types";
@@ -145,8 +146,8 @@ export class ConfiguredAgent implements Agent {
       await enforceQuota(directory, { logger: this.logger.child({ module: "tool.output.cache" }) });
     });
     this.memoryRoots = {
-      project: join(this.workspaceRoot, ".archcode", "memory"),
-      user: join(homedir(), ".archcode", "memory"),
+      project: join(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+      user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
     };
 
     this.commandRegistry = new CommandRegistry();
@@ -284,7 +285,7 @@ export class ConfiguredAgent implements Agent {
     }
   }
 
-  async dispatchCommand(name: string, args?: string): Promise<CommandResult> {
+  async dispatchCommand(name: string, args?: string): Promise<SlashCommandResult> {
     if (this.disposed) {
       throw new Error("Agent has been disposed");
     }

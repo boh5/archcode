@@ -28,15 +28,15 @@ afterAll(async () => {
 
 describe("CollisionLedger", () => {
   test("canonicalizes target keys for PR, issue, branch, and workspace-relative files", () => {
-    expect(canonicalTargetKey({ type: "pr", owner: "archcode", repo: "archcode", number: 42 })).toBe("github:archcode/archcode:pr:42");
-    expect(canonicalTargetKey({ type: "issue", owner: "archcode", repo: "archcode", number: 7 })).toBe("github:archcode/archcode:issue:7");
-    expect(canonicalTargetKey({ type: "branch", owner: "archcode", repo: "archcode", branch: "main" })).toBe("git:archcode/archcode:branch:main");
+    expect(canonicalTargetKey({ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 })).toBe("github:test-owner/test-repo:pr:42");
+    expect(canonicalTargetKey({ type: "issue", owner: "test-owner", repo: "test-repo", number: 7 })).toBe("github:test-owner/test-repo:issue:7");
+    expect(canonicalTargetKey({ type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" })).toBe("git:test-owner/test-repo:branch:main");
     expect(canonicalTargetKey({ type: "file", path: "src/index.ts" })).toBe("file:src/index.ts");
   });
 
   test("same PR target conflict skips lower-priority newer lease", async () => {
     const fixture = await createFixture();
-    const target: CollisionTarget = { type: "pr", owner: "archcode", repo: "archcode", number: 42 };
+    const target: CollisionTarget = { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 };
     const loopA = await fixture.stateManager.create("project-a", config);
     const loopB = await fixture.stateManager.create("project-a", config);
 
@@ -45,14 +45,14 @@ describe("CollisionLedger", () => {
 
     expect(held.acquired).toBe(true);
     expect(skipped.acquired).toBe(false);
-    expect(skipped.conflict).toMatchObject({ targetKey: "github:archcode/archcode:pr:42" });
+    expect(skipped.conflict).toMatchObject({ targetKey: "github:test-owner/test-repo:pr:42" });
     expect(skipped.conflict?.conflictingLease).toMatchObject({ loopId: loopA.loopId, runId: "run-a", priority: 10 });
     expect(await fixture.ledger.readActiveLeases()).toHaveLength(1);
   });
 
   test("stale lease cleanup removes expired leases and allows a new action", async () => {
     const fixture = await createFixture();
-    const target: CollisionTarget = { type: "pr", owner: "archcode", repo: "archcode", number: 42 };
+    const target: CollisionTarget = { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 };
     const loopA = await fixture.stateManager.create("project-a", config);
     const loopB = await fixture.stateManager.create("project-a", config);
 
@@ -69,7 +69,7 @@ describe("CollisionLedger", () => {
 
   test("higher priority replaces an existing lower-priority lease", async () => {
     const fixture = await createFixture();
-    const target: CollisionTarget = { type: "issue", owner: "archcode", repo: "archcode", number: 9 };
+    const target: CollisionTarget = { type: "issue", owner: "test-owner", repo: "test-repo", number: 9 };
     const loopA = await fixture.stateManager.create("project-a", config);
     const loopB = await fixture.stateManager.create("project-a", config);
 
@@ -84,7 +84,7 @@ describe("CollisionLedger", () => {
 
   test("same-priority older lease wins against newer lease", async () => {
     const fixture = await createFixture();
-    const target: CollisionTarget = { type: "branch", owner: "archcode", repo: "archcode", branch: "feature/x" };
+    const target: CollisionTarget = { type: "branch", owner: "test-owner", repo: "test-repo", branch: "feature/x" };
     const loopA = await fixture.stateManager.create("project-a", config);
     const loopB = await fixture.stateManager.create("project-a", config);
 

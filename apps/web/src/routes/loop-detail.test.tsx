@@ -224,7 +224,7 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       updatedAt: 1700000120000,
     },
     latestCollisions: {
-      targets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+      targets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
       activeLeases: [],
       conflicts: [],
       updatedAt: 1700000120000,
@@ -259,7 +259,7 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
         resetDateUtc: "2026-07-05",
         pricingUnavailable: true,
       },
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
       integrationErrors: [],
       toolProfileId: "loop_github_pr_watch",
     }),
@@ -322,14 +322,14 @@ function setupLoopDetailFetch(input: {
         resetDateUtc: "2026-07-05",
         estimatedUsd: 0.0123,
       },
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
       collisionConflicts: [
         {
-          targetKey: "github:archcode/archcode:pr:42",
-          target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+          targetKey: "github:test-owner/test-repo:pr:42",
+          target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
           conflictingLease: {
-            targetKey: "github:archcode/archcode:pr:42",
-            target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+            targetKey: "github:test-owner/test-repo:pr:42",
+            target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
             loopId: "other-loop",
             runId: "other-run",
             priority: 1,
@@ -560,13 +560,13 @@ describe("LoopDetailRoute", () => {
       expect(container.querySelector('[data-testid="loop-cancel-current-run-button"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
       expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("maintenance stop");
-      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/archcode:pr:42");
+      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:test-owner/test-repo:pr:42");
       expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("GitHub token configured: no");
       expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("60000ms retry-after");
       const historyRow = container.querySelector('[data-testid="loop-run-history-row-run-history-1"]');
       expect(historyRow?.textContent).toContain("reason: execution_failed");
       expect(historyRow?.textContent).toContain("budget: 3 iterations");
-      expect(historyRow?.textContent).toContain("collision conflicts: github:archcode/archcode:pr:42");
+      expect(historyRow?.textContent).toContain("collision conflicts: github:test-owner/test-repo:pr:42");
       expect(historyRow?.textContent).toContain("integration: github integration_auth_missing");
 
       expect(container.querySelector('a[href="/projects/demo/sessions/session-current"]')).not.toBeNull();
@@ -669,14 +669,14 @@ describe("LoopDetailRoute", () => {
           trigger: "manual",
           reason: "collision_conflict",
           skippedReason: "PR target is already leased by another Loop run.",
-          collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+          collisionTargets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
           collisionConflicts: [
             {
-              targetKey: "github:archcode/archcode:pr:42",
-              target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+              targetKey: "github:test-owner/test-repo:pr:42",
+              target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
               conflictingLease: {
-                targetKey: "github:archcode/archcode:pr:42",
-                target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+                targetKey: "github:test-owner/test-repo:pr:42",
+                target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
                 loopId: "other-loop",
                 runId: "other-run",
                 priority: 10,
@@ -718,7 +718,7 @@ describe("LoopDetailRoute", () => {
         expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
         expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Seeded kill switch");
-        expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:archcode/archcode:pr:42");
+        expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:test-owner/test-repo:pr:42");
         const integrationStatus = container.querySelector('[data-testid="loop-integration-status"]')?.textContent ?? "";
         expect(integrationStatus).toContain("github");
         expect(integrationStatus).toContain("auth_missing");
@@ -728,7 +728,7 @@ describe("LoopDetailRoute", () => {
         expect(integrationStatus).toContain("GitHub token configured: yes");
         const runRow = container.querySelector('[data-testid="loop-run-history-row-run-1"]');
         expect(runRow?.textContent).toContain("reason: collision_conflict");
-        expect(runRow?.textContent).toContain("collision conflicts: github:archcode/archcode:pr:42");
+        expect(runRow?.textContent).toContain("collision conflicts: github:test-owner/test-repo:pr:42");
       });
     } finally {
       await act(async () => {
@@ -739,11 +739,11 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("renders phase 5 cron trigger queue worktree cleanup metadata compactly", async () => {
+  test("renders cron trigger queue worktree cleanup metadata compactly", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
-    const phase5Loop = makeLoop({
+    const triggerCleanupLoop = makeLoop({
       config: {
         ...makeLoop().config,
         schedule: { kind: "cron", expression: "*/15 * * * *" },
@@ -760,9 +760,9 @@ describe("LoopDetailRoute", () => {
         loopId: "loop-1",
         status: "blocked",
         triggerKind: "on_pr",
-        subjectKey: "github:archcode/archcode:pr:42",
+        subjectKey: "github:test-owner/test-repo:pr:42",
         dedupeKey: "loop-1:on_pr:42",
-        branchKey: "archcode/archcode:feature-loop",
+        branchKey: "test-owner/test-repo:feature-loop",
         queuedAt: 1700000020000,
         startedAt: 1700000030000,
         attempts: 1,
@@ -789,18 +789,18 @@ describe("LoopDetailRoute", () => {
       ],
     });
     setupLoopDetailFetch({
-      loop: phase5Loop,
+      loop: triggerCleanupLoop,
       killState: { globalKillActive: false },
       runs: [
         makeRun({
-          runId: "run-phase5",
+          runId: "run-trigger-cleanup",
           status: "skipped",
           trigger: "on_pr",
           jobId: "job-current",
           triggerKind: "on_pr",
-          subjectKey: "github:archcode/archcode:pr:42",
+          subjectKey: "github:test-owner/test-repo:pr:42",
           dedupeKey: "loop-1:on_pr:42",
-          branchKey: "archcode/archcode:feature-loop",
+          branchKey: "test-owner/test-repo:feature-loop",
           worktreePath: "/safe/worktrees/loop-1",
           baseSha: "base123",
           resolvedHeadSha: "head456",
@@ -833,7 +833,7 @@ describe("LoopDetailRoute", () => {
         expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("degraded");
         expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("rate limited");
         expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("path /safe/worktrees/loop-1");
-        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("branch archcode/archcode:feature-loop");
+        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("branch test-owner/test-repo:feature-loop");
         expect(container.querySelector('[data-testid="loop-run-blocked-reason"]')?.textContent).toContain("needs-review");
         expect(container.textContent).toContain("diff stats: modified 1, created 1");
         expect(container.textContent).toContain("cleanup: cleanup_candidate");

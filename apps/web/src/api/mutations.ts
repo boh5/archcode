@@ -4,7 +4,7 @@ import { queryKeys } from "./queries";
 import type {
   ApprovalPoint,
   CancelCurrentRunResponse,
-  CommandResult,
+  ApiCommandResult,
   DoneCondition,
   GoalState,
   LoopConfig,
@@ -107,7 +107,7 @@ export function usePostCommand() {
       sessionId: string;
       name: string;
       args?: string;
-    }) => apiFetch<CommandResult>(
+    }) => apiFetch<ApiCommandResult>(
       `/api/projects/${encodeURIComponent(slug)}/sessions/${encodeURIComponent(sessionId)}/commands`,
       {
         method: "POST",

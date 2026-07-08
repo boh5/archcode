@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import { TOOL_GOAL_EVIDENCE, TOOL_GOAL_MANAGE, type DoneCondition, type DoneResult, type GoalState, type HitlRecord } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_ADVANCE_PHASE, TOOL_GOAL_EVIDENCE, TOOL_GOAL_MANAGE, type DoneCondition, type GoalDoneResult, type GoalState, type HitlRecord } from "@archcode/protocol";
 import { GoalArtifactManager } from "../../goals/artifacts";
 import { GoalMemoryManager } from "../../goals/goal-memory";
 import { GoalRunner } from "../../goals/runner";
@@ -360,7 +360,7 @@ describe("goal_manage builtin tool", () => {
     expect(result.isError).toBe(false);
     const paused = JSON.parse(result.output) as GoalState;
     expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "plan", lastError: "Waiting for after_plan approval" });
-    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: "advancePhase", approvalPoint: "after_plan" });
+    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: GOAL_HITL_ACTION_ADVANCE_PHASE, approvalPoint: "after_plan" });
   });
 
   it("retry delegates to GoalRunner.handleFailedVerification", async () => {
@@ -549,7 +549,7 @@ describe("goal_evidence builtin tool", () => {
     );
 
     expect(result.isError).toBe(false);
-    const done = JSON.parse(result.output) as DoneResult;
+    const done = JSON.parse(result.output) as GoalDoneResult;
     expect(done).toMatchObject({ conditionId: DONE_CONDITION.id, passed: true });
     const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
     expect(persisted.status).toBe("verifying");
@@ -569,7 +569,7 @@ describe("goal_evidence builtin tool", () => {
     );
 
     expect(result.isError).toBe(false);
-    const done = JSON.parse(result.output) as DoneResult;
+    const done = JSON.parse(result.output) as GoalDoneResult;
     expect(done).toMatchObject({ conditionId: DONE_CONDITION.id, passed: false });
     const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
     expect(persisted.status).toBe("verifying");

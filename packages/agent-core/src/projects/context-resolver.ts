@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { PROJECT_STATE_DIR_NAME, USER_DATA_DIR_NAME } from "@archcode/protocol";
 
 import { GoalArtifactManager } from "../goals/artifacts";
 import { GoalMemoryManager } from "../goals/goal-memory";
@@ -76,8 +77,8 @@ export class ProjectContextResolver {
     this.#hitlFactory = options.hitlFactory ?? ((workspaceRoot) => new HitlService({ workspaceRoot }));
     this.#memoryFactory = options.memoryFactory ?? ((workspaceRoot) => {
       return new MemoryFileManager({
-        project: join(workspaceRoot, ".archcode", "memory"),
-        user: join(homedir(), ".archcode", "memory"),
+        project: join(workspaceRoot, PROJECT_STATE_DIR_NAME, "memory"),
+        user: join(homedir(), USER_DATA_DIR_NAME, "memory"),
       });
     });
     this.#approvalsFactory = options.approvalsFactory ?? (() => new ProjectApprovalManager(this.#logger.child({ module: "project.approvals" })));
@@ -139,7 +140,7 @@ export class ProjectContextResolver {
 
   #createPlaceholderProjectInfo(workspaceRoot: string): ProjectInfo {
     const name = basename(workspaceRoot);
-    // TODO(W1.M7): replace placeholder ProjectInfo with registry lookup
+    // Fallback for tests or runtimes that do not provide registry-backed ProjectInfo.
     return {
       slug: name,
       name,

@@ -3,6 +3,7 @@ import { apiFetch } from "./client";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
+const TEST_PROJECT_SLUG = "test-project";
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -20,13 +21,13 @@ describe("web goal mutation API calls", () => {
   test("createGoal calls POST /api/projects/:slug/goals", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-new", title: "New Goal" }, { status: 201 });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals`, {
       method: "POST",
       body: { title: "New Goal", doneConditions: [], retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true }, approvalPoints: [], reviewerAgent: "reviewer", author: "user" },
     });
@@ -38,13 +39,13 @@ describe("web goal mutation API calls", () => {
   test("lockGoal calls POST /api/projects/:slug/goals/:goalId/lock", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1/lock");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/lock`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-1", status: "locked" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals/goal-1/lock", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/lock`, {
       method: "POST",
       body: { lockedBy: "user" },
     });
@@ -56,13 +57,13 @@ describe("web goal mutation API calls", () => {
   test("runGoal calls POST /api/projects/:slug/goals/:goalId/run", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1/run");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/run`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-1", status: "running" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals/goal-1/run", { method: "POST", body: {} });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/run`, { method: "POST", body: {} });
     expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -70,13 +71,13 @@ describe("web goal mutation API calls", () => {
   test("retryGoal calls POST /api/projects/:slug/goals/:goalId/retry", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1/retry");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-1", status: "running" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals/goal-1/retry", { method: "POST", body: {} });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/retry`, { method: "POST", body: {} });
     expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -84,13 +85,13 @@ describe("web goal mutation API calls", () => {
   test("escalateGoal calls POST /api/projects/:slug/goals/:goalId/escalate", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1/escalate");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/escalate`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-1", status: "escalated" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals/goal-1/escalate", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/escalate`, { method: "POST" });
     expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -98,13 +99,13 @@ describe("web goal mutation API calls", () => {
   test("cancelGoal calls POST /api/projects/:slug/goals/:goalId/cancel", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1/cancel");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ id: "goal-1", status: "paused" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/goals/goal-1/cancel", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`, { method: "POST" });
     expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -114,13 +115,13 @@ describe("web HITL mutation API calls", () => {
   test("respondHitl calls POST /api/projects/:slug/hitl/:id/respond", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/hitl/hitl-1/respond");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/respond`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/hitl/hitl-1/respond", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/respond`, {
       method: "POST",
       body: { decision: "approved" },
     });
@@ -131,13 +132,13 @@ describe("web HITL mutation API calls", () => {
   test("cancelHitl calls POST /api/projects/:slug/hitl/:id/cancel", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/hitl/hitl-1/cancel");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/cancel`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, hitlId: "hitl-1" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/hitl/hitl-1/cancel", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/hitl/hitl-1/cancel`, { method: "POST" });
     expect(result).toEqual({ ok: true, hitlId: "hitl-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -251,10 +252,10 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterCreate } = await import("./mutations");
 
-    await invalidateLoopAfterCreate(qc, "archcode");
+    await invalidateLoopAfterCreate(qc, TEST_PROJECT_SLUG);
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"] },
       { queryKey: ["loops", "active"] },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(2);
@@ -264,17 +265,17 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterTrigger } = await import("./mutations");
 
-    await invalidateLoopAfterTrigger(qc, "archcode", "loop-1");
+    await invalidateLoopAfterTrigger(qc, TEST_PROJECT_SLUG, "loop-1");
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "runs"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "runs"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "integrations"] },
       { queryKey: ["loops", "active"] },
-      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "kill-state"] },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(8);
   });
@@ -283,12 +284,12 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterUpdate } = await import("./mutations");
 
-    await invalidateLoopAfterUpdate(qc, "archcode", "loop-1");
+    await invalidateLoopAfterUpdate(qc, TEST_PROJECT_SLUG, "loop-1");
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "state"] },
       { queryKey: ["loops", "active"] },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
@@ -298,17 +299,17 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterPauseResume } = await import("./mutations");
 
-    await invalidateLoopAfterPauseResume(qc, "archcode", "loop-1");
+    await invalidateLoopAfterPauseResume(qc, TEST_PROJECT_SLUG, "loop-1");
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "integrations"] },
       { queryKey: ["loops", "active"] },
-      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "kill-state"] },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(8);
   });
@@ -317,18 +318,18 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterCancelCurrentRun } = await import("./mutations");
 
-    await invalidateLoopAfterCancelCurrentRun(qc, "archcode", "loop-1");
+    await invalidateLoopAfterCancelCurrentRun(qc, TEST_PROJECT_SLUG, "loop-1");
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops", "loop-1"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "runs"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "state"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "budget"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "collisions"] },
-      { queryKey: ["projects", "archcode", "loops", "loop-1", "integrations"] },
-      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "runs"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "budget"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "collisions"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "integrations"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"] },
       { queryKey: ["loops", "active"] },
-      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "kill-state"] },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(9);
   });
@@ -337,13 +338,13 @@ describe("web loop mutation invalidation helpers", () => {
     const qc = createFakeQc();
     const { invalidateLoopAfterGlobalKill } = await import("./mutations");
 
-    await invalidateLoopAfterGlobalKill(qc, "archcode");
+    await invalidateLoopAfterGlobalKill(qc, TEST_PROJECT_SLUG);
 
     expect(qc.getCalls()).toEqual([
-      { queryKey: ["projects", "archcode", "loops", "kill-state"] },
-      { queryKey: ["projects", "archcode", "loops"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops", "kill-state"] },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"] },
       { queryKey: ["loops", "active"] },
-      { queryKey: ["projects", "archcode", "loops"], exact: false },
+      { queryKey: ["projects", TEST_PROJECT_SLUG, "loops"], exact: false },
     ]);
     expect(qc.invalidateQueries).toHaveBeenCalledTimes(4);
   });
@@ -353,7 +354,7 @@ describe("web loop mutation URL contracts", () => {
   test("createLoop posts to /api/projects/:slug/loops with config body", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops`);
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.config).toBeDefined();
@@ -364,7 +365,7 @@ describe("web loop mutation URL contracts", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops`, {
       method: "POST",
       body: {
         config: {
@@ -386,7 +387,7 @@ describe("web loop mutation URL contracts", () => {
   test("createLoop with presetId does not include goalTemplateId", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops`);
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.presetId).toBe("daily_triage");
@@ -396,7 +397,7 @@ describe("web loop mutation URL contracts", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops`, {
       method: "POST",
       body: { presetId: "daily_triage" },
     });
@@ -408,13 +409,13 @@ describe("web loop mutation URL contracts", () => {
   test("loop trigger mutation calls POST /api/projects/:slug/loops/:loopId/trigger", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/trigger");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/trigger`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ report: { runId: "run-1", loopId: "loop-1", status: "running", trigger: "manual", startedAt: 1_000 } });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/loop-1/trigger", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/trigger`, { method: "POST" });
     expect(result).toMatchObject({ report: { runId: "run-1" } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -422,13 +423,13 @@ describe("web loop mutation URL contracts", () => {
   test("pauseLoop calls POST /api/projects/:slug/loops/:loopId/pause", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/pause");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/pause`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ loop: { loopId: "loop-1", status: "paused" } });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/loop-1/pause", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/pause`, { method: "POST" });
     expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "paused" } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -436,13 +437,13 @@ describe("web loop mutation URL contracts", () => {
   test("resumeLoop calls POST /api/projects/:slug/loops/:loopId/resume", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/resume");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/resume`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ loop: { loopId: "loop-1", status: "active" } });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/loop-1/resume", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/resume`, { method: "POST" });
     expect(result).toMatchObject({ loop: { loopId: "loop-1", status: "active" } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -450,7 +451,7 @@ describe("web loop mutation URL contracts", () => {
   test("updateLoop calls PATCH /api/projects/:slug/loops/:loopId with status", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1`);
       expect(init?.method).toBe("PATCH");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.status).toBe("paused");
@@ -459,7 +460,7 @@ describe("web loop mutation URL contracts", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/loop-1", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1`, {
       method: "PATCH",
       body: { status: "paused" },
     });
@@ -470,13 +471,13 @@ describe("web loop mutation URL contracts", () => {
   test("useCancelLoopCurrentRun posts to /api/projects/:slug/loops/:loopId/runs/current/cancel", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/runs/current/cancel");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/runs/current/cancel`);
       expect(init?.method).toBe("POST");
       return jsonResponse({ ok: true, loopId: "loop-1", runId: "run-1", status: "cancelled" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/loop-1/runs/current/cancel", { method: "POST" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/runs/current/cancel`, { method: "POST" });
     expect(result).toMatchObject({ ok: true, loopId: "loop-1", runId: "run-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -484,7 +485,7 @@ describe("web loop mutation URL contracts", () => {
   test("useActivateLoopGlobalKill posts to /api/projects/:slug/loops/kill-all with optional body", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/kill-all");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/kill-all`);
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.activatedBy).toBe("user");
@@ -492,7 +493,7 @@ describe("web loop mutation URL contracts", () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/kill-all", {
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/kill-all`, {
       method: "POST",
       body: { activatedBy: "user" },
     });
@@ -503,13 +504,13 @@ describe("web loop mutation URL contracts", () => {
   test("useClearLoopGlobalKill deletes /api/projects/:slug/loops/kill-all", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/kill-all");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/kill-all`);
       expect(init?.method).toBe("DELETE");
       return jsonResponse({ killState: { globalKillActive: false } });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch("/api/projects/archcode/loops/kill-all", { method: "DELETE" });
+    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops/kill-all`, { method: "DELETE" });
     expect(result).toMatchObject({ killState: { globalKillActive: false } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

@@ -2,7 +2,13 @@ import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, HitlRecord } from "@archcode/protocol";
+import {
+  GOAL_HITL_ACTION_ADVANCE_PHASE,
+  GOAL_HITL_ACTION_COMPLETE,
+  type DoneCondition,
+  type GoalDoneResult,
+  type HitlRecord,
+} from "@archcode/protocol";
 
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner, GoalRunnerError } from "./runner";
@@ -36,15 +42,15 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function passingResult(conditionId = condition.id): DoneResult {
+function passingResult(conditionId = condition.id): GoalDoneResult {
   return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
-function failingResult(conditionId = condition.id): DoneResult {
+function failingResult(conditionId = condition.id): GoalDoneResult {
   return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
 }
 
-function customFailingResult(conditionId: string, evidence: string): DoneResult {
+function customFailingResult(conditionId: string, evidence: string): GoalDoneResult {
   return { conditionId, passed: false, evidence, checkedAt: new Date().toISOString() };
 }
 
@@ -241,7 +247,7 @@ describe("GoalRunner", () => {
     expect(paused.lastError).toBe("Waiting for after_plan approval");
     expect(paused.attentionStatus).toBe("waiting_for_human");
     expect(paused.blockedByHitlIds).toHaveLength(1);
-    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "advancePhase", approvalPoint: "after_plan" });
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_ADVANCE_PHASE, approvalPoint: "after_plan" });
   });
 
   it("pauses with checkpoint when before_complete approval is required", async () => {
@@ -260,7 +266,7 @@ describe("GoalRunner", () => {
     expect(paused.lastError).toBe("Waiting for before_complete approval");
     expect(paused.attentionStatus).toBe("waiting_for_human");
     expect(paused.blockedByHitlIds).toHaveLength(1);
-    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
+    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_COMPLETE, approvalPoint: "before_complete" });
   });
 
   it("does not complete without reviewer done evidence", async () => {
@@ -312,7 +318,7 @@ describe("GoalRunner", () => {
       expect(paused.phase).toBe("review");
       expect(paused.reviewReport?.outcome).toBe("DONE");
       expect(paused.lastError).toBe("Waiting for before_complete approval");
-      expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
+      expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_COMPLETE, approvalPoint: "before_complete" });
     });
 
     it("returns NOT_DONE with structured repair context for missing required evidence", async () => {
@@ -416,7 +422,7 @@ describe("GoalRunner", () => {
       blockedAt: new Date().toISOString(),
       phase: "plan",
       kind: "goal_approval",
-      action: "advancePhase",
+      action: GOAL_HITL_ACTION_ADVANCE_PHASE,
       from: "plan",
       to: "build",
       approvalPoint: "after_plan",

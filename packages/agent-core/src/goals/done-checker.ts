@@ -1,7 +1,7 @@
 import { access, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
+import { ENV_CLI, type DoneCondition, type GoalDoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
 import { createProcessRunner } from "../process/runner";
 import type { ProcessRunnerResult } from "../process/types";
 import { classifyCommand } from "../tools/security";
@@ -26,7 +26,7 @@ export interface EvaluateConditionOptions {
   readonly checkCommandPermission?: boolean;
 }
 
-interface CommandResult {
+interface DoneCommandResult {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -42,7 +42,7 @@ export async function evaluateCondition(
   condition: DoneCondition,
   workspaceRoot: string,
   options: EvaluateConditionOptions = {},
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   switch (condition.kind) {
     case "tests_pass": {
       const result = await runShellCommand(condition.params.command ?? DEFAULT_TEST_COMMAND, workspaceRoot, DEFAULT_COMMAND_TIMEOUT_MS, options);
@@ -74,7 +74,7 @@ export async function evaluateCondition(
 async function evaluateSpecCompliance(
   condition: Extract<DoneCondition, { kind: "spec_compliance" }>,
   workspaceRoot: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const resolvedPath = resolveWorkspacePath(workspaceRoot, condition.params.specPath);
   if (!(await pathExists(resolvedPath))) {
     return specComplianceResult(condition.id, false, condition.params.specPath, [], `spec_compliance: spec file not found: ${condition.params.specPath}`);
@@ -182,7 +182,7 @@ function filterSpecComplianceCriteria(
 async function evaluateFileExists(
   condition: Extract<DoneCondition, { kind: "file_exists" }>,
   workspaceRoot: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const resolvedPath = resolveWorkspacePath(workspaceRoot, condition.params.path);
   const exists = await pathExists(resolvedPath);
   return doneResult(condition.id, exists, `${condition.params.path}: exists=${exists}`);
@@ -191,7 +191,7 @@ async function evaluateFileExists(
 async function evaluateGrepContains(
   condition: Extract<DoneCondition, { kind: "grep_contains" }>,
   workspaceRoot: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const matches = await collectGrepMatches(workspaceRoot, condition.params.path ?? ".", condition.params.pattern);
   const minMatches = condition.params.minMatches ?? 1;
   return doneResult(
@@ -204,7 +204,7 @@ async function evaluateGrepContains(
 async function evaluateGrepEmpty(
   condition: Extract<DoneCondition, { kind: "grep_empty" }>,
   workspaceRoot: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const matches = await collectGrepMatches(workspaceRoot, condition.params.path ?? ".", condition.params.pattern);
   return doneResult(condition.id, matches.length === 0, formatGrepEvidence(matches, `${matches.length} matches`));
 }
@@ -212,7 +212,7 @@ async function evaluateGrepEmpty(
 async function evaluateLspClean(
   condition: Extract<DoneCondition, { kind: "lsp_clean" }>,
   workspaceRoot: string,
-): Promise<DoneResult> {
+): Promise<GoalDoneResult> {
   const paths = condition.params.paths && condition.params.paths.length > 0 ? condition.params.paths : ["."];
   const severity = condition.params.severity ?? "error";
   const diagnostics: string[] = [];
@@ -308,7 +308,7 @@ async function runShellCommand(
   cwd: string,
   timeoutMs: number,
   options: EvaluateConditionOptions = {},
-): Promise<CommandResult> {
+): Promise<DoneCommandResult> {
   if (options.checkCommandPermission !== false) {
     const permissionDenied = await commandPermissionDenial(command, cwd, Math.min(timeoutMs, MAX_DONE_COMMAND_TIMEOUT_MS), options);
     if (permissionDenied) return permissionDenied;
@@ -334,7 +334,7 @@ async function commandPermissionDenial(
   cwd: string,
   timeoutMs: number,
   options: EvaluateConditionOptions,
-): Promise<CommandResult | undefined> {
+): Promise<DoneCommandResult | undefined> {
   const decision = classifyCommand(command, { workspaceRoot: cwd });
   if (decision.outcome === "allow") return undefined;
   if (decision.outcome === "deny") {
@@ -363,12 +363,12 @@ async function commandPermissionDenial(
   return commandDeniedResult(decision.reason ?? `Done condition command confirmation ${confirmation}`);
 }
 
-function commandDeniedResult(reason: string): CommandResult {
+function commandDeniedResult(reason: string): DoneCommandResult {
   return { exitCode: 126, stdout: "", stderr: `Permission denied: ${reason}` };
 }
 
 function buildDoneCommandEnv(source: Record<string, string | undefined> = Bun.env): Record<string, string> {
-  const env: Record<string, string> = { ARCHCODE_CLI: "1" };
+  const env: Record<string, string> = { [ENV_CLI]: "1" };
   for (const key of ENV_ALLOWLIST) {
     const value = source[key];
     if (value !== undefined) env[key] = value;
@@ -383,7 +383,7 @@ function processResultExitCode(result: ProcessRunnerResult): number {
   return 127;
 }
 
-function doneResult(conditionId: string, passed: boolean, evidence: string): DoneResult {
+function doneResult(conditionId: string, passed: boolean, evidence: string): GoalDoneResult {
   return {
     conditionId,
     passed,
@@ -398,7 +398,7 @@ function specComplianceResult(
   specPath: string,
   criteria: GoalSpecComplianceCriterionEvidence[],
   evidence: string,
-): DoneResult {
+): GoalDoneResult {
   const checkedAt = new Date().toISOString();
   return {
     conditionId,
@@ -431,7 +431,7 @@ function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
-function formatCommandEvidence(result: CommandResult): string {
+function formatCommandEvidence(result: DoneCommandResult): string {
   return `STDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}\nEXIT_CODE: ${result.exitCode}`;
 }
 

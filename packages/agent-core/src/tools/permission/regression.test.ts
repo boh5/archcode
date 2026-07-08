@@ -301,10 +301,25 @@ describe("bash permission bypass regressions", () => {
       "echo hacked > .archcode/memory/index.md",
       "cat .archcode/permissions.json",
       "cat ./.archcode/permissions.json",
+      "python3 -c \"import shutil; shutil.rmtree('.archcode')\"",
+      "python3 -c \"open('.archcode','w')\"",
+      `python3 -c "import shutil; shutil.rmtree('${join(WORKSPACE, ".archcode")}')"`,
     ]) {
       const decision = classify(command);
       expect(decision.outcome, command).toBe("deny");
     }
+  });
+
+  test("bash registry integration denies inline .archcode directory mutation", async () => {
+    const { result, confirmPermission } = await executeWithConfirmation(
+      bashTool(),
+      { command: "python3 -c \"import shutil; shutil.rmtree('.archcode')\"" },
+      "approve_always",
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.meta?.permissionErrorCode).toBe("TOOL_PERMISSION_DENIED");
+    expect(confirmPermission).not.toHaveBeenCalled();
   });
 
   test("bash registry integration denies explicit .archcode/permissions.json mention including read", async () => {

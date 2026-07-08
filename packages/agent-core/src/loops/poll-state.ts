@@ -1,5 +1,6 @@
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { z } from "zod/v4";
 
@@ -169,7 +170,7 @@ export class LoopPollStateManager {
 }
 
 async function pollStatePath(workspaceRoot: string, loopId: string): Promise<string> {
-  const loopsRoot = resolve(workspaceRoot, ".archcode", "loops");
+  const loopsRoot = resolve(workspaceRoot, PROJECT_STATE_DIR_NAME, "loops");
   await assertSafeLoopRoot(workspaceRoot, loopsRoot);
   await mkdir(resolve(loopsRoot, loopId), { recursive: true });
   const filePath = resolve(loopsRoot, loopId, "poll-state.json");
@@ -179,7 +180,7 @@ async function pollStatePath(workspaceRoot: string, loopId: string): Promise<str
 
 async function assertSafeLoopRoot(workspaceRoot: string, loopsRoot: string): Promise<void> {
   const realWorkspaceRoot = await realpath(workspaceRoot);
-  await assertExistingPathContained(resolve(workspaceRoot, ".archcode"), realWorkspaceRoot);
+  await assertExistingPathContained(resolve(workspaceRoot, PROJECT_STATE_DIR_NAME), realWorkspaceRoot);
   await assertExistingPathContained(loopsRoot, realWorkspaceRoot);
 }
 

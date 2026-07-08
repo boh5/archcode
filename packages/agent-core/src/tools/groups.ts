@@ -60,7 +60,7 @@ export const SKILL_TOOLS = [
 ] as const;
 
 /**
- * Tools used for workflow delegation execution (includes view_tool_output).
+ * Tools used for delegated agent execution (includes view_tool_output).
  */
 export const DELEGATION_EXECUTION_TOOLS = [
   TOOL_DELEGATE,

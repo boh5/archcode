@@ -1,5 +1,5 @@
 import type {
-  DoneResult,
+  GoalDoneResult,
   GoalReviewReport,
   GoalSpecComplianceEvidence,
   GoalTokenBudgetState,
@@ -317,7 +317,7 @@ function collectSpecComplianceEvidence(goal: GoalState): GoalSpecComplianceEvide
     .filter((evidence): evidence is GoalSpecComplianceEvidence => evidence !== undefined);
 }
 
-function criteriaFromDoneResults(doneResults: Record<string, DoneResult>) {
+function criteriaFromDoneResults(doneResults: Record<string, GoalDoneResult>) {
   return Object.values(doneResults).map((result) => ({
     criterionId: result.conditionId,
     criterion: result.conditionId,

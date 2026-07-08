@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
+import type { DoneCondition, GoalDoneResult, GoalState } from "@archcode/protocol";
 import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner } from "./runner";
 import { GoalStateManager } from "./state";
@@ -34,7 +34,7 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function failingResult(): DoneResult {
+function failingResult(): GoalDoneResult {
   return {
     conditionId: condition.id,
     passed: false,

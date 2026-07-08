@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
-import { UnknownQualifiedIdError, type Registry as ProviderRegistry } from "../provider/index";
+import { UnknownQualifiedIdError, type ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
 import { createRegistry } from "../tools/registry";

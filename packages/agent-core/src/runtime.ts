@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
 import { SessionAgentManager } from "./agents/session-agent-manager";
-import type { CommandResult } from "./commands/types";
+import type { SlashCommandResult } from "./commands/types";
 import { loadConfig } from "./config/load";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
 import { configureDefaultBinaryManagerLogger } from "./binary/manager";
@@ -20,7 +20,7 @@ import {
   McpManager,
   type McpWarning,
 } from "./mcp/index";
-import { createRegistry as createProviderRegistry, type Registry as ProviderRegistry } from "./provider/index";
+import { createRegistry as createProviderRegistry, type ProviderRegistry } from "./provider/index";
 import { ProjectContextResolver } from "./projects/context-resolver";
 import { ProjectRegistry } from "./projects/registry";
 import { SkillService } from "./skills";
@@ -32,6 +32,7 @@ import type {
   McpServerStatus,
   SessionTreeResponse,
 } from "@archcode/protocol";
+import { CONFIG_FILE_NAME, ENV_WORKSPACE_ROOT } from "@archcode/protocol";
 import { createRegistry as createToolRegistry, DuplicateToolError, type ToolRegistry } from "./tools/index";
 import { SessionExecutionManager, SessionHitlResumeAdapter } from "./execution";
 import type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
@@ -56,7 +57,7 @@ import { SessionStoreManager } from "./store/session-store-manager";
 import { redactString } from "./tools/security";
 import type { SessionRole } from "./store/types";
 
-const DEFAULT_CONFIG_PATH = ".archcode.json";
+const DEFAULT_CONFIG_PATH = CONFIG_FILE_NAME;
 
 export interface AgentRuntimeOptions {
   configPath?: string;
@@ -120,7 +121,7 @@ export interface AgentRuntime {
   disposeSessionAgent(workspaceRoot: string, sessionId: string): void;
   disposeAllSessionAgents(): void;
   isSessionTombstoned(workspaceRoot: string, sessionId: string): boolean;
-  dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<CommandResult | null>;
+  dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<SlashCommandResult | null>;
   listLoops(workspaceRoot: string): Promise<LoopState[]>;
   readLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
   createLoop(workspaceRoot: string, config: LoopConfig, author?: string): Promise<LoopState>;
@@ -283,7 +284,7 @@ export async function createRuntime(
       sessionId: string,
       name: string,
       args?: string,
-    ): Promise<CommandResult | null> {
+    ): Promise<SlashCommandResult | null> {
       return await executionManager.dispatchCommand(workspaceRoot, sessionId, name, args);
     }
 
@@ -733,7 +734,7 @@ async function recoverRegisteredProjectGoals(input: {
 
 async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {
   if (options.workspaceRoot) return options.workspaceRoot;
-  if (Bun.env.ARCHCODE_WORKSPACE_ROOT) return Bun.env.ARCHCODE_WORKSPACE_ROOT;
+  if (Bun.env[ENV_WORKSPACE_ROOT]) return Bun.env[ENV_WORKSPACE_ROOT];
 
   return realpath(dirname(options.configPath ?? DEFAULT_CONFIG_PATH));
 }

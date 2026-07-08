@@ -1,5 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import type { MemoryFrontmatter } from "../memory/schemas";
 import type { MemoryIndexEntry, MemoryTopicFile } from "../memory/types";
@@ -129,7 +130,7 @@ export class GoalMemoryManager {
   }
 
   private goalsRoot(): string {
-    return resolve(this.workspaceRoot, ".archcode", "goals");
+    return resolve(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "goals");
   }
 }
 

@@ -1,3 +1,5 @@
+import { COOKIE_SERVER_PASSWORD } from "@archcode/protocol";
+
 interface ApiErrorPayload {
   error?: {
     code?: unknown;
@@ -115,11 +117,12 @@ async function safeParseErrorPayload(response: Response): Promise<ApiErrorPayloa
 }
 
 function readServerPasswordCookie(): string | undefined {
+  const cookiePrefix = `${COOKIE_SERVER_PASSWORD}=`;
   const cookie = document.cookie
     .split(";")
     .map((part) => part.trim())
-    .find((part) => part.startsWith("ARCHCODE_SERVER_PASSWORD="));
+    .find((part) => part.startsWith(cookiePrefix));
 
   if (!cookie) return undefined;
-  return decodeURIComponent(cookie.slice("ARCHCODE_SERVER_PASSWORD=".length));
+  return decodeURIComponent(cookie.slice(cookiePrefix.length));
 }

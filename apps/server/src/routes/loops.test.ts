@@ -50,6 +50,12 @@ const prTriggerSessionLoopConfig: LoopConfig = {
   triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
 };
 
+const TEST_GITHUB_OWNER = "test-owner";
+const TEST_GITHUB_REPO = "test-repo";
+const TEST_GITHUB_TARGET_KEY = `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:pr:42`;
+const TEST_GITHUB_PR_SUBJECT_KEY = `pr:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}#42`;
+const TEST_GITHUB_CI_SUBJECT_KEY = `ci:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:ci:deadbeef`;
+
 const goalLoopConfig: LoopConfig = {
   title: "Goal loop",
   schedule: { kind: "manual" },
@@ -203,7 +209,7 @@ describe("loops routes", () => {
   });
 
   test("rejects invalid cron cadence and unsupported coordinator config with stable messages", async () => {
-    const { app, project } = await createTestApp("phase-5-create-rejections");
+    const { app, project } = await createTestApp("loop-config-rejections");
     const cases: Array<{ name: string; body: unknown; message: string; patch?: boolean }> = [
       {
         name: "invalid cron",
@@ -410,7 +416,7 @@ describe("loops routes", () => {
     const loop = await createLoop(app, project.slug, {
       ...manualSessionLoopConfig,
       toolProfileId: "loop_github_pr_watch",
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "workbench", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 }],
     });
     await runtime.seedLoopSnapshots(workspaceRoot, loop.loopId);
 
@@ -439,7 +445,7 @@ describe("loops routes", () => {
       ...manualSessionLoopConfig,
       title: "PR collision loop",
       toolProfileId: "loop_github_pr_watch",
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 }],
     });
     await runtime.seedCollisionRunHistory(workspaceRoot, loop.loopId);
 
@@ -452,14 +458,14 @@ describe("loops routes", () => {
       status: "skipped",
       reason: "collision_conflict",
       toolProfileId: "loop_github_pr_watch",
-      collisionConflicts: [expect.objectContaining({ targetKey: "github:archcode/archcode:pr:42" })],
+      collisionConflicts: [expect.objectContaining({ targetKey: TEST_GITHUB_TARGET_KEY })],
     });
   });
 
-  test("run history exposes Phase 5 job metadata and sanitizes worktree paths", async () => {
-    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-5-run-history-metadata");
+  test("run history exposes trigger job metadata and sanitizes worktree paths", async () => {
+    const { app, project, runtime, workspaceRoot } = await createTestApp("trigger-job-run-history-metadata");
     const loop = await createLoop(app, project.slug, prTriggerSessionLoopConfig);
-    const seeded = await runtime.seedPhase5RunHistory(workspaceRoot, loop.loopId);
+    const seeded = await runtime.seedPrTriggerRunHistory(workspaceRoot, loop.loopId);
 
     const runsRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/runs`);
     const runsBody = await runsRes.json() as { runs: LoopRunReport[] };
@@ -470,9 +476,9 @@ describe("loops routes", () => {
       jobId: "job-safe",
       trigger: "on_pr",
       triggerKind: "on_pr",
-      subjectKey: "pr:archcode/archcode#42",
-      dedupeKey: `${loop.loopId}:on_pr:pr:archcode/archcode#42`,
-      branchKey: "github:archcode/archcode:main",
+      subjectKey: TEST_GITHUB_PR_SUBJECT_KEY,
+      dedupeKey: `${loop.loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
+      branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
       worktreePath: seeded.safeWorktreePath,
       baseSha: "a".repeat(40),
       resolvedHeadSha: "b".repeat(40),
@@ -487,7 +493,7 @@ describe("loops routes", () => {
       triggerKind: "on_commit",
       subjectKey: "branch:feature/leaky",
       dedupeKey: `${loop.loopId}:on_commit:branch:feature/leaky`,
-      branchKey: "github:archcode/archcode:feature/leaky",
+      branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
       cleanupState: "cleanup_failed",
     });
     expect(unsafeRun?.worktreePath).toBeUndefined();
@@ -500,9 +506,9 @@ describe("loops routes", () => {
   });
 
   test("read list and state routes expose trigger queue and cleanup metadata safely", async () => {
-    const { app, project, runtime, workspaceRoot } = await createTestApp("phase-5-state-metadata");
+    const { app, project, runtime, workspaceRoot } = await createTestApp("trigger-job-state-metadata");
     const loop = await createLoop(app, project.slug, prTriggerSessionLoopConfig);
-    const seeded = await runtime.seedPhase5LoopState(workspaceRoot, loop.loopId);
+    const seeded = await runtime.seedPrTriggerLoopState(workspaceRoot, loop.loopId);
 
     const listRes = await app.request(`/api/projects/${project.slug}/loops`);
     const listBody = await listRes.json() as { loops: LoopState[] };
@@ -559,21 +565,21 @@ describe("loops routes", () => {
     expect(patchRes.status).toBe(200);
     expect(await patchRes.json()).toMatchObject({ loop: { loopId: loop.loopId, status: "paused" } });
 
-    const phase5PatchConfig: LoopConfig = {
+    const triggerPatchConfig: LoopConfig = {
       ...prTriggerSessionLoopConfig,
       schedule: { kind: "cron", expression: "*/15 * * * *" },
       cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
     };
-    const phase5PatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
+    const triggerPatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
       method: "PATCH",
-      body: JSON.stringify({ config: phase5PatchConfig }),
+      body: JSON.stringify({ config: triggerPatchConfig }),
       headers: { "content-type": "application/json" },
     });
-    const phase5PatchBody = await phase5PatchRes.json() as { loop: LoopState };
-    expect(phase5PatchRes.status).toBe(200);
-    expect(phase5PatchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
-    expect(phase5PatchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
-    expect(phase5PatchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true });
+    const triggerPatchBody = await triggerPatchRes.json() as { loop: LoopState };
+    expect(triggerPatchRes.status).toBe(200);
+    expect(triggerPatchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+    expect(triggerPatchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(triggerPatchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true });
 
     for (const internalPatch of [{ nextRunAt: 123_456 }, { generatedStateSummary: "server generated only" }, { runCount: 99 }]) {
       const internalPatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
@@ -634,9 +640,9 @@ function seededBudgetSnapshot(): LoopBudgetSnapshot {
 }
 
 function seededCollisionSnapshot(loopId: string): LoopCollisionSnapshot {
-  const target = { type: "pr", owner: "archcode", repo: "archcode", number: 42 } as const;
+  const target = { type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 } as const;
   const lease = {
-    targetKey: "github:archcode/archcode:pr:42",
+    targetKey: TEST_GITHUB_TARGET_KEY,
     target,
     loopId,
     runId: "run-collision",
@@ -689,8 +695,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   createLoopRunCount(): number;
   seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
   seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
-  seedPhase5RunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
-  seedPhase5LoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+  seedPrTriggerRunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+  seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
 } {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
   let now = options.now ?? 1_000;
@@ -875,9 +881,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     },
     async seedCollisionRunHistory(workspaceRoot: string, loopId: string) {
       const context = await contextResolver.resolve(workspaceRoot);
-      const target = { type: "pr", owner: "archcode", repo: "archcode", number: 42 } as const;
+      const target = { type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 } as const;
       const conflictingLease = {
-        targetKey: "github:archcode/archcode:pr:42",
+        targetKey: TEST_GITHUB_TARGET_KEY,
         target,
         loopId: "00000000-0000-4000-8000-000000000042",
         runId: "other-run",
@@ -899,9 +905,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         toolProfileId: "loop_github_pr_watch",
       });
     },
-    async seedPhase5RunHistory(workspaceRoot: string, loopId: string) {
+    async seedPrTriggerRunHistory(workspaceRoot: string, loopId: string) {
       const context = await contextResolver.resolve(workspaceRoot);
-      const { safeWorktreePath, unsafeWorktreePath } = phase5WorktreePaths(workspaceRoot);
+      const { safeWorktreePath, unsafeWorktreePath } = triggerWorktreePaths(workspaceRoot);
       await context.loopState.appendRunReport(loopId, {
         runId: "run-safe-worktree",
         loopId,
@@ -912,9 +918,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         endedAt: now,
         reason: "execution_failed",
         jobId: "job-safe",
-        subjectKey: "pr:archcode/archcode#42",
-        dedupeKey: `${loopId}:on_pr:pr:archcode/archcode#42`,
-        branchKey: "github:archcode/archcode:main",
+        subjectKey: TEST_GITHUB_PR_SUBJECT_KEY,
+        dedupeKey: `${loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
+        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
         worktreePath: safeWorktreePath,
         baseSha: "a".repeat(40),
         resolvedHeadSha: "b".repeat(40),
@@ -934,7 +940,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         jobId: "job-unsafe",
         subjectKey: "branch:feature/leaky",
         dedupeKey: `${loopId}:on_commit:branch:feature/leaky`,
-        branchKey: "github:archcode/archcode:feature/leaky",
+        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
         worktreePath: unsafeWorktreePath,
         baseSha: "c".repeat(40),
         resolvedHeadSha: "d".repeat(40),
@@ -943,17 +949,17 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
       });
       return { safeWorktreePath, unsafeWorktreePath };
     },
-    async seedPhase5LoopState(workspaceRoot: string, loopId: string) {
+    async seedPrTriggerLoopState(workspaceRoot: string, loopId: string) {
       const context = await contextResolver.resolve(workspaceRoot);
-      const { safeWorktreePath, unsafeWorktreePath } = phase5WorktreePaths(workspaceRoot);
+      const { safeWorktreePath, unsafeWorktreePath } = triggerWorktreePaths(workspaceRoot);
       const currentJob: LoopJobSummary = {
         jobId: "job-current",
         loopId,
         status: "blocked",
         triggerKind: "on_pr",
-        subjectKey: "pr:archcode/archcode#42",
-        dedupeKey: `${loopId}:on_pr:pr:archcode/archcode#42`,
-        branchKey: "github:archcode/archcode:main",
+        subjectKey: TEST_GITHUB_PR_SUBJECT_KEY,
+        dedupeKey: `${loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
+        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
         queuedAt: now,
         startedAt: now + 1,
         attempts: 1,
@@ -969,9 +975,9 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         loopId,
         status: "queued",
         triggerKind: "on_ci_fail",
-        subjectKey: "ci:archcode/archcode:ci:deadbeef",
-        dedupeKey: `${loopId}:on_ci_fail:ci:archcode/archcode:ci:deadbeef`,
-        branchKey: "github:archcode/archcode:feature/leaky",
+        subjectKey: TEST_GITHUB_CI_SUBJECT_KEY,
+        dedupeKey: `${loopId}:on_ci_fail:${TEST_GITHUB_CI_SUBJECT_KEY}`,
+        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
         queuedAt: now + 2,
         attempts: 0,
         worktreePath: unsafeWorktreePath,
@@ -996,14 +1002,14 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     createLoopRunCount(): number;
     seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
     seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
-    seedPhase5RunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
-    seedPhase5LoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+    seedPrTriggerRunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+    seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
   };
 
   return runtime;
 }
 
-function phase5WorktreePaths(workspaceRoot: string): { safeWorktreePath: string; unsafeWorktreePath: string } {
+function triggerWorktreePaths(workspaceRoot: string): { safeWorktreePath: string; unsafeWorktreePath: string } {
   const managedRoot = resolve(dirname(workspaceRoot), `${basename(workspaceRoot)}.worktrees`);
   return {
     safeWorktreePath: join(managedRoot, "loop-safe-worktree"),

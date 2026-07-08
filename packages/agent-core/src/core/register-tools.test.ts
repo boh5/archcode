@@ -701,7 +701,7 @@ describe("registerBuiltinTools", () => {
       expect(tool!.name).toBe("ask_user");
     });
 
-    it("no human_check tool is registered (HITL uses ask_user in Phase 1)", () => {
+  it("no human_check tool is registered because HITL uses ask_user", () => {
       const registry = new ToolRegistry();
       registerBuiltinTools(registry, silentLogger);
 

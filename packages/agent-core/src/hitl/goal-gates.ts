@@ -1,3 +1,8 @@
+import {
+  GOAL_HITL_ACTION_ADVANCE_PHASE,
+  GOAL_HITL_ACTION_COMPLETE,
+  GOAL_HITL_ACTION_FINALIZE_REVIEW,
+} from "@archcode/protocol";
 import type { ApprovalPoint, GoalHitlCheckpoint, GoalReviewOutcome, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import type { GoalArtifactManager } from "../goals/artifacts";
@@ -99,7 +104,7 @@ export class GoalApprovalGate {
       hitlId: record.hitlId,
       blockedAt: new Date().toISOString(),
       kind: "goal_review",
-      action: "finalizeReviewerReview",
+      action: GOAL_HITL_ACTION_FINALIZE_REVIEW,
       reason: "Reviewer HITL outcome required",
     });
     await this.#goalStateManager.updateLastError(goalId, "Waiting for reviewer HITL outcome");
@@ -168,8 +173,8 @@ function approvalArtifactStatus(response: HitlResponse, outcome: ApprovalOutcome
 function approvalCheckpoint(hitlId: string, approvalPoint: ApprovalPoint): GoalHitlCheckpoint {
   const base = { version: 1 as const, hitlId, blockedAt: new Date().toISOString(), kind: "goal_approval" as const };
   return approvalPoint === "after_plan"
-    ? { ...base, action: "advancePhase", from: "plan", to: "build", approvalPoint, phase: "plan", reason: "After-plan approval required" }
-    : { ...base, action: "complete", approvalPoint, phase: "review", reason: "Before-complete approval required" };
+    ? { ...base, action: GOAL_HITL_ACTION_ADVANCE_PHASE, from: "plan", to: "build", approvalPoint, phase: "plan", reason: "After-plan approval required" }
+    : { ...base, action: GOAL_HITL_ACTION_COMPLETE, approvalPoint, phase: "review", reason: "Before-complete approval required" };
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {

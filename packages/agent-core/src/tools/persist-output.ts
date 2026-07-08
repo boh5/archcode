@@ -1,10 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 import type { Logger } from "../logger";
 import type { CompletedToolPart, ErrorToolPart } from "../store/types";
 
-export const TOOL_OUTPUT_DIR = join(homedir(), ".archcode", "tool-output");
+export const TOOL_OUTPUT_DIR = join(homedir(), USER_DATA_DIR_NAME, "tool-output");
 
 const DEFAULT_PREVIEW_LINES = 5;
 

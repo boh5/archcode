@@ -1,7 +1,7 @@
 import { appendFile, mkdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { normalizeUsage } from "@archcode/protocol";
+import { normalizeUsage, PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import type { ModelPricing } from "../config/provider";
 import type { ModelInfo } from "../provider/model";
@@ -335,7 +335,7 @@ export function utcDateKey(timestampMs: number): string {
 }
 
 async function resolveBudgetLedgerPath(workspaceRoot: string, loopId: string): Promise<string> {
-  return await resolveContainedPath(join(loopId, "budget-ledger.jsonl"), resolve(workspaceRoot, ".archcode", "loops"));
+  return await resolveContainedPath(join(loopId, "budget-ledger.jsonl"), resolve(workspaceRoot, PROJECT_STATE_DIR_NAME, "loops"));
 }
 
 class SafeLoopPathError extends Error {

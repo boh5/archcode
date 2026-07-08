@@ -1,4 +1,5 @@
 import { normalize } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import type { NormalizedShellInvocation, NormalizedShellRequest, PermissionApprovalScope, ShellEffect, ShellPathReference } from "../../permission/policy-types";
 import type { PermissionDecision } from "../../types";
 import { PathValidator } from "../path-validator";
@@ -160,12 +161,13 @@ function stripTrailingSlash(path: string): string {
 
 function isProjectPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".archcode" || normalized.startsWith(".archcode/") || normalized.includes("/.archcode/") || normalized.endsWith("/.archcode");
+  return normalized === PROJECT_STATE_DIR_NAME || normalized.startsWith(`${PROJECT_STATE_DIR_NAME}/`) || normalized.includes(`/${PROJECT_STATE_DIR_NAME}/`) || normalized.endsWith(`/${PROJECT_STATE_DIR_NAME}`);
 }
 
 function isPermissionsPath(rawPath: string): boolean {
   const normalized = normalize(rawPath);
-  return normalized === ".archcode/permissions.json" || normalized.endsWith("/.archcode/permissions.json");
+  const permissionsPath = `${PROJECT_STATE_DIR_NAME}/permissions.json`;
+  return normalized === permissionsPath || normalized.endsWith(`/${permissionsPath}`);
 }
 
 function mentionsPermissionsPath(rawText: string): boolean {

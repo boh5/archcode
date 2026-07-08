@@ -6,6 +6,8 @@ import { activeGoalsQueryOptions, activeLoopsQueryOptions, focusedSessionQueryOp
 const originalFetch = globalThis.fetch;
 const originalDocument = globalThis.document;
 type QueryOptionWithFn<T> = { queryFn: (context?: unknown) => Promise<T> };
+const TEST_PROJECT_SLUG = "test-project";
+const TEST_PROJECT_NAME = "Test Project";
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -40,12 +42,12 @@ describe("web session query contracts", () => {
       lastUpdatedAt: 1_700,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/sessions");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions`);
       return jsonResponse({ sessions: [rootSession, childSession] });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (sessionsQueryOptions("archcode") as unknown as QueryOptionWithFn<unknown[]>).queryFn();
+    const result = await (sessionsQueryOptions(TEST_PROJECT_SLUG) as unknown as QueryOptionWithFn<unknown[]>).queryFn();
 
     expect(result).toEqual([
       {
@@ -84,12 +86,12 @@ describe("web session query contracts", () => {
       lastUpdatedAt: 2_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/sessions/child-session");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/child-session`);
       return jsonResponse(serverResponse);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (focusedSessionQueryOptions("archcode", "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
+    const result = await (focusedSessionQueryOptions(TEST_PROJECT_SLUG, "child-session") as unknown as QueryOptionWithFn<unknown>).queryFn();
 
     expect(result).toMatchObject({
       id: "child-session",
@@ -104,7 +106,7 @@ describe("web session query contracts", () => {
   });
 
   test("focusedSessionQueryOptions is disabled when focusSessionId is null", () => {
-    const opts = focusedSessionQueryOptions("archcode", null);
+    const opts = focusedSessionQueryOptions(TEST_PROJECT_SLUG, null);
     expect(opts.enabled).toBe(false);
   });
 
@@ -129,12 +131,12 @@ describe("web session query contracts", () => {
       diagnostics: [],
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/sessions/root-session/tree");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/sessions/root-session/tree`);
       return jsonResponse(tree);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await (sessionTreeQueryOptions("archcode", "root-session") as unknown as QueryOptionWithFn<SessionTreeResponse>).queryFn();
+    const result = await (sessionTreeQueryOptions(TEST_PROJECT_SLUG, "root-session") as unknown as QueryOptionWithFn<SessionTreeResponse>).queryFn();
 
     expect(result.root.children[0].session).toMatchObject({
       sessionId: "child-session",
@@ -149,7 +151,7 @@ describe("web session query contracts", () => {
     const goals: GoalState[] = [
       {
         id: "goal-1",
-        projectId: "archcode",
+        projectId: TEST_PROJECT_SLUG,
         title: "Test Goal",
         status: "draft",
         phase: "plan",
@@ -166,15 +168,15 @@ describe("web session query contracts", () => {
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals`);
       return jsonResponse({ goals });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = goalsQueryOptions("archcode");
+    const opts = goalsQueryOptions(TEST_PROJECT_SLUG);
     const result = await (opts as unknown as QueryOptionWithFn<GoalState[]>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "goals"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "goals"]);
     expect(result).toEqual(goals);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -183,7 +185,7 @@ describe("web session query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const goal: GoalState = {
       id: "goal-1",
-      projectId: "archcode",
+      projectId: TEST_PROJECT_SLUG,
       title: "Single Goal",
       status: "locked",
       phase: "plan",
@@ -199,23 +201,23 @@ describe("web session query contracts", () => {
       updatedAt: "2026-01-01T00:00:00Z",
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/goals/goal-1");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1`);
       return jsonResponse(goal);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = goalQueryOptions("archcode", "goal-1");
+    const opts = goalQueryOptions(TEST_PROJECT_SLUG, "goal-1");
     const result = await (opts as unknown as QueryOptionWithFn<GoalState>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "goals", "goal-1"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "goals", "goal-1"]);
     expect(result).toEqual(goal);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("queryKeys.goal is keyed by goalId", () => {
-    expect(queryKeys.goal("archcode", "goal-abc")).toEqual([
+    expect(queryKeys.goal(TEST_PROJECT_SLUG, "goal-abc")).toEqual([
       "projects",
-      "archcode",
+      TEST_PROJECT_SLUG,
       "goals",
       "goal-abc",
     ]);
@@ -226,8 +228,8 @@ describe("web session query contracts", () => {
     const hitl: HitlProjection[] = [
       {
         hitlId: "hitl-2",
-        project: { slug: "archcode", name: "ArchCode" },
-        owner: { projectSlug: "archcode", ownerType: "goal", ownerId: "goal-1" },
+        project: { slug: TEST_PROJECT_SLUG, name: TEST_PROJECT_NAME },
+        owner: { projectSlug: TEST_PROJECT_SLUG, ownerType: "goal", ownerId: "goal-1" },
         source: { type: "goal_review", goalId: "goal-1" },
         status: "pending",
         displayPayload: { title: "Review artifacts", redacted: true },
@@ -238,15 +240,15 @@ describe("web session query contracts", () => {
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
       const url = String(input);
-      expect(url).toBe("/api/projects/archcode/hitl?scope=project&status=pending");
+      expect(url).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl?scope=project&status=pending`);
       return jsonResponse({ hitl });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = projectHitlQueryOptions("archcode");
+    const opts = projectHitlQueryOptions(TEST_PROJECT_SLUG);
     const result = await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "hitl"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "hitl"]);
     expect(result).toEqual(hitl);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -257,18 +259,18 @@ describe("web session query contracts", () => {
       const url = String(input);
       expect(url).not.toBe("/api/hitl?status=pending");
       expect(url).not.toMatch(/^\/api\/hitl\b/);
-      expect(url).toBe("/api/projects/archcode/hitl?scope=project&status=pending");
+      expect(url).toBe(`/api/projects/${TEST_PROJECT_SLUG}/hitl?scope=project&status=pending`);
       return jsonResponse({ hitl: [] });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = projectHitlQueryOptions("archcode");
+    const opts = projectHitlQueryOptions(TEST_PROJECT_SLUG);
     await (opts as unknown as QueryOptionWithFn<HitlProjection[]>).queryFn();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test("queryKeys.projectHitl is keyed correctly", () => {
-    expect(queryKeys.projectHitl("archcode")).toEqual(["projects", "archcode", "hitl"]);
+    expect(queryKeys.projectHitl(TEST_PROJECT_SLUG)).toEqual(["projects", TEST_PROJECT_SLUG, "hitl"]);
   });
 
   test("activeGoalsQueryOptions fetches global active goals with project metadata", async () => {
@@ -276,7 +278,7 @@ describe("web session query contracts", () => {
     const goals: DashboardGoal[] = [
       {
         id: "goal-1",
-        projectId: "archcode",
+        projectId: TEST_PROJECT_SLUG,
         title: "Active Goal",
         status: "running",
         phase: "build",
@@ -290,8 +292,8 @@ describe("web session query contracts", () => {
         childSessionIds: [],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
-        projectSlug: "archcode",
-        projectName: "ArchCode",
+        projectSlug: TEST_PROJECT_SLUG,
+        projectName: TEST_PROJECT_NAME,
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
@@ -319,7 +321,7 @@ describe("web loop query contracts", () => {
     const loops: LoopState[] = [
       {
         loopId: "loop-1",
-        projectId: "archcode",
+        projectId: TEST_PROJECT_SLUG,
         config: {
           title: "Test Loop",
           description: "A test loop",
@@ -337,15 +339,15 @@ describe("web loop query contracts", () => {
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops`);
       return jsonResponse({ loops });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopsQueryOptions("archcode");
+    const opts = loopsQueryOptions(TEST_PROJECT_SLUG);
     const result = await (opts as unknown as QueryOptionWithFn<LoopState[]>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops"]);
     expect(result).toEqual(loops);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -354,7 +356,7 @@ describe("web loop query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const loop: LoopState = {
       loopId: "loop-1",
-      projectId: "archcode",
+      projectId: TEST_PROJECT_SLUG,
       config: {
         title: "Single Loop",
         schedule: { kind: "manual" },
@@ -370,15 +372,15 @@ describe("web loop query contracts", () => {
       stateVersion: 1,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1`);
       return jsonResponse({ loop });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopQueryOptions("archcode", "loop-1");
+    const opts = loopQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<LoopState>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1"]);
     expect(result).toEqual(loop);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -396,15 +398,15 @@ describe("web loop query contracts", () => {
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/runs");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/runs`);
       return jsonResponse({ runs });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopRunsQueryOptions("archcode", "loop-1");
+    const opts = loopRunsQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<LoopRunReport[]>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "runs"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "runs"]);
     expect(result).toEqual(runs);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -413,7 +415,7 @@ describe("web loop query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const loop: LoopState = {
       loopId: "loop-1",
-      projectId: "archcode",
+      projectId: TEST_PROJECT_SLUG,
       config: {
         title: "State Loop",
         schedule: { kind: "manual" },
@@ -430,15 +432,15 @@ describe("web loop query contracts", () => {
     };
     const stateResponse = { markdown: "# State", state: loop };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/state");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/state`);
       return jsonResponse(stateResponse);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopStateQueryOptions("archcode", "loop-1");
+    const opts = loopStateQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<{ markdown: string; state: LoopState }>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "state"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "state"]);
     expect(result).toEqual(stateResponse);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -452,8 +454,8 @@ describe("web loop query contracts", () => {
         status: "active",
         runKind: "session",
         mode: "report",
-        projectSlug: "archcode",
-        projectName: "ArchCode",
+        projectSlug: TEST_PROJECT_SLUG,
+        projectName: TEST_PROJECT_NAME,
       },
     ];
     const fetchMock = mock(async (input: RequestInfo | URL) => {
@@ -471,14 +473,14 @@ describe("web loop query contracts", () => {
   });
 
   test("queryKeys include project slug and loopId", () => {
-    expect(queryKeys.projectLoops("archcode")).toEqual(["projects", "archcode", "loops"]);
-    expect(queryKeys.loop("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc"]);
-    expect(queryKeys.loopRuns("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "runs"]);
-    expect(queryKeys.loopState("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "state"]);
-    expect(queryKeys.loopBudget("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "budget"]);
-    expect(queryKeys.loopCollisions("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "collisions"]);
-    expect(queryKeys.loopIntegrations("archcode", "loop-abc")).toEqual(["projects", "archcode", "loops", "loop-abc", "integrations"]);
-    expect(queryKeys.loopKillState("archcode")).toEqual(["projects", "archcode", "loops", "kill-state"]);
+    expect(queryKeys.projectLoops(TEST_PROJECT_SLUG)).toEqual(["projects", TEST_PROJECT_SLUG, "loops"]);
+    expect(queryKeys.loop(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc"]);
+    expect(queryKeys.loopRuns(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc", "runs"]);
+    expect(queryKeys.loopState(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc", "state"]);
+    expect(queryKeys.loopBudget(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc", "budget"]);
+    expect(queryKeys.loopCollisions(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc", "collisions"]);
+    expect(queryKeys.loopIntegrations(TEST_PROJECT_SLUG, "loop-abc")).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-abc", "integrations"]);
+    expect(queryKeys.loopKillState(TEST_PROJECT_SLUG)).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "kill-state"]);
     expect(queryKeys.activeLoops).toEqual(["loops", "active"]);
   });
 });
@@ -491,15 +493,15 @@ describe("web loop guardrail query contracts", () => {
       updatedAt: 1_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/budget");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/budget`);
       return jsonResponse({ loopId: "loop-1", budget });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopBudgetQueryOptions("archcode", "loop-1");
+    const opts = loopBudgetQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "budget"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "budget"]);
     expect(result).toEqual(budget);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -507,12 +509,12 @@ describe("web loop guardrail query contracts", () => {
   test("loopBudgetQueryOptions returns null when no budget exists", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/budget");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/budget`);
       return jsonResponse({ loopId: "loop-1", budget: null });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopBudgetQueryOptions("archcode", "loop-1");
+    const opts = loopBudgetQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
 
     expect(result).toBeNull();
@@ -528,15 +530,15 @@ describe("web loop guardrail query contracts", () => {
       updatedAt: 1_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/collisions");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/collisions`);
       return jsonResponse({ loopId: "loop-1", collisions });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopCollisionsQueryOptions("archcode", "loop-1");
+    const opts = loopCollisionsQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "collisions"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "collisions"]);
     expect(result).toEqual(collisions);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -551,15 +553,15 @@ describe("web loop guardrail query contracts", () => {
       updatedAt: 1_000,
     };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/loop-1/integrations");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/loop-1/integrations`);
       return jsonResponse({ loopId: "loop-1", integrations });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopIntegrationsQueryOptions("archcode", "loop-1");
+    const opts = loopIntegrationsQueryOptions(TEST_PROJECT_SLUG, "loop-1");
     const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "loop-1", "integrations"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "loop-1", "integrations"]);
     expect(result).toEqual(integrations);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -568,15 +570,15 @@ describe("web loop guardrail query contracts", () => {
     globalThis.document = { cookie: "" } as Document;
     const killState = { globalKillActive: false };
     const fetchMock = mock(async (input: RequestInfo | URL) => {
-      expect(String(input)).toBe("/api/projects/archcode/loops/kill-state");
+      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops/kill-state`);
       return jsonResponse({ killState });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const opts = loopKillStateQueryOptions("archcode");
+    const opts = loopKillStateQueryOptions(TEST_PROJECT_SLUG);
     const result = await (opts as unknown as QueryOptionWithFn<unknown>).queryFn();
 
-    expect([...opts.queryKey]).toEqual(["projects", "archcode", "loops", "kill-state"]);
+    expect([...opts.queryKey]).toEqual(["projects", TEST_PROJECT_SLUG, "loops", "kill-state"]);
     expect(result).toEqual(killState);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

@@ -1,3 +1,4 @@
+import { HTTP_USER_AGENT } from "@archcode/protocol";
 import {
   GITHUB_API_BASE_URL,
   GithubIntegrationTokenError,
@@ -486,7 +487,7 @@ export class GitHubRestProvider implements GitHubIntegrationProvider {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${tokenState.token}`,
           "Content-Type": "application/json",
-          "User-Agent": "ArchCode",
+          "User-Agent": HTTP_USER_AGENT,
           "X-GitHub-Api-Version": GITHUB_REST_API_VERSION,
         },
         body: request.body === undefined ? undefined : JSON.stringify(request.body),

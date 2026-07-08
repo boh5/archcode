@@ -139,13 +139,13 @@ describe("createLoopCollisionToolPermission", () => {
   test("future GitHub structured PR extractor conflicts without connector tools", async () => {
     const registry = createDefaultToolTargetExtractorRegistry();
     const targets = registry.extract("github_create_issue_comment", {
-      owner: "archcode",
-      repo: "archcode",
+      owner: "test-owner",
+      repo: "test-repo",
       issueNumber: 42,
       body: "Looks good",
     }, { workspaceRoot: TMP_DIR });
 
-    expect(targets).toEqual([{ type: "issue", owner: "archcode", repo: "archcode", number: 42 }]);
+    expect(targets).toEqual([{ type: "issue", owner: "test-owner", repo: "test-repo", number: 42 }]);
   });
 });
 

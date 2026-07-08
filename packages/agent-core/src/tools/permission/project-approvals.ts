@@ -1,10 +1,10 @@
 import { join } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 import { z } from "zod";
 import type { Logger } from "../../logger";
 import { atomicWrite } from "../../utils/safe-file";
 import type { PermissionApprovalScope, ShellEffectKind } from "./policy-types";
 
-const PROJECT_DIR_NAME = ".archcode";
 const PERMISSIONS_FILE = "permissions.json";
 
 const ShellEffectKindSchema = z.enum([
@@ -90,7 +90,7 @@ function scopeKey(scope: PermissionApprovalScope): string {
 }
 
 function approvalsPath(workspaceRoot: string): string {
-  return join(workspaceRoot, PROJECT_DIR_NAME, PERMISSIONS_FILE);
+  return join(workspaceRoot, PROJECT_STATE_DIR_NAME, PERMISSIONS_FILE);
 }
 
 export class ProjectApprovalManager {

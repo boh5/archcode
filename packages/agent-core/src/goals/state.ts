@@ -3,10 +3,18 @@ import { mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { z } from "zod/v4";
+import {
+  GOAL_HITL_ACTION_ADVANCE_PHASE,
+  GOAL_HITL_ACTION_ANSWER_QUESTION,
+  GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL,
+  GOAL_HITL_ACTION_COMPLETE,
+  GOAL_HITL_ACTION_FINALIZE_REVIEW,
+  PROJECT_STATE_DIR_NAME,
+} from "@archcode/protocol";
 import type {
   ApprovalPoint as ProtocolApprovalPoint,
   DoneCondition as ProtocolDoneCondition,
-  DoneResult as ProtocolDoneResult,
+  GoalDoneResult as ProtocolGoalDoneResult,
   GoalArtifactFile as ProtocolGoalArtifactFile,
   GoalPhase as ProtocolGoalPhase,
   GoalReviewReport as ProtocolGoalReviewReport,
@@ -137,7 +145,7 @@ export const DoneResultSchema = z.strictObject({
   checkedAt: z.string(),
   specCompliance: z.lazy(() => GoalSpecComplianceEvidenceSchema).optional(),
   review: z.lazy(() => GoalReviewReportSchema).optional(),
-}) satisfies z.ZodType<ProtocolDoneResult>;
+}) satisfies z.ZodType<ProtocolGoalDoneResult>;
 
 export const GoalArtifactNameSchema = z.enum([
   "plan.md",
@@ -251,32 +259,52 @@ const GoalHitlCheckpointBaseSchema = z.strictObject({
   reason: z.string().optional(),
 });
 
+const GoalHitlAdvancePhaseActionSchema = z.union([
+  z.literal(GOAL_HITL_ACTION_ADVANCE_PHASE),
+  z.literal("advancePhase"),
+]).transform((): typeof GOAL_HITL_ACTION_ADVANCE_PHASE => GOAL_HITL_ACTION_ADVANCE_PHASE);
+
+const GoalHitlFinalizeReviewActionSchema = z.union([
+  z.literal(GOAL_HITL_ACTION_FINALIZE_REVIEW),
+  z.literal("finalizeReviewerReview"),
+]).transform((): typeof GOAL_HITL_ACTION_FINALIZE_REVIEW => GOAL_HITL_ACTION_FINALIZE_REVIEW);
+
+const GoalHitlAwaitBudgetApprovalActionSchema = z.union([
+  z.literal(GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL),
+  z.literal("awaitBudgetApproval"),
+]).transform((): typeof GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL => GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL);
+
+const GoalHitlAnswerQuestionActionSchema = z.union([
+  z.literal(GOAL_HITL_ACTION_ANSWER_QUESTION),
+  z.literal("answerQuestion"),
+]).transform((): typeof GOAL_HITL_ACTION_ANSWER_QUESTION => GOAL_HITL_ACTION_ANSWER_QUESTION);
+
 export const GoalHitlCheckpointSchema = z.union([
   GoalHitlCheckpointBaseSchema.extend({
     kind: z.literal("goal_approval"),
-    action: z.literal("advancePhase"),
+    action: GoalHitlAdvancePhaseActionSchema,
     from: z.literal("plan"),
     to: z.literal("build"),
     approvalPoint: z.literal("after_plan"),
   }),
   GoalHitlCheckpointBaseSchema.extend({
     kind: z.literal("goal_approval"),
-    action: z.literal("complete"),
+    action: z.literal(GOAL_HITL_ACTION_COMPLETE),
     approvalPoint: z.literal("before_complete"),
   }),
   GoalHitlCheckpointBaseSchema.extend({
     kind: z.literal("goal_review"),
-    action: z.literal("finalizeReviewerReview"),
+    action: GoalHitlFinalizeReviewActionSchema,
   }),
   GoalHitlCheckpointBaseSchema.extend({
     kind: z.literal("goal_budget"),
-    action: z.literal("awaitBudgetApproval"),
+    action: GoalHitlAwaitBudgetApprovalActionSchema,
     approvalPoint: z.string().trim().min(1),
     estimatedNextCallTokens: z.number().int().nonnegative().optional(),
   }),
   GoalHitlCheckpointBaseSchema.extend({
     kind: z.literal("goal_question"),
-    action: z.literal("answerQuestion"),
+    action: GoalHitlAnswerQuestionActionSchema,
     questionKey: z.string().trim().min(1),
   }),
 ]) satisfies z.ZodType<ProtocolGoalHitlCheckpoint>;
@@ -315,7 +343,7 @@ export const GoalStateSchema = z.strictObject({
 export type GoalStatus = ProtocolGoalStatus;
 export type GoalPhase = ProtocolGoalPhase;
 export type DoneCondition = ProtocolDoneCondition;
-export type DoneResult = ProtocolDoneResult;
+export type GoalDoneResult = ProtocolGoalDoneResult;
 export type RetryPolicy = ProtocolRetryPolicy;
 export type ApprovalPoint = ProtocolApprovalPoint;
 export type GoalState = ProtocolGoalState;
@@ -443,7 +471,7 @@ export class GoalStateManager {
   }
 
   async listGoals(projectId?: string): Promise<GoalState[]> {
-    const goalsRoot = resolve(this.workspaceRoot, ".archcode", "goals");
+    const goalsRoot = resolve(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "goals");
     const entries = await readdir(goalsRoot, { withFileTypes: true }).catch((error: unknown) => {
       if (this.isMissingDirectoryError(error)) return [];
       this.#logger.warn("goals.list.readdir.failed", { error: logError(error) });
@@ -545,7 +573,7 @@ export class GoalStateManager {
     return updated;
   }
 
-  async recordDoneResult(goalId: string, conditionId: string, result: DoneResult): Promise<GoalState> {
+  async recordDoneResult(goalId: string, conditionId: string, result: GoalDoneResult): Promise<GoalState> {
     const state = await this.read(goalId);
     const parsedResult = DoneResultSchema.parse({ ...result, conditionId });
     const updated = GoalStateSchema.parse({
@@ -745,7 +773,7 @@ export class GoalStateManager {
   }
 
   private goalsRoot(): string {
-    return resolve(this.workspaceRoot, ".archcode", "goals");
+    return resolve(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "goals");
   }
 
   private parseGoalState(goalId: string, content: string): GoalState {

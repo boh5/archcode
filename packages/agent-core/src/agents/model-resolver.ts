@@ -1,5 +1,5 @@
 import type { ModelCallOptions, ArchCodeConfig, AgentConfig } from "../config/index";
-import type { ModelInfo, Registry as ProviderRegistry } from "../provider/index";
+import type { ModelInfo, ProviderRegistry } from "../provider/index";
 import { MissingAgentModelConfigError, UnknownModelVariantError } from "./errors";
 
 export function resolveAgentModel(

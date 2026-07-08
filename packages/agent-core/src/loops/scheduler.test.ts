@@ -798,7 +798,7 @@ describe("LoopScheduler", () => {
   });
 
   test("trigger polling cancels jobs if global kill activates during poll", async () => {
-    const fixture = await createFixture(0, { localHead: { repoId: "archcode/workbench", branch: "main", sha: "before" } });
+    const fixture = await createFixture(0, { localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "before" } });
     await fixture.manager.create("project-a", triggerConfig);
     const poller = {
       pollLoopState: async (loop: Awaited<ReturnType<LoopStateManager["read"]>>) => {
@@ -807,7 +807,7 @@ describe("LoopScheduler", () => {
           triggerKind: "on_commit",
           subjectKey: "commit:after",
           eventSummary: { summary: "commit arrived while kill activated" },
-          collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+          collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
         });
         await fixture.scheduler.activateGlobalKill({ reason: "stop during poll" });
       },
@@ -822,11 +822,11 @@ describe("LoopScheduler", () => {
   });
 
   test("dynamic trigger collision target blocks run before runner starts", async () => {
-    const fixture = await createFixture(0, { localHead: { repoId: "archcode/workbench", branch: "main", sha: "abc123" } });
+    const fixture = await createFixture(0, { localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "abc123" } });
     const loop = await fixture.manager.create("project-a", triggerConfig);
     const other = await fixture.manager.create("project-a", { ...manualConfig, title: "Other loop" });
     await fixture.collisionLedger.acquire({
-      target: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      target: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
       loopId: other.loopId,
       runId: "other-run",
       priority: 10,
@@ -846,7 +846,7 @@ describe("LoopScheduler", () => {
       subjectKey: job.subjectKey,
       dedupeKey: job.dedupeKey,
       resolvedHeadSha: "abc123",
-      collisionTargets: [{ type: "branch", owner: "archcode", repo: "workbench", branch: "main" }],
+      collisionTargets: [{ type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" }],
     });
     expect(job).toMatchObject({ status: "skipped", blockedReason: "collision_conflict" });
   });
@@ -859,10 +859,10 @@ describe("LoopScheduler", () => {
     await fixture.jobQueue.enqueue({
       loopId: loop.loopId,
       triggerKind: "on_commit",
-      subjectKey: "commit:archcode/workbench:main",
-      repoId: "archcode/workbench",
+      subjectKey: "commit:test-owner/test-repo:main",
+      repoId: "test-owner/test-repo",
       branch: "main",
-      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
       resolvedHeadSha: oldSha,
       eventSummary: { summary: "Observed old commit", payloadSha: oldSha },
     });
@@ -884,10 +884,10 @@ describe("LoopScheduler", () => {
     await fixture.jobQueue.enqueue({
       loopId: loop.loopId,
       triggerKind: "on_commit",
-      subjectKey: "commit:archcode/workbench:main",
-      repoId: "archcode/workbench",
+      subjectKey: "commit:test-owner/test-repo:main",
+      repoId: "test-owner/test-repo",
       branch: "main",
-      collisionTarget: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      collisionTarget: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
       resolvedHeadSha: newSha,
       eventSummary: { summary: "Observed new commit", payloadSha: newSha },
     });
@@ -973,7 +973,7 @@ describe("LoopScheduler", () => {
 
   test("manual, interval, cron, and trigger polling all create durable jobs before runner invocation", async () => {
     const fixture = await createFixture(Date.UTC(2026, 0, 1, 0, 0, 0), {
-      localHead: { repoId: "archcode/workbench", branch: "main", sha: "abc123" },
+      localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "abc123" },
     });
     const manual = await fixture.manager.create("project-a", manualConfig);
     const interval = await fixture.manager.create("project-a", {

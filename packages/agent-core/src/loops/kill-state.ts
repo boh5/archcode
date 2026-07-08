@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { z } from "zod/v4";
 
@@ -99,7 +100,7 @@ export class LoopKillStateManager {
   }
 
   private async killStatePath(): Promise<string> {
-    const loopsRoot = resolve(this.#workspaceRoot, ".archcode", "loops");
+    const loopsRoot = resolve(this.#workspaceRoot, PROJECT_STATE_DIR_NAME, "loops");
     await assertSafeLoopRoot(this.#workspaceRoot, loopsRoot);
     return await resolveContainedPath("kill-state.json", loopsRoot);
   }
@@ -161,7 +162,7 @@ async function resolveContainedPath(relative: string, root: string): Promise<str
 
 async function assertSafeLoopRoot(workspaceRoot: string, loopsRoot: string): Promise<void> {
   const realWorkspaceRoot = await realpath(workspaceRoot);
-  await assertExistingPathContained(resolve(workspaceRoot, ".archcode"), realWorkspaceRoot);
+  await assertExistingPathContained(resolve(workspaceRoot, PROJECT_STATE_DIR_NAME), realWorkspaceRoot);
   await assertExistingPathContained(loopsRoot, realWorkspaceRoot);
 }
 

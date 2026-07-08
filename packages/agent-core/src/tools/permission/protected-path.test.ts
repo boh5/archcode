@@ -113,6 +113,22 @@ describe("createProtectedPathPermission", () => {
     });
   });
 
+  test("denies command text references to the .archcode directory itself", async () => {
+    for (const command of [
+      "python3 -c \"import shutil; shutil.rmtree('.archcode')\"",
+      "python3 -c \"open('.archcode','w')\"",
+      `python3 -c "import shutil; shutil.rmtree('${join(WORKSPACE, ".archcode")}')"`,
+    ]) {
+      const decision = await permission({ command }, makeCtx({ toolName: "bash" }));
+
+      expect(decision, command).toMatchObject({
+        outcome: "deny",
+        errorKind: "permission-denied",
+        errorCode: "PROTECTED_PATH_WRITE_DENIED",
+      });
+    }
+  });
+
   // ─── Deny: traversal & symlink attacks ───
 
   test("denies path traversal into .archcode/", async () => {

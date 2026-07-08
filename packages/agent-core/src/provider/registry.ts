@@ -26,7 +26,7 @@ export class UnknownQualifiedIdError extends Error {
  * Built from a validated `ProvidersConfig` — call {@link createRegistry} or
  * {@link createRegistryFromFile} to obtain an instance.
  */
-export class Registry {
+export class ProviderRegistry {
   /** The underlying AI SDK provider registry (`registry.languageModel("p:m")`). */
   readonly sdkRegistry: ProviderRegistryProvider;
 
@@ -60,7 +60,7 @@ export class Registry {
 }
 
 /**
- * Build a {@link Registry} from an already-loaded `ProvidersConfig`.
+ * Build a {@link ProviderRegistry} from an already-loaded `ProvidersConfig`.
  *
  * Iterates every provider → every model, creates AI SDK provider instances,
  * and indexes all resulting `ModelInfo` objects by qualified id.
@@ -89,7 +89,7 @@ export class Registry {
  * registry.sdkRegistry.languageModel("xxx:gpt-5.2")
  * ```
  */
-export function createRegistry(providers: ProvidersConfig): Registry {
+export function createRegistry(providers: ProvidersConfig): ProviderRegistry {
   const sdkProviders: Record<string, ReturnType<typeof createProviderInstance>> =
     {};
   const models = new Map<string, ModelInfo>();
@@ -114,5 +114,5 @@ export function createRegistry(providers: ProvidersConfig): Registry {
   }
 
   const sdkRegistry = createProviderRegistry(sdkProviders);
-  return new Registry(sdkRegistry, models);
+  return new ProviderRegistry(sdkRegistry, models);
 }

@@ -1,3 +1,4 @@
+import { ENV_CLI } from "@archcode/protocol";
 import { z } from "zod";
 import { defineTool } from "../define-tool";
 import type { ToolExecutionContext, ToolExecutionResult } from "../types";
@@ -21,7 +22,7 @@ type BashInput = z.infer<typeof BashInputSchema>;
 const ENV_ALLOWLIST = ["PATH", "HOME", "SHELL", "TERM", "LANG", "LC_ALL"] as const;
 
 export function buildBashEnv(source: Record<string, string | undefined> = Bun.env): Record<string, string> {
-  const env: Record<string, string> = { ARCHCODE_CLI: "1" };
+  const env: Record<string, string> = { [ENV_CLI]: "1" };
 
   for (const key of ENV_ALLOWLIST) {
     if (key.endsWith("_TOKEN") || key.endsWith("_KEY")) continue;

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { z } from "zod/v4";
 import type {
@@ -882,7 +883,7 @@ export class LoopStateManager {
   }
 
   private loopsRoot(): string {
-    return resolve(this.workspaceRoot, ".archcode", "loops");
+    return resolve(this.workspaceRoot, PROJECT_STATE_DIR_NAME, "loops");
   }
 
   private isMissingDirectoryError(error: unknown): boolean {

@@ -18,12 +18,12 @@ import { FakeClock } from "./test-utils";
 import { LoopTriggerPoller } from "./triggers";
 import type { LoopWorktreeCreateResult, LoopWorktreeInspection } from "./worktree-manager";
 
-const TMP_DIR = join(import.meta.dir, "__test_tmp__", "phase5-e2e");
+const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-hardening-e2e");
 const HEAD_ONE = "1".repeat(40);
 const HEAD_TWO = "2".repeat(40);
 
-const phase5Config: LoopConfig = {
-  title: "Phase 5 PR hardening",
+const loopHardeningConfig: LoopConfig = {
+  title: "PR loop hardening",
   description: "Exercise trigger polling, queue dispatch, worktree execution, and cleanup metadata.",
   schedule: { kind: "manual" },
   runKind: "session",
@@ -44,7 +44,7 @@ afterAll(async () => {
   await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
 });
 
-describe("Phase 5 loop hardening e2e", () => {
+describe("Loop hardening e2e", () => {
   test("polls PR triggers, serializes same-PR jobs, runs mocked sessions in worktrees, and records cleanup artifacts", async () => {
     const clock = new FakeClock(Date.UTC(2026, 6, 6, 10, 0, 0));
     const stateManager = new LoopStateManager(TMP_DIR);
@@ -57,7 +57,7 @@ describe("Phase 5 loop hardening e2e", () => {
       queue,
       pollState: new LoopPollStateManager({ workspaceRoot: TMP_DIR, clock }),
       github: github as unknown as GitHubCiPollingConnectorApi,
-      repository: { owner: "archcode", repo: "workbench", defaultBranch: "main" },
+      repository: { owner: "test-owner", repo: "test-repo", defaultBranch: "main" },
       clock,
     });
     const runtime = new FakeLoopRuntime();
@@ -81,23 +81,23 @@ describe("Phase 5 loop hardening e2e", () => {
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       triggerPoller: poller,
     });
-    const loop = await stateManager.create("project-a", phase5Config, "architect");
+    const loop = await stateManager.create("project-a", loopHardeningConfig, "architect");
 
     const firstPoll = await poller.pollLoop(loop.loopId);
     expect(firstPoll.enqueued).toHaveLength(1);
     expect(firstPoll.health[0]).toMatchObject({ triggerKind: "on_pr", status: "healthy", cadenceMs: 60_000 });
     expect((await queue.list())[0]).toMatchObject({
       triggerKind: "on_pr",
-      subjectKey: `pr:archcode/workbench#42:${HEAD_ONE}`,
-      collisionKey: "github:archcode/workbench:pr:42",
+      subjectKey: `pr:test-owner/test-repo#42:${HEAD_ONE}`,
+      collisionKey: "github:test-owner/test-repo:pr:42",
       resolvedHeadSha: HEAD_ONE,
     });
 
     const schedulerStarted = scheduler.start("project-a");
     await waitFor(() => runtime.startSessionExecutionMock.mock.calls.length === 1);
     expect(worktreeManager.createMock.mock.calls[0]?.[0]).toMatchObject({
-      loopSlug: "Phase 5 PR hardening",
-      subjectSlug: `pr:archcode/workbench#42:${HEAD_ONE}`,
+      loopSlug: "PR loop hardening",
+      subjectSlug: `pr:test-owner/test-repo#42:${HEAD_ONE}`,
       baseSha: HEAD_ONE,
       jobClass: "remote",
     });
@@ -110,8 +110,8 @@ describe("Phase 5 loop hardening e2e", () => {
     const queuedWhileFirstRuns = await queue.list();
     expect(queuedWhileFirstRuns.map((job) => job.status)).toEqual(["running", "pending"]);
     expect(queuedWhileFirstRuns.map((job) => job.collisionKey)).toEqual([
-      "github:archcode/workbench:pr:42",
-      "github:archcode/workbench:pr:42",
+      "github:test-owner/test-repo:pr:42",
+      "github:test-owner/test-repo:pr:42",
     ]);
     expect(runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
 
@@ -213,7 +213,7 @@ class FakeLoopRuntime {
     origin: "user_message",
     abortController: new AbortController(),
     promise: this.#executionPromise,
-    executionToken: Symbol(`phase5:${input.sessionId}`),
+    executionToken: Symbol(`loop-hardening:${input.sessionId}`),
     startedAt: Date.now(),
   }));
   readonly getSessionFileMock = mock(async (_workspaceRoot: string, sessionId: string): Promise<SessionFile> => {
@@ -257,7 +257,7 @@ class FakeWorktreeManager implements LoopRunnerWorktreeManager {
       managedRoot: join(this.root, "worktrees"),
       worktreePath,
       worktreeName: `worktree-${this.#createCount}`,
-      branchName: `archcode/loop/phase5/job-${this.#createCount}`,
+      branchName: `archcode/loop/hardening/job-${this.#createCount}`,
       baseSha: input.baseSha,
       resolvedHeadSha: input.baseSha,
       canonicalStatus: { dirty: false, entries: [] },
@@ -307,8 +307,8 @@ function makePullRequest(headSha: string): GitHubPullRequest {
   return {
     number: 42,
     state: "open",
-    title: "Harden Phase 5 loop path",
-    head: { ref: "feature/phase5-hardening", sha: headSha },
+    title: "Harden loop execution path",
+    head: { ref: "feature/loop-hardening", sha: headSha },
     base: { ref: "main" },
     updated_at: `2026-07-06T10:00:${headSha === HEAD_ONE ? "01" : "02"}Z`,
   };

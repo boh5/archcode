@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalTokenBudgetState, HitlRecord, HitlResponse } from "@archcode/protocol";
+import type { DoneCondition, GoalDoneResult, GoalTokenBudgetState, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalApprovalGate } from "../hitl/goal-gates";
 import { writeGoalBudgetArtifact } from "./artifact-lifecycle";
@@ -233,7 +233,7 @@ function approvalResponse(decision: "approved" | "denied", comment?: string): Hi
   return { type: "approval_decision", decision, ...(comment === undefined ? {} : { comment }) };
 }
 
-function specComplianceFailureResult(): DoneResult {
+function specComplianceFailureResult(): GoalDoneResult {
   return {
     conditionId: "spec-check",
     passed: false,
@@ -269,7 +269,7 @@ function specComplianceFailureResult(): DoneResult {
   };
 }
 
-function specCompliancePassingResult(): DoneResult {
+function specCompliancePassingResult(): GoalDoneResult {
   const failed = specComplianceFailureResult();
   return {
     ...failed,
@@ -288,7 +288,7 @@ function specCompliancePassingResult(): DoneResult {
   };
 }
 
-function failingResult(conditionId: string): DoneResult {
+function failingResult(conditionId: string): GoalDoneResult {
   return {
     conditionId,
     passed: false,

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TOOL_GOAL_EVIDENCE, type DoneCondition, type DoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
+import { TOOL_GOAL_EVIDENCE, type DoneCondition, type GoalDoneResult, type GoalSpecComplianceCriterionEvidence } from "@archcode/protocol";
 
 import { goalEvidenceTool } from "../tools/builtins/goal-tools";
 import { createRegistry } from "../tools/registry";
@@ -30,7 +30,7 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function expectResult(result: DoneResult, conditionId: string, passed: boolean): void {
+function expectResult(result: GoalDoneResult, conditionId: string, passed: boolean): void {
   expect(result.conditionId).toBe(conditionId);
   expect(result.passed).toBe(passed);
   expect(result.evidence.length).toBeGreaterThan(0);
@@ -216,7 +216,7 @@ describe("evaluateCondition", () => {
     expect(approved.evidence).toContain("EXIT_CODE: 0");
   });
 
-  it("returns the Phase 1 placeholder for user_confirmed", async () => {
+  it("returns the user confirmation placeholder result", async () => {
     const condition: DoneCondition = { id: "user-ok", kind: "user_confirmed", params: { prompt: "Approve?" } };
 
     const result = await evaluateCondition(condition, workspaceRoot);
@@ -291,7 +291,7 @@ describe("goal_evidence check_done tool", () => {
     const toolResult = await registry.execute({ toolName: TOOL_GOAL_EVIDENCE, toolCallId: "goal-evidence-check-done-call", input }, ctx);
 
     expect(toolResult.isError).toBe(false);
-    const doneResult = JSON.parse(toolResult.output) as DoneResult;
+  const doneResult = JSON.parse(toolResult.output) as GoalDoneResult;
     expectResult(doneResult, "artifact-exists", true);
     const persisted = await manager.read(goal.id);
     expect(persisted.status).toBe("verifying");

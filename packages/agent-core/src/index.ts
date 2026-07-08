@@ -8,7 +8,7 @@ export type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "./p
 export type { Agent, AgentResult, AgentRunOptions } from "./agents/types";
 export { AgentRunningError, ConcurrentSessionLimitError } from "./agents/errors";
 
-export type { CommandResult } from "./commands/types";
+export type { CommandResult, SlashCommandResult } from "./commands/types";
 export { SessionExecutionManager } from "./execution";
 export type { ActiveSessionExecution, StartSessionExecutionInput, SubscribeSessionEventsInput } from "./execution";
 export { SessionEventBridge } from "./events";

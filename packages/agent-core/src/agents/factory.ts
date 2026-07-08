@@ -2,7 +2,7 @@ import type { BackgroundTaskManager } from "../background/manager";
 import { BackgroundTaskManager as DefaultBackgroundTaskManager } from "../background/manager";
 import type { ArchCodeConfig } from "../config/schema";
 import type { ProjectContextResolver } from "../projects/context-resolver";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
 import type { SessionModelInfo } from "@archcode/protocol";
 import type { SessionStoreManager } from "../store/session-store-manager";

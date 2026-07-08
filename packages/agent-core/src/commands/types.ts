@@ -19,13 +19,16 @@ export interface CommandContext {
   skillService?: SkillService;
 }
 
-export interface CommandResult {
+export interface SlashCommandResult {
   success: boolean;
   message: string;
   continueAsMessage?: string;
 }
 
-export type CommandHandler = (ctx: CommandContext, args?: string) => Promise<CommandResult>;
+/** @deprecated Use SlashCommandResult for agent slash-command execution results. */
+export type CommandResult = SlashCommandResult;
+
+export type CommandHandler = (ctx: CommandContext, args?: string) => Promise<SlashCommandResult>;
 
 export interface CommandDescriptor {
   name: string;

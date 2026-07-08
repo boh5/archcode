@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalRepairContext } from "@archcode/protocol";
+import type { DoneCondition, GoalDoneResult, GoalRepairContext } from "@archcode/protocol";
 
 import { buildSystemPrompt } from "../prompt/builder";
 import type { PromptContext } from "../prompt/types";
@@ -90,7 +90,7 @@ async function runToReview(goalId: string, runner: GoalRunner): Promise<void> {
   await runner.advancePhase(goalId, "review");
 }
 
-function failedAc002SpecResult(): DoneResult {
+function failedAc002SpecResult(): GoalDoneResult {
   return {
     conditionId: specCondition.id,
     passed: false,
@@ -124,7 +124,7 @@ function failedAc002SpecResult(): DoneResult {
   };
 }
 
-function passingSpecResult(): DoneResult {
+function passingSpecResult(): GoalDoneResult {
   return {
     ...failedAc002SpecResult(),
     passed: true,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ArchCodeConfig } from "../config/index";
-import { ModelInfo, type Registry as ProviderRegistry } from "../provider/index";
+import { ModelInfo, type ProviderRegistry } from "../provider/index";
 import { resolveAgentModel } from "./model-resolver";
 
 const baseModel = {

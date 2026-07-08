@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { ArchCodeConfig } from "../config/schema";
 import { ModelInfo } from "../provider/model";
-import type { Registry as ProviderRegistry } from "../provider/index";
+import type { ProviderRegistry } from "../provider/index";
 import { SkillService } from "../skills";
 import { SessionStoreManager } from "../store/session-store-manager";
 import { createRegistry } from "../tools/registry";

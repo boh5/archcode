@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { USER_DATA_DIR_NAME } from "@archcode/protocol";
 import { z } from "zod/v4";
 
 import { atomicWrite } from "../utils/safe-file";
@@ -79,7 +80,7 @@ export class ProjectRegistry {
   #logger: Logger;
 
   constructor(options: ProjectRegistryOptions) {
-    this.#indexFile = join(options.homeDir ?? homedir(), ".archcode", "projects", "index.json");
+    this.#indexFile = join(options.homeDir ?? homedir(), USER_DATA_DIR_NAME, "projects", "index.json");
     this.#logger = options.logger;
   }
 

@@ -57,7 +57,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:main",
-      repoId: "archcode/workbench",
+      repoId: "test-owner/test-repo",
       branch: "main",
       priority: 1,
       eventSummary: { summary: "commit a", source: "local-git" },
@@ -67,7 +67,7 @@ describe("LoopJobQueue", () => {
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:main",
-      repoId: "archcode/workbench",
+      repoId: "test-owner/test-repo",
       branch: "main",
       priority: 5,
       eventSummary: { summary: "commit b", source: "local-git" },
@@ -86,11 +86,11 @@ describe("LoopJobQueue", () => {
   test("running duplicate sets rerunAfterCurrent once without unlimited pending jobs", async () => {
     const clock = new FakeClock(20_000);
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
-    const { job } = await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:archcode/workbench#7" });
+    const { job } = await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7" });
     await queue.update(job.jobId, { status: "running", startedAt: 20_000, leaseExpiresAt: 50_000, attempts: 1 });
 
-    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:archcode/workbench#7", eventSummary: { summary: "PR updated" } });
-    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:archcode/workbench#7", eventSummary: { summary: "PR updated again" } });
+    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7", eventSummary: { summary: "PR updated" } });
+    await queue.enqueue({ loopId: LOOP_ID, triggerKind: "on_pr", subjectKey: "pr:test-owner/test-repo#7", eventSummary: { summary: "PR updated again" } });
 
     const jobs = await queue.list();
     expect(jobs).toHaveLength(1);
@@ -99,21 +99,21 @@ describe("LoopJobQueue", () => {
   });
 
   test("derives exact dedupe, branch, and collision keys", async () => {
-    const target = { type: "branch" as const, owner: "archcode", repo: "workbench", branch: "feature/queue" };
+    const target = { type: "branch" as const, owner: "test-owner", repo: "test-repo", branch: "feature/queue" };
     const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock: new FakeClock(30_000) });
 
     const { job } = await queue.enqueue({
       loopId: LOOP_ID,
       triggerKind: "on_commit",
       subjectKey: "branch:feature/queue",
-      repoId: "archcode/workbench",
+      repoId: "test-owner/test-repo",
       branch: "feature/queue",
       collisionTarget: target,
     });
 
     expect(job.subjectKey).toBe("branch:feature/queue");
     expect(job.dedupeKey).toBe(`${LOOP_ID}:on_commit:branch:feature/queue`);
-    expect(job.branchKey).toBe("archcode/workbench:feature/queue");
+    expect(job.branchKey).toBe("test-owner/test-repo:feature/queue");
     expect(job.collisionKey).toBe(canonicalTargetKey(target));
   });
 

@@ -871,7 +871,7 @@ export type DoneCondition =
   | { id: string; kind: "spec_compliance"; params: { specPath: string; focusAreas?: string[] }; required?: boolean };
 // required defaults true; false = soft hint
 
-export interface DoneResult {
+export interface GoalDoneResult {
   conditionId: string;
   passed: boolean;
   evidence: string;   // machine output or Reviewer evidence summary
@@ -879,6 +879,9 @@ export interface DoneResult {
   specCompliance?: GoalSpecComplianceEvidence;
   review?: GoalReviewReport;
 }
+
+/** @deprecated Use GoalDoneResult for clarity at Goal/Reviewer boundaries. */
+export type DoneResult = GoalDoneResult;
 
 export type GoalArtifactName =
   | "plan.md"
@@ -997,6 +1000,19 @@ export interface GoalRetryState {
 
 export type HitlAttentionStatus = "clear" | "waiting_for_human";
 
+export const GOAL_HITL_ACTION_ADVANCE_PHASE = "advance_phase";
+export const GOAL_HITL_ACTION_COMPLETE = "complete";
+export const GOAL_HITL_ACTION_FINALIZE_REVIEW = "finalize_review";
+export const GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL = "await_budget_approval";
+export const GOAL_HITL_ACTION_ANSWER_QUESTION = "answer_question";
+
+export type GoalHitlAction =
+  | typeof GOAL_HITL_ACTION_ADVANCE_PHASE
+  | typeof GOAL_HITL_ACTION_COMPLETE
+  | typeof GOAL_HITL_ACTION_FINALIZE_REVIEW
+  | typeof GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL
+  | typeof GOAL_HITL_ACTION_ANSWER_QUESTION;
+
 interface GoalHitlCheckpointBase {
   version: 1;
   hitlId: string;
@@ -1006,11 +1022,11 @@ interface GoalHitlCheckpointBase {
 }
 
 export type GoalHitlCheckpoint = GoalHitlCheckpointBase & (
-  | { kind: "goal_approval"; action: "advancePhase"; from: "plan"; to: "build"; approvalPoint: "after_plan" }
-  | { kind: "goal_approval"; action: "complete"; approvalPoint: "before_complete" }
-  | { kind: "goal_review"; action: "finalizeReviewerReview" }
-  | { kind: "goal_budget"; action: "awaitBudgetApproval"; approvalPoint: string; estimatedNextCallTokens?: number }
-  | { kind: "goal_question"; action: "answerQuestion"; questionKey: string }
+  | { kind: "goal_approval"; action: typeof GOAL_HITL_ACTION_ADVANCE_PHASE; from: "plan"; to: "build"; approvalPoint: "after_plan" }
+  | { kind: "goal_approval"; action: typeof GOAL_HITL_ACTION_COMPLETE; approvalPoint: "before_complete" }
+  | { kind: "goal_review"; action: typeof GOAL_HITL_ACTION_FINALIZE_REVIEW }
+  | { kind: "goal_budget"; action: typeof GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL; approvalPoint: string; estimatedNextCallTokens?: number }
+  | { kind: "goal_question"; action: typeof GOAL_HITL_ACTION_ANSWER_QUESTION; questionKey: string }
 );
 
 export type ApprovalPoint = "after_plan" | "before_complete";
@@ -1022,7 +1038,7 @@ export interface GoalState {
   status: GoalStatus;
   phase: GoalPhase;    // current phase (plan/build/review), persisted
   doneConditions: DoneCondition[];  // locked and immutable after lock
-  doneResults: Record<string, DoneResult>;  // conditionId → latest result
+  doneResults: Record<string, GoalDoneResult>;  // conditionId → latest result
   reviewerAgent: string;  // must ≠ executor, default "reviewer"
   retryPolicy: RetryPolicy;
   retryCount: number;
@@ -1050,7 +1066,7 @@ export interface GoalState {
 
 export type GoalStreamEvent =
   | { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState }
-  | { type: "goal.done_check"; goalId: string; results: DoneResult[]; review?: GoalReviewReport }
+  | { type: "goal.done_check"; goalId: string; results: GoalDoneResult[]; review?: GoalReviewReport }
   | { type: "goal.escalation"; goalId: string; reason: string };
 
 // ─── HITL Types ───
@@ -1503,7 +1519,10 @@ export type LoopStreamEvent =
   | { type: "loop.state_change"; loopId: string; status: LoopStatus; state: LoopState }
   | { type: "loop.run_appended"; loopId: string; report: LoopRunReport };
 
-export interface CommandResult {
+export interface ApiCommandResult {
   success: boolean;
   message: string;
 }
+
+/** @deprecated Use ApiCommandResult for API command responses. */
+export type CommandResult = ApiCommandResult;

@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
 import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
-import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult, HitlProjection } from "../api/types";
+import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, GoalDoneResult, HitlProjection } from "../api/types";
 import { hitlStore } from "../store/hitl-store";
 import { GoalDetailRoute } from "./goal-detail";
 
@@ -108,7 +108,7 @@ function makeDoneCondition(overrides: Partial<DoneCondition> = {}): DoneConditio
   } as DoneCondition;
 }
 
-function makeDoneResult(overrides: Partial<DoneResult> = {}): DoneResult {
+function makeDoneResult(overrides: Partial<GoalDoneResult> = {}): GoalDoneResult {
   return {
     conditionId: "cond-1",
     passed: true,

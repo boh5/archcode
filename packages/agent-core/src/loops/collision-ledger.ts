@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import type { CollisionConflict, CollisionLease, CollisionTarget, LoopCollisionSnapshot, LoopState } from "./state";
 import { CollisionConflictSchema, CollisionLeaseSchema, LoopCollisionSnapshotSchema, LoopStateManager } from "./state";
@@ -313,7 +314,7 @@ function trimNewest<T>(items: readonly T[]): T[] {
 }
 
 async function collisionLedgerPath(workspaceRoot: string): Promise<string> {
-  const root = resolve(workspaceRoot, ".archcode", "loops");
+  const root = resolve(workspaceRoot, PROJECT_STATE_DIR_NAME, "loops");
   const filePath = resolve(root, "collision-ledger.json");
   if (!isContained(filePath, root)) throw new Error("Invalid collision ledger path");
   return filePath;

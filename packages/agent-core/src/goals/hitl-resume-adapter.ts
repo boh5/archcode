@@ -1,4 +1,5 @@
-import type { ApprovalPoint, DoneResult, GoalHitlCheckpoint, HitlRecord, HitlResponse } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_ADVANCE_PHASE } from "@archcode/protocol";
+import type { ApprovalPoint, GoalDoneResult, GoalHitlCheckpoint, HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "../hitl/goal-gates";
 import type { GoalHitlResumeAdapter as ResumeAdapterContract } from "../hitl/resume-coordinator";
@@ -67,7 +68,7 @@ export class GoalHitlResumeAdapter implements ResumeAdapterContract {
     }
 
     const runner = this.options.createRunner();
-    if (checkpoint.action === "advancePhase") {
+    if (checkpoint.action === GOAL_HITL_ACTION_ADVANCE_PHASE) {
       const current = await this.options.goalStateManager.read(goalId);
       if (current.status !== "paused" || current.phase !== "plan") return;
       await this.options.goalStateManager.resumeStatusAfterHitl(goalId, "running");
@@ -116,7 +117,7 @@ function approvalPauseReason(prefix: string, response: HitlResponse): string {
   return response.type === "approval_decision" && response.comment !== undefined ? `${prefix}: ${response.comment}` : prefix;
 }
 
-function reviewDoneResult(outcome: ReturnType<typeof reviewOutcomeFromResponse>): DoneResult {
+function reviewDoneResult(outcome: ReturnType<typeof reviewOutcomeFromResponse>): GoalDoneResult {
   return {
     conditionId: "reviewer_approval",
     passed: outcome.outcome === "DONE",

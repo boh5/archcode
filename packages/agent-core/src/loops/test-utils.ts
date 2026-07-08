@@ -116,15 +116,15 @@ export function fixtureCollisionTarget(
   overrides?: { type?: CollisionTarget["type"]; owner?: string; repo?: string; number?: number; branch?: string; path?: string },
 ): CollisionTarget {
   if (overrides?.type === "issue") {
-    return { type: "issue", owner: overrides.owner ?? "archcode", repo: overrides.repo ?? "workbench", number: overrides.number ?? 42 };
+    return { type: "issue", owner: overrides.owner ?? "test-owner", repo: overrides.repo ?? "test-repo", number: overrides.number ?? 42 };
   }
   if (overrides?.type === "branch") {
-    return { type: "branch", owner: overrides.owner ?? "archcode", repo: overrides.repo ?? "workbench", branch: overrides.branch ?? "main" };
+    return { type: "branch", owner: overrides.owner ?? "test-owner", repo: overrides.repo ?? "test-repo", branch: overrides.branch ?? "main" };
   }
   if (overrides?.type === "file") {
     return { type: "file", path: overrides.path ?? ".archcode/config.json" };
   }
-  return { type: "pr", owner: overrides?.owner ?? "archcode", repo: overrides?.repo ?? "workbench", number: overrides?.number ?? 42 };
+  return { type: "pr", owner: overrides?.owner ?? "test-owner", repo: overrides?.repo ?? "test-repo", number: overrides?.number ?? 42 };
 }
 
 /**
@@ -138,8 +138,8 @@ export function fixtureCollisionLease(
 ): CollisionLease {
   const now = utcEpochMs();
   return {
-    targetKey: "github:archcode/workbench:pr:42",
-    target: { type: "pr", owner: "archcode", repo: "workbench", number: 42 },
+    targetKey: "github:test-owner/test-repo:pr:42",
+    target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
     loopId: "test-loop-1",
     runId: "test-run-1",
     priority: 10,
@@ -630,9 +630,9 @@ export class FakeGitHubFetchAdapter {
       number: 42,
       title: "Test PR title",
       state: "open",
-      html_url: "https://github.com/archcode/workbench/pull/42",
-      owner: "archcode",
-      repo: "workbench",
+      html_url: "https://github.com/test-owner/test-repo/pull/42",
+      owner: "test-owner",
+      repo: "test-repo",
       created_at: "2026-07-04T10:00:00Z",
       updated_at: "2026-07-04T12:00:00Z",
       ...overrides,
@@ -660,7 +660,7 @@ export class FakeGitHubFetchAdapter {
       status: "completed",
       conclusion: "success",
       head_branch: "main",
-      html_url: "https://github.com/archcode/workbench/actions/runs/2001",
+      html_url: "https://github.com/test-owner/test-repo/actions/runs/2001",
       created_at: "2026-07-04T10:00:00Z",
       updated_at: "2026-07-04T10:10:00Z",
       ...overrides,

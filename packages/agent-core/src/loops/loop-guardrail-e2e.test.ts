@@ -76,7 +76,7 @@ describe("Loop end-to-end guardrail flows", () => {
         const pullRequest = await registry.execute({
           toolName: TOOL_GITHUB_GET_PULL_REQUEST,
           toolCallId: "read-pr-42",
-          input: { owner: "archcode", repo: "archcode", number: 42 },
+          input: { owner: "test-owner", repo: "test-repo", number: 42 },
         }, readContext);
         expect(pullRequest.isError).toBe(false);
         executedReadTools.push(TOOL_GITHUB_GET_PULL_REQUEST);
@@ -84,7 +84,7 @@ describe("Loop end-to-end guardrail flows", () => {
         const checks = await registry.execute({
           toolName: TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
           toolCallId: "read-pr-checks-42",
-          input: { owner: "archcode", repo: "archcode", number: 42, perPage: 10 },
+          input: { owner: "test-owner", repo: "test-repo", number: 42, perPage: 10 },
         }, toolContext(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS, loop.loopId, runId, allowedTools, { confirmPermission }));
         expect(checks.isError).toBe(false);
         expect(JSON.parse(checks.output)).toMatchObject({
@@ -111,7 +111,7 @@ describe("Loop end-to-end guardrail flows", () => {
         const comment = await registry.execute({
           toolName: TOOL_GITHUB_CREATE_ISSUE_COMMENT,
           toolCallId: "comment-pr-42",
-          input: { owner: "archcode", repo: "archcode", issueNumber: 42, body: "Status update" },
+          input: { owner: "test-owner", repo: "test-repo", issueNumber: 42, body: "Status update" },
         }, toolContext(TOOL_GITHUB_CREATE_ISSUE_COMMENT, loop.loopId, runId, allowedTools, { confirmPermission }));
         expect(comment.isError).toBe(true);
         expect(comment.output).toContain("LOOP_SOFT_BUDGET_BLOCKED");
@@ -134,7 +134,7 @@ describe("Loop end-to-end guardrail flows", () => {
     });
     expect(executedReadTools).toEqual([TOOL_GITHUB_GET_PULL_REQUEST, TOOL_GITHUB_GET_PULL_REQUEST_CHECKS]);
     expect(connector.getPullRequest).toHaveBeenCalledTimes(2);
-    expect(connector.listWorkflowRuns).toHaveBeenCalledWith("archcode", "archcode", {
+    expect(connector.listWorkflowRuns).toHaveBeenCalledWith("test-owner", "test-repo", {
       branch: "automation/guardrail-evidence",
       headSha: "abc123",
       perPage: 10,
@@ -154,10 +154,10 @@ describe("Loop end-to-end guardrail flows", () => {
     const holder = await stateManager.create("project-a", prBabysitterConfig());
     const contender = await stateManager.create("project-a", {
       ...prBabysitterConfig(),
-      collisionTargets: [{ type: "pr", owner: "archcode", repo: "archcode", number: 42 }],
+      collisionTargets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
     });
     await collisionLedger.acquire({
-      target: { type: "pr", owner: "archcode", repo: "archcode", number: 42 },
+      target: { type: "pr", owner: "test-owner", repo: "test-repo", number: 42 },
       loopId: holder.loopId,
       runId: "holder-run",
       priority: 10,
@@ -178,12 +178,12 @@ describe("Loop end-to-end guardrail flows", () => {
     const runHistory = await stateManager.readRunLog(contender.loopId, 1);
 
     expect(report).toMatchObject({ status: "skipped", reason: "collision_conflict" });
-    expect(report?.collisionConflicts?.[0]?.targetKey).toBe("github:archcode/archcode:pr:42");
+    expect(report?.collisionConflicts?.[0]?.targetKey).toBe("github:test-owner/test-repo:pr:42");
     expect(runHistory).toEqual([
       expect.objectContaining({
         status: "skipped",
         reason: "collision_conflict",
-        collisionConflicts: [expect.objectContaining({ targetKey: "github:archcode/archcode:pr:42" })],
+        collisionConflicts: [expect.objectContaining({ targetKey: "github:test-owner/test-repo:pr:42" })],
       }),
     ]);
     expect(runner).not.toHaveBeenCalled();

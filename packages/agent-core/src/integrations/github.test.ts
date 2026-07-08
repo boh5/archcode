@@ -107,7 +107,7 @@ describe("GitHubRestProvider token resolution", () => {
       fetchAdapter: fetcher.createFetch(),
     });
 
-    const result = await connector.getPullRequest("archcode", "workbench", 42);
+    const result = await connector.getPullRequest("test-owner", "test-repo", 42);
 
     expect(fetcher.requests[0].headers.Authorization).toBe("Bearer ghp_configured_secret");
     expect(result.data.token_echo).toBe(REDACTION_MARKER);
@@ -122,7 +122,7 @@ describe("GitHubRestProvider token resolution", () => {
       fetchAdapter: fetcher.createFetch(),
     });
 
-    await connector.getPullRequest("archcode", "workbench", 42);
+    await connector.getPullRequest("test-owner", "test-repo", 42);
 
     expect(fetcher.requests[0].headers.Authorization).toBe("Bearer ghp_gh_secret");
   });
@@ -147,7 +147,7 @@ describe("GitHubRestProvider token resolution", () => {
       fetchAdapter: new MockGitHubFetch().createFetch(),
     });
 
-    const error = await captureIntegrationError(() => connector.getPullRequest("archcode", "workbench", 42));
+    const error = await captureIntegrationError(() => connector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(error.name).toBe("IntegrationError");
     expect(error.code).toBe("integration_auth_missing");
@@ -162,12 +162,12 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueJson({ number: 42, title: "Add connector" });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_header_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const result = await connector.getPullRequest("archcode", "workbench", 42);
+    const result = await connector.getPullRequest("test-owner", "test-repo", 42);
 
     expect(result.status).toBe(200);
     expect(result.data.number).toBe(42);
     expect(fetcher.requests[0]).toMatchObject({
-      url: "https://api.github.com/repos/archcode/workbench/pulls/42",
+      url: "https://api.github.com/repos/test-owner/test-repo/pulls/42",
       method: "GET",
     });
     expect(fetcher.requests[0].headers.Accept).toBe("application/vnd.github+json");
@@ -180,10 +180,10 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueJson([{ number: 1 }, { number: 2 }]);
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_list_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const result = await connector.listPullRequests("archcode", "workbench", {
+    const result = await connector.listPullRequests("test-owner", "test-repo", {
       state: "all",
       base: "main",
-      head: "archcode:feature",
+      head: "test-owner:feature",
       sort: "updated",
       direction: "desc",
       perPage: 50,
@@ -192,10 +192,10 @@ describe("GitHubConnector REST methods", () => {
 
     expect(result.data).toHaveLength(2);
     const url = new URL(fetcher.requests[0].url);
-    expect(url.pathname).toBe("/repos/archcode/workbench/pulls");
+    expect(url.pathname).toBe("/repos/test-owner/test-repo/pulls");
     expect(url.searchParams.get("per_page")).toBe("50");
     expect(url.searchParams.get("page")).toBe("2");
-    expect(url.searchParams.get("head")).toBe("archcode:feature");
+    expect(url.searchParams.get("head")).toBe("test-owner:feature");
   });
 
   test("listOpenPullRequests scopes polling to open PR filters", async () => {
@@ -203,9 +203,9 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueJson([{ number: 7, state: "open", base: { ref: "main" } }]);
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_open_pr_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const result = await connector.listOpenPullRequests("archcode", "workbench", {
+    const result = await connector.listOpenPullRequests("test-owner", "test-repo", {
       base: "main",
-      head: "archcode:feature",
+      head: "test-owner:feature",
       sort: "updated",
       direction: "desc",
       perPage: 25,
@@ -213,10 +213,10 @@ describe("GitHubConnector REST methods", () => {
 
     expect(result.data[0].number).toBe(7);
     const url = new URL(fetcher.requests[0].url);
-    expect(url.pathname).toBe("/repos/archcode/workbench/pulls");
+    expect(url.pathname).toBe("/repos/test-owner/test-repo/pulls");
     expect(url.searchParams.get("state")).toBe("open");
     expect(url.searchParams.get("base")).toBe("main");
-    expect(url.searchParams.get("head")).toBe("archcode:feature");
+    expect(url.searchParams.get("head")).toBe("test-owner:feature");
     expect(url.searchParams.get("per_page")).toBe("25");
   });
 
@@ -225,10 +225,10 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueJson([{ filename: "src/index.ts", additions: 10, deletions: 2, changes: 12 }]);
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_files_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const result = await connector.getPullRequestFiles("archcode", "workbench", 42, { perPage: 100 });
+    const result = await connector.getPullRequestFiles("test-owner", "test-repo", 42, { perPage: 100 });
 
     expect(result.data[0].filename).toBe("src/index.ts");
-    expect(new URL(fetcher.requests[0].url).pathname).toBe("/repos/archcode/workbench/pulls/42/files");
+    expect(new URL(fetcher.requests[0].url).pathname).toBe("/repos/test-owner/test-repo/pulls/42/files");
     expect(new URL(fetcher.requests[0].url).searchParams.get("per_page")).toBe("100");
   });
 
@@ -238,13 +238,13 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueJson({ id: 101, body: "created" }, { status: 201 });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_comment_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const comments = await connector.listIssueComments("archcode", "workbench", 42, { page: 3 });
-    const created = await connector.createIssueComment("archcode", "workbench", 42, "created");
+    const comments = await connector.listIssueComments("test-owner", "test-repo", 42, { page: 3 });
+    const created = await connector.createIssueComment("test-owner", "test-repo", 42, "created");
 
     expect(comments.data[0].id).toBe(100);
     expect(created.status).toBe(201);
     expect(created.data.id).toBe(101);
-    expect(fetcher.requests[0].url).toContain("/repos/archcode/workbench/issues/42/comments?page=3");
+    expect(fetcher.requests[0].url).toContain("/repos/test-owner/test-repo/issues/42/comments?page=3");
     expect(fetcher.requests[1].method).toBe("POST");
     expect(JSON.parse(fetcher.requests[1].body ?? "{}")).toEqual({ body: "created" });
   });
@@ -256,17 +256,17 @@ describe("GitHubConnector REST methods", () => {
     fetcher.queueText("", { status: 201 });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_actions_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const runs = await connector.listWorkflowRuns("archcode", "workbench", { branch: "main", status: "completed", headSha: "abc123" });
-    const run = await connector.getWorkflowRun("archcode", "workbench", 2001);
-    const rerun = await connector.rerunWorkflowRun("archcode", "workbench", 2001);
+    const runs = await connector.listWorkflowRuns("test-owner", "test-repo", { branch: "main", status: "completed", headSha: "abc123" });
+    const run = await connector.getWorkflowRun("test-owner", "test-repo", 2001);
+    const rerun = await connector.rerunWorkflowRun("test-owner", "test-repo", 2001);
 
     expect(runs.data.workflow_runs[0].id).toBe(2001);
     expect(run.data.conclusion).toBe("success");
     expect(rerun.status).toBe(201);
-    expect(new URL(fetcher.requests[0].url).pathname).toBe("/repos/archcode/workbench/actions/runs");
+    expect(new URL(fetcher.requests[0].url).pathname).toBe("/repos/test-owner/test-repo/actions/runs");
     expect(new URL(fetcher.requests[0].url).searchParams.get("head_sha")).toBe("abc123");
     expect(fetcher.requests[2]).toMatchObject({
-      url: "https://api.github.com/repos/archcode/workbench/actions/runs/2001/rerun",
+      url: "https://api.github.com/repos/test-owner/test-repo/actions/runs/2001/rerun",
       method: "POST",
     });
   });
@@ -294,23 +294,23 @@ describe("GitHubConnector REST methods", () => {
     });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_ci_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const checkRuns = await connector.listCheckRunsForRef("archcode", "workbench", "feature/ci", {
+    const checkRuns = await connector.listCheckRunsForRef("test-owner", "test-repo", "feature/ci", {
       checkName: "ci/build",
       status: "completed",
       filter: "latest",
       perPage: 50,
     });
-    const combinedStatus = await connector.getCombinedStatusForRef("archcode", "workbench", "feature/ci");
+    const combinedStatus = await connector.getCombinedStatusForRef("test-owner", "test-repo", "feature/ci");
 
     expect(checkRuns.data.check_runs[0].id).toBe(501);
     expect(combinedStatus.data.statuses[0].context).toBe("ci/build");
     const checksUrl = new URL(fetcher.requests[0].url);
-    expect(checksUrl.pathname).toBe("/repos/archcode/workbench/commits/feature%2Fci/check-runs");
+    expect(checksUrl.pathname).toBe("/repos/test-owner/test-repo/commits/feature%2Fci/check-runs");
     expect(checksUrl.searchParams.get("check_name")).toBe("ci/build");
     expect(checksUrl.searchParams.get("status")).toBe("completed");
     expect(checksUrl.searchParams.get("filter")).toBe("latest");
     expect(checksUrl.searchParams.get("per_page")).toBe("50");
-    expect(new URL(fetcher.requests[1].url).pathname).toBe("/repos/archcode/workbench/commits/feature%2Fci/status");
+    expect(new URL(fetcher.requests[1].url).pathname).toBe("/repos/test-owner/test-repo/commits/feature%2Fci/status");
   });
 
   test("reads CI failures for a scoped ref without queuing on rate limits", async () => {
@@ -330,7 +330,7 @@ describe("GitHubConnector REST methods", () => {
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_rate_ci_secret" }, fetchAdapter: fetcher.createFetch() });
     const enqueue = mock(() => undefined);
 
-    const result = await connector.readCiFailuresForRef("archcode", "workbench", "abc123", {
+    const result = await connector.readCiFailuresForRef("test-owner", "test-repo", "abc123", {
       branch: "main",
       lastPollAt: 123_000,
       lastSuccessAt: 100_000,
@@ -356,8 +356,8 @@ describe("GitHubConnector REST methods", () => {
 describe("GitHub CI failure normalization", () => {
   test("dedupes equivalent Checks and Combined Status failures for the same SHA and context", () => {
     const failures = normalizeGitHubCiFailures({
-      owner: "archcode",
-      repo: "workbench",
+      owner: "test-owner",
+      repo: "test-repo",
       branch: "feature/ci",
       checks: {
         total_count: 1,
@@ -396,9 +396,9 @@ describe("GitHub CI failure normalization", () => {
 
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({
-      owner: "archcode",
-      repo: "workbench",
-      repoId: "archcode/workbench",
+      owner: "test-owner",
+      repo: "test-repo",
+      repoId: "test-owner/test-repo",
       branch: "feature/ci",
       pullRequestNumber: 7,
       pullRequestHeadRef: "feature/ci",
@@ -409,13 +409,13 @@ describe("GitHub CI failure normalization", () => {
       conclusion: "failure",
       state: "failure",
       dedupeInputs: {
-        owner: "archcode",
-        repo: "workbench",
+        owner: "test-owner",
+        repo: "test-repo",
         sha: "abc123",
         context: "ci/build",
       },
     });
-    expect(failures[0].subjectKey).toBe("ci:archcode/workbench:ci/build:abc123");
+    expect(failures[0].subjectKey).toBe("ci:test-owner/test-repo:ci/build:abc123");
     expect(failures[0].checkRunIds).toEqual([501]);
     expect(failures[0].statusIds).toEqual([701]);
     expect(failures[0].checkSuiteIds).toEqual([99]);
@@ -427,8 +427,8 @@ describe("GitHub CI failure normalization", () => {
 
   test("redacts all known GitHub token prefixes from CI audit summaries", () => {
     const failures = normalizeGitHubCiFailures({
-      owner: "archcode",
-      repo: "workbench",
+      owner: "test-owner",
+      repo: "test-repo",
       checks: {
         check_runs: [
           {
@@ -493,7 +493,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     );
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_rate_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const error = await captureIntegrationError(() => connector.getPullRequest("archcode", "workbench", 42));
+    const error = await captureIntegrationError(() => connector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(error.code).toBe("integration_rate_limited");
     expect(error.status).toBe(403);
@@ -515,7 +515,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     fetcher.queueJson({ message: "Too many requests" }, { status: 429, headers: { "retry-after": "1" } });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_429_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const error = await captureIntegrationError(() => connector.getPullRequest("archcode", "workbench", 42));
+    const error = await captureIntegrationError(() => connector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(error.code).toBe("integration_rate_limited");
     expect(error.rateLimit?.retryAfterMs).toBe(1000);
@@ -526,7 +526,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     fetcher.queueJson({ message: "Not Found" }, { status: 404 });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_not_found_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const error = await captureIntegrationError(() => connector.getPullRequest("archcode", "workbench", 404));
+    const error = await captureIntegrationError(() => connector.getPullRequest("test-owner", "test-repo", 404));
 
     expect(error.code).toBe("integration_not_found");
     expect(error.status).toBe(404);
@@ -537,7 +537,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     fetcher.queueJson({ message: "Resource not accessible by integration" }, { status: 403 });
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_forbidden_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const error = await captureIntegrationError(() => connector.createIssueComment("archcode", "workbench", 42, "body"));
+    const error = await captureIntegrationError(() => connector.createIssueComment("test-owner", "test-repo", 42, "body"));
 
     expect(error.code).toBe("integration_forbidden");
     expect(error.status).toBe(403);
@@ -548,7 +548,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     invalidJsonFetcher.queueText("not-json", { status: 200 });
     const invalidJsonConnector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_bad_json_secret" }, fetchAdapter: invalidJsonFetcher.createFetch() });
 
-    const invalidJsonError = await captureIntegrationError(() => invalidJsonConnector.getPullRequest("archcode", "workbench", 42));
+    const invalidJsonError = await captureIntegrationError(() => invalidJsonConnector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(invalidJsonError.code).toBe("integration_bad_response");
     expect(invalidJsonError.message).toContain("invalid JSON");
@@ -557,7 +557,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     invalidShapeFetcher.queueJson({ title: "missing number" });
     const invalidShapeConnector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_bad_shape_secret" }, fetchAdapter: invalidShapeFetcher.createFetch() });
 
-    const invalidShapeError = await captureIntegrationError(() => invalidShapeConnector.getPullRequest("archcode", "workbench", 42));
+    const invalidShapeError = await captureIntegrationError(() => invalidShapeConnector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(invalidShapeError.code).toBe("integration_bad_response");
     expect(invalidShapeError.message).toContain("unexpected response shape");
@@ -568,7 +568,7 @@ describe("GitHubRestProvider typed errors and redaction", () => {
     fetcher.throwOnNext(new Error("network failed for ghp_fetch_secret"));
     const connector = new GitHubConnector({ config: {}, env: { GITHUB_TOKEN: "ghp_fetch_secret" }, fetchAdapter: fetcher.createFetch() });
 
-    const error = await captureIntegrationError(() => connector.getPullRequest("archcode", "workbench", 42));
+    const error = await captureIntegrationError(() => connector.getPullRequest("test-owner", "test-repo", 42));
 
     expect(error.code).toBe("integration_bad_response");
     expect(error.message).not.toContain("ghp_fetch_secret");

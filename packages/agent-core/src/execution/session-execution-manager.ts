@@ -15,7 +15,7 @@ import {
   DepthLimitError,
 } from "../agents/errors";
 import type { AgentResult } from "../agents/types";
-import type { CommandResult } from "../commands/types";
+import type { SlashCommandResult } from "../commands/types";
 import type { ChildExecutionHandle, ChildExecutionRequest, ResumeChildRequest } from "../delegation/types";
 import { SessionEventBridge } from "../events/session-event-bridge";
 import type { SubscribeSessionEventsInput } from "../events/session-event-bridge";
@@ -378,7 +378,7 @@ export class SessionExecutionManager {
     sessionId: string,
     name: string,
     args?: string,
-  ): Promise<CommandResult | null> {
+  ): Promise<SlashCommandResult | null> {
     if (!this.isRunning(workspaceRoot, sessionId)) return null;
     return await this.#config.sessionAgentManager.dispatchCommand(workspaceRoot, sessionId, name, args);
   }

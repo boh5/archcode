@@ -128,11 +128,11 @@ describe("fixtureCollisionTarget", () => {
   test("returns default PR target", () => {
     const target = fixtureCollisionTarget() as { type: "pr"; owner: string; repo: string; number: number };
 
-    expect(target).toEqual({ type: "pr", owner: "archcode", repo: "workbench", number: 42 });
+    expect(target).toEqual({ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 });
   });
 
   test("accepts override", () => {
-    const target = fixtureCollisionTarget({ type: "issue", owner: "archcode", repo: "workbench", number: 7 }) as { type: "issue"; owner: string; repo: string; number: number };
+    const target = fixtureCollisionTarget({ type: "issue", owner: "test-owner", repo: "test-repo", number: 7 }) as { type: "issue"; owner: string; repo: string; number: number };
 
     expect(target.type).toBe("issue");
     expect(target.number).toBe(7);
@@ -178,7 +178,7 @@ describe("fixtureCollisionLease", () => {
     expect(lease.loopId).toBe("test-loop-1");
     expect(lease.runId).toBe("test-run-1");
     expect(lease.priority).toBe(10);
-    expect(lease.targetKey).toBe("github:archcode/workbench:pr:42");
+    expect(lease.targetKey).toBe("github:test-owner/test-repo:pr:42");
   });
 
   test("accepts overrides", () => {
@@ -194,7 +194,7 @@ describe("fixtureCollisionConflict", () => {
   test("returns conflict with two different leases", () => {
     const conflict = fixtureCollisionConflict();
 
-    expect(conflict.targetKey).toBe("github:archcode/workbench:pr:42");
+    expect(conflict.targetKey).toBe("github:test-owner/test-repo:pr:42");
     expect(conflict.conflictingLease.loopId).toBe("test-loop-2");
     expect(conflict.conflictingLease.priority).toBe(5);
     expect(conflict.detectedAt).toBeGreaterThan(0);
@@ -482,11 +482,11 @@ describe("FakeGitHubFetchAdapter", () => {
     const adapter = new FakeGitHubFetchAdapter();
     const fetch = adapter.createFetch();
 
-    const res = await fetch("https://api.github.com/repos/archcode/workbench/pulls/42");
+    const res = await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42");
 
     expect(res.status).toBe(200);
     expect(adapter.requests).toHaveLength(1);
-    expect(adapter.requests[0].url).toBe("https://api.github.com/repos/archcode/workbench/pulls/42");
+    expect(adapter.requests[0].url).toBe("https://api.github.com/repos/test-owner/test-repo/pulls/42");
     expect(adapter.requests[0].method).toBe("GET");
   });
 
@@ -494,7 +494,7 @@ describe("FakeGitHubFetchAdapter", () => {
     const adapter = new FakeGitHubFetchAdapter();
     const fetch = adapter.createFetch();
 
-    await fetch("https://api.github.com/repos/archcode/workbench/pulls/42", {
+    await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42", {
       headers: { Authorization: "Bearer ghp_test_token", Accept: "application/vnd.github.v3+json" },
     });
 
@@ -505,12 +505,12 @@ describe("FakeGitHubFetchAdapter", () => {
   test("returns deterministic PR response via makePullRequest", async () => {
     const adapter = new FakeGitHubFetchAdapter();
     adapter.setResponse(
-      "https://api.github.com/repos/archcode/workbench/pulls/42",
+      "https://api.github.com/repos/test-owner/test-repo/pulls/42",
       adapter.makePullRequest(),
     );
     const fetch = adapter.createFetch();
 
-    const res = await fetch("https://api.github.com/repos/archcode/workbench/pulls/42");
+    const res = await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42");
     const body = await res.json() as Record<string, unknown>;
 
     expect(body.number).toBe(42);
@@ -554,7 +554,7 @@ describe("FakeGitHubFetchAdapter", () => {
 
     let thrown: Error | undefined;
     try {
-      await fetch("https://api.github.com/repos/archcode/workbench/pulls/42");
+      await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42");
     } catch (err) {
       thrown = err as Error;
     }
@@ -572,7 +572,7 @@ describe("FakeGitHubFetchAdapter", () => {
 
     let thrown: Error | undefined;
     try {
-      await fetch("https://api.github.com/repos/archcode/workbench/pulls/42");
+      await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42");
     } catch (err) {
       thrown = err as Error;
     }
@@ -585,7 +585,7 @@ describe("FakeGitHubFetchAdapter", () => {
     const adapter = new FakeGitHubFetchAdapter();
     const fetch = adapter.createFetch();
 
-    await fetch("https://api.github.com/repos/archcode/workbench/pulls/42");
+    await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42");
     expect(adapter.requests).toHaveLength(1);
 
     adapter.clearRequests();
@@ -595,10 +595,10 @@ describe("FakeGitHubFetchAdapter", () => {
   test("token not leaked in normal responses", async () => {
     const adapter = new FakeGitHubFetchAdapter();
     adapter.setDefaultToken("ghp_should_not_leak");
-    adapter.setResponse("https://api.github.com/repos/archcode/workbench/pulls/42", { number: 42 });
+    adapter.setResponse("https://api.github.com/repos/test-owner/test-repo/pulls/42", { number: 42 });
     const fetch = adapter.createFetch();
 
-    const res = await fetch("https://api.github.com/repos/archcode/workbench/pulls/42", {
+    const res = await fetch("https://api.github.com/repos/test-owner/test-repo/pulls/42", {
       headers: { Authorization: "Bearer ghp_should_not_leak" },
     });
     const body = await res.text();

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { GOAL_HITL_ACTION_ADVANCE_PHASE } from "@archcode/protocol";
 
 import {
   GoalEmptyConditionsError,
@@ -69,7 +70,7 @@ describe("GoalStateSchema", () => {
         hitlId: "hitl-1",
         blockedAt: now,
         kind: "goal_approval",
-        action: "advancePhase",
+        action: GOAL_HITL_ACTION_ADVANCE_PHASE,
         from: "plan",
         to: "build",
         approvalPoint: "after_plan",
@@ -85,6 +86,40 @@ describe("GoalStateSchema", () => {
     expect(state.attentionStatus).toBe("waiting_for_human");
     expect(state.resumeCheckpoint?.hitlId).toBe("hitl-1");
     expect(() => GoalStateSchema.parse({ ...state, workflowId: VALID_UUID })).toThrow();
+  });
+
+  test("normalizes legacy camelCase Goal HITL action names", () => {
+    const now = new Date().toISOString();
+
+    const state = GoalStateSchema.parse({
+      id: VALID_UUID,
+      projectId: "project-a",
+      title: "Legacy checkpoint",
+      status: "paused",
+      phase: "plan",
+      doneConditions: [condition],
+      doneResults: {},
+      reviewerAgent: "reviewer",
+      retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: false },
+      retryCount: 0,
+      approvalPoints: ["after_plan"],
+      author: "planner",
+      childSessionIds: [],
+      resumeCheckpoint: {
+        version: 1,
+        hitlId: "hitl-legacy",
+        blockedAt: now,
+        kind: "goal_approval",
+        action: "advancePhase",
+        from: "plan",
+        to: "build",
+        approvalPoint: "after_plan",
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    expect(state.resumeCheckpoint?.action).toBe(GOAL_HITL_ACTION_ADVANCE_PHASE);
   });
 
   test("validates all done condition variants with required default true", () => {

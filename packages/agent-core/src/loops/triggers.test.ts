@@ -39,7 +39,7 @@ afterAll(async () => {
 
 describe("LoopTriggerPoller", () => {
   test("dedupes repeated branch SHAs with poll-state cursors", async () => {
-    const { poller, queue, stateManager } = makeHarness({ localHead: { repoId: "archcode/workbench", branch: "main", sha: "abc123" } });
+    const { poller, queue, stateManager } = makeHarness({ localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "abc123" } });
     const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main" }] });
 
     const first = await poller.pollLoop(loop.loopId);
@@ -49,7 +49,7 @@ describe("LoopTriggerPoller", () => {
     expect(second.enqueued).toHaveLength(0);
     expect(second.skipped).toContain("commit main@abc123 already observed");
     expect(await queue.list()).toHaveLength(1);
-    expect((await queue.list())[0]?.dedupeKey).toBe(`${loop.loopId}:on_commit:commit:archcode/workbench:main`);
+    expect((await queue.list())[0]?.dedupeKey).toBe(`${loop.loopId}:on_commit:commit:test-owner/test-repo:main`);
     expect((await queue.list())[0]?.eventSummaries[0]?.payloadSha).toBe("abc123");
   });
 
@@ -58,7 +58,7 @@ describe("LoopTriggerPoller", () => {
     const newSha = "2222222222222222222222222222222222222222";
     let currentSha = oldSha;
     const localGit: LoopLocalGitReader = {
-      readBranchHead: async (branch) => ({ repoId: "archcode/workbench", branch: branch ?? "main", sha: currentSha }),
+      readBranchHead: async (branch) => ({ repoId: "test-owner/test-repo", branch: branch ?? "main", sha: currentSha }),
     };
     const { poller, queue, stateManager, clock } = makeHarness({ localGit });
     const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit", branch: "main" }] });
@@ -77,8 +77,8 @@ describe("LoopTriggerPoller", () => {
     expect(jobs[0]).toMatchObject({
       status: "running",
       rerunAfterCurrent: true,
-      subjectKey: "commit:archcode/workbench:main",
-      dedupeKey: `${loop.loopId}:on_commit:commit:archcode/workbench:main`,
+      subjectKey: "commit:test-owner/test-repo:main",
+      dedupeKey: `${loop.loopId}:on_commit:commit:test-owner/test-repo:main`,
       resolvedHeadSha: newSha,
     });
     expect(jobs[0]?.eventSummaries.map((entry) => entry.payloadSha)).toEqual([oldSha, newSha]);
@@ -121,7 +121,7 @@ describe("LoopTriggerPoller", () => {
 
     const jobs = await queue.list();
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.subjectKey).toBe("pr:archcode/workbench#2:bbb222");
+    expect(jobs[0]?.subjectKey).toBe("pr:test-owner/test-repo#2:bbb222");
   });
 
   test("honors assigned pull request scope", async () => {
@@ -137,7 +137,7 @@ describe("LoopTriggerPoller", () => {
     const result = await poller.pollLoop(loop.loopId);
 
     expect(result.enqueued).toHaveLength(1);
-    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:archcode/workbench#2:bbb222"]);
+    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:test-owner/test-repo#2:bbb222"]);
   });
 
   test("does not treat authored pull request scope as open without actor identity", async () => {
@@ -166,7 +166,7 @@ describe("LoopTriggerPoller", () => {
     const result = await poller.pollLoop(loop.loopId);
 
     expect(result.enqueued).toHaveLength(1);
-    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:archcode/workbench#2:bbb222"]);
+    expect((await queue.list()).map((job) => job.subjectKey)).toEqual(["pr:test-owner/test-repo#2:bbb222"]);
   });
 
   test("skips superseded pull request SHA after immediate revalidation", async () => {
@@ -202,8 +202,8 @@ describe("LoopTriggerPoller", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0]).toMatchObject({
       triggerKind: "on_ci_fail",
-      subjectKey: "ci:archcode/workbench:ci/build:abc123",
-      dedupeKey: `${loop.loopId}:on_ci_fail:ci:archcode/workbench:ci/build:abc123`,
+      subjectKey: "ci:test-owner/test-repo:ci/build:abc123",
+      dedupeKey: `${loop.loopId}:on_ci_fail:ci:test-owner/test-repo:ci/build:abc123`,
       resolvedHeadSha: "abc123",
     });
   });
@@ -264,7 +264,7 @@ function makeHarness(options: {
     queue,
     pollState,
     github: (options.github ?? new FakeGitHub()) as unknown as GitHubCiPollingConnectorApi,
-    repository: { owner: "archcode", repo: "workbench", defaultBranch: "main" },
+    repository: { owner: "test-owner", repo: "test-repo", defaultBranch: "main" },
     localGit,
     clock,
   });
@@ -316,9 +316,9 @@ function makePr(input: {
 
 function makeCiFailure(overrides: Partial<GitHubCiFailureSubject> = {}): GitHubCiFailureSubject {
   return {
-    owner: "archcode",
-    repo: "workbench",
-    repoId: "archcode/workbench",
+    owner: "test-owner",
+    repo: "test-repo",
+    repoId: "test-owner/test-repo",
     branch: "main",
     sha: "abc123",
     context: "ci/build",
@@ -328,9 +328,9 @@ function makeCiFailure(overrides: Partial<GitHubCiFailureSubject> = {}): GitHubC
     checkSuiteIds: [],
     appSlugs: [],
     runAttempts: [],
-    dedupeInputs: { owner: "archcode", repo: "workbench", sha: "abc123", context: "ci/build" },
-    subjectKey: "ci:archcode/workbench:ci/build:abc123",
-    dedupeKey: "archcode/workbench:abc123:ci/build",
+    dedupeInputs: { owner: "test-owner", repo: "test-repo", sha: "abc123", context: "ci/build" },
+    subjectKey: "ci:test-owner/test-repo:ci/build:abc123",
+    dedupeKey: "test-owner/test-repo:abc123:ci/build",
     sourceSummaries: [],
     ...overrides,
   };

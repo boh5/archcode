@@ -1,3 +1,4 @@
+import { ENV_PORT } from "@archcode/protocol";
 import type { Hono } from "hono";
 
 export interface StartServerOptions {
@@ -15,7 +16,7 @@ export async function startServer(
   app: Hono,
   options: StartServerOptions = {},
 ): Promise<ServerInfo> {
-  const preferredPort = options.port ?? parseInt(Bun.env.ARCHCODE_PORT ?? "4096", 10);
+  const preferredPort = options.port ?? parseInt(Bun.env[ENV_PORT] ?? "4096", 10);
   const hostname = options.hostname ?? "0.0.0.0";
 
   try {

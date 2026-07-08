@@ -1,26 +1,27 @@
 import type { AgentRuntime } from "@archcode/agent-core";
+import { ENV_OPEN_BROWSER, ENV_PORT, ENV_SERVER_PASSWORD, PRODUCT_DISPLAY_NAME } from "@archcode/protocol";
 import { createServerApp } from "./app";
 import { setupGracefulShutdown } from "./lifecycle";
 import { startServer } from "./listen";
 
 export async function bootServer(runtime: AgentRuntime): Promise<void> {
   const compiled = import.meta.url.startsWith("file:///$bunfs/");
-  const dev = !compiled && !Bun.env.ARCHCODE_SERVER_PASSWORD;
+  const dev = !compiled && !Bun.env[ENV_SERVER_PASSWORD];
   const { app } = createServerApp(runtime, {
     dev,
-    password: Bun.env.ARCHCODE_SERVER_PASSWORD,
+    password: Bun.env[ENV_SERVER_PASSWORD],
   });
 
   const { url, server } = await startServer(app, {
-    port: parseInt(Bun.env.ARCHCODE_PORT ?? "4096", 10) || undefined,
+    port: parseInt(Bun.env[ENV_PORT] ?? "4096", 10) || undefined,
   });
 
   await runtime.startLoopSchedulers();
   setupGracefulShutdown(server, runtime);
 
-  console.info(`ArchCode server running at ${url}`);
+  console.info(`${PRODUCT_DISPLAY_NAME} server running at ${url}`);
 
-  if (Bun.env.ARCHCODE_OPEN_BROWSER) {
+  if (Bun.env[ENV_OPEN_BROWSER]) {
     // Browser opening will be implemented when the web UI workflow is ready.
   }
 }

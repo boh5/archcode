@@ -243,7 +243,7 @@ describe("LoopCleanupService", () => {
       updatedAt: START,
     });
     await fixture.collisionLedger.acquire({
-      target: { type: "branch", owner: "archcode", repo: "workbench", branch: "main" },
+      target: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
       loopId: fixture.loop.loopId,
       runId: "lease-run",
       priority: 0,

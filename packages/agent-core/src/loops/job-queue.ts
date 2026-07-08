@@ -1,5 +1,6 @@
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
 import { z } from "zod/v4";
 
@@ -498,7 +499,7 @@ async function withQueueLock<T>(filePath: string, callback: () => Promise<T>): P
 }
 
 async function safeQueuePath(workspaceRoot: string): Promise<string> {
-  const loopsRoot = resolve(workspaceRoot, ".archcode", "loops");
+  const loopsRoot = resolve(workspaceRoot, PROJECT_STATE_DIR_NAME, "loops");
   await assertSafeLoopRoot(workspaceRoot, loopsRoot);
   await mkdir(loopsRoot, { recursive: true });
   const filePath = resolve(loopsRoot, "job-queue.json");
@@ -508,7 +509,7 @@ async function safeQueuePath(workspaceRoot: string): Promise<string> {
 
 async function assertSafeLoopRoot(workspaceRoot: string, loopsRoot: string): Promise<void> {
   const realWorkspaceRoot = await realpath(workspaceRoot);
-  await assertExistingPathContained(resolve(workspaceRoot, ".archcode"), realWorkspaceRoot);
+  await assertExistingPathContained(resolve(workspaceRoot, PROJECT_STATE_DIR_NAME), realWorkspaceRoot);
   await assertExistingPathContained(loopsRoot, realWorkspaceRoot);
 }
 

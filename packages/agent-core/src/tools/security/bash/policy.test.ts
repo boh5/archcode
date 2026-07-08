@@ -125,6 +125,21 @@ describe("built-in bash deny taxonomy", () => {
     }
   });
 
+  test("denies inline script mutations of the .archcode directory itself", () => {
+    for (const command of [
+      "python3 -c \"import shutil; shutil.rmtree('.archcode')\"",
+      "python3 -c \"open('.archcode','w')\"",
+      `python3 -c "import shutil; shutil.rmtree('${join(workspaceRoot, ".archcode")}')"`,
+      "node -e \"require('fs').rmSync('.archcode')\"",
+    ]) {
+      expectDeny(command, "deny-direct-path-mutation");
+    }
+  });
+
+  test("does not deny inline script reads of the .archcode directory solely as mutation", () => {
+    expectNotDeny("python3 -c \"print('.archcode')\"");
+  });
+
   test("does not deny ordinary git commit or non-archcode writes", () => {
     expectNotDeny('git commit -m "msg"');
     expectNotDeny("mkdir tmp/cache");

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DoneCondition, DoneResult, GoalState } from "@archcode/protocol";
+import { GOAL_HITL_ACTION_ADVANCE_PHASE, type DoneCondition, type GoalDoneResult, type GoalState } from "@archcode/protocol";
 
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
 import { HitlService } from "../hitl/service";
@@ -48,7 +48,7 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function passingResult(conditionId = condition.id): DoneResult {
+function passingResult(conditionId = condition.id): GoalDoneResult {
   return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
 }
 
@@ -159,7 +159,7 @@ describe("GoalRunner owner-local HITL integration", () => {
       blockedByHitlIds: [hitlId],
       resumeCheckpoint: {
         kind: "goal_approval",
-        action: "advancePhase",
+        action: GOAL_HITL_ACTION_ADVANCE_PHASE,
         from: "plan",
         to: "build",
         approvalPoint: "after_plan",
