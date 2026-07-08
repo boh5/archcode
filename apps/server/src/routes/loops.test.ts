@@ -268,7 +268,12 @@ describe("loops routes", () => {
 
     expect(createRes.status).toBe(201);
     expect(createBody.loop.config.runKind).toBe("goal");
-    expect(createBody.loop.config.goalTemplate).toMatchObject({ title: "Loop-created goal", author: "architect" });
+    expect(createBody.loop.config.goalTemplate).toMatchObject({
+      title: "Loop-created goal",
+      objective: "Execute this inline Goal template only.",
+      acceptanceCriteria: "Reviewer can decide DONE from loop-created Goal evidence.",
+    });
+    expect(createBody.loop.config.goalTemplate).not.toHaveProperty("author");
     expect(createBody.loop.readinessScore ?? null).toBeNull();
 
     const invalidRes = await app.request(`/api/projects/${project.slug}/loops`, {

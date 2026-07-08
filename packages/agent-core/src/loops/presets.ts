@@ -258,6 +258,6 @@ function dependencySweeperGoalTemplate(): LoopGoalTemplate {
       "make only the local changes needed for that action, and ask Reviewer to judge the result from the session logs, diff, and verification output.",
     acceptanceCriteria:
       "The Goal is acceptable when Reviewer can see that dependency changes, if any, are narrowly scoped, repository health checks relevant to the change were run through normal tools, " +
-      "and the final review receipt explains the outcome with evidence references. Do not rely on typed DoneCondition arrays or Goal-owned artifact files.",
+      "and the final review receipt explains the outcome with evidence references from ordinary session output.",
   };
 }

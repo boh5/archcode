@@ -115,7 +115,7 @@ describe("LoopCleanupService", () => {
     const worktreeManager = new LoopWorktreeManager({ canonicalRoot: repo });
     const baseSha = await git(repo, ["rev-parse", "HEAD"]);
     const created = await worktreeManager.create({ loopSlug: "cleanup", subjectSlug: "changed", jobId: "changed-job-123456", baseSha });
-    await writeFile(join(created.worktreePath, "review.md"), "needs review\n");
+    await writeFile(join(created.worktreePath, "review-notes.txt"), "needs review\n");
     const fixture = await createFixture(repo, {
       cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, noFindingRuns: 10 },
       worktreeManager,
@@ -136,7 +136,7 @@ describe("LoopCleanupService", () => {
     expect(await pathExists(created.worktreePath)).toBe(true);
     const updated = await fixture.jobQueue.read(job.jobId);
     expect(updated).toMatchObject({ cleanupState: "preserved", blockedReason: "review_required" });
-    expect(updated.observedArtifacts).toContainEqual({ path: "review.md", status: "created" });
+    expect(updated.observedArtifacts).toContainEqual({ path: "review-notes.txt", status: "created" });
     expect(updated.observedArtifacts).toContainEqual({ path: "cleanup:preserved", status: "observed" });
     expect(result.blockers.map((blocker) => blocker.code)).toContain("unreviewed_changed_worktree");
   });

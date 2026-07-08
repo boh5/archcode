@@ -62,7 +62,7 @@ const webLegacyWorkflowUiImportPatterns = [
 
 const directGoalRunningTransitionPattern = /\.transitionStatus\s*\(\s*[^,]+,\s*["']running["']\s*\)/;
 
-const directDoneResultRecordPattern = /\.recordDoneResult\s*\(/;
+const directLegacyReviewResultRecordPattern = new RegExp("\\.record" + "Done" + "Result\\s*\\(");
 
 const directLifecycleMutationPatterns = [
   /\.transitionStatus\s*\(/,
@@ -77,9 +77,9 @@ const activeGoalToolNames = [
 ] as const;
 
 const removedGoalToolNames = [
-  "goal_evidence",
-  "goal_artifact_read",
-  "goal_artifact_write",
+  "goal_" + "evidence",
+  "goal_" + "artifact_read",
+  "goal_" + "artifact_write",
 ] as const;
 
 const removedGoalExecutableToolNames = [
@@ -124,6 +124,54 @@ const goalMemoryProjectMutationPatterns = [
   /["']\.archcode["']\s*,\s*["']memory["']/,
 ] as const;
 
+const removedGoalModulePaths = [
+  "packages/agent-core/src/goals/arti" + "facts.ts",
+  "packages/agent-core/src/goals/arti" + "fact-lifecycle.ts",
+  "packages/agent-core/src/goals/done" + "-checker.ts",
+  "packages/agent-core/src/goals/goal" + "-memory.ts",
+  "packages/agent-core/src/tools/builtins/goal" + "-evidence.ts",
+  "packages/agent-core/src/tools/builtins/goal" + "-artifact-read.ts",
+  "packages/agent-core/src/tools/builtins/goal" + "-artifact-write.ts",
+] as const;
+
+const simplifiedGoalForbiddenProductionPatterns = [
+  new RegExp("\\bDone" + "Condition\\b"),
+  new RegExp("\\bDone" + "Result\\b"),
+  new RegExp("\\bGoal" + "DoneResult\\b"),
+  new RegExp("\\bdone" + "Conditions\\b"),
+  new RegExp("\\bdone" + "Results\\b"),
+  new RegExp("\\bgoal" + "_evidence\\b"),
+  new RegExp("\\bgoal" + "_artifact(?:_read|_write)?\\b"),
+  new RegExp("\\bGoal" + "Artifact\\b"),
+  new RegExp("done" + "-checker"),
+  new RegExp("arti" + "fact-lifecycle"),
+  new RegExp("\\bGoal" + "HitlAction\\b"),
+  new RegExp("\\bGoal" + "HitlCheckpoint\\b"),
+  new RegExp("\\bGOAL" + "_HITL_ACTION_"),
+  new RegExp("\\badvance" + "Phase\\b"),
+  new RegExp("\\bfinalize" + "ReviewerReview\\b"),
+  new RegExp("\\bawait" + "BudgetApproval\\b"),
+  new RegExp("\\banswer" + "Question\\b"),
+  /\bvalidationCommands\b/,
+  new RegExp("\\btests" + "_pass\\b"),
+  new RegExp("\\btypecheck" + "_pass\\b"),
+  new RegExp("\\blsp" + "_clean\\b"),
+  new RegExp("\\bfile" + "_exists\\b"),
+  new RegExp("\\bgrep" + "_contains\\b"),
+  new RegExp("\\bgrep" + "_empty\\b"),
+  new RegExp("\\bcommand" + "_succeeds\\b"),
+  new RegExp("\\buser" + "_confirmed\\b"),
+  new RegExp("\\bspec" + "_compliance\\b"),
+  new RegExp("\\bplan" + "\\.md\\b"),
+  new RegExp("\\bbuild" + "\\.md\\b"),
+  new RegExp("\\breview" + "\\.md\\b"),
+  new RegExp("\\bspec" + "-compliance\\.md\\b"),
+  new RegExp("\\bapprovals" + "\\.md\\b"),
+  new RegExp("\\bbudget" + "\\.md\\b"),
+  new RegExp("\\bretry" + "-log\\.md\\b"),
+  new RegExp("\\bfinal" + "-report\\.md\\b"),
+] as const;
+
 const workflowRegistrationPatterns = [
   /createWorkflow/i,
   /createArtifact(?:Read|Write)?Tool/,
@@ -148,7 +196,7 @@ const directGoalRunningTransitionAllowedFiles = new Set([
   "packages/agent-core/src/goals/runner.ts",
 ]);
 
-const directDoneResultRecordAllowedFiles = new Set([
+const directLegacyReviewResultRecordAllowedFiles = new Set([
   "packages/agent-core/src/goals/runner.ts",
   "packages/agent-core/src/hitl/goal-gates.ts",
   "packages/agent-core/src/goals/hitl-resume-adapter.ts",
@@ -434,6 +482,21 @@ describe("Goal migration boundaries", () => {
     }
   });
 
+  test("removed Goal helper modules stay deleted", () => {
+    expect(removedGoalModulePaths.filter((file) => existsSync(join(projectRoot, file)))).toEqual([]);
+  });
+
+  test("production packages and apps do not reference removed Goal DSL, artifact, validation, or HITL compatibility names", () => {
+    expectNoViolations(
+      findWorkspaceTextViolations([
+        "apps/server/src",
+        "apps/web/src",
+        "packages/agent-core/src",
+        "packages/protocol/src",
+      ], simplifiedGoalForbiddenProductionPatterns),
+    );
+  });
+
   test("goal_manage is exposed only to lifecycle roles", () => {
     const exposedTo = agentDefinitions
       .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
@@ -471,15 +534,15 @@ describe("Goal migration boundaries", () => {
     );
   });
 
-  test("production tool code does not directly record Goal done results", () => {
-    expectNoViolations(findSourceTextViolations("packages/agent-core/src/tools", [directDoneResultRecordPattern]));
+  test("production tool code does not directly record legacy review results", () => {
+    expectNoViolations(findSourceTextViolations("packages/agent-core/src/tools", [directLegacyReviewResultRecordPattern]));
   });
 
-  test("direct Goal done result recording remains behind runner and HITL review boundaries", () => {
+  test("direct legacy review result recording remains behind runner and HITL review boundaries", () => {
     expectNoViolations(
       withoutAllowedFiles(
-        findSourceTextViolations("packages/agent-core/src", [directDoneResultRecordPattern]),
-        directDoneResultRecordAllowedFiles,
+        findSourceTextViolations("packages/agent-core/src", [directLegacyReviewResultRecordPattern]),
+        directLegacyReviewResultRecordAllowedFiles,
       ),
     );
   });
@@ -505,49 +568,31 @@ describe("Goal migration boundaries", () => {
     );
   });
 
-  test("spec artifacts and repair context schemas do not add raw LLM persistence fields", () => {
+  test("simplified Goal schemas do not add raw LLM persistence fields", () => {
     expectNoViolations(
       findTextViolations(
         readSpecificProductionSources([
           join(projectRoot, "packages/protocol/src/types.ts"),
           join(projectRoot, "packages/agent-core/src/goals/state.ts"),
-          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
-          join(projectRoot, "packages/agent-core/src/goals/operator-repair-context.ts"),
         ]),
         rawLlmPersistenceFieldPatterns,
       ),
     );
   });
 
-  test("Goal artifact writers do not persist private-output markers or chain-of-thought tags", () => {
+  test("production Goal code has no private artifact markers, artifact versioning paths, or Goal-specific memory manager writes", () => {
     expectNoViolations(
       findTextViolations(
         readSpecificProductionSources([
-          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
-        ]),
-        rawPrivateArtifactMarkerPatterns,
-      ),
-    );
-  });
-
-  test("Goal artifact implementation has no artifact version files, revision directories, or latest pointers", () => {
-    expectNoViolations(
-      findTextViolations(
-        readSpecificProductionSources([
-          join(projectRoot, "packages/agent-core/src/goals/artifacts.ts"),
-          join(projectRoot, "packages/agent-core/src/goals/artifact-lifecycle.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/state.ts"),
+          join(projectRoot, "packages/agent-core/src/goals/runner.ts"),
           join(projectRoot, "apps/server/src/routes/goals.ts"),
         ]),
-        goalArtifactVersionPathPatterns,
-      ),
-    );
-  });
-
-  test("Goal memory manager does not mutate Project memory storage or indexes", () => {
-    expectNoViolations(
-      findTextViolations(
-        readSpecificProductionSources([join(projectRoot, "packages/agent-core/src/goals/goal-memory.ts")]),
-        goalMemoryProjectMutationPatterns,
+        [
+          ...rawPrivateArtifactMarkerPatterns,
+          ...goalArtifactVersionPathPatterns,
+          ...goalMemoryProjectMutationPatterns,
+        ],
       ),
     );
   });

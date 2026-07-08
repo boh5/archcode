@@ -39,7 +39,7 @@ const sessionLoopConfig: LoopConfig = {
 const goalTemplate: LoopGoalTemplate = {
   title: "Ship loop-created goal",
   objective: "Build only the requested scope for the loop-created Goal.",
-  acceptanceCriteria: "Reviewer can verify the change from session logs, diff, and ordinary verification output without typed DoneCondition arrays.",
+  acceptanceCriteria: "Reviewer can verify the change from session logs, diff, and ordinary verification output.",
 };
 
 const goalLoopConfig: LoopConfig = {

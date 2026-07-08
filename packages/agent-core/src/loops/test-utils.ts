@@ -445,7 +445,6 @@ export function makeReadOnlyTestTools(): AnyToolDescriptor[] {
     "background_output",
     "view_tool_output",
     "memory_read",
-    "goal_artifact_read",
   ];
   return names.map((name) => makeTestToolDescriptor(name, true, false));
 }
@@ -463,7 +462,7 @@ export function makeEffectfulTestTools(): AnyToolDescriptor[] {
     "bash",
     "delegate",
     "memory_write",
-    "goal_artifact_write",
+    "goal_manage",
   ];
   return names.map((name) => makeTestToolDescriptor(name, false, false));
 }
