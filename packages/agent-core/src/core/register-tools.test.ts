@@ -308,7 +308,7 @@ describe("registerBuiltinTools", () => {
 
     expect(retried.isError).toBe(false);
     expect(retried.output).toContain('"status": "running"');
-    expect(retried.output).toContain('"attempt": 1');
+    expect(retried.output).toContain('"attempt": 2');
   });
 
   it("treats old Goal executable names as unknown tools", async () => {
