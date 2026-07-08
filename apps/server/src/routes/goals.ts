@@ -466,10 +466,19 @@ function mapGoalError(error: unknown): Error {
   if (hasErrorName(error, "GoalNotFoundError")) {
     return new ServerError("SESSION_NOT_FOUND", error.message, 404);
   }
-  if (hasErrorName(error, "GoalLockedError") || hasErrorName(error, "GoalStateError")) {
+  if (
+    hasErrorName(error, "GoalStateError")
+    || hasErrorName(error, "GoalTransitionError")
+    || hasErrorName(error, "GoalReviewerAuthorizationError")
+    || hasErrorName(error, "GoalReviewFinalizationError")
+  ) {
     return new ServerError("BAD_REQUEST", error.message, 409);
   }
-  if (hasErrorName(error, "GoalPathError") || hasErrorName(error, "GoalInvalidIdError") || hasErrorName(error, "GoalSchemaError")) {
+  if (
+    hasErrorName(error, "GoalPathError")
+    || hasErrorName(error, "GoalInvalidIdError")
+    || hasErrorName(error, "GoalUnsupportedStateError")
+  ) {
     return new BadRequestError(error.message);
   }
   if (error instanceof z.ZodError) {

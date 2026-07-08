@@ -42,6 +42,34 @@ class FakeGoalStateError extends Error {
   }
 }
 
+class FakeGoalTransitionError extends Error {
+  constructor(goalId: string, from: GoalStatus, to: GoalStatus) {
+    super(`Invalid goal transition ${from} -> ${to} for ${goalId}`);
+    this.name = "GoalTransitionError";
+  }
+}
+
+class FakeGoalUnsupportedStateError extends Error {
+  constructor(goalId: string, unsupportedKeys: string[]) {
+    super(`Unsupported legacy goal state for ${goalId}: ${unsupportedKeys.join(", ")}`);
+    this.name = "GoalUnsupportedStateError";
+  }
+}
+
+class FakeGoalReviewerAuthorizationError extends Error {
+  constructor(public readonly goalId: string, message: string) {
+    super(message);
+    this.name = "GoalReviewerAuthorizationError";
+  }
+}
+
+class FakeGoalReviewFinalizationError extends Error {
+  constructor(public readonly goalId: string, message: string) {
+    super(message);
+    this.name = "GoalReviewFinalizationError";
+  }
+}
+
 class FakeGoalNotFoundError extends Error {
   constructor(goalId: string) {
     super(`Goal not found: ${goalId}`);
@@ -52,6 +80,7 @@ class FakeGoalNotFoundError extends Error {
 class FakeGoalStateManager {
   readonly #goals = new Map<string, GoalState>();
   readonly #now = new Date("2026-07-08T00:00:00.000Z").toISOString();
+  #nextReadError: Error | undefined;
 
   async listGoals(projectId?: string): Promise<GoalState[]> {
     return [...this.#goals.values()].filter((goal) => projectId === undefined || goal.projectId === projectId);
@@ -65,7 +94,7 @@ class FakeGoalStateManager {
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
-      attempt: 0,
+      attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -77,6 +106,11 @@ class FakeGoalStateManager {
   }
 
   async read(goalId: string): Promise<GoalState> {
+    if (this.#nextReadError !== undefined) {
+      const error = this.#nextReadError;
+      this.#nextReadError = undefined;
+      throw error;
+    }
     const goal = this.#goals.get(goalId);
     if (goal === undefined) throw new FakeGoalNotFoundError(goalId);
     return goal;
@@ -93,7 +127,7 @@ class FakeGoalStateManager {
   async start(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "draft" && goal.status !== "running") {
-      throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
+      throw new FakeGoalTransitionError(goalId, goal.status, "running");
     }
     return this.#update(goalId, {
       status: "running",
@@ -106,7 +140,7 @@ class FakeGoalStateManager {
   async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "not_done" && goal.status !== "failed" && goal.status !== "running") {
-      throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
+      throw new FakeGoalTransitionError(goalId, goal.status, "running");
     }
     return this.#update(goalId, {
       status: "running",
@@ -122,7 +156,7 @@ class FakeGoalStateManager {
   async cancel(goalId: string): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status === "done" || goal.status === "cancelled") {
-      throw new FakeGoalStateError(`Cannot cancel terminal goal ${goalId}`);
+      throw new FakeGoalTransitionError(goalId, goal.status, "cancelled");
     }
     return this.#update(goalId, { status: "cancelled", cancelledAt: this.#now, updatedAt: this.#now });
   }
@@ -167,6 +201,10 @@ class FakeGoalStateManager {
       },
       updatedAt: this.#now,
     });
+  }
+
+  failNextRead(error: Error): void {
+    this.#nextReadError = error;
   }
 
   #update(goalId: string, updates: Partial<GoalState>): GoalState {
@@ -303,7 +341,7 @@ describe("goals routes", () => {
       objective: "Expose a natural-language Goal contract from the server.",
       acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
       status: "draft",
-      attempt: 0,
+      attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -496,7 +534,7 @@ describe("goals routes", () => {
     const retried = await retryRes.json() as GoalState;
 
     expect(retryRes.status).toBe(200);
-    expect(retried).toMatchObject({ status: "running", attempt: 1, mainSessionId: retrySessionId });
+    expect(retried).toMatchObject({ status: "running", attempt: 2, mainSessionId: retrySessionId });
     expect(retried.review).toBeUndefined();
     expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: retrySessionId,
@@ -538,6 +576,19 @@ describe("goals routes", () => {
     expect(cancelled.cancelledAt).toBeString();
   });
 
+  test("POST cancel maps GoalTransitionError to the existing conflict shape", async () => {
+    const { app, manager, project } = await createFixture("cancel-transition-error");
+    const created = await postGoal(app, project.slug);
+    await manager.setStatus(created.id, "done");
+
+    const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
+
+    expect(cancelRes.status).toBe(409);
+    expect(await cancelRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Invalid goal transition done -> cancelled for ${created.id}` },
+    });
+  });
+
   test("GET list and read expose simplified GoalState only", async () => {
     const { app, project } = await createFixture("list-read");
     const created = await postGoal(app, project.slug);
@@ -552,6 +603,38 @@ describe("goals routes", () => {
     expect(readRes.status).toBe(200);
     expect(readGoal.id).toBe(created.id);
     expectSimplifiedGoalShape(readGoal as unknown as Record<string, unknown>);
+  });
+
+  test("GET read maps unsupported legacy Goal state to deterministic bad request", async () => {
+    const { app, manager, project } = await createFixture("unsupported-legacy-state");
+    const created = await postGoal(app, project.slug);
+    manager.failNextRead(new FakeGoalUnsupportedStateError(created.id, ["doneConditions", "artifacts"]));
+
+    const readRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`);
+
+    expect(readRes.status).toBe(400);
+    expect(await readRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Unsupported legacy goal state for ${created.id}: doneConditions, artifacts` },
+    });
+  });
+
+  test("GET read maps reviewer lifecycle errors to the existing conflict shape", async () => {
+    const { app, manager, project } = await createFixture("reviewer-lifecycle-errors");
+    const created = await postGoal(app, project.slug);
+
+    manager.failNextRead(new FakeGoalReviewFinalizationError(created.id, "DONE review requires at least one evidence ref"));
+    const finalizationRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`);
+    manager.failNextRead(new FakeGoalReviewerAuthorizationError(created.id, "Review finalization requires reviewer agent, got build"));
+    const authorizationRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`);
+
+    expect(finalizationRes.status).toBe(409);
+    expect(await finalizationRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "DONE review requires at least one evidence ref" },
+    });
+    expect(authorizationRes.status).toBe(409);
+    expect(await authorizationRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "Review finalization requires reviewer agent, got build" },
+    });
   });
 
   test("deleted artifact lock and escalate routes are not registered", async () => {
