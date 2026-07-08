@@ -469,10 +469,21 @@ export interface HitlInboxProps {
   projections: HitlProjection[];
   isLoading?: boolean;
   emptyMessage?: string;
+  hideWhenEmpty?: boolean;
+  className?: string;
+  testId?: string;
   title?: string;
 }
 
-export function HitlInbox({ projections, isLoading, emptyMessage = "No pending approvals", title = "Approval Queue" }: HitlInboxProps) {
+export function HitlInbox({
+  projections,
+  isLoading,
+  emptyMessage = "No pending approvals",
+  hideWhenEmpty = false,
+  className = "gap-2",
+  testId = "hitl-inbox",
+  title = "Approval Queue",
+}: HitlInboxProps) {
   const deduped = useMemo(() => {
     const seen = new Set<string>();
     const result: HitlProjection[] = [];
@@ -486,9 +497,11 @@ export function HitlInbox({ projections, isLoading, emptyMessage = "No pending a
     return result;
   }, [projections]);
 
+  if (hideWhenEmpty && !isLoading && deduped.length === 0) return null;
+
   return (
-    <div data-testid="hitl-inbox" className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 mb-0.5">
+    <div data-testid={testId} className={`flex flex-col ${className}`}>
+      <div className="flex items-center gap-2">
         <Bell size={13} className="text-warning" aria-hidden="true" />
         <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">{title}</h3>
         {deduped.length > 0 && (

@@ -127,6 +127,11 @@ describe("HitlInbox", () => {
     expect(text.toLowerCase()).toContain("no pending approvals");
   });
 
+  test("returns null when empty and hideWhenEmpty is enabled", () => {
+    const result = HitlInbox({ projections: [], hideWhenEmpty: true });
+    expect(result).toBeNull();
+  });
+
   test("renders custom empty message", () => {
     const result = HitlInbox({ projections: [], emptyMessage: "No HITL for this loop" });
     const text = textContent(result);
@@ -197,6 +202,17 @@ describe("HitlInbox", () => {
     const result = HitlInbox({ projections: [], isLoading: true });
     const text = textContent(result);
     expect(text.toLowerCase()).toContain("loading");
+  });
+
+  test("renders loading state when hideWhenEmpty is enabled", () => {
+    const result = HitlInbox({ projections: [], isLoading: true, hideWhenEmpty: true });
+    const text = textContent(result);
+    expect(text.toLowerCase()).toContain("loading");
+  });
+
+  test("uses custom test id", () => {
+    const result = HitlInbox({ projections: [makeProjection()], testId: "dashboard-approval-queue" });
+    expect(findByTestId(result, "dashboard-approval-queue")).toBeDefined();
   });
 
   test("renders title with count badge when projections exist", () => {

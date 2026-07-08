@@ -288,14 +288,15 @@ describe("Dashboard", () => {
     }
   });
 
-  test("renders data-testid='dashboard-approval-queue' section", async () => {
+  test("does not render approval queue when no pending HITL", async () => {
     const ctx = await setupDashboard(createDashboardHandler({}));
 
     try {
       await renderDashboard(ctx.reactRoot, ctx.queryClient);
 
       await waitFor(() => {
-        expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).not.toBeNull();
+        expect(ctx.queryClient.isFetching()).toBe(0);
+        expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).toBeNull();
       });
     } finally {
       await cleanupDashboard(ctx);
@@ -403,15 +404,16 @@ describe("Dashboard", () => {
     }
   });
 
-  test("shows empty state when no pending HITL", async () => {
+  test("hides approval queue empty state when no pending HITL", async () => {
     const ctx = await setupDashboard(createDashboardHandler({ hitl: [] }));
 
     try {
       await renderDashboard(ctx.reactRoot, ctx.queryClient);
 
       await waitFor(() => {
-        const queueSection = ctx.container.querySelector('[data-testid="dashboard-approval-queue"]');
-        expect((queueSection?.textContent ?? "").toLowerCase()).toContain("no pending");
+        expect(ctx.queryClient.isFetching()).toBe(0);
+        expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).toBeNull();
+        expect(ctx.container.textContent?.toLowerCase()).not.toContain("no pending approvals");
       });
     } finally {
       await cleanupDashboard(ctx);
@@ -577,7 +579,8 @@ describe("Dashboard", () => {
       await renderDashboard(ctx.reactRoot, ctx.queryClient);
 
       await waitFor(() => {
-        expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).not.toBeNull();
+        expect(ctx.queryClient.isFetching()).toBe(0);
+        expect(ctx.container.querySelector('[data-testid="dashboard-approval-queue"]')).toBeNull();
       });
     } finally {
       await cleanupDashboard(ctx);

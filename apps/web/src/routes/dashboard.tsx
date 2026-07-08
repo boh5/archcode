@@ -101,13 +101,13 @@ export function Dashboard() {
           )}
         </section>
 
-        <section data-testid="dashboard-approval-queue" className="flex flex-col gap-2.5">
-          <HitlInbox
-            projections={projections}
-            isLoading={hitlLoading}
-            emptyMessage="No pending approvals"
-          />
-        </section>
+        <HitlInbox
+          projections={projections}
+          isLoading={hitlLoading}
+          hideWhenEmpty
+          testId="dashboard-approval-queue"
+          className="gap-2.5"
+        />
       </div>
     </div>
   );
