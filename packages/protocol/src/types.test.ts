@@ -6,10 +6,6 @@ import type {
   CompressionBlockSnapshot,
   CompressionRefMapUpdatedEvent,
   CompressionStateSnapshot,
-  DoneCondition,
-  GoalArtifactFile,
-  GoalPhase,
-  GoalReviewReport,
   GoalState,
   GoalStatus,
   HitlFile,
@@ -266,240 +262,130 @@ describe("compression protocol types", () => {
 });
 
 describe("Goal types", () => {
-  test("GoalPhase remains the canonical three-phase model", () => {
-    const phases: GoalPhase[] = ["plan", "build", "review"];
-
-    expect(phases).toEqual(["plan", "build", "review"]);
-    expect(phases).toHaveLength(3);
-  });
-
-  test("GoalStatus includes paused for safe interruption", () => {
+  test("GoalStatus is the simplified durable execution envelope", () => {
     const statuses: GoalStatus[] = [
-      "draft", "locked", "running", "verifying",
-      "reviewed", "completed", "failed", "escalated",
-      "paused",
+      "draft",
+      "running",
+      "blocked",
+      "reviewing",
+      "done",
+      "not_done",
+      "failed",
+      "cancelled",
     ];
 
-    expect(statuses).toContain("paused");
-    expect(statuses.length).toBe(9);
+    expect(statuses).toEqual([
+      "draft",
+      "running",
+      "blocked",
+      "reviewing",
+      "done",
+      "not_done",
+      "failed",
+      "cancelled",
+    ]);
   });
 
-  test("GoalStatus union rejects invalid values at compile time", () => {
-    // This test validates the type at compile time — if it compiles, the union is correct.
-    const valid: GoalStatus = "paused";
-    expect(valid).toBe("paused");
-  });
-
-  test("DoneCondition is a discriminated union by kind", () => {
-    const condition: DoneCondition = {
-      id: "cond-1",
-      kind: "tests_pass",
-      params: { command: "bun test" },
-    };
-
-    expect(condition.kind).toBe("tests_pass");
-    expect(condition.id).toBe("cond-1");
-
-    const fileExists: DoneCondition = {
-      id: "cond-2",
-      kind: "file_exists",
-      params: { path: "src/index.ts" },
-    };
-
-    expect(fileExists.kind).toBe("file_exists");
-    expect(fileExists.params.path).toBe("src/index.ts");
-  });
-
-  test("DoneCondition spec_compliance is typed as Reviewer-owned structured evidence", () => {
-    const specCheck: DoneCondition = {
-      id: "cond-spec",
-      kind: "spec_compliance",
-      params: { specPath: "docs/spec.md" },
-    };
-
-    expect(specCheck.kind).toBe("spec_compliance");
-    expect(specCheck.params.specPath).toBe("docs/spec.md");
-    // spec_compliance is implemented by Reviewer-owned structured per-criterion evidence.
-  });
-
-  test("serializes and deserializes GoalState round-trip", () => {
+  test("GoalState serializes the natural-language contract with review evidence", () => {
     const state: GoalState = {
       id: "goal-1",
       projectId: "my-project",
       title: "Implement auth",
-      status: "running",
-      phase: "build",
-      doneConditions: [
-        { id: "dc-1", kind: "tests_pass", params: { command: "bun test" } },
-      ],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-      retryCount: 0,
-      approvalPoints: ["after_plan", "before_complete"],
-      author: "orchestrator",
-      childSessionIds: [],
+      objective: "Build the requested authentication flow.",
+      acceptanceCriteria: "Users can sign in and invalid credentials are rejected.",
+      status: "done",
+      attempt: 2,
+      budget: {
+        status: "ok",
+        usedTokens: 1200,
+        maxTokens: 5000,
+        updatedAt: "2026-01-01T00:04:00.000Z",
+      },
+      pendingHitlIds: [],
+      approvalRefs: ["hitl-approval-1"],
+      mainSessionId: "session-main",
+      childSessionIds: ["session-build", "session-review"],
+      review: {
+        verdict: "DONE",
+        summary: "Reviewer confirmed the acceptance criteria are satisfied.",
+        evidenceRefs: [
+          {
+            kind: "test_output",
+            ref: "test-output-1",
+            summary: "Targeted protocol tests passed and cover the new contract.",
+            sessionId: "session-review",
+            toolCallId: "tool-call-1",
+            createdAt: "2026-01-01T00:03:00.000Z",
+          },
+          {
+            kind: "diff",
+            ref: "diff-1",
+            summary: "The diff shows old Goal DSL types were removed.",
+            path: "packages/protocol/src/types.ts",
+          },
+        ],
+        reviewerSessionId: "session-review",
+        decidedAt: "2026-01-01T00:05:00.000Z",
+      },
+      finalSummary: "Authentication flow completed and reviewed.",
       createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:05:00.000Z",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: "2026-01-01T00:05:00.000Z",
     };
 
     const parsed = serializeRoundTrip(state);
 
     expect(parsed).toEqual(state);
-    expect(parsed.status).toBe("running");
-    expect(parsed.doneConditions).toHaveLength(1);
-    expect((parsed.doneConditions[0] as DoneCondition).kind).toBe("tests_pass");
+    expect(parsed.objective).toContain("authentication");
+    expect(parsed.acceptanceCriteria).toContain("invalid credentials");
+    expect(parsed.review?.verdict).toBe("DONE");
+    expect(parsed.review?.evidenceRefs[0]?.summary).toContain("Targeted protocol tests");
   });
 
-  test("round-trips Goal contracts without raw LLM transcript fields", () => {
-    const reviewReport: GoalReviewReport = {
-      reviewerAgent: "reviewer",
-      outcome: "NOT_DONE",
-      reviewedAt: "2026-07-03T00:10:00.000Z",
-      summary: "AC-001 needs stronger evidence.",
-      criteria: [
-        {
-          criterionId: "AC-001",
-          criterion: "The implementation satisfies the documented acceptance criterion.",
-          compliant: false,
-          evidence: ["review.md notes missing negative-path coverage"],
-          artifactNames: ["review.md", "spec-compliance.md"],
-        },
-      ],
-    };
-    const state: GoalState = {
-      id: "goal_test_123",
-      projectId: "my-project",
-      title: "Ship Goal contracts",
-      status: "verifying",
-      phase: "review",
-      doneConditions: [
-        { id: "AC-001", kind: "spec_compliance", params: { specPath: "docs/spec.md" } },
-      ],
-      doneResults: {
-        "AC-001": {
-          conditionId: "AC-001",
-          passed: false,
-          evidence: "Criterion AC-001 is NOT DONE.",
-          checkedAt: "2026-07-03T00:10:00.000Z",
-          specCompliance: {
-            checkedAt: "2026-07-03T00:09:00.000Z",
-            specPath: "docs/spec.md",
-            summary: "One criterion remains unmet.",
-            criteria: reviewReport.criteria,
-          },
-          review: reviewReport,
-        },
-      },
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-      retryCount: 1,
-      retryState: {
-        retryCount: 1,
-        nextRetryAt: "2026-07-03T00:15:00.000Z",
-        lastFailure: {
-          failedAt: "2026-07-03T00:10:00.000Z",
-          errorKind: "review_not_done",
-          message: "Reviewer marked AC-001 NOT DONE",
-          phase: "review",
-        },
-        lastAttempt: {
-          attempt: 1,
-          status: "scheduled",
-          scheduledAt: "2026-07-03T00:10:00.000Z",
-          nextRetryAt: "2026-07-03T00:15:00.000Z",
-        },
-      },
-      tokenBudget: {
-        status: "warning",
-        maxTokens: 100_000,
-        warningThresholdTokens: 80_000,
-        inputTokens: 45_000,
-        outputTokens: 20_000,
-        reasoningTokens: 10_000,
-        cachedInputTokens: 5_000,
-        totalTokens: 75_000,
-        updatedAt: "2026-07-03T00:08:00.000Z",
-      },
-      artifacts: [
-        { name: "plan.md", path: ".archcode/goals/goal_test_123/artifacts/plan.md", mediaType: "text/markdown" },
-        { name: "review.md", path: ".archcode/goals/goal_test_123/artifacts/review.md", mediaType: "text/markdown" },
-      ],
-      reviewReport,
-      approvalPoints: ["after_plan", "before_complete"],
-      author: "orchestrator",
-      mainSessionId: "session-main",
-      childSessionIds: ["session-plan", "session-build", "session-review"],
-      createdAt: "2026-07-03T00:00:00.000Z",
-      updatedAt: "2026-07-03T00:10:00.000Z",
-    };
-
-    const parsed = serializeRoundTrip(state);
-    const serialized = JSON.stringify(parsed);
-
-    expect(parsed.id).toBe("goal_test_123");
-    expect(parsed.phase).toBe("review");
-    expect(parsed.reviewerAgent).toBe("reviewer");
-    expect(parsed.reviewReport?.outcome).toBe("NOT_DONE");
-    expect(parsed.reviewReport?.criteria[0]?.criterionId).toBe("AC-001");
-    expect(parsed.tokenBudget?.totalTokens).toBe(75_000);
-    expect(parsed.retryState?.nextRetryAt).toBe("2026-07-03T00:15:00.000Z");
-    expect(parsed.retryState?.lastFailure?.errorKind).toBe("review_not_done");
-    expect(parsed.artifacts?.map((artifact) => artifact.name)).toEqual(["plan.md", "review.md"]);
-    expect(serialized).not.toContain("rawLlmOutput");
-    expect(serialized).not.toContain("rawTranscript");
-    expect(serialized).not.toContain("transcript");
-  });
-
-  test("canonical Goal artifacts are current Markdown files without version pointers", () => {
-    const artifact: GoalArtifactFile = {
-      name: "final-report.md",
-      path: ".archcode/goals/goal-1/artifacts/final-report.md",
-      mediaType: "text/markdown",
-      updatedAt: "2026-07-03T00:00:00.000Z",
-      sizeBytes: 128,
-      sha256: "abc123",
-    };
-
-    const parsed = serializeRoundTrip(artifact) as GoalArtifactFile & Record<string, unknown>;
-
-    expect(parsed.name).toBe("final-report.md");
-    expect(parsed.path).toContain("/artifacts/final-report.md");
-    expect(parsed.mediaType).toBe("text/markdown");
-    expect(parsed.version).toBeUndefined();
-    expect(parsed.revision).toBeUndefined();
-    expect(parsed.latest).toBeUndefined();
-  });
-
-  test("GoalState with optional fields round-trips", () => {
+  test("Goal blockers and NOT_DONE receipts round-trip", () => {
     const state: GoalState = {
       id: "goal-2",
       projectId: "my-project",
       title: "Fix bug",
-      status: "paused",
-      phase: "plan",
-      doneConditions: [],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 1, backoffMs: 1000, escalateOnFailure: false },
-      retryCount: 0,
-      approvalPoints: [],
-      author: "user",
-      lockedBy: "user-1",
-      mainSessionId: "session-1",
-      childSessionIds: ["session-plan"],
-      lockedAt: "2026-06-01T00:00:00.000Z",
+      objective: "Resolve the reported bug.",
+      acceptanceCriteria: "The bug no longer reproduces.",
+      status: "blocked",
+      blocker: {
+        kind: "question",
+        summary: "Need user clarification on expected behavior.",
+        hitlId: "hitl-1",
+        resumeStatus: "running",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      },
+      attempt: 1,
+      pendingHitlIds: ["hitl-1"],
+      approvalRefs: [],
+      childSessionIds: [],
+      review: {
+        verdict: "NOT_DONE",
+        summary: "Cannot complete without the requested clarification.",
+        evidenceRefs: [],
+        unresolvedItems: ["Clarify expected behavior"],
+        reviewerSessionId: "session-review",
+        decidedAt: "2026-06-01T00:01:00.000Z",
+      },
       createdAt: "2026-06-01T00:00:00.000Z",
-      updatedAt: "2026-06-02T00:00:00.000Z",
-      lastError: "failed once",
+      updatedAt: "2026-06-01T00:01:00.000Z",
+      lastError: {
+        name: "QuestionBlockedError",
+        message: "Awaiting user clarification",
+        at: "2026-06-01T00:01:00.000Z",
+      },
     };
 
     const parsed = serializeRoundTrip(state);
 
-    expect(parsed).toEqual(state);
-    expect(parsed.status).toBe("paused");
-    expect(parsed.lockedBy).toBe("user-1");
-    expect(parsed.lastError).toBe("failed once");
+    expect(parsed.status).toBe("blocked");
+    expect(parsed.blocker?.kind).toBe("question");
+    expect(parsed.review?.verdict).toBe("NOT_DONE");
+    expect(parsed.review?.unresolvedItems).toEqual(["Clarify expected behavior"]);
+    expect(parsed.lastError?.name).toBe("QuestionBlockedError");
   });
 });
 
@@ -638,47 +524,75 @@ describe("HITL types", () => {
 });
 
 describe("Goal/HITL stream events", () => {
-  test("GoalStreamEvent types are serializable", () => {
+  function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
+    return {
+      id: "goal-1",
+      projectId: "p",
+      title: "Implement feature",
+      objective: "Implement the requested feature.",
+      acceptanceCriteria: "Feature behavior satisfies the request.",
+      status: "running",
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      childSessionIds: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  test("GoalStreamEvent only carries state changes", () => {
     const stateChange: GoalStreamEvent = {
       type: "goal.state_change",
       goalId: "goal-1",
       status: "running",
-      state: {
-        id: "goal-1",
-        projectId: "p",
-        title: "t",
-        status: "running",
-        phase: "build",
-        doneConditions: [],
-        doneResults: {},
-        reviewerAgent: "reviewer",
-        retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-        retryCount: 0,
-        approvalPoints: [],
-        author: "orchestrator",
-        childSessionIds: [],
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    };
-
-    const doneCheck: GoalStreamEvent = {
-      type: "goal.done_check",
-      goalId: "goal-1",
-      results: [
-        { conditionId: "dc-1", passed: true, evidence: "Tests passed", checkedAt: "2026-06-01T00:00:00.000Z" },
-      ],
-    };
-
-    const escalation: GoalStreamEvent = {
-      type: "goal.escalation",
-      goalId: "goal-1",
-      reason: "Max retries exceeded",
+      state: makeGoalState(),
     };
 
     expect(serializeRoundTrip(stateChange)).toEqual(stateChange);
-    expect(serializeRoundTrip(doneCheck)).toEqual(doneCheck);
-    expect(serializeRoundTrip(escalation)).toEqual(escalation);
+  });
+
+  test("StreamEvent and SessionEventPayload unions accept Goal state change and HITL events", () => {
+    const goalEvent: GoalStreamEvent = {
+      type: "goal.state_change",
+      goalId: "g-1",
+      status: "reviewing",
+      state: makeGoalState({ id: "g-1", status: "reviewing" }),
+    };
+    const events: StreamEvent[] = [
+      goalEvent,
+      { type: "hitl.request", request: {} as HitlRecord },
+      { type: "hitl.updated", record: {} as HitlRecord },
+      { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
+    ];
+    const payloads: SessionEventPayload[] = events;
+
+    expect(events).toHaveLength(4);
+    expect(payloads.map((p) => p.type)).toEqual([
+      "goal.state_change",
+      "hitl.request",
+      "hitl.updated",
+      "hitl.resolved",
+    ]);
+  });
+
+  test("GoalStreamEvent discriminates simplified status values", () => {
+    const reviewingEvent: GoalStreamEvent = {
+      type: "goal.state_change",
+      goalId: "g-1",
+      status: "reviewing",
+      state: makeGoalState({ id: "g-1", status: "reviewing" }),
+    };
+    const notDoneEvent: GoalStreamEvent = {
+      type: "goal.state_change",
+      goalId: "g-2",
+      status: "not_done",
+      state: makeGoalState({ id: "g-2", status: "not_done" }),
+    };
+
+    expect(reviewingEvent.status).toBe("reviewing");
+    expect(notDoneEvent.status).toBe("not_done");
   });
 
   test("HitlStreamEvent types are serializable", () => {
@@ -711,67 +625,6 @@ describe("Goal/HITL stream events", () => {
     expect(serializeRoundTrip(hitlRequestEvent)).toEqual(hitlRequestEvent);
     expect(serializeRoundTrip(hitlUpdatedEvent)).toEqual(hitlUpdatedEvent);
     expect(serializeRoundTrip(hitlResolvedEvent)).toEqual(hitlResolvedEvent);
-  });
-
-  test("StreamEvent union accepts Goal/HITL events", () => {
-    const events: StreamEvent[] = [
-      { type: "goal.state_change", goalId: "g-1", status: "running", state: {} as GoalState },
-      { type: "goal.done_check", goalId: "g-1", results: [] },
-      { type: "goal.escalation", goalId: "g-1", reason: "fail" },
-      { type: "hitl.request", request: {} as HitlRecord },
-      { type: "hitl.updated", record: {} as HitlRecord },
-      { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
-    ];
-
-    expect(events).toHaveLength(6);
-    expect(events[0]!.type).toBe("goal.state_change");
-    expect(events[5]!.type).toBe("hitl.resolved");
-  });
-
-  test("SessionEventPayload union accepts Goal/HITL events", () => {
-    const payloads: SessionEventPayload[] = [
-      { type: "goal.state_change", goalId: "g-1", status: "running", state: {} as GoalState },
-      { type: "goal.done_check", goalId: "g-1", results: [] },
-      { type: "goal.escalation", goalId: "g-1", reason: "fail" },
-      { type: "hitl.request", request: {} as HitlRecord },
-      { type: "hitl.updated", record: {} as HitlRecord },
-      { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
-    ];
-
-    expect(payloads).toHaveLength(6);
-    expect(payloads.map((p) => p.type)).toEqual([
-      "goal.state_change",
-      "goal.done_check",
-      "goal.escalation",
-      "hitl.request",
-      "hitl.updated",
-      "hitl.resolved",
-    ]);
-  });
-
-  test("StreamEvent discriminates accurately between goal state change status values", () => {
-    const runningEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-1",
-      status: "running",
-      state: {} as GoalState,
-    };
-    const pausedEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-2",
-      status: "paused",
-      state: {} as GoalState,
-    };
-    const escalatedEvent: GoalStreamEvent = {
-      type: "goal.state_change",
-      goalId: "g-3",
-      status: "escalated",
-      state: {} as GoalState,
-    };
-
-    expect(runningEvent.status).toBe("running");
-    expect(pausedEvent.status).toBe("paused");
-    expect(escalatedEvent.status).toBe("escalated");
   });
 });
 
@@ -932,31 +785,23 @@ describe("Loop types", () => {
     expect(parsed.skippedReason).toBe("Loop already active");
   });
 
-  test("LoopGoalTemplate has minimal snapshot fields", () => {
+  test("LoopGoalTemplate has only natural-language Goal fields", () => {
     const template: LoopGoalTemplate = {
       title: "Implement feature",
-      author: "orchestrator",
-      doneConditions: [
-        { id: "dc-1", kind: "tests_pass", params: { command: "bun test" } },
-      ],
-      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-      approvalPoints: ["after_plan"],
-      reviewerAgent: "reviewer",
-      prompt: "Implement the feature according to spec",
+      objective: "Implement the feature according to the loop finding.",
+      acceptanceCriteria: "The feature is implemented and reviewed against the finding.",
     };
 
     const parsed = serializeRoundTrip(template);
     expect(parsed).toEqual(template);
     expect(parsed.title).toBe("Implement feature");
-    expect(parsed.author).toBe("orchestrator");
-    expect(parsed.doneConditions).toHaveLength(1);
-    expect(parsed.approvalPoints).toEqual(["after_plan"]);
-    expect(parsed.reviewerAgent).toBe("reviewer");
+    expect(parsed.objective).toContain("feature");
+    expect(parsed.acceptanceCriteria).toContain("reviewed");
   });
 
-  test("LoopGoalTemplate rejects goalTemplateId at type level", () => {
-    // @ts-expect-error - goalTemplateId is not a valid field; templates are inline only
-    const invalid: LoopGoalTemplate = { title: "t", author: "a", doneConditions: [], retryPolicy: { maxRetries: 1, backoffMs: 1000, escalateOnFailure: false }, approvalPoints: [], reviewerAgent: "r", goalTemplateId: "goal-123" };
+  test("LoopGoalTemplate rejects non-natural-language Goal DSL fields at type level", () => {
+    // @ts-expect-error - old typed criteria arrays are not valid on LoopGoalTemplate
+    const invalid: LoopGoalTemplate = { title: "t", objective: "o", acceptanceCriteria: "a", doneConditions: [] };
     expect(invalid).toBeDefined();
   });
 
@@ -991,13 +836,8 @@ describe("Loop types", () => {
       limits: { maxIterationsPerRun: 5 },
       goalTemplate: {
         title: "Draft changelog",
-        author: "loop",
-        doneConditions: [
-          { id: "dc-1", kind: "file_exists", params: { path: "CHANGELOG.md" } },
-        ],
-        retryPolicy: { maxRetries: 2, backoffMs: 10000, escalateOnFailure: false },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
+        objective: "Draft a changelog from recent project changes.",
+        acceptanceCriteria: "The changelog draft summarizes user-facing changes in natural language.",
       },
     };
 

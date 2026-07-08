@@ -842,232 +842,102 @@ export interface ToolResultMeta {
 // ─── Goal Types ───
 
 export type GoalStatus =
-  | "draft" | "locked" | "running" | "verifying"
-  | "reviewed" | "completed" | "failed" | "escalated"
-  | "paused"; // paused for safe interruption
+  | "draft"
+  | "running"
+  | "blocked"
+  | "reviewing"
+  | "done"
+  | "not_done"
+  | "failed"
+  | "cancelled";
 
-export type GoalPhase = "plan" | "build" | "review";
+export type GoalBlockerKind = "approval" | "question" | "budget" | "permission" | "tool_error";
 
-export type DoneConditionKind =
-  // Layer 1: machine-checkable (7 kinds)
-  | "tests_pass" | "typecheck_pass" | "lsp_clean"
-  | "file_exists" | "grep_contains" | "grep_empty"
-  | "command_succeeds"
-  // Layer 1: HITL (1 kind, non-machine check)
-  | "user_confirmed"
-  // Layer 2: Reviewer-owned structured per-criterion evidence
-  | "spec_compliance";
+export type GoalEvidenceRefKind =
+  | "session"
+  | "message"
+  | "tool_call"
+  | "diff"
+  | "test_output"
+  | "file"
+  | "url"
+  | "hitl";
 
-// DoneCondition: discriminated union by kind (type-safe params)
-export type DoneCondition =
-  | { id: string; kind: "tests_pass"; params: { command?: string }; required?: boolean }
-  | { id: string; kind: "typecheck_pass"; params: { command?: string }; required?: boolean }
-  | { id: string; kind: "lsp_clean"; params: { paths?: string[]; severity?: "error" | "warning" }; required?: boolean }
-  | { id: string; kind: "file_exists"; params: { path: string }; required?: boolean }
-  | { id: string; kind: "grep_contains"; params: { pattern: string; path?: string; minMatches?: number }; required?: boolean }
-  | { id: string; kind: "grep_empty"; params: { pattern: string; path?: string }; required?: boolean }
-  | { id: string; kind: "command_succeeds"; params: { command: string; timeoutMs?: number }; required?: boolean }
-  | { id: string; kind: "user_confirmed"; params: { prompt: string }; required?: boolean }
-  | { id: string; kind: "spec_compliance"; params: { specPath: string; focusAreas?: string[] }; required?: boolean };
-// required defaults true; false = soft hint
+export type GoalReviewVerdict = "DONE" | "NOT_DONE";
 
-export interface GoalDoneResult {
-  conditionId: string;
-  passed: boolean;
-  evidence: string;   // machine output or Reviewer evidence summary
-  checkedAt: string;
-  specCompliance?: GoalSpecComplianceEvidence;
-  review?: GoalReviewReport;
-}
-
-/** @deprecated Use GoalDoneResult for clarity at Goal/Reviewer boundaries. */
-export type DoneResult = GoalDoneResult;
-
-export type GoalArtifactName =
-  | "plan.md"
-  | "build.md"
-  | "review.md"
-  | "spec-compliance.md"
-  | "approvals.md"
-  | "budget.md"
-  | "retry-log.md"
-  | "final-report.md";
-
-export interface GoalArtifactFile {
-  name: GoalArtifactName;
-  path: string;
-  mediaType: "text/markdown";
-  updatedAt?: string;
-  sizeBytes?: number;
-  sha256?: string;
-}
-
-export type GoalReviewOutcome = "DONE" | "NOT_DONE";
-
-export interface GoalSpecComplianceCriterionEvidence {
-  criterionId: string;
-  criterion: string;
-  compliant: boolean;
-  status?: "satisfied" | "failed";
-  evidence: string[];
-  artifactNames?: GoalArtifactName[];
-  commandRefs?: string[];
-  resultRefs?: string[];
-  fileRefs?: string[];
-  repairGuidance?: string;
-}
-
-export interface GoalSpecComplianceEvidence {
-  checkedAt: string;
-  specPath?: string;
+export interface GoalEvidenceRef {
+  kind: GoalEvidenceRefKind;
+  ref: string;
   summary: string;
-  criteria: GoalSpecComplianceCriterionEvidence[];
+  sessionId?: string;
+  messageId?: string;
+  toolCallId?: string;
+  path?: string;
+  url?: string;
+  createdAt?: string;
 }
 
-export interface GoalReviewReport {
-  reviewerAgent: string;
-  outcome: GoalReviewOutcome;
-  reviewedAt: string;
+export interface GoalReviewReceipt {
+  verdict: GoalReviewVerdict;
   summary: string;
-  criteria: GoalSpecComplianceCriterionEvidence[];
+  evidenceRefs: GoalEvidenceRef[];
+  unresolvedItems?: string[];
+  reviewerSessionId: string;
+  decidedAt: string;
 }
 
-export interface GoalRepairIssue {
-  conditionId: string;
-  evidenceSummary: string;
-  repairGuidance: string;
-  repairTarget?: string;
-  implicatedFiles?: string[];
-  failingCommands?: string[];
-  resultSummaries?: string[];
-}
-
-export interface GoalRepairContext {
-  generatedAt: string;
+export interface GoalBlocker {
+  kind: GoalBlockerKind;
   summary: string;
-  issues: GoalRepairIssue[];
+  hitlId?: string;
+  source?: string;
+  resumeStatus?: "running" | "reviewing";
+  createdAt: string;
 }
 
-export type GoalTokenBudgetStatus = "ok" | "warning" | "exceeded" | "paused";
-
-export interface GoalTokenBudgetState {
-  status: GoalTokenBudgetStatus;
+export interface GoalBudgetSummary {
+  status: "ok" | "warning" | "blocked";
+  usedTokens?: number;
   maxTokens?: number;
-  warningThresholdTokens?: number;
-  warningApprovalPoint?: string;
-  warningApprovalThresholdTokens?: number;
-  warningApprovedAt?: string;
-  warningApprovedTotalTokens?: number;
-  inputTokens: number;
-  outputTokens: number;
-  reasoningTokens?: number;
-  cachedInputTokens?: number;
-  totalTokens: number;
+  reason?: string;
   updatedAt: string;
 }
 
-export interface RetryPolicy {
-  maxRetries: number;
-  backoffMs: number;
-  escalateOnFailure: boolean; // true = retries exhausted → escalated, not failed
-}
-
-export type GoalRetryAttemptStatus = "scheduled" | "running" | "failed" | "succeeded" | "escalated";
-
-export interface GoalRetryFailureMetadata {
-  failedAt: string;
-  errorKind: string;
-  message: string;
-  phase?: GoalPhase;
-}
-
-export interface GoalRetryAttemptMetadata {
+export interface GoalState {
+  id: string;
+  projectId: string;
+  title: string;
+  objective: string;
+  acceptanceCriteria: string;
+  status: GoalStatus;
+  blocker?: GoalBlocker;
   attempt: number;
-  status: GoalRetryAttemptStatus;
-  scheduledAt?: string;
+  lastFailureSummary?: string;
+  budget?: GoalBudgetSummary;
+  pendingHitlIds: string[];
+  approvalRefs: string[];
+  mainSessionId?: string;
+  childSessionIds: string[];
+  loopId?: string;
+  review?: GoalReviewReceipt;
+  finalSummary?: string;
+  createdAt: string;
+  updatedAt: string;
   startedAt?: string;
   completedAt?: string;
-  nextRetryAt?: string;
-  failure?: GoalRetryFailureMetadata;
-}
-
-export interface GoalRetryState {
-  retryCount: number;
-  nextRetryAt?: string;
-  lastFailure?: GoalRetryFailureMetadata;
-  lastAttempt?: GoalRetryAttemptMetadata;
+  cancelledAt?: string;
+  lastError?: {
+    name: string;
+    message: string;
+    at: string;
+  };
 }
 
 export type HitlAttentionStatus = "clear" | "waiting_for_human";
 
-export const GOAL_HITL_ACTION_ADVANCE_PHASE = "advance_phase";
-export const GOAL_HITL_ACTION_COMPLETE = "complete";
-export const GOAL_HITL_ACTION_FINALIZE_REVIEW = "finalize_review";
-export const GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL = "await_budget_approval";
-export const GOAL_HITL_ACTION_ANSWER_QUESTION = "answer_question";
-
-export type GoalHitlAction =
-  | typeof GOAL_HITL_ACTION_ADVANCE_PHASE
-  | typeof GOAL_HITL_ACTION_COMPLETE
-  | typeof GOAL_HITL_ACTION_FINALIZE_REVIEW
-  | typeof GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL
-  | typeof GOAL_HITL_ACTION_ANSWER_QUESTION;
-
-interface GoalHitlCheckpointBase {
-  version: 1;
-  hitlId: string;
-  blockedAt: string;
-  phase?: GoalPhase;
-  reason?: string;
-}
-
-export type GoalHitlCheckpoint = GoalHitlCheckpointBase & (
-  | { kind: "goal_approval"; action: typeof GOAL_HITL_ACTION_ADVANCE_PHASE; from: "plan"; to: "build"; approvalPoint: "after_plan" }
-  | { kind: "goal_approval"; action: typeof GOAL_HITL_ACTION_COMPLETE; approvalPoint: "before_complete" }
-  | { kind: "goal_review"; action: typeof GOAL_HITL_ACTION_FINALIZE_REVIEW }
-  | { kind: "goal_budget"; action: typeof GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL; approvalPoint: string; estimatedNextCallTokens?: number }
-  | { kind: "goal_question"; action: typeof GOAL_HITL_ACTION_ANSWER_QUESTION; questionKey: string }
-);
-
-export type ApprovalPoint = "after_plan" | "before_complete";
-
-export interface GoalState {
-  id: string;
-  projectId: string;  // slug
-  title: string;
-  status: GoalStatus;
-  phase: GoalPhase;    // current phase (plan/build/review), persisted
-  doneConditions: DoneCondition[];  // locked and immutable after lock
-  doneResults: Record<string, GoalDoneResult>;  // conditionId → latest result
-  reviewerAgent: string;  // must ≠ executor, default "reviewer"
-  retryPolicy: RetryPolicy;
-  retryCount: number;
-  retryState?: GoalRetryState;
-  tokenBudget?: GoalTokenBudgetState;
-  artifacts?: GoalArtifactFile[];
-  reviewReport?: GoalReviewReport;
-  repairContext?: GoalRepairContext;
-  approvalPoints: ApprovalPoint[];
-  author: string;      // done condition author (orchestrator/plan/user)
-  lockedBy?: string;   // locker (user id)
-  mainSessionId?: string;  // orchestrator session
-  loopId?: string; // parent Loop, when a Loop creates or owns this Goal
-  childSessionIds: string[];  // plan/build/review/explore/librarian
-  attentionStatus?: HitlAttentionStatus;
-  blockedByHitlIds?: string[];
-  resumeCheckpoint?: GoalHitlCheckpoint;
-  lockedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-  lastError?: string;
-}
-
 // ─── Goal Stream Events ───
 
-export type GoalStreamEvent =
-  | { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState }
-  | { type: "goal.done_check"; goalId: string; results: GoalDoneResult[]; review?: GoalReviewReport }
-  | { type: "goal.escalation"; goalId: string; reason: string };
+export type GoalStreamEvent = { type: "goal.state_change"; goalId: string; status: GoalStatus; state: GoalState };
 
 // ─── HITL Types ───
 
@@ -1087,7 +957,7 @@ export type HitlStatus = "pending" | "resume_claimed" | "resolved" | "cancelled"
 export type HitlSource =
   | { type: "ask_user"; sessionId: string; toolCallId?: string }
   | { type: "tool_permission"; sessionId: string; toolCallId: string; toolName: string }
-  | { type: "goal_approval"; goalId: string; approvalPoint: ApprovalPoint }
+  | { type: "goal_approval"; goalId: string; approvalPoint?: string }
   | { type: "goal_review"; goalId: string }
   | { type: "goal_budget"; goalId: string; approvalPoint?: string }
   | { type: "goal_question"; goalId: string; questionKey: string }
@@ -1133,7 +1003,7 @@ export type HitlResponse =
   | { type: "question_answer"; answers: string[]; comment?: string; answeredBy?: string }
   | { type: "permission_decision"; decision: "approve_once" | "approve_always" | "deny"; comment?: string; decidedBy?: string }
   | { type: "approval_decision"; decision: "approved" | "denied"; comment?: string; decidedBy?: string }
-  | { type: "review_outcome"; outcome: GoalReviewOutcome; comment?: string; report?: GoalReviewReport; reviewedBy?: string }
+  | { type: "review_outcome"; outcome: GoalReviewVerdict; comment?: string; receipt?: GoalReviewReceipt; reviewedBy?: string }
   | { type: "cancel"; reason: string; cancelledBy?: string };
 
 export interface HitlRecord {
@@ -1324,13 +1194,8 @@ export interface LoopIntegrationSnapshot {
 
 export interface LoopGoalTemplate {
   title: string;
-  author: string;
-  doneConditions: DoneCondition[];
-  retryPolicy: RetryPolicy;
-  approvalPoints: ApprovalPoint[];
-  reviewerAgent: string;
-  prompt?: string;
-  instructions?: string;
+  objective: string;
+  acceptanceCriteria: string;
 }
 
 export interface LoopConfig {

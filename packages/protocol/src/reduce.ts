@@ -624,32 +624,6 @@ export function reduceStreamEvent(
       return { goals };
     }
 
-    case "goal.done_check": {
-      const goals = { ...(state.goals ?? {}) };
-      const existing = goals[event.goalId];
-
-      if (existing) {
-        const updatedDoneResults = { ...existing.doneResults };
-        for (const result of event.results) {
-          updatedDoneResults[result.conditionId] = result;
-        }
-
-        goals[event.goalId] = { ...existing, doneResults: updatedDoneResults };
-      }
-
-      return { goals };
-    }
-
-    case "goal.escalation": {
-      const goals = { ...(state.goals ?? {}) };
-      const existing = goals[event.goalId];
-
-      if (existing) {
-        goals[event.goalId] = { ...existing, status: "escalated", lastError: event.reason };
-      }
-
-      return { goals };
-    }
 
     case "hitl.request": {
       const hitlRequests = [...(state.hitlRequests ?? [])];

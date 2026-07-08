@@ -6,7 +6,6 @@ import type {
   CompressionBlockSnapshot,
   CompressionRefMapSnapshot,
   GoalState,
-  GoalStatus,
   HitlRecord,
   LoopState,
   Reminder,
@@ -1218,18 +1217,12 @@ describe("Goal stream event reducers", () => {
       id: "goal-1",
       projectId: "p",
       title: "Implement feature",
+      objective: "Implement the requested feature.",
+      acceptanceCriteria: "The feature behaves as requested and is reviewed.",
       status: "draft",
-      phase: "plan",
-      doneConditions: [
-        { id: "dc-1", kind: "tests_pass", params: { command: "bun test" }, required: true },
-        { id: "dc-2", kind: "file_exists", params: { path: "src/feature.ts" }, required: true },
-      ],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-      retryCount: 0,
-      approvalPoints: ["after_plan"],
-      author: "orchestrator",
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
       childSessionIds: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1265,24 +1258,55 @@ describe("Goal stream event reducers", () => {
     }, createDeterministicContext());
 
     expect(result.goals!["goal-1"]!.status).toBe("running");
-    expect(result.goals!["goal-1"]!.title).toBe("Implement feature");
+    expect(result.goals!["goal-1"]!.objective).toBe("Implement the requested feature.");
   });
 
   test("goal.state_change preserves other goals when updating one", () => {
     const goal1 = makeGoalState({ id: "goal-1", title: "First" });
     const goal2 = makeGoalState({ id: "goal-2", title: "Second", status: "running" });
     const state = createProjection({ goals: { "goal-1": goal1, "goal-2": goal2 } });
-    const updatedGoal1 = makeGoalState({ id: "goal-1", title: "First", status: "locked" });
+    const updatedGoal1 = makeGoalState({ id: "goal-1", title: "First", status: "reviewing" });
 
     const result = reduceStreamEvent(state, {
       type: "goal.state_change",
       goalId: "goal-1",
-      status: "locked",
+      status: "reviewing",
       state: updatedGoal1,
     }, createDeterministicContext());
 
-    expect(result.goals!["goal-1"]!.status).toBe("locked");
+    expect(result.goals!["goal-1"]!.status).toBe("reviewing");
     expect(result.goals!["goal-2"]!.status).toBe("running");
+  });
+
+  test("goal.state_change stores review receipts and evidence refs", () => {
+    const reviewed = makeGoalState({
+      status: "done",
+      review: {
+        verdict: "DONE",
+        summary: "Reviewer verified the natural-language acceptance criteria.",
+        evidenceRefs: [
+          {
+            kind: "test_output",
+            ref: "test-output-1",
+            summary: "Targeted tests passed for the protocol contract.",
+            toolCallId: "tool-call-1",
+          },
+        ],
+        reviewerSessionId: "session-review",
+        decidedAt: "2026-01-01T00:05:00.000Z",
+      },
+      completedAt: "2026-01-01T00:05:00.000Z",
+    });
+
+    const result = reduceStreamEvent(createProjection(), {
+      type: "goal.state_change",
+      goalId: "goal-1",
+      status: "done",
+      state: reviewed,
+    }, createDeterministicContext());
+
+    expect(result.goals!["goal-1"]!.review?.verdict).toBe("DONE");
+    expect(result.goals!["goal-1"]!.review?.evidenceRefs[0]?.summary).toContain("Targeted tests");
   });
 
   test("goal.state_change produces identical results with deterministic context", () => {
@@ -1303,109 +1327,7 @@ describe("Goal stream event reducers", () => {
     expect(first).toEqual(second);
   });
 
-  test("goal.done_check updates done results for an existing goal", () => {
-    const goalState = makeGoalState({ status: "verifying" });
-    const state = createProjection({ goals: { "goal-1": goalState } });
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.done_check",
-      goalId: "goal-1",
-      results: [
-        { conditionId: "dc-1", passed: true, evidence: "Tests passed", checkedAt: "2026-06-01T00:00:00.000Z" },
-      ],
-    }, createDeterministicContext());
-
-    expect(result.goals!["goal-1"]!.doneResults["dc-1"]).toEqual({
-      conditionId: "dc-1",
-      passed: true,
-      evidence: "Tests passed",
-      checkedAt: "2026-06-01T00:00:00.000Z",
-    });
-  });
-
-  test("goal.done_check appends new results without removing previous ones", () => {
-    const goalState = makeGoalState({
-      status: "verifying",
-      doneResults: {
-        "dc-1": { conditionId: "dc-1", passed: true, evidence: "Old", checkedAt: "2026-01-01T00:00:00.000Z" },
-      },
-    });
-    const state = createProjection({ goals: { "goal-1": goalState } });
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.done_check",
-      goalId: "goal-1",
-      results: [
-        { conditionId: "dc-2", passed: true, evidence: "File exists", checkedAt: "2026-06-01T00:00:00.000Z" },
-      ],
-    }, createDeterministicContext());
-
-    expect(result.goals!["goal-1"]!.doneResults["dc-1"]).toBeDefined();
-    expect(result.goals!["goal-1"]!.doneResults["dc-2"]).toBeDefined();
-    expect(result.goals!["goal-1"]!.doneResults["dc-2"]!.evidence).toBe("File exists");
-  });
-
-  test("goal.done_check overwrites existing result for the same conditionId", () => {
-    const goalState = makeGoalState({
-      status: "verifying",
-      doneResults: {
-        "dc-1": { conditionId: "dc-1", passed: false, evidence: "Failed", checkedAt: "2026-01-01T00:00:00.000Z" },
-      },
-    });
-    const state = createProjection({ goals: { "goal-1": goalState } });
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.done_check",
-      goalId: "goal-1",
-      results: [
-        { conditionId: "dc-1", passed: true, evidence: "Now passing", checkedAt: "2026-06-01T00:00:00.000Z" },
-      ],
-    }, createDeterministicContext());
-
-    expect(result.goals!["goal-1"]!.doneResults["dc-1"]!.evidence).toBe("Now passing");
-  });
-
-  test("goal.done_check is noop for unknown goal id", () => {
-    const state = createProjection();
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.done_check",
-      goalId: "nonexistent",
-      results: [
-        { conditionId: "dc-1", passed: true, evidence: "ok", checkedAt: "2026-06-01T00:00:00.000Z" },
-      ],
-    }, createDeterministicContext());
-
-    expect(result).toEqual({ goals: {} });
-  });
-
-  test("goal.escalation sets status to escalated with reason", () => {
-    const goalState = makeGoalState({ status: "running" });
-    const state = createProjection({ goals: { "goal-1": goalState } });
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.escalation",
-      goalId: "goal-1",
-      reason: "Max retries exceeded",
-    }, createDeterministicContext());
-
-    expect(result.goals!["goal-1"]!.status).toBe("escalated");
-    expect(result.goals!["goal-1"]!.lastError).toBe("Max retries exceeded");
-  });
-
-  test("goal.escalation is noop for unknown goal id", () => {
-    const state = createProjection();
-
-    const result = reduceStreamEvent(state, {
-      type: "goal.escalation",
-      goalId: "nonexistent",
-      reason: "fail",
-    }, createDeterministicContext());
-
-    expect(result).toEqual({ goals: {} });
-  });
-
-  test("accumulated goal events produce deterministic projection", () => {
+  test("accumulated goal state changes produce deterministic projection", () => {
     const events: StreamEvent[] = [
       {
         type: "goal.state_change",
@@ -1416,21 +1338,14 @@ describe("Goal stream event reducers", () => {
       {
         type: "goal.state_change",
         goalId: "goal-1",
-        status: "locked",
-        state: makeGoalState({ status: "locked" }),
+        status: "running",
+        state: makeGoalState({ status: "running", startedAt: "2026-01-01T00:01:00.000Z" }),
       },
       {
         type: "goal.state_change",
         goalId: "goal-1",
-        status: "running",
-        state: makeGoalState({ status: "running" }),
-      },
-      {
-        type: "goal.done_check",
-        goalId: "goal-1",
-        results: [
-          { conditionId: "dc-1", passed: true, evidence: "ok", checkedAt: "2026-06-01T00:00:00.000Z" },
-        ],
+        status: "reviewing",
+        state: makeGoalState({ status: "reviewing" }),
       },
     ];
 
@@ -1438,6 +1353,7 @@ describe("Goal stream event reducers", () => {
     const second = applyEvents(createProjection(), events);
 
     expect(first.goals).toEqual(second.goals);
+    expect(first.goals!["goal-1"]!.status).toBe("reviewing");
   });
 });
 

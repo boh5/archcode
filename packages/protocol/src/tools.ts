@@ -60,9 +60,6 @@ export const TOOL_MEMORY_WRITE = "memory_write";
 
 // Goal lifecycle tools
 export const TOOL_GOAL_MANAGE = "goal_manage";
-export const TOOL_GOAL_EVIDENCE = "goal_evidence";
-export const TOOL_GOAL_ARTIFACT_READ = "goal_artifact_read";
-export const TOOL_GOAL_ARTIFACT_WRITE = "goal_artifact_write";
 
 // Compression
 export const TOOL_COMPRESS = "compress";
@@ -104,9 +101,6 @@ export type BuiltinToolName =
   | typeof TOOL_MEMORY_READ
   | typeof TOOL_MEMORY_WRITE
   | typeof TOOL_GOAL_MANAGE
-  | typeof TOOL_GOAL_EVIDENCE
-  | typeof TOOL_GOAL_ARTIFACT_READ
-  | typeof TOOL_GOAL_ARTIFACT_WRITE
   | typeof TOOL_COMPRESS;
 
 // ─── Tool Category (cross-package semantic classification) ───
@@ -163,9 +157,6 @@ export const TOOL_CATEGORY_MAP = {
   [TOOL_MEMORY_READ]: "memory",
   [TOOL_MEMORY_WRITE]: "memory",
   [TOOL_GOAL_MANAGE]: "goal",
-  [TOOL_GOAL_EVIDENCE]: "goal",
-  [TOOL_GOAL_ARTIFACT_READ]: "goal",
-  [TOOL_GOAL_ARTIFACT_WRITE]: "goal",
   [TOOL_COMPRESS]: "other",
 } as const satisfies Record<BuiltinToolName, ToolCategory>;
 
