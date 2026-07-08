@@ -153,6 +153,20 @@ describe("HitlInbox", () => {
     expect(cards).toHaveLength(1);
   });
 
+  test("filters resume_claimed projections after the user responds", () => {
+    const projections = [
+      makeProjection({ hitlId: "hitl-pending", status: "pending" }),
+      makeProjection({ hitlId: "hitl-claimed", status: "resume_claimed" }),
+    ];
+
+    const result = HitlInbox({ projections });
+
+    const cards = findAll(result, (el) => el.type === HitlCard);
+    expect(cards).toHaveLength(1);
+    const cardProps = cards[0]?.props as { projection: HitlProjection } | undefined;
+    expect(cardProps?.projection.hitlId).toBe("hitl-pending");
+  });
+
   test("shows same hitlId on child Session and parent Goal/Loop pages without duplicates within a page", () => {
     const sharedProjection = makeProjection({
       hitlId: "shared-hitl",

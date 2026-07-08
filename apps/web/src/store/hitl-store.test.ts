@@ -18,6 +18,19 @@ describe("hitlStore", () => {
     expect(hitlStore.getState().projections["hitl-1"]).toBeUndefined();
   });
 
+  test("removes resume_claimed projections from the visible realtime queue", () => {
+    const request = hitlEvent({ hitlId: "hitl-claimed" });
+    hitlStore.getState().applyRealtimeEvent(request);
+
+    hitlStore.getState().applyRealtimeEvent(hitlEvent({
+      hitlId: "hitl-claimed",
+      status: "resume_claimed",
+      payloadType: "hitl.updated",
+    }));
+
+    expect(hitlStore.getState().projections["hitl-claimed"]).toBeUndefined();
+  });
+
   test("authoritative snapshot reset clears stale projections for listed projects", () => {
     const stale = projection({ hitlId: "stale", project: { slug: "proj" } });
     const otherProject = projection({ hitlId: "other", project: { slug: "other" } });
@@ -59,7 +72,7 @@ describe("hitlStore", () => {
   });
 });
 
-function hitlEvent(input: { hitlId: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {
+function hitlEvent(input: { hitlId: string; status?: HitlProjection["status"]; payloadType?: "hitl.request" | "hitl.updated" | "hitl.resolved" }): GlobalSSEHitlRealtimeEvent {
   const eventProjection = projection({ hitlId: input.hitlId, status: input.status ?? "pending" });
   return {
     type: "hitl.event",
@@ -69,7 +82,9 @@ function hitlEvent(input: { hitlId: string; status?: HitlProjection["status"]; p
     createdAt: 1,
     payload: input.payloadType === "hitl.resolved"
       ? { type: "hitl.resolved", status: "resolved" }
-      : { type: "hitl.request", status: "pending" },
+      : input.payloadType === "hitl.updated"
+        ? { type: "hitl.updated", status: eventProjection.status }
+        : { type: "hitl.request", status: "pending" },
     projection: eventProjection,
   };
 }

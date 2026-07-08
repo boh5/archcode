@@ -14,6 +14,7 @@ import {
   Bell,
 } from "lucide-react";
 import { useRespondHitl, useCancelHitl } from "../../api/mutations";
+import { isVisiblePendingHitlStatus } from "../../store/hitl-store";
 import type {
   HitlDisplayPayload,
   HitlOwnerKey,
@@ -476,6 +477,7 @@ export function HitlInbox({ projections, isLoading, emptyMessage = "No pending a
     const seen = new Set<string>();
     const result: HitlProjection[] = [];
     for (const p of projections) {
+      if (!isVisiblePendingHitlStatus(p.status)) continue;
       if (!seen.has(p.hitlId)) {
         seen.add(p.hitlId);
         result.push(p);

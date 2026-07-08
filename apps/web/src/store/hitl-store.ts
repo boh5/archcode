@@ -16,7 +16,7 @@ export const hitlStore = createStore<HitlStoreState>((set) => ({
   projections: {},
   applyRealtimeEvent: (event) => set((state) => {
     const next = { ...state.projections };
-    if (event.projection.status === "pending" || event.projection.status === "resume_claimed" || event.projection.status === "resume_failed") {
+    if (isVisiblePendingHitlStatus(event.projection.status)) {
       next[event.hitlId] = event.projection;
     } else {
       delete next[event.hitlId];
@@ -72,6 +72,10 @@ export function selectHitlProjections(
     return isDescendantProjection(projection, input.scope, ownerId);
   });
   return selected.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.hitlId.localeCompare(right.hitlId));
+}
+
+export function isVisiblePendingHitlStatus(status: HitlProjection["status"]): boolean {
+  return status === "pending" || status === "resume_failed";
 }
 
 function isDescendantProjection(projection: HitlProjection, scope: Exclude<HitlScope, "project">, ownerId: string): boolean {
