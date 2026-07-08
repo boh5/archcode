@@ -155,7 +155,7 @@ describe("GoalRunner", () => {
     })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
 
     const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 1, mainSessionId: "retry-session-2" });
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session-2" });
     expect(retry.review).toBeUndefined();
     expect((await runner.beginReview(draft.id)).status).toBe("reviewing");
   });

@@ -105,7 +105,7 @@ describe("GoalStateSchema", () => {
       objective: "O".repeat(8000),
       acceptanceCriteria: "C".repeat(8000),
       status: "reviewing" as const,
-      attempt: 0,
+      attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -149,7 +149,7 @@ describe("GoalStateManager", () => {
       projectId: "project-a",
       title: "Ship thin goal state",
       status: "draft",
-      attempt: 0,
+      attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -278,7 +278,7 @@ describe("GoalStateManager", () => {
     }))).toBeInstanceOf(GoalReviewFinalizationError);
 
     const retry = await manager.retry(created.id, { mainSessionId: "retry-session" });
-    expect(retry).toMatchObject({ status: "running", attempt: 1, mainSessionId: "retry-session" });
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
     expect(retry.review).toBeUndefined();
     const reviewing = await manager.beginReview(created.id);
     expect(reviewing.status).toBe("reviewing");

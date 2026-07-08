@@ -94,11 +94,11 @@ describe("Goal core integration", () => {
       unresolvedItems: ["Add regression test evidence"],
       authorization: reviewerAuth(draft.id, "review-session-1"),
     });
-    expect(firstReview).toMatchObject({ status: "not_done", attempt: 0 });
+    expect(firstReview).toMatchObject({ status: "not_done", attempt: 1 });
     expect(firstReview.review?.verdict).toBe("NOT_DONE");
 
     const retry = await runner.retry(draft.id);
-    expect(retry).toMatchObject({ status: "running", attempt: 1, mainSessionId: "retry-session" });
+    expect(retry).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
     expect(retry.review).toBeUndefined();
     await runner.beginReview(draft.id);
     const completed = await runner.finalizeReview(draft.id, {
@@ -108,7 +108,7 @@ describe("Goal core integration", () => {
       authorization: reviewerAuth(draft.id, "review-session-2"),
     });
 
-    expect(completed).toMatchObject({ status: "done", attempt: 1 });
+    expect(completed).toMatchObject({ status: "done", attempt: 2 });
     expect(completed.review).toMatchObject({ verdict: "DONE", reviewerSessionId: "review-session-2" });
   });
 

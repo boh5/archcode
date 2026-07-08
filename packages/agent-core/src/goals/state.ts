@@ -252,7 +252,7 @@ export class GoalStateManager {
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
-      attempt: 0,
+      attempt: 1,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
