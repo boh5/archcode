@@ -38,16 +38,8 @@ const sessionLoopConfig: LoopConfig = {
 
 const goalTemplate: LoopGoalTemplate = {
   title: "Ship loop-created goal",
-  author: "architect",
-  doneConditions: [
-    { id: "done-file", kind: "file_exists", params: { path: "done.md" } },
-    { id: "reviewer-check", kind: "tests_pass", params: { command: "bun test packages/agent-core/src/loops/runner.test.ts" }, required: false },
-  ],
-  retryPolicy: { maxRetries: 2, backoffMs: 25, escalateOnFailure: true },
-  approvalPoints: ["after_plan", "before_complete"],
-  reviewerAgent: "reviewer",
-  prompt: "Build only the requested scope.",
-  instructions: "Keep reviewer evidence in Goal artifacts.",
+  objective: "Build only the requested scope for the loop-created Goal.",
+  acceptanceCriteria: "Reviewer can verify the change from session logs, diff, and ordinary verification output without typed DoneCondition arrays.",
 };
 
 const goalLoopConfig: LoopConfig = {
@@ -502,9 +494,8 @@ describe("goal loop runner", () => {
 
     const firstGoal = fixture.goalStateManager.goals.get("goal-1");
     if (firstGoal === undefined) throw new Error("Expected goal-1 to exist");
-    firstGoal.doneConditions[0] = { id: "mutated", kind: "file_exists", params: { path: "mutated.md" } };
-    firstGoal.retryPolicy.maxRetries = 99;
-    firstGoal.approvalPoints.push("after_plan");
+    firstGoal.objective = "mutated objective";
+    firstGoal.acceptanceCriteria = "mutated criteria";
 
     const second = await fixture.runner.runGoalLoop(loop, "manual");
 
@@ -514,9 +505,13 @@ describe("goal loop runner", () => {
     expect(first.goalId).not.toBe(second.goalId);
     expect(loop.config.goalTemplate).toEqual(originalLoopTemplate);
     expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(2);
-    expect(fixture.goalStateManager.createMock.mock.calls[1]?.[3]).toEqual(originalLoopTemplate.doneConditions);
-    expect(fixture.goalStateManager.createMock.mock.calls[1]?.[4]).toEqual(originalLoopTemplate.retryPolicy);
-    expect(fixture.goalStateManager.createMock.mock.calls[1]?.[5]).toEqual(originalLoopTemplate.approvalPoints);
+    expect(fixture.goalStateManager.createMock.mock.calls[1]?.[0]).toEqual({
+      projectId: "project-a",
+      title: originalLoopTemplate.title,
+      objective: originalLoopTemplate.objective,
+      acceptanceCriteria: originalLoopTemplate.acceptanceCriteria,
+      loopId: loop.loopId,
+    });
 
     const state = await fixture.stateManager.read(loop.loopId);
     expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-2", sessionId: "goal-session-2" });
@@ -539,7 +534,7 @@ describe("goal loop runner", () => {
     expect(fixture.goalRunner.startMock).not.toHaveBeenCalled();
   });
 
-  test("goal loop passes Done reviewer and approval data to Goal lifecycle without evaluating it", async () => {
+  test("goal loop passes natural-language objective and acceptance criteria to Goal lifecycle", async () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
     const expectedTemplate = loop.config.goalTemplate;
@@ -548,22 +543,18 @@ describe("goal loop runner", () => {
     const report = await fixture.runner.runGoalLoop(loop, "manual");
 
     expect(report).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
-    expect(fixture.goalStateManager.createMock).toHaveBeenCalledWith(
-      "project-a",
-      expectedTemplate.title,
-      expectedTemplate.author,
-      expectedTemplate.doneConditions,
-      expectedTemplate.retryPolicy,
-      expectedTemplate.approvalPoints,
-      expectedTemplate.reviewerAgent,
-    );
-    expect(fixture.goalStateManager.lockMock).toHaveBeenCalledWith("goal-1", expectedTemplate.author);
+    expect(fixture.goalStateManager.createMock).toHaveBeenCalledWith({
+      projectId: "project-a",
+      title: expectedTemplate.title,
+      objective: expectedTemplate.objective,
+      acceptanceCriteria: expectedTemplate.acceptanceCriteria,
+      loopId: loop.loopId,
+    });
     expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", {
       loopId: loop.loopId,
       sessionTitle: "Loop Goal: Goal loop",
       workspaceRoot: fixture.workspaceRoot,
     });
-    expect(fixture.goalRunner.doneEvaluationCount).toBe(0);
   });
 
   test("goal loop starts the created Goal main session through runtime execution", async () => {
@@ -597,9 +588,11 @@ describe("goal loop runner", () => {
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
     expect(executionInput?.userMessage).toContain("Bootstrap an ArchCode Goal run.");
     expect(executionInput?.userMessage).toContain("Goal ID: goal-1");
+    expect(executionInput?.userMessage).toContain("Goal objective JSON");
+    expect(executionInput?.userMessage).toContain("Goal acceptance criteria JSON");
     expect(executionInput?.userMessage).toContain(`Loop ID: ${loop.loopId}`);
     expect(executionInput?.userMessage).toContain("Your first action must be calling goal_manage with action=\"start\" for this Goal ID.");
-    expect(executionInput?.userMessage).toContain("goal_evidence action=\"check_done\"");
+    expect(executionInput?.userMessage).toContain("goal_manage.finalize_review");
 
     const state = await fixture.stateManager.read(loop.loopId);
     expect(state.lastRun).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
@@ -685,7 +678,6 @@ describe("goal loop runner", () => {
     });
     expect(fixture.runtime.prepareSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/goal-start-fail-worktree", fixture.workspaceRoot);
     expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(1);
-    expect(fixture.goalStateManager.lockMock).toHaveBeenCalledWith("goal-1", goalTemplate.author);
     expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", expect.objectContaining({ workspaceRoot: "/tmp/goal-start-fail-worktree" }));
     expect(fixture.runtime.startSessionExecutionMock).not.toHaveBeenCalled();
     expect(fixture.runtime.releaseSessionWorkspaceMock.mock.calls).toEqual([["/tmp/goal-start-fail-worktree", undefined]]);
@@ -1058,59 +1050,36 @@ class FakeWorktreeManager {
 class FakeGoalStateManager {
   #nextGoal = 1;
   readonly goals = new Map<string, GoalState>();
-  readonly createMock = mock(async (
-    projectId: string,
-    title: string,
-    author: string,
-    doneConditions: GoalState["doneConditions"],
-    retryPolicy: GoalState["retryPolicy"],
-    approvalPoints: GoalState["approvalPoints"],
-    reviewerAgent: string,
-  ): Promise<GoalState> => {
+  readonly createMock = mock(async (input: {
+    projectId: string;
+    title: string;
+    objective: string;
+    acceptanceCriteria: string;
+    loopId?: string;
+  }): Promise<GoalState> => {
     const id = `goal-${this.#nextGoal++}`;
     const now = new Date(0).toISOString();
     const goal: GoalState = {
       id,
-      projectId,
-      title,
+      projectId: input.projectId,
+      title: input.title,
+      objective: input.objective,
+      acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
-      phase: "plan",
-      doneConditions: structuredClone(doneConditions),
-      doneResults: {},
-      reviewerAgent,
-      retryPolicy: structuredClone(retryPolicy),
-      retryCount: 0,
-      approvalPoints: structuredClone(approvalPoints),
-      author,
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
       childSessionIds: [],
+      ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
       createdAt: now,
       updatedAt: now,
     };
     this.goals.set(id, goal);
     return goal;
   });
-  readonly lockMock = mock(async (goalId: string, lockedBy: string): Promise<GoalState> => {
-    const goal = this.goals.get(goalId);
-    if (goal === undefined) throw new Error(`Missing fake goal ${goalId}`);
-    const locked: GoalState = { ...goal, status: "locked", lockedBy, lockedAt: new Date(0).toISOString() };
-    this.goals.set(goalId, locked);
-    return locked;
-  });
 
-  async create(
-    projectId: string,
-    title: string,
-    author: string,
-    doneConditions: GoalState["doneConditions"],
-    retryPolicy: GoalState["retryPolicy"],
-    approvalPoints: GoalState["approvalPoints"],
-    reviewerAgent: string,
-  ): Promise<GoalState> {
-    return await this.createMock(projectId, title, author, doneConditions, retryPolicy, approvalPoints, reviewerAgent);
-  }
-
-  async lock(goalId: string, lockedBy: string): Promise<GoalState> {
-    return await this.lockMock(goalId, lockedBy);
+  async create(input: Parameters<FakeGoalStateManager["createMock"]>[0]): Promise<GoalState> {
+    return await this.createMock(input);
   }
 }
 
@@ -1128,7 +1097,6 @@ class FakeGoalRunner {
     await this.afterGoalStart?.(running);
     return running;
   });
-  readonly doneEvaluationCount = 0;
 
   constructor(
     private readonly goalStateManager: FakeGoalStateManager,

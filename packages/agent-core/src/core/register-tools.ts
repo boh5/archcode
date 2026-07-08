@@ -12,12 +12,7 @@ import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
 import { createLoopCollisionToolPermission, createLoopCollisionToolReleaseHook } from "../loops/collision-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
 import { createMemoryWriteTool } from "../tools/builtins/memory-write";
-import {
-  createGoalArtifactReadTool,
-  createGoalArtifactWriteTool,
-  goalEvidenceTool,
-  goalManageTool,
-} from "../tools/builtins/goal-tools";
+import { goalManageTool } from "../tools/builtins/goal-tools";
 import { createGitHubToolDescriptors } from "../tools/github";
 
 export function registerBuiltinTools(
@@ -31,9 +26,6 @@ export function registerBuiltinTools(
   registry.register(createMemoryWriteTool());
 
   registry.register(goalManageTool);
-  registry.register(goalEvidenceTool);
-  registry.register(createGoalArtifactReadTool());
-  registry.register(createGoalArtifactWriteTool());
 
   registry.registerAll(createGitHubToolDescriptors());
 

@@ -1,34 +1,44 @@
 import { z } from "zod/v4";
-import { TOOL_GOAL_MANAGE } from "@archcode/protocol";
+import {
+  TOOL_GOAL_MANAGE,
+  type GoalBlockerKind,
+  type GoalEvidenceRef,
+  type GoalReviewVerdict,
+  type GoalState,
+} from "@archcode/protocol";
 
 import { defineTool } from "../define-tool";
 import type { AnyToolDescriptor, ToolExecutionContext, ToolExecutionResult } from "../types";
-import {
-  ApprovalPointSchema,
-  DoneConditionSchema,
-  GoalPhaseSchema,
-  GoalUuidSchema,
-  RetryPolicySchema,
-} from "../../goals/state";
+import { GoalUuidSchema } from "../../goals/state";
 import {
   assertGoalManageActionAuthorized,
-  createGoalRunnerFromContext,
   formatGoalToolResult,
   goalToolErrorResult,
 } from "./goal-tools/helpers";
 
+const GoalTextSchema = z.string().trim().min(1);
+const GoalTitleSchema = GoalTextSchema.max(160);
+const GoalLongMarkdownSchema = GoalTextSchema.max(8_000);
+const GoalReceiptSummarySchema = GoalTextSchema.max(4_000);
+const GoalEvidenceSummarySchema = GoalTextSchema.max(1_000);
+
+const GoalEvidenceRefSchema = z.strictObject({
+  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
+  ref: GoalTextSchema,
+  summary: GoalEvidenceSummarySchema,
+  sessionId: GoalTextSchema.optional(),
+  messageId: GoalTextSchema.optional(),
+  toolCallId: GoalTextSchema.optional(),
+  path: GoalTextSchema.optional(),
+  url: z.url().optional(),
+  createdAt: GoalTextSchema.optional(),
+}) satisfies z.ZodType<GoalEvidenceRef>;
+
 const GoalManageCreateInputSchema = z.strictObject({
   action: z.literal("create"),
-  title: z.string().trim().min(1).max(200).describe("Human-readable Goal title."),
-  doneConditions: z.array(DoneConditionSchema).describe("Done Conditions that define Goal completion."),
-  retryPolicy: RetryPolicySchema.describe("Retry limits and escalation policy for this Goal."),
-  approvalPoints: z.array(ApprovalPointSchema).describe("Human approval checkpoints required by this Goal."),
-  author: z.string().trim().min(1).describe("Author or source of the Goal contract."),
-});
-
-const GoalManageLockInputSchema = z.strictObject({
-  action: z.literal("lock"),
-  goalId: GoalUuidSchema.describe("Goal UUID to lock."),
+  title: GoalTitleSchema.describe("Human-readable Goal title."),
+  objective: GoalLongMarkdownSchema.describe("Natural-language objective for the Goal."),
+  acceptanceCriteria: GoalLongMarkdownSchema.describe("Natural-language acceptance criteria for Reviewer judgment."),
 });
 
 const GoalManageStartInputSchema = z.strictObject({
@@ -36,96 +46,177 @@ const GoalManageStartInputSchema = z.strictObject({
   goalId: GoalUuidSchema.describe("Goal UUID to start running."),
 });
 
-const GoalManageAdvancePhaseInputSchema = z.strictObject({
-  action: z.literal("advance_phase"),
-  goalId: GoalUuidSchema.describe("Goal UUID whose lifecycle phase should advance."),
-  nextPhase: GoalPhaseSchema.extract(["build", "review"]).describe("Next lifecycle phase."),
+const GoalManageBlockInputSchema = z.strictObject({
+  action: z.literal("block"),
+  goalId: GoalUuidSchema.describe("Goal UUID to block."),
+  kind: z.enum(["approval", "question", "budget", "permission", "tool_error"]) satisfies z.ZodType<GoalBlockerKind>,
+  summary: GoalReceiptSummarySchema.describe("Short blocker summary."),
+  hitlId: GoalTextSchema.optional(),
+  source: GoalTextSchema.optional(),
+  resumeStatus: z.enum(["running", "reviewing"]).optional(),
 });
 
-const GoalManageRetryInputSchema = z.strictObject({
-  action: z.literal("retry"),
-  goalId: GoalUuidSchema.describe("Goal UUID to retry from a fresh plan phase."),
+const GoalManageResumeInputSchema = z.strictObject({
+  action: z.literal("resume"),
+  goalId: GoalUuidSchema.describe("Goal UUID to resume."),
+  hitlId: GoalTextSchema.optional().describe("Optional HITL id to clear before resuming."),
+});
+
+const GoalManageBeginReviewInputSchema = z.strictObject({
+  action: z.literal("begin_review"),
+  goalId: GoalUuidSchema.describe("Goal UUID whose execution should move into review."),
+  reviewerSessionId: GoalTextSchema.optional().describe("Optional existing Reviewer session id."),
 });
 
 const GoalManageFinalizeReviewInputSchema = z.strictObject({
   action: z.literal("finalize_review"),
-  goalId: GoalUuidSchema.describe("Goal UUID whose Reviewer review should be finalized."),
-  outcome: z.enum(["DONE", "NOT_DONE"]).describe("External Reviewer outcome."),
-  summary: z.string().trim().min(1).max(20_000).optional().describe("Bounded Reviewer summary."),
+  goalId: GoalUuidSchema.describe("Goal UUID whose Reviewer receipt should be recorded."),
+  verdict: z.enum(["DONE", "NOT_DONE"]) satisfies z.ZodType<GoalReviewVerdict>,
+  summary: GoalReceiptSummarySchema.describe("Reviewer result summary."),
+  evidenceRefs: z.array(GoalEvidenceRefSchema).max(20).describe("Evidence references supporting the verdict."),
+  unresolvedItems: z.array(GoalTextSchema.max(1_000)).max(20).optional(),
+  finalSummary: GoalReceiptSummarySchema.optional(),
+});
+
+const GoalManageRetryInputSchema = z.strictObject({
+  action: z.literal("retry"),
+  goalId: GoalUuidSchema.describe("Goal UUID to retry."),
+});
+
+const GoalManageCancelInputSchema = z.strictObject({
+  action: z.literal("cancel"),
+  goalId: GoalUuidSchema.describe("Goal UUID to cancel."),
+  reason: GoalReceiptSummarySchema.optional(),
 });
 
 const GoalManageInputSchema = z.discriminatedUnion("action", [
   GoalManageCreateInputSchema,
-  GoalManageLockInputSchema,
   GoalManageStartInputSchema,
-  GoalManageAdvancePhaseInputSchema,
-  GoalManageRetryInputSchema,
+  GoalManageBlockInputSchema,
+  GoalManageResumeInputSchema,
+  GoalManageBeginReviewInputSchema,
   GoalManageFinalizeReviewInputSchema,
-]);
+  GoalManageRetryInputSchema,
+  GoalManageCancelInputSchema,
+]).superRefine((input, ctx) => {
+  if (input.action === "finalize_review" && input.verdict === "DONE" && input.evidenceRefs.length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["evidenceRefs"],
+      message: "goal_manage.finalize_review with DONE requires at least one evidence ref.",
+    });
+  }
+});
 
 type GoalManageInput = z.infer<typeof GoalManageInputSchema>;
 
+interface SimplifiedGoalStateManager {
+  create(input: {
+    projectId: string;
+    title: string;
+    objective: string;
+    acceptanceCriteria: string;
+  }): Promise<GoalState>;
+  start(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState>;
+  block(goalId: string, blocker: {
+    kind: GoalBlockerKind;
+    summary: string;
+    hitlId?: string;
+    source?: string;
+    resumeStatus?: "running" | "reviewing";
+  }): Promise<GoalState>;
+  clearBlocker(goalId: string, hitlId?: string): Promise<GoalState>;
+  beginReview(goalId: string): Promise<GoalState>;
+  finalizeReview(goalId: string, input: {
+    readonly verdict: GoalReviewVerdict;
+    readonly summary: string;
+    readonly evidenceRefs?: readonly GoalEvidenceRef[];
+    readonly unresolvedItems?: readonly string[];
+    readonly finalSummary?: string;
+    readonly authorization: {
+      readonly agentName?: string;
+      readonly sessionRole?: string;
+      readonly sessionGoalId?: string;
+      readonly reviewerSessionId?: string;
+    };
+  }): Promise<GoalState>;
+  retry(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState>;
+  cancel(goalId: string, reason?: string): Promise<GoalState>;
+}
+
 export const goalManageTool: AnyToolDescriptor = defineTool({
   name: TOOL_GOAL_MANAGE,
-  description: "Manage the authorized Goal lifecycle action: create, lock, start, advance_phase, retry, or finalize_review.",
+  description: "Manage the simplified Goal lifecycle: create, start, block, resume, begin_review, finalize_review, retry, or cancel.",
   inputSchema: GoalManageInputSchema,
   traits: { readOnly: false, destructive: false, concurrencySafe: false },
   execute: async (input: GoalManageInput, ctx: ToolExecutionContext): Promise<string | ToolExecutionResult> => {
     try {
-      const runner = createGoalRunnerFromContext(ctx);
+      const authorization = assertGoalManageActionAuthorized(
+        input.action,
+        ctx,
+        "goalId" in input ? input.goalId : undefined,
+      );
+      const manager = simplifiedGoalStateManager(ctx);
 
       switch (input.action) {
         case "create": {
-          assertGoalManageActionAuthorized(input.action, ctx);
-          const goal = await runner.createDraft({
+          return formatGoalToolResult(await manager.create({
             projectId: ctx.projectContext.project.slug,
             title: input.title,
-            author: input.author,
-            doneConditions: input.doneConditions,
-            retryPolicy: input.retryPolicy,
-            approvalPoints: input.approvalPoints,
-          });
-          return formatGoalToolResult(goal);
-        }
-        case "lock": {
-          const authorization = assertGoalManageActionAuthorized(input.action, ctx);
-          const goal = await runner.lockDraft(input.goalId, authorization.sessionId);
-          return formatGoalToolResult(goal);
+            objective: input.objective,
+            acceptanceCriteria: input.acceptanceCriteria,
+          }));
         }
         case "start": {
-          const authorization = assertGoalManageActionAuthorized(input.action, ctx);
-          const goal = await runner.claimStart(input.goalId, authorization.sessionId);
-          return formatGoalToolResult(goal);
+          return formatGoalToolResult(await manager.start(input.goalId, { mainSessionId: authorization.sessionId }));
         }
-        case "advance_phase": {
-          assertGoalManageActionAuthorized(input.action, ctx);
-          const goal = await runner.advancePhase(input.goalId, input.nextPhase);
-          return formatGoalToolResult(goal);
+        case "block": {
+          return formatGoalToolResult(await manager.block(input.goalId, {
+            kind: input.kind,
+            summary: input.summary,
+            ...(input.hitlId === undefined ? {} : { hitlId: input.hitlId }),
+            ...(input.source === undefined ? {} : { source: input.source }),
+            ...(input.resumeStatus === undefined ? {} : { resumeStatus: input.resumeStatus }),
+          }));
         }
-        case "retry": {
-          assertGoalManageActionAuthorized(input.action, ctx);
-          const goal = await runner.handleFailedVerification(input.goalId, "Retry requested by goal_manage.retry", {
-            abort: ctx.abort,
-          });
-          return formatGoalToolResult(goal);
+        case "resume": {
+          return formatGoalToolResult(await manager.clearBlocker(input.goalId, input.hitlId));
+        }
+        case "begin_review": {
+          return formatGoalToolResult(await manager.beginReview(input.goalId));
         }
         case "finalize_review": {
-          const goalForAuthorization = await ctx.projectContext.goalState.read(input.goalId);
-          const authorization = assertGoalManageActionAuthorized(input.action, ctx, goalForAuthorization);
-          const goal = await runner.finalizeReviewerReview(input.goalId, input.outcome, {
-            reviewerAgent: authorization.agentName,
-            ...(input.summary === undefined ? {} : { summary: input.summary }),
-            abort: ctx.abort,
-          });
-          return formatGoalToolResult(goal);
+          return formatGoalToolResult(await manager.finalizeReview(input.goalId, {
+            verdict: input.verdict,
+            summary: input.summary,
+            evidenceRefs: input.evidenceRefs,
+            ...(input.unresolvedItems === undefined ? {} : { unresolvedItems: input.unresolvedItems }),
+            ...(input.finalSummary === undefined ? {} : { finalSummary: input.finalSummary }),
+            authorization: {
+              agentName: authorization.agentName,
+              sessionRole: authorization.sessionRole,
+              sessionGoalId: authorization.sessionGoalId,
+              reviewerSessionId: authorization.sessionId,
+            },
+          }));
+        }
+        case "retry": {
+          return formatGoalToolResult(await manager.retry(input.goalId, { mainSessionId: authorization.sessionId }));
+        }
+        case "cancel": {
+          return formatGoalToolResult(await manager.cancel(input.goalId, input.reason));
         }
       }
     } catch (error) {
       return goalToolErrorResult(error, {
-        runnerErrorCode: input.action === "finalize_review" ? "GOAL_REVIEW_PHASE_REQUIRED" : "GOAL_INVALID_TRANSITION",
+        stateErrorCode: input.action === "finalize_review" ? "GOAL_REVIEW_PHASE_REQUIRED" : "GOAL_INVALID_TRANSITION",
       });
     }
   },
 });
+
+function simplifiedGoalStateManager(ctx: ToolExecutionContext): SimplifiedGoalStateManager {
+  return ctx.projectContext.goalState as unknown as SimplifiedGoalStateManager;
+}
 
 export { GoalManageInputSchema };

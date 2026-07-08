@@ -143,7 +143,12 @@ describe("HITL aggregation", () => {
 });
 
 async function createGoalOwnedByLoop(goalState: GoalStateManager, loopId: string): Promise<GoalState> {
-  const goal = await goalState.create("archcode", "Loop child goal", "test", [{ id: "tests", kind: "tests_pass", required: true, params: {} }]);
+  const goal = await goalState.create({
+    projectId: "archcode",
+    title: "Loop child goal",
+    objective: "Run the loop child goal.",
+    acceptanceCriteria: "Reviewer can decide from loop run evidence.",
+  });
   const filePath = await goalState.resolveContainedPathForTest(join(goal.id, "goal.json"));
   const updated: GoalState = { ...goal, loopId, updatedAt: new Date().toISOString() };
   await Bun.write(filePath, `${JSON.stringify(updated, null, 2)}\n`);

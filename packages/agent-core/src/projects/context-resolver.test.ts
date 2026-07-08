@@ -2,8 +2,6 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -80,8 +78,6 @@ describe("ProjectContextResolver", () => {
 
     expect(second).not.toBe(first);
     expect(second.goalState).not.toBe(first.goalState);
-    expect(second.goalArtifacts).not.toBe(first.goalArtifacts);
-    expect(second.goalMemory).not.toBe(first.goalMemory);
     expect(second.loopState).not.toBe(first.loopState);
     expect(second.hitl).not.toBe(first.hitl);
     expect(second.memory).not.toBe(first.memory);
@@ -146,10 +142,6 @@ describe("ProjectContextResolver", () => {
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
-    expect(context.goalArtifacts).toBeInstanceOf(GoalArtifactManager);
-    expect(context.goalArtifacts.workspaceRoot).toBe(workspace);
-    expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
-    expect(context.goalMemory.workspaceRoot).toBe(workspace);
     expect(context.loopState).toBeInstanceOf(LoopStateManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
@@ -190,10 +182,10 @@ describe("ProjectContextResolver", () => {
     const contextRecord = context as unknown as Record<string, unknown>;
 
     expect(context.goalState).toBeInstanceOf(GoalStateManager);
-    expect(context.goalArtifacts).toBeInstanceOf(GoalArtifactManager);
-    expect(context.goalMemory).toBeInstanceOf(GoalMemoryManager);
     expect(context.hitl).toBeInstanceOf(HitlService);
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
+    expect(contextRecord.goalArtifacts).toBeUndefined();
+    expect(contextRecord.goalMemory).toBeUndefined();
     expect(contextRecord.workflowState).toBeUndefined();
     expect(contextRecord.artifacts).toBeUndefined();
   });
@@ -230,8 +222,8 @@ describe("ProjectContextResolver", () => {
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
 
-    const goalA = await contextA.goalState.create(contextA.project.slug, "Goal A", "architect");
-    const goalB = await contextB.goalState.create(contextB.project.slug, "Goal B", "architect");
+    const goalA = await contextA.goalState.create({ projectId: contextA.project.slug, title: "Goal A", objective: "A objective", acceptanceCriteria: "A criteria" });
+    const goalB = await contextB.goalState.create({ projectId: contextB.project.slug, title: "Goal B", objective: "B objective", acceptanceCriteria: "B criteria" });
 
     expect((await contextA.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalA.id]);
     expect((await contextB.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalB.id]);
@@ -245,7 +237,7 @@ describe("ProjectContextResolver", () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
     const first = await resolver.resolve(workspace);
-    const goal = await first.goalState.create(first.project.slug, "Needs approval", "architect");
+    const goal = await first.goalState.create({ projectId: first.project.slug, title: "Needs approval", objective: "Get approval", acceptanceCriteria: "HITL persists" });
 
     const created = await first.hitl.create({
       owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },
@@ -310,21 +302,11 @@ describe("ProjectContextResolver", () => {
   test("custom Goal/HITL factories are used per resolved context", async () => {
     const workspace = await makeWorkspace("custom-factories");
     const goalState = new GoalStateManager(workspace);
-    const goalArtifacts = new GoalArtifactManager(workspace);
-    const goalMemory = new GoalMemoryManager(workspace);
     const hitl = new HitlService();
     const resolver = new ProjectContextResolver({
       goalStateFactory: mock((workspaceRoot: string) => {
         expect(workspaceRoot).toBe(workspace);
         return goalState;
-      }),
-      goalArtifactsFactory: mock((workspaceRoot: string) => {
-        expect(workspaceRoot).toBe(workspace);
-        return goalArtifacts;
-      }),
-      goalMemoryFactory: mock((workspaceRoot: string) => {
-        expect(workspaceRoot).toBe(workspace);
-        return goalMemory;
       }),
       hitlFactory: mock(() => hitl),
     });
@@ -332,8 +314,6 @@ describe("ProjectContextResolver", () => {
     const context = await resolver.resolve(workspace);
 
     expect(context.goalState).toBe(goalState);
-    expect(context.goalArtifacts).toBe(goalArtifacts);
-    expect(context.goalMemory).toBe(goalMemory);
     expect(context.hitl).toBe(hitl);
     expect(context.hitlResumeCoordinator).toBeInstanceOf(ResumeCoordinator);
   });

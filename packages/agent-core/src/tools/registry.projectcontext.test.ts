@@ -2,12 +2,6 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
-import { GoalStateManager } from "../goals/state";
-import { HitlService } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
-import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import { SkillService } from "../skills";
 import { storeManager } from "../store/store";
@@ -18,6 +12,7 @@ import type { PermissionApprovalScope } from "./permission";
 import { createRegistry } from "./registry";
 import { createToolExecutionContext, type ToolConfirmationRequest, type ToolDescriptor, type ToolExecutionContext, type ToolExecutionOrigin } from "./types";
 import { z } from "zod";
+import { createTestProjectContext } from "./test-project-context";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "registry-projectcontext");
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -48,21 +43,8 @@ async function createProjectContext(name: string): Promise<ProjectContext> {
   await approvals.load(workspaceRoot);
 
   return {
-    project: {
-      slug: name,
-      name,
-      workspaceRoot,
-      addedAt: new Date().toISOString(),
-    },
-    goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
-    memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".archcode", "memory"),
-      user: join(workspaceRoot, ".archcode", "user-memory"),
-    }),
+    ...createTestProjectContext(workspaceRoot),
+    project: { slug: name, name, workspaceRoot, addedAt: new Date().toISOString() },
     approvals,
   };
 }

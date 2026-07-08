@@ -343,8 +343,13 @@ async function waitForSessionFile(runtime: AgentRuntime, workspaceRoot: string, 
 }
 
 async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {
-  const goal = await manager.create(projectSlug, title, "tester", [], undefined, ["after_plan"]);
-  return loopId === undefined ? goal : await manager.updateLoopId(goal.id, loopId);
+  return await manager.create({
+    projectId: projectSlug,
+    title,
+    objective: `Exercise HITL route behavior for ${title}.`,
+    acceptanceCriteria: "Reviewer can decide DONE from HITL route projections.",
+    ...(loopId === undefined ? {} : { loopId }),
+  });
 }
 
 async function createSessionHitl(hitl: TestHitlService, projectSlug: string, sessionId: string, title: string): Promise<HitlRecord> {

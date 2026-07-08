@@ -218,7 +218,7 @@ export async function createRuntime(
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
       hitlFactory: (workspaceRoot) => new HitlService({ workspaceRoot, realtimePublisher: publishHitlEvent }),
       sessionStoreManager,
-      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, goalArtifacts, loopState }) => new ResumeCoordinator({
+      resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, loopState }) => new ResumeCoordinator({
         hitl,
         adapters: {
           session: new SessionHitlResumeAdapter({
@@ -247,16 +247,7 @@ export async function createRuntime(
           goal: new GoalHitlResumeAdapter({
             workspaceRoot,
             goalStateManager: goalState,
-            goalArtifacts,
             hitlService: hitl,
-            createRunner: () => new GoalRunner({
-              goalStateManager: goalState,
-              goalArtifacts,
-              hitlService: hitl,
-              workspaceRoot,
-              createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, createOptions)).sessionId,
-              isSessionActive: async (sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
-            }),
           }),
         },
         logger: runtimeLogger.child({ module: "projects" }),
@@ -317,7 +308,6 @@ export async function createRuntime(
     const createGoalRunnerForLoop = (workspaceRoot: string, loopId?: string): Promise<GoalRunner> => {
       return contextResolver.resolve(workspaceRoot).then((projectContext) => new GoalRunner({
         goalStateManager: projectContext.goalState,
-        goalArtifacts: projectContext.goalArtifacts,
         hitlService: projectContext.hitl,
         workspaceRoot,
         createSession: async (createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, {
@@ -540,14 +530,6 @@ export async function createRuntime(
       loopSchedulers.clear();
     }
 
-    await recoverRegisteredProjectGoals({
-      projectRegistry,
-      contextResolver,
-      hitl,
-      isSessionActive: (workspaceRoot, sessionId) => executionManager.isRunning(workspaceRoot, sessionId),
-      createSession: async (workspaceRoot, createOptions) => (await sessionStoreManager.createSessionFile(workspaceRoot, createOptions)).sessionId,
-      logger: runtimeLogger,
-    });
     sessionAgentManager.setStartChildExecution((workspaceRoot, request) => executionManager.startChildExecution(workspaceRoot, request));
     sessionAgentManager.setCancelChildSession((workspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(workspaceRoot, parentSessionId, childSessionId));
     sessionAgentManager.setResumeChildSession((workspaceRoot, request) => executionManager.resumeChildExecution(workspaceRoot, request));
@@ -694,42 +676,6 @@ function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopInt
       message: redactString(error.message),
     })),
   };
-}
-
-async function recoverRegisteredProjectGoals(input: {
-  projectRegistry: ProjectRegistry;
-  contextResolver: ProjectContextResolver;
-  hitl: HitlService;
-  createSession: (workspaceRoot: string, options?: CreateRuntimeSessionOptions) => Promise<string>;
-  isSessionActive: (workspaceRoot: string, sessionId: string) => boolean;
-  logger: Logger;
-}): Promise<void> {
-  const projects = await input.projectRegistry.list();
-  for (const project of projects) {
-    try {
-      const projectContext = await input.contextResolver.resolve(project.workspaceRoot);
-      const runner = new GoalRunner({
-        goalStateManager: projectContext.goalState,
-        goalArtifacts: projectContext.goalArtifacts,
-        hitlService: projectContext.hitl,
-        workspaceRoot: project.workspaceRoot,
-        createSession: (createOptions) => input.createSession(project.workspaceRoot, createOptions),
-        isSessionActive: async (sessionId) => input.isSessionActive(project.workspaceRoot, sessionId),
-      });
-      const recovered = await runner.recoverInterruptedGoals(project.workspaceRoot);
-      if (recovered.length > 0) {
-        input.logger.info("goals.recovery.completed", {
-          context: { workspaceRoot: project.workspaceRoot },
-          meta: { recovered: recovered.map((goal) => ({ id: goal.id, status: goal.status })) },
-        });
-      }
-    } catch (error) {
-      input.logger.warn("goals.recovery.failed", {
-        error,
-        context: { workspaceRoot: project.workspaceRoot },
-      });
-    }
-  }
 }
 
 async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {

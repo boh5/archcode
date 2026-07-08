@@ -253,18 +253,11 @@ function presetBudget(
 function dependencySweeperGoalTemplate(): LoopGoalTemplate {
   return {
     title: "Dependency Sweeper Goal",
-    author: "loop",
-    doneConditions: [
-      { id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" } },
-      { id: "tests", kind: "tests_pass", params: { command: "bun test" } },
-    ],
-    retryPolicy: { maxRetries: 2, backoffMs: 1_000, escalateOnFailure: true },
-    approvalPoints: [],
-    reviewerAgent: "reviewer",
-    prompt:
-      "Run a dependency maintenance Goal: inspect dependency manifests and lockfiles, identify a scoped update or report-only outcome, " +
-      "make only the local changes needed for the selected dependency action, verify with the configured commands, and record final evidence.",
-    instructions:
-      "Use the stored LoopConfig run kind, tool profile, and budget values. Keep the Goal scoped to dependency maintenance and stop after evidence is recorded.",
+    objective:
+      "Inspect dependency manifests and lockfiles, identify one scoped dependency maintenance action or a report-only outcome, " +
+      "make only the local changes needed for that action, and ask Reviewer to judge the result from the session logs, diff, and verification output.",
+    acceptanceCriteria:
+      "The Goal is acceptable when Reviewer can see that dependency changes, if any, are narrowly scoped, repository health checks relevant to the change were run through normal tools, " +
+      "and the final review receipt explains the outcome with evidence references. Do not rely on typed DoneCondition arrays or Goal-owned artifact files.",
   };
 }

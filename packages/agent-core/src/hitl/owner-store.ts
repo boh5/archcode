@@ -40,7 +40,7 @@ const HitlDisplayPayloadSchema: z.ZodType<HitlDisplayPayload> = z.strictObject({
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("ask_user"), sessionId: z.string(), toolCallId: z.string().optional() }),
   z.strictObject({ type: z.literal("tool_permission"), sessionId: z.string(), toolCallId: z.string(), toolName: z.string() }),
-  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.enum(["after_plan", "before_complete"]) }),
+  z.strictObject({ type: z.literal("goal_approval"), goalId: z.string(), approvalPoint: z.string().optional() }),
   z.strictObject({ type: z.literal("goal_review"), goalId: z.string() }),
   z.strictObject({ type: z.literal("goal_budget"), goalId: z.string(), approvalPoint: z.string().optional() }),
   z.strictObject({ type: z.literal("goal_question"), goalId: z.string(), questionKey: z.string() }),
@@ -62,36 +62,25 @@ const HitlResumeMetadataSchema: z.ZodType<HitlResumeMetadata> = z.strictObject({
   attempts: z.number().int().nonnegative().optional(),
 });
 
-const GoalArtifactNameSchema = z.enum([
-  "plan.md",
-  "build.md",
-  "review.md",
-  "spec-compliance.md",
-  "approvals.md",
-  "budget.md",
-  "retry-log.md",
-  "final-report.md",
-]);
-
-const GoalReviewCriterionSchema = z.strictObject({
-  criterionId: z.string(),
-  criterion: z.string(),
-  compliant: z.boolean(),
-  status: z.enum(["satisfied", "failed"]).optional(),
-  evidence: z.array(z.string()),
-  artifactNames: z.array(GoalArtifactNameSchema).optional(),
-  commandRefs: z.array(z.string()).optional(),
-  resultRefs: z.array(z.string()).optional(),
-  fileRefs: z.array(z.string()).optional(),
-  repairGuidance: z.string().optional(),
+const GoalEvidenceRefSchema = z.strictObject({
+  kind: z.enum(["session", "message", "tool_call", "diff", "test_output", "file", "url", "hitl"]),
+  ref: z.string(),
+  summary: z.string(),
+  sessionId: z.string().optional(),
+  messageId: z.string().optional(),
+  toolCallId: z.string().optional(),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  createdAt: z.string().optional(),
 });
 
-const GoalReviewReportSchema = z.strictObject({
-  reviewerAgent: z.string(),
-  outcome: z.enum(["DONE", "NOT_DONE"]),
-  reviewedAt: z.string(),
+const GoalReviewReceiptSchema = z.strictObject({
+  verdict: z.enum(["DONE", "NOT_DONE"]),
   summary: z.string(),
-  criteria: z.array(GoalReviewCriterionSchema),
+  evidenceRefs: z.array(GoalEvidenceRefSchema).max(20),
+  unresolvedItems: z.array(z.string()).optional(),
+  reviewerSessionId: z.string(),
+  decidedAt: z.string(),
 });
 
 const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
@@ -117,7 +106,7 @@ const HitlResponseSchema: z.ZodType<HitlResponse> = z.union([
     type: z.literal("review_outcome"),
     outcome: z.enum(["DONE", "NOT_DONE"]),
     comment: z.string().optional(),
-    report: GoalReviewReportSchema.optional(),
+    receipt: GoalReviewReceiptSchema.optional(),
     reviewedBy: z.string().optional(),
   }),
   z.strictObject({

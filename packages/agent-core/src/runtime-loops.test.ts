@@ -39,12 +39,8 @@ const goalLoopConfig: LoopConfig = {
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {
     title: "Runtime-created Goal",
-    author: "architect",
-    doneConditions: [{ id: "done-file", kind: "file_exists", params: { path: "done.md" } }],
-    retryPolicy: { maxRetries: 1, backoffMs: 10, escalateOnFailure: false },
-    approvalPoints: [],
-    reviewerAgent: "reviewer",
-    prompt: "Use runtime execution plumbing.",
+    objective: "Use runtime execution plumbing.",
+    acceptanceCriteria: "Reviewer can decide DONE from the runtime execution result.",
   },
 };
 

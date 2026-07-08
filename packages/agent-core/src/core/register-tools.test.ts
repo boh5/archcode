@@ -5,8 +5,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { EXPLORER_READ_ONLY_TOOLS, DELEGATION_EXECUTION_TOOLS } from "../tools/groups";
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { LoopStateManager } from "../loops/state";
@@ -27,9 +25,6 @@ import { ProjectApprovalManager } from "../tools/permission";
 import { registerBuiltinTools } from "./register-tools";
 import {
   TOOL_GOAL_MANAGE,
-  TOOL_GOAL_EVIDENCE,
-  TOOL_GOAL_ARTIFACT_READ,
-  TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_ASK_USER,
   TOOL_BASH,
   TOOL_GITHUB_CREATE_ISSUE_COMMENT,
@@ -83,8 +78,6 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
   return {
     project: { slug: "register-tools", name: "Register Tools", workspaceRoot, addedAt: new Date().toISOString() },
     goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
     loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
@@ -193,28 +186,14 @@ describe("registerBuiltinTools", () => {
       expect(registry.get("artifact_write")).toBeUndefined();
     });
 
-  it("registers Goal artifact tools without reviving legacy workflow artifacts", () => {
-      const registry = new ToolRegistry();
-
-      registerBuiltinTools(registry, silentLogger);
-
-      expect(registry.get(TOOL_GOAL_ARTIFACT_READ)).toBeDefined();
-      expect(registry.get(TOOL_GOAL_ARTIFACT_WRITE)).toBeDefined();
-      expect(registry.get("artifact_read")).toBeUndefined();
-      expect(registry.get("artifact_write")).toBeUndefined();
-    });
-
   it("registers only the active Goal tool surface", () => {
     const registry = new ToolRegistry();
 
     registerBuiltinTools(registry, silentLogger);
 
     expect(registry.get(TOOL_GOAL_MANAGE)).toBeDefined();
-    expect(registry.get(TOOL_GOAL_EVIDENCE)).toBeDefined();
-    expect(registry.get(TOOL_GOAL_ARTIFACT_READ)).toBeDefined();
-    expect(registry.get(TOOL_GOAL_ARTIFACT_WRITE)).toBeDefined();
 
-    for (const oldName of ["goal_create", "goal_lock", "goal_run", "goal_retry", "goal_check_done"]) {
+    for (const oldName of ["goal_create", "goal_lock", "goal_run", "goal_retry", "goal_check_done", "goal_evidence", "goal_artifact_read", "goal_artifact_write"]) {
       expect(registry.get(oldName)).toBeUndefined();
     }
   });
@@ -222,15 +201,12 @@ describe("registerBuiltinTools", () => {
   it("blocks effectful tools in Goal main sessions until the Goal is claimed", async () => {
     const workspaceRoot = await createTmpRoot("goal-bootstrap-guard");
     const projectContext = makeProjectContext(workspaceRoot);
-    const goal = await projectContext.goalState.create(
-      projectContext.project.slug,
-      "Bootstrap guard",
-      "architect",
-      [{ id: "artifact", kind: "file_exists", params: { path: "artifact.txt" } }],
-      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
-      [],
-    );
-    await projectContext.goalState.lock(goal.id, "architect");
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      title: "Bootstrap guard",
+      objective: "Verify bootstrap guard.",
+      acceptanceCriteria: "Effectful tools stay blocked until the Goal is claimed.",
+    });
     const store = storeManager.create("goal-bootstrap-main-session", workspaceRoot);
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
@@ -276,28 +252,26 @@ describe("registerBuiltinTools", () => {
   it("does not broadly allow every goal_manage action during Goal bootstrap", async () => {
     const workspaceRoot = await createTmpRoot("goal-bootstrap-narrow");
     const projectContext = makeProjectContext(workspaceRoot);
-    const goal = await projectContext.goalState.create(
-      projectContext.project.slug,
-      "Bootstrap guard narrow",
-      "architect",
-      [{ id: "artifact", kind: "file_exists", params: { path: "artifact.txt" } }],
-      { maxRetries: 1, backoffMs: 100, escalateOnFailure: true },
-      [],
-    );
-    await projectContext.goalState.lock(goal.id, "architect");
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      title: "Bootstrap guard narrow",
+      objective: "Verify bootstrap guard narrow allowlist.",
+      acceptanceCriteria: "Only the expected bootstrap action is allowed.",
+    });
     const store = storeManager.create("goal-bootstrap-narrow-session", workspaceRoot);
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
 
+    const blockInput = { action: "block", goalId: goal.id, kind: "permission", summary: "Not the bootstrap action" };
     const denied = await registry.execute(
-      { toolName: TOOL_GOAL_MANAGE, toolCallId: "goal-manage-lock-before-claim", input: { action: "lock", goalId: goal.id } },
+      { toolName: TOOL_GOAL_MANAGE, toolCallId: "goal-manage-block-before-claim", input: blockInput },
       makeContext(TOOL_GOAL_MANAGE, [TOOL_GOAL_MANAGE], workspaceRoot, {
         store,
         projectContext,
-        input: { action: "lock", goalId: goal.id },
-        toolCallId: "goal-manage-lock-before-claim",
+        input: blockInput,
+        toolCallId: "goal-manage-block-before-claim",
       }),
     );
 
@@ -308,17 +282,14 @@ describe("registerBuiltinTools", () => {
   it("allows goal_manage.retry as the failed-Goal bootstrap action", async () => {
     const workspaceRoot = await createTmpRoot("goal-bootstrap-retry");
     const projectContext = makeProjectContext(workspaceRoot);
-    const goal = await projectContext.goalState.create(
-      projectContext.project.slug,
-      "Bootstrap guard retry",
-      "architect",
-      [{ id: "artifact", kind: "file_exists", params: { path: "artifact.txt" } }],
-      { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
-      [],
-    );
-    await projectContext.goalState.lock(goal.id, "architect");
-    await projectContext.goalState.transitionStatus(goal.id, "running");
-    await projectContext.goalState.transitionStatus(goal.id, "failed");
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      title: "Bootstrap guard retry",
+      objective: "Verify retry bootstrap guard.",
+      acceptanceCriteria: "Retry is allowed for failed Goals.",
+    });
+    await projectContext.goalState.start(goal.id, { mainSessionId: "previous-main-session" });
+    await projectContext.goalState.fail(goal.id, "Previous attempt failed");
     const store = storeManager.create("goal-bootstrap-retry-session", workspaceRoot);
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
@@ -337,7 +308,7 @@ describe("registerBuiltinTools", () => {
 
     expect(retried.isError).toBe(false);
     expect(retried.output).toContain('"status": "running"');
-    expect(retried.output).toContain('"retryCount": 1');
+    expect(retried.output).toContain('"attempt": 1');
   });
 
   it("treats old Goal executable names as unknown tools", async () => {
@@ -620,14 +591,14 @@ describe("registerBuiltinTools", () => {
           toolCallId: "bash-archcode-deny",
           input: {
             description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/goals/goal_test/artifacts/plan.md','w').write('---')\"",
+            command: "python3 -c \"open('.archcode/goals/goal_test/goal.json','w').write('---')\"",
           },
         },
         makeContext("bash", ["bash"], workspaceRoot, {
           toolCallId: "bash-archcode-deny",
           input: {
             description: "Attempt scripted write to .archcode",
-            command: "python3 -c \"open('.archcode/goals/goal_test/artifacts/plan.md','w').write('---')\"",
+            command: "python3 -c \"open('.archcode/goals/goal_test/goal.json','w').write('---')\"",
           },
           confirmPermission: async () => "approve" as const,
         }),
@@ -675,17 +646,11 @@ describe("registerBuiltinTools", () => {
   describe("Goal/HITL tool contract", () => {
     it("goal tool constants resolve to correct string values", () => {
       expect(TOOL_GOAL_MANAGE).toBe("goal_manage");
-      expect(TOOL_GOAL_EVIDENCE).toBe("goal_evidence");
-      expect(TOOL_GOAL_ARTIFACT_READ).toBe("goal_artifact_read");
-      expect(TOOL_GOAL_ARTIFACT_WRITE).toBe("goal_artifact_write");
     });
 
     it("all goal tool names follow goal_* prefix convention", () => {
       const goalNames = [
         TOOL_GOAL_MANAGE,
-        TOOL_GOAL_EVIDENCE,
-        TOOL_GOAL_ARTIFACT_READ,
-        TOOL_GOAL_ARTIFACT_WRITE,
       ];
       for (const name of goalNames) {
         expect(name).toMatch(/^goal_/);

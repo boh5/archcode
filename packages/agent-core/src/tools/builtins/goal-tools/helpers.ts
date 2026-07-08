@@ -1,37 +1,34 @@
-import type { GoalDoneResult, GoalState } from "@archcode/protocol";
+import type { GoalState } from "@archcode/protocol";
 
 import {
-  GoalArtifactNameError,
-  GoalArtifactPathError,
-  GoalArtifactPlanLockedError,
-  GoalArtifactSecretError,
-} from "../../../goals/artifacts";
-import {
   GoalInvalidIdError,
-  GoalLockedError,
   GoalNotFoundError,
   GoalPathError,
-  GoalStateError,
-} from "../../../goals/state";
-import {
+  GoalReviewFinalizationError,
   GoalReviewerAuthorizationError,
-  GoalRunner,
-  GoalRunnerError,
-} from "../../../goals/runner";
+  GoalStateError,
+  GoalTransitionError,
+  GoalUnsupportedStateError,
+} from "../../../goals/state";
 import { createToolErrorResult } from "../../errors";
 import type { ToolErrorKind } from "../../errors";
 import type { ToolExecutionContext, ToolExecutionResult } from "../../types";
 import type { SessionRole } from "../../../store/types";
 
-export type GoalManageAction = "create" | "lock" | "start" | "advance_phase" | "retry" | "finalize_review";
+export type GoalManageAction =
+  | "create"
+  | "start"
+  | "block"
+  | "resume"
+  | "begin_review"
+  | "finalize_review"
+  | "retry"
+  | "cancel";
 
 export type GoalToolAuthorizationCode =
   | "GOAL_CONTEXT_REQUIRED"
   | "GOAL_MANAGE_ACTION_DENIED"
-  | "GOAL_REVIEWER_REQUIRED"
-  | "GOAL_ARTIFACT_WRONG_SESSION"
-  | "GOAL_ARTIFACT_ROLE_DENIED"
-  | "GOAL_ARTIFACT_PHASE_DENIED";
+  | "GOAL_REVIEWER_REQUIRED";
 
 export interface GoalToolAuthorizationContext {
   readonly sessionId: string;
@@ -41,8 +38,7 @@ export interface GoalToolAuthorizationContext {
 }
 
 export interface GoalToolErrorMappingOptions {
-  readonly runnerErrorCode?: "GOAL_INVALID_TRANSITION" | "GOAL_REVIEW_PHASE_REQUIRED";
-  readonly stateErrorCode?: "GOAL_INVALID_TRANSITION" | "GOAL_INVALID_STATE";
+  readonly stateErrorCode?: "GOAL_INVALID_TRANSITION" | "GOAL_INVALID_STATE" | "GOAL_REVIEW_PHASE_REQUIRED";
 }
 
 export class GoalToolAuthorizationError extends Error {
@@ -55,31 +51,7 @@ export class GoalToolAuthorizationError extends Error {
   }
 }
 
-export function createGoalRunnerFromContext(ctx: ToolExecutionContext): GoalRunner {
-  const currentSession = ctx.store.getState();
-  return new GoalRunner({
-    goalStateManager: ctx.projectContext.goalState,
-    goalArtifacts: ctx.projectContext.goalArtifacts,
-    hitlService: ctx.projectContext.hitl,
-    workspaceRoot: ctx.workspaceRoot,
-    createSession: async (options) => {
-      if (currentSession.sessionRole === "review") {
-        return (await ctx.storeManager.createSessionFile(ctx.workspaceRoot, options)).sessionId;
-      }
-      return currentSession.sessionId;
-    },
-  });
-}
-
-export function formatGoalResult(goal: GoalState): string {
-  return formatGoalToolResult(goal);
-}
-
-export function formatDoneResult(result: GoalDoneResult): string {
-  return formatGoalToolResult(result);
-}
-
-export function formatGoalToolResult(value: unknown): string {
+export function formatGoalToolResult(value: GoalState): string {
   return JSON.stringify(value, null, 2);
 }
 
@@ -96,11 +68,11 @@ export function extractGoalToolAuthorization(ctx: ToolExecutionContext): GoalToo
 export function assertGoalManageActionAuthorized(
   action: GoalManageAction,
   ctx: ToolExecutionContext,
-  goal?: Pick<GoalState, "id" | "reviewerAgent">,
+  goalId?: string,
 ): GoalToolAuthorizationContext {
   const authorization = extractGoalToolAuthorization(ctx);
   if (action === "finalize_review") {
-    assertGoalManageReviewerActionAuthorized(action, authorization, goal);
+    assertReviewerFinalizationAuthorized(action, authorization, goalId);
     return authorization;
   }
 
@@ -120,45 +92,39 @@ export function goalToolErrorResult(
   if (error instanceof GoalNotFoundError) {
     return goalWorkspaceError("GOAL_NOT_FOUND", error.message);
   }
-  if (error instanceof GoalToolAuthorizationError || error instanceof GoalReviewerAuthorizationError) {
+  if (error instanceof GoalToolAuthorizationError) {
     return goalError("permission-denied", error.code, error.message);
   }
-  if (error instanceof GoalArtifactPlanLockedError) {
-    return goalError("permission-denied", "GOAL_ARTIFACT_PLAN_LOCKED", error.message);
-  }
-  if (error instanceof GoalArtifactSecretError) {
-    return goalError("permission-denied", "GOAL_ARTIFACT_SECRET_DETECTED", error.message);
-  }
-  if (error instanceof GoalArtifactNameError) {
-    return goalWorkspaceError("GOAL_ARTIFACT_INVALID_NAME", error.message);
-  }
-  if (error instanceof GoalPathError || error instanceof GoalInvalidIdError || error instanceof GoalArtifactPathError) {
+  if (error instanceof GoalPathError || error instanceof GoalInvalidIdError) {
     return goalWorkspaceError("GOAL_INVALID_ID", error.message);
   }
-  if (error instanceof GoalRunnerError) {
-    return goalWorkspaceError(options.runnerErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
+  if (error instanceof GoalReviewerAuthorizationError) {
+    return goalError("permission-denied", error.code, error.message);
   }
-  if (error instanceof GoalStateError || error instanceof GoalLockedError) {
+  if (error instanceof GoalStateError || error instanceof GoalTransitionError || error instanceof GoalReviewFinalizationError || error instanceof GoalUnsupportedStateError) {
+    return goalWorkspaceError(options.stateErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
+  }
+  if (error instanceof Error && error.name === "GoalRunnerError") {
     return goalWorkspaceError(options.stateErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
   }
   return createToolErrorResult({ kind: "execution", error: error instanceof Error ? error : new Error(String(error)) });
 }
 
-function assertGoalManageReviewerActionAuthorized(
+function assertReviewerFinalizationAuthorized(
   action: GoalManageAction,
   authorization: GoalToolAuthorizationContext,
-  goal: Pick<GoalState, "id" | "reviewerAgent"> | undefined,
+  goalId: string | undefined,
 ): void {
-  if (!goal) {
+  if (!goalId) {
     throw new GoalToolAuthorizationError(
       "GOAL_CONTEXT_REQUIRED",
       `goal_manage.${action} requires the target Goal before reviewer authorization can be checked`,
     );
   }
-  if (authorization.agentName !== goal.reviewerAgent) {
+  if (authorization.agentName !== "reviewer") {
     throw new GoalToolAuthorizationError(
       "GOAL_REVIEWER_REQUIRED",
-      `goal_manage.${action} requires reviewer agent ${goal.reviewerAgent}, got ${authorization.agentName ?? "unknown"}`,
+      `goal_manage.${action} requires reviewer agent, got ${authorization.agentName ?? "unknown"}`,
     );
   }
   if (authorization.sessionRole !== "review") {
@@ -167,10 +133,10 @@ function assertGoalManageReviewerActionAuthorized(
       `goal_manage.${action} requires a review session, got ${authorization.sessionRole ?? "unknown"}`,
     );
   }
-  if (authorization.sessionGoalId !== goal.id) {
+  if (authorization.sessionGoalId !== goalId) {
     throw new GoalToolAuthorizationError(
       "GOAL_REVIEWER_REQUIRED",
-      `goal_manage.${action} requires matching session goal ${goal.id}, got ${authorization.sessionGoalId ?? "unknown"}`,
+      `goal_manage.${action} requires matching session goal ${goalId}, got ${authorization.sessionGoalId ?? "unknown"}`,
     );
   }
 }

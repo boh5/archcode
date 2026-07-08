@@ -65,12 +65,8 @@ const goalLoopConfig: LoopConfig = {
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {
     title: "Loop-created goal",
-    author: "architect",
-    doneConditions: [{ id: "done-file", kind: "file_exists", params: { path: "done.md" } }],
-    retryPolicy: { maxRetries: 1, backoffMs: 25, escalateOnFailure: false },
-    approvalPoints: ["after_plan"],
-    reviewerAgent: "reviewer",
-    prompt: "Execute this inline Goal template only.",
+    objective: "Execute this inline Goal template only.",
+    acceptanceCriteria: "Reviewer can decide DONE from loop-created Goal evidence.",
   },
 };
 

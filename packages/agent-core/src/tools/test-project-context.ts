@@ -1,8 +1,6 @@
 import { join } from "node:path";
 import { PROJECT_STATE_DIR_NAME } from "@archcode/protocol";
 
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { LoopStateManager } from "../loops/state";
@@ -20,8 +18,6 @@ export function createTestProjectContext(workspaceRoot: string): ProjectContext 
       addedAt: new Date().toISOString(),
     },
     goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
     loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({

@@ -167,7 +167,7 @@ describe("expandLoopPreset", () => {
       expect(parsed.toolProfileId).toBe(expected.toolProfileId);
       expect(parsed.limits).toEqual(expected.limits);
       expect(parsed.budget).toBeUndefined();
-      expect(parsed.taskPrompt ?? parsed.goalTemplate?.prompt ?? "").not.toHaveLength(0);
+      expect(parsed.taskPrompt ?? parsed.goalTemplate?.objective ?? "").not.toHaveLength(0);
     }
   });
 
@@ -217,8 +217,9 @@ describe("expandLoopPreset", () => {
       const parsed = LoopConfigSchema.parse(expandLoopPreset(id));
       if (parsed.runKind === "goal") {
         expect(parsed.goalTemplate).toBeDefined();
-        expect(parsed.goalTemplate?.doneConditions.length).toBeGreaterThan(0);
-        expect(parsed.goalTemplate?.retryPolicy).toEqual({ maxRetries: 2, backoffMs: 1_000, escalateOnFailure: true });
+        expect(parsed.goalTemplate?.title).toBe("Dependency Sweeper Goal");
+        expect(parsed.goalTemplate?.objective).toContain("dependency maintenance");
+        expect(parsed.goalTemplate?.acceptanceCriteria).toContain("Reviewer");
         continue;
       }
 
@@ -236,12 +237,8 @@ describe("expandLoopPreset", () => {
       toolProfileId: "loop_goal_action",
       goalTemplate: {
         title: "Edited PR follow-up Goal",
-        author: "architect",
-        doneConditions: [{ id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" } }],
-        retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: false },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
-        prompt: "Run the edited follow-up Goal from the stored LoopConfig values.",
+        objective: "Run the edited follow-up Goal from the stored LoopConfig values.",
+        acceptanceCriteria: "Reviewer can determine DONE from logs and evidence refs without typed acceptance arrays.",
       },
     });
 
@@ -331,8 +328,8 @@ function presetText(config: ReturnType<typeof expandLoopPreset>): string {
     config.taskPrompt,
     config.instructions,
     config.goalTemplate?.title,
-    config.goalTemplate?.prompt,
-    config.goalTemplate?.instructions,
+    config.goalTemplate?.objective,
+    config.goalTemplate?.acceptanceCriteria,
   ].filter((value): value is string => value !== undefined).join("\n");
 }
 

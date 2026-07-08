@@ -260,10 +260,10 @@ describe("ast_grep_replace tool", () => {
   test("apply mode refuses preview matches under .archcode before mutation", async () => {
     const workspace = tempWorkspace();
     try {
-      const artifact = join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001", "artifacts", "plan.md");
-      mkdirSync(join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001", "artifacts"), { recursive: true });
+      const artifact = join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001", "goal.json");
+      mkdirSync(join(workspace, ".archcode", "goals", "00000000-0000-0000-0000-000000000001"), { recursive: true });
       writeFileSync(artifact, "console.log(message)", "utf-8");
-      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".archcode/goals/00000000-0000-0000-0000-000000000001/artifacts/plan.md")); });
+      const run = mock((cmd: readonly [string, ...string[]]) => { void cmd; return spawnResult(replacementJsonFor(".archcode/goals/00000000-0000-0000-0000-000000000001/goal.json")); });
       setProcessRunnerForTest(run);
 
       const result = await astGrepReplaceTool.execute(
@@ -517,7 +517,7 @@ describe("ast_grep_replace tool", () => {
   test("checks protected .archcode permission for explicit paths", async () => {
     const protectedPermission = astGrepReplaceTool.permissions![1];
 
-    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/goals/goal_test/artifacts/plan.md"] }, ctx());
+    const decision = await protectedPermission({ pattern: "x", rewrite: "y", dryRun: false, paths: [".archcode/goals/goal_test/goal.json"] }, ctx());
 
     expect(decision.outcome).toBe("deny");
     expect(decision.errorCode).toBe("PROTECTED_PATH_WRITE_DENIED");

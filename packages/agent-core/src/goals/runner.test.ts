@@ -1,32 +1,13 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  GOAL_HITL_ACTION_ADVANCE_PHASE,
-  GOAL_HITL_ACTION_COMPLETE,
-  type DoneCondition,
-  type GoalDoneResult,
-  type HitlRecord,
-} from "@archcode/protocol";
+import type { GoalEvidenceRef } from "@archcode/protocol";
 
-import { GoalArtifactManager } from "./artifacts";
 import { GoalRunner, GoalRunnerError } from "./runner";
-import { GoalStateManager } from "./state";
+import { GoalReviewFinalizationError, GoalReviewerAuthorizationError, GoalStateManager, GoalTransitionError } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-runner");
-
-const condition: DoneCondition = {
-  id: "artifact-exists",
-  kind: "file_exists",
-  params: { path: "artifact.txt" },
-};
-
-const reviewerDoneConditions: DoneCondition[] = [
-  { id: "AC-001", kind: "file_exists", params: { path: "packages/agent-core/src/goals/runner.ts" } },
-  { id: "AC-002", kind: "typecheck_pass", params: { command: "bun run typecheck" } },
-  { id: "AC-003", kind: "tests_pass", params: { command: "bun test packages/agent-core/src/goals/runner.test.ts" } },
-];
 
 let workspaceRoot = "";
 let manager: GoalStateManager;
@@ -42,409 +23,176 @@ afterAll(async () => {
   await rm(TMP_ROOT, { recursive: true, force: true });
 });
 
-function passingResult(conditionId = condition.id): GoalDoneResult {
-  return { conditionId, passed: true, evidence: "condition passed", checkedAt: new Date().toISOString() };
-}
-
-function failingResult(conditionId = condition.id): GoalDoneResult {
-  return { conditionId, passed: false, evidence: "condition failed", checkedAt: new Date().toISOString() };
-}
-
-function customFailingResult(conditionId: string, evidence: string): GoalDoneResult {
-  return { conditionId, passed: false, evidence, checkedAt: new Date().toISOString() };
-}
-
-async function expectGoalRunnerError(action: () => Promise<unknown>): Promise<void> {
-  try {
-    await action();
-  } catch (error) {
-    expect(error).toBeInstanceOf(GoalRunnerError);
-    return;
-  }
-  throw new Error("Expected GoalRunnerError");
-}
-
-function createRunner(options: {
-  sessionIds?: string[];
-  activeSessionIds?: string[];
-} = {}): GoalRunner {
-  const sessionIds = [...(options.sessionIds ?? ["main-session-1", "main-session-2", "main-session-3"])] as string[];
-  const activeSessionIds = new Set(options.activeSessionIds ?? []);
-
-    return new GoalRunner({
-      goalStateManager: manager,
-      goalArtifacts: new GoalArtifactManager(workspaceRoot),
-      workspaceRoot,
-    hitlService: {
-      create: mock(async (input): Promise<HitlRecord> => ({
-        hitlId: crypto.randomUUID(),
-        owner: input.owner,
-        blockingKey: input.blockingKey,
-        source: input.source,
-        status: "pending",
-        displayPayload: input.displayPayload,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })),
-      list: mock(async () => []),
-    },
-    createSession: mock(async () => sessionIds.shift() ?? `session-${crypto.randomUUID()}`),
-    isSessionActive: mock(async (sessionId: string) => activeSessionIds.has(sessionId)),
+function createRunner(sessionIds = ["main-session-1", "retry-session-2"]): GoalRunner {
+  const remaining = [...sessionIds];
+  return new GoalRunner({
+    goalStateManager: manager,
+    createSession: mock(async () => remaining.shift() ?? `session-${crypto.randomUUID()}`),
   });
 }
 
-async function lockedGoal(approvalPoints: Array<"after_plan" | "before_complete"> = []) {
-  return lockedGoalWithConditions([condition], approvalPoints);
+async function createDraft(runner: GoalRunner) {
+  return runner.create({
+    projectId: "project-a",
+    title: "Ship runner facade",
+    objective: "Exercise the thin goal runner facade.",
+    acceptanceCriteria: "Runner delegates to state manager and enforces reviewer finalization.",
+  });
 }
 
-async function lockedGoalWithConditions(
-  doneConditions: DoneCondition[],
-  approvalPoints: Array<"after_plan" | "before_complete"> = [],
-) {
-  const goal = await manager.create(
-    "project-a",
-    "Ship goal runner",
-    "architect",
-    doneConditions,
-    { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
-    approvalPoints,
-  );
-  return manager.lock(goal.id, "architect");
+function evidenceRef(summary = "Targeted tests passed"): GoalEvidenceRef {
+  return { kind: "test_output", ref: "runner-test", summary };
 }
 
-async function runToReview(goalId: string, runner: GoalRunner): Promise<void> {
-  await runner.start(goalId);
-  await runner.advancePhase(goalId, "build");
-  await runner.advancePhase(goalId, "review");
+function reviewerAuth(goalId: string) {
+  return {
+    agentName: "reviewer",
+    sessionRole: "review",
+    sessionGoalId: goalId,
+    reviewerSessionId: "review-session-1",
+  };
 }
 
 describe("GoalRunner", () => {
-  it("creates draft goals through the lifecycle facade", async () => {
+  test("creates, patches, and starts a goal with a main session", async () => {
     const runner = createRunner();
+    const draft = await createDraft(runner);
+    const patched = await runner.patchDraft(draft.id, { title: "Patched runner goal" });
+    const running = await runner.start(patched.id);
 
-    const goal = await runner.createDraft({
-      projectId: "project-a",
-      title: "Draft through runner",
-      author: "architect",
-      doneConditions: [condition],
-      retryPolicy: { maxRetries: 2, backoffMs: 5, escalateOnFailure: true },
-      approvalPoints: ["after_plan"],
-      reviewerAgent: "senior-reviewer",
+    expect(running).toMatchObject({
+      status: "running",
+      title: "Patched runner goal",
+      mainSessionId: "main-session-1",
     });
-
-    expect(goal).toMatchObject({
-      projectId: "project-a",
-      title: "Draft through runner",
-      status: "draft",
-      phase: "plan",
-      doneConditions: [condition],
-      retryPolicy: { maxRetries: 2, backoffMs: 5, escalateOnFailure: true },
-      approvalPoints: ["after_plan"],
-      reviewerAgent: "senior-reviewer",
-      author: "architect",
-    });
-    expect(await manager.read(goal.id)).toMatchObject({ status: "draft", title: "Draft through runner" });
+    expect(await manager.read(draft.id)).toMatchObject({ status: "running", mainSessionId: "main-session-1" });
   });
 
-  it("locks draft goals through the lifecycle facade", async () => {
-    const runner = createRunner();
-    const goal = await runner.createDraft({
-      projectId: "project-a",
-      title: "Lock through runner",
-      author: "architect",
-      doneConditions: [condition],
-    });
+  test("start is idempotent for an already running matching session", async () => {
+    const runner = createRunner(["main-session-1"]);
+    const draft = await createDraft(runner);
 
-    const locked = await runner.lockDraft(goal.id, "locker-session");
-
-    expect(locked).toMatchObject({
-      id: goal.id,
-      status: "locked",
-      lockedBy: "locker-session",
-    });
-    expect(typeof locked.lockedAt).toBe("string");
-    expect(await manager.read(goal.id)).toMatchObject({ status: "locked", lockedBy: "locker-session" });
-  });
-
-  it("records authorized reviewer done results through the runner facade", async () => {
-    const goal = await lockedGoal();
-    const runner = createRunner();
-    await runToReview(goal.id, runner);
-
-    const verifying = await runner.recordAuthorizedReviewerDoneResult(goal.id, condition.id, passingResult(), {
-      agentName: "reviewer",
-      sessionRole: "review",
-      sessionGoalId: goal.id,
-    });
-
-    expect(verifying.status).toBe("verifying");
-    expect(verifying.doneResults[condition.id]?.passed).toBe(true);
-  });
-
-  it("runs the happy path with approval gates, reviewer evidence, and completion", async () => {
-    const goal = await lockedGoal(["after_plan", "before_complete"]);
-    const runner = createRunner();
-
-    const running = await runner.start(goal.id);
-    expect(running.status).toBe("running");
-    expect(running.phase).toBe("plan");
-    expect(running.mainSessionId).toBe("main-session-1");
-
-    const build = await runner.advancePhase(goal.id, "build", { skipApproval: true });
-    expect(build.phase).toBe("build");
-
-    const review = await runner.advancePhase(goal.id, "review");
-    expect(review.phase).toBe("review");
-
-    const verifying = await runner.recordReviewerDoneResult(goal.id, condition.id, passingResult());
-    expect(verifying.status).toBe("verifying");
-
-    const reviewed = await runner.review(goal.id);
-    expect(reviewed.status).toBe("reviewed");
-
-    const completed = await runner.complete(goal.id, { skipApproval: true });
-    expect(completed.status).toBe("completed");
-  });
-
-  it("claimStart is idempotent for the same main session", async () => {
-    const goal = await lockedGoal();
-    const runner = createRunner();
-
-    const first = await runner.claimStart(goal.id, "reserved-session");
-    const second = await runner.claimStart(goal.id, "reserved-session");
+    const first = await runner.start(draft.id, { mainSessionId: "reserved-session" });
+    const second = await runner.start(draft.id, { mainSessionId: "reserved-session" });
 
     expect(first.status).toBe("running");
-    expect(second).toMatchObject({ status: "running", mainSessionId: "reserved-session" });
+    expect(second).toEqual(first);
   });
 
-  it("claimStart rejects a different reserved session", async () => {
-    const goal = await lockedGoal();
+  test("requires createSession when no main session is available", async () => {
+    const runner = new GoalRunner({ goalStateManager: manager });
+    const draft = await createDraft(runner);
+
+    await expect(runner.start(draft.id)).rejects.toBeInstanceOf(GoalRunnerError);
+  });
+
+  test("blocks and clears back to requested resume status", async () => {
     const runner = createRunner();
-    await manager.updateSessionIds(goal.id, "reserved-session");
+    const draft = await createDraft(runner);
+    await runner.start(draft.id);
 
-    await expectGoalRunnerError(() => runner.claimStart(goal.id, "other-session"));
-    expect(await manager.read(goal.id)).toMatchObject({ status: "locked", mainSessionId: "reserved-session" });
+    const blocked = await runner.block(draft.id, {
+      kind: "approval",
+      summary: "Need approval",
+      hitlId: "hitl-1",
+      resumeStatus: "reviewing",
+    });
+    expect(blocked).toMatchObject({ status: "blocked", pendingHitlIds: ["hitl-1"] });
+
+    const reviewing = await runner.clearBlocker(draft.id, "hitl-1");
+    expect(reviewing).toMatchObject({ status: "reviewing", pendingHitlIds: [] });
   });
 
-  it("claimStart rejects a different session after running", async () => {
-    const goal = await lockedGoal();
+  test("finalizes DONE only from reviewer authorization with evidence", async () => {
     const runner = createRunner();
-    await runner.claimStart(goal.id, "main-session");
+    const draft = await createDraft(runner);
+    await runner.start(draft.id);
+    await runner.beginReview(draft.id);
 
-    await expectGoalRunnerError(() => runner.claimStart(goal.id, "other-session"));
-    expect(await manager.read(goal.id)).toMatchObject({ status: "running", mainSessionId: "main-session" });
-  });
+    await expect(runner.finalizeReview(draft.id, {
+      verdict: "DONE",
+      summary: "Missing evidence.",
+      evidenceRefs: [],
+      authorization: reviewerAuth(draft.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+    await expect(runner.finalizeReview(draft.id, {
+      verdict: "DONE",
+      summary: "Wrong agent.",
+      evidenceRefs: [evidenceRef()],
+      authorization: { ...reviewerAuth(draft.id), agentName: "build" },
+    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
 
-  it("pauses with checkpoint when after_plan approval is required", async () => {
-    const goal = await lockedGoal(["after_plan"]);
-    const runner = createRunner();
-    await runner.start(goal.id);
-
-    const paused = await runner.advancePhase(goal.id, "build");
-
-    expect(paused.status).toBe("paused");
-    expect(paused.phase).toBe("plan");
-    expect(paused.lastError).toBe("Waiting for after_plan approval");
-    expect(paused.attentionStatus).toBe("waiting_for_human");
-    expect(paused.blockedByHitlIds).toHaveLength(1);
-    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_ADVANCE_PHASE, approvalPoint: "after_plan" });
-  });
-
-  it("pauses with checkpoint when before_complete approval is required", async () => {
-    const goal = await lockedGoal(["before_complete"]);
-    const runner = createRunner();
-    await runner.start(goal.id);
-    await runner.advancePhase(goal.id, "build");
-    await runner.advancePhase(goal.id, "review");
-    await runner.recordReviewerDoneResult(goal.id, condition.id, passingResult());
-    await runner.review(goal.id);
-
-    const paused = await runner.complete(goal.id);
-
-    expect(paused.status).toBe("paused");
-    expect(paused.phase).toBe("review");
-    expect(paused.lastError).toBe("Waiting for before_complete approval");
-    expect(paused.attentionStatus).toBe("waiting_for_human");
-    expect(paused.blockedByHitlIds).toHaveLength(1);
-    expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_COMPLETE, approvalPoint: "before_complete" });
-  });
-
-  it("does not complete without reviewer done evidence", async () => {
-    const goal = await lockedGoal();
-    const runner = createRunner();
-    await runner.start(goal.id);
-    await runner.advancePhase(goal.id, "build");
-    await runner.advancePhase(goal.id, "review");
-
-    await expectGoalRunnerError(() => runner.complete(goal.id));
-    expect((await manager.read(goal.id)).status).toBe("running");
-  });
-
-  describe("reviewer done not done", () => {
-    it("records three condition results before final DONE and follows the completed path", async () => {
-      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
-      const runner = createRunner();
-      await runToReview(goal.id, runner);
-
-      for (const doneCondition of reviewerDoneConditions) {
-        const state = await runner.recordReviewerDoneResult(goal.id, doneCondition.id, passingResult(doneCondition.id));
-        expect(state.doneResults[doneCondition.id]?.passed).toBe(true);
-      }
-
-      const beforeOutcome = await manager.read(goal.id);
-      expect(beforeOutcome.status).toBe("verifying");
-      expect(Object.keys(beforeOutcome.doneResults).sort()).toEqual(["AC-001", "AC-002", "AC-003"]);
-
-      const completed = await runner.finalizeReviewerReview(goal.id, "DONE", { summary: "Reviewer verified all Done Conditions." });
-
-      expect(completed.status).toBe("completed");
-      const persisted = await manager.read(goal.id);
-      expect(persisted.reviewReport).toMatchObject({ outcome: "DONE", summary: "Reviewer verified all Done Conditions." });
-      expect(persisted.reviewReport?.criteria).toHaveLength(3);
-      expect(persisted.repairContext).toBeUndefined();
+    const done = await runner.finalizeReview(draft.id, {
+      verdict: "DONE",
+      summary: "Reviewer verified all criteria.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(draft.id),
     });
 
-    it("preserves before_complete approval behavior for final DONE", async () => {
-      const goal = await lockedGoalWithConditions(reviewerDoneConditions, ["before_complete"]);
-      const runner = createRunner();
-      await runToReview(goal.id, runner);
-      for (const doneCondition of reviewerDoneConditions) {
-        await runner.recordReviewerDoneResult(goal.id, doneCondition.id, passingResult(doneCondition.id));
-      }
-
-      const paused = await runner.finalizeReviewerReview(goal.id, "DONE");
-
-      expect(paused.status).toBe("paused");
-      expect(paused.phase).toBe("review");
-      expect(paused.reviewReport?.outcome).toBe("DONE");
-      expect(paused.lastError).toBe("Waiting for before_complete approval");
-      expect(paused.resumeCheckpoint).toMatchObject({ kind: "goal_approval", action: GOAL_HITL_ACTION_COMPLETE, approvalPoint: "before_complete" });
-    });
-
-    it("returns NOT_DONE with structured repair context for missing required evidence", async () => {
-      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
-      const runner = createRunner();
-      await runToReview(goal.id, runner);
-      await runner.recordReviewerDoneResult(goal.id, "AC-001", passingResult("AC-001"));
-
-      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
-
-      expect(failed.status).toBe("failed");
-      expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE" });
-      expect(failed.repairContext?.issues.map((issue) => issue.conditionId).sort()).toEqual(["AC-002", "AC-003"]);
-      expect(failed.repairContext?.issues[0]?.evidenceSummary).toBe("Required evidence missing");
-      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("goal_evidence with action:\"check_done\"");
-      expect(failed.lastError).toContain("Reviewer NOT_DONE");
-    });
-
-    it("returns NOT_DONE with failed condition id, evidence summary, guidance, and repair target", async () => {
-      const goal = await lockedGoalWithConditions(reviewerDoneConditions);
-      const runner = createRunner();
-      await runToReview(goal.id, runner);
-      await runner.recordReviewerDoneResult(goal.id, "AC-001", passingResult("AC-001"));
-      await runner.recordReviewerDoneResult(goal.id, "AC-002", customFailingResult("AC-002", "typecheck failed"));
-      await runner.recordReviewerDoneResult(goal.id, "AC-003", passingResult("AC-003"));
-
-      const failed = await runner.finalizeReviewerReview(goal.id, "NOT_DONE", { waitForBackoff: false });
-
-      expect(failed.status).toBe("failed");
-      expect(failed.reviewReport?.criteria.find((criterion) => criterion.criterionId === "AC-002")).toMatchObject({
-        compliant: false,
-        evidence: ["typecheck failed"],
-      });
-      expect(failed.repairContext?.issues).toHaveLength(1);
-      expect(failed.repairContext?.issues[0]).toMatchObject({
-        conditionId: "AC-002",
-        evidenceSummary: "typecheck failed",
-        repairTarget: "bun run typecheck",
-      });
-      expect(failed.repairContext?.issues[0]?.repairGuidance).toContain("AC-002");
-      expect(failed.lastError).toContain("AC-002");
-    });
+    expect(done.status).toBe("done");
+    expect(done.review).toMatchObject({ verdict: "DONE", reviewerSessionId: "review-session-1" });
+    await expect(runner.cancel(done.id, "too late")).rejects.toBeInstanceOf(GoalTransitionError);
   });
 
-  it("retries failed verification with a fresh session, plan phase reset, and incremented retryCount", async () => {
-    const goal = await lockedGoal();
-    const runner = createRunner({ sessionIds: ["main-session-1", "fresh-session-2"] });
-    await runner.start(goal.id);
-    await runner.advancePhase(goal.id, "build");
-    await runner.advancePhase(goal.id, "review");
-    await runner.recordReviewerDoneResult(goal.id, condition.id, failingResult());
-
-    const retry = await runner.handleFailedVerification(goal.id, "verification failed");
-
-    expect(retry.status).toBe("running");
-    expect(retry.phase).toBe("plan");
-    expect(retry.retryCount).toBe(1);
-    expect(retry.mainSessionId).toBe("fresh-session-2");
-    expect(retry.lastError).toBe("verification failed");
-  });
-
-  it("escalates when retry budget is exhausted", async () => {
-    const goal = await manager.create(
-      "project-a",
-      "No retries",
-      "architect",
-      [condition],
-      { maxRetries: 0, backoffMs: 0, escalateOnFailure: true },
-      [],
-    );
-    await manager.lock(goal.id, "architect");
+  test("finalizes NOT_DONE, rejects duplicate finalization, then explicit retry clears review", async () => {
     const runner = createRunner();
-    await runner.start(goal.id);
+    const draft = await createDraft(runner);
+    await runner.start(draft.id);
+    await runner.beginReview(draft.id);
 
-    const escalated = await runner.handleFailedVerification(goal.id, "still failing");
+    const notDone = await runner.finalizeReview(draft.id, {
+      verdict: "NOT_DONE",
+      summary: "Acceptance criteria need repair.",
+      unresolvedItems: ["Add targeted tests"],
+      authorization: reviewerAuth(draft.id),
+    });
+    expect(notDone).toMatchObject({ status: "not_done", lastFailureSummary: "Acceptance criteria need repair." });
 
-    expect(escalated.status).toBe("escalated");
-    expect(escalated.lastError).toBe("still failing");
+    await expect(runner.finalizeReview(draft.id, {
+      verdict: "NOT_DONE",
+      summary: "duplicate",
+      authorization: reviewerAuth(draft.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+
+    const retry = await runner.retry(draft.id);
+    expect(retry).toMatchObject({ status: "running", attempt: 1, mainSessionId: "retry-session-2" });
+    expect(retry.review).toBeUndefined();
+    expect((await runner.beginReview(draft.id)).status).toBe("reviewing");
   });
 
-  it("recovers interrupted active goals by failing missing sessions and pausing pending HITL", async () => {
-    const noSession = await lockedGoal();
-    const pending = await manager.create(
-      "project-a",
-      "Pending approval",
-      "architect",
-      [condition],
-      { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
-      ["after_plan"],
-    );
-    await manager.lock(pending.id, "architect");
-    const runner = createRunner({
-      activeSessionIds: ["pending-session"],
-      sessionIds: ["missing-session", "pending-session"],
-    });
-    await runner.start(noSession.id);
-    await runner.start(pending.id);
-    await manager.blockOnHitl(pending.id, {
-      version: 1,
-      hitlId: "pending-hitl",
-      blockedAt: new Date().toISOString(),
-      phase: "plan",
-      kind: "goal_approval",
-      action: GOAL_HITL_ACTION_ADVANCE_PHASE,
-      from: "plan",
-      to: "build",
-      approvalPoint: "after_plan",
-      reason: "approval required",
-    });
-
-    const recovered = await runner.recoverInterruptedGoals(workspaceRoot);
-
-    const recoveredMap = new Map(recovered.map((g) => [g.id, g.status]));
-    expect(recoveredMap.get(noSession.id)).toBe("failed");
-    expect(recoveredMap.get(pending.id)).toBe("paused");
-    expect(recovered).toHaveLength(2);
-    expect((await manager.read(noSession.id)).lastError).toContain("Interrupted");
-  });
-
-  it("rejects skipped or backwards phase transitions", async () => {
-    const goal = await lockedGoal();
+  test("fail and cancel follow the simplified transition graph", async () => {
     const runner = createRunner();
-    await runner.start(goal.id);
+    const failing = await createDraft(runner);
+    await runner.start(failing.id);
+    const failed = await runner.fail(failing.id, new Error("verification crashed"));
+    expect(failed).toMatchObject({ status: "failed", lastFailureSummary: "verification crashed" });
+    expect(failed.lastError).toMatchObject({ name: "Error", message: "verification crashed" });
+    expect((await runner.retry(failing.id)).status).toBe("running");
 
-    await expectGoalRunnerError(() => runner.advancePhase(goal.id, "review"));
-    await runner.advancePhase(goal.id, "build");
-    await expectGoalRunnerError(() => runner.advancePhase(goal.id, "plan"));
+    const cancelledDraft = await createDraft(runner);
+    expect((await runner.cancel(cancelledDraft.id, "duplicate request")).status).toBe("cancelled");
+  });
+
+  test("tracks child sessions, main session, budget, and HITL refs", async () => {
+    const runner = createRunner();
+    const draft = await createDraft(runner);
+    await runner.start(draft.id);
+    await runner.setMainSession(draft.id, "explicit-main");
+    await runner.addChildSession(draft.id, "child-1");
+    await runner.recordHitlRef(draft.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
+    const budgeted = await runner.updateBudgetSummary(draft.id, {
+      status: "ok",
+      usedTokens: 10,
+      maxTokens: 100,
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(budgeted).toMatchObject({
+      mainSessionId: "explicit-main",
+      childSessionIds: ["child-1"],
+      pendingHitlIds: ["hitl-1"],
+      approvalRefs: ["approval-1"],
+      budget: { status: "ok", usedTokens: 10, maxTokens: 100 },
+    });
   });
 });

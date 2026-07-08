@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { GoalArtifactManager } from "../../goals/artifacts";
-import { GoalMemoryManager } from "../../goals/goal-memory";
-import { GoalStateManager } from "../../goals/state";
-import { HitlService } from "../../hitl/service";
-import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
 import { SkillService } from "../../skills";
@@ -13,8 +8,7 @@ import { storeManager } from "../../store/store";
 import { createMemoryWriteTool, MemoryWriteInputSchema } from "./memory-write";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
-import { silentLogger } from "../../logger";
-import { ProjectApprovalManager } from "../permission";
+import { createTestProjectContext } from "../test-project-context";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__");
 const testSkillService = new SkillService({ builtinSkills: {} });
@@ -28,14 +22,9 @@ function makeFileManager(): MemoryFileManager {
 
 function makeCtx(fileManager: MemoryFileManager, toolCallId = "call-1"): ToolExecutionContext {
   const projectContext: ProjectContext = {
+    ...createTestProjectContext(TMP_DIR),
     project: { slug: "memory-write", name: "Memory Write", workspaceRoot: TMP_DIR, addedAt: new Date().toISOString() },
-    goalState: new GoalStateManager(TMP_DIR),
-    goalArtifacts: new GoalArtifactManager(TMP_DIR),
-    goalMemory: new GoalMemoryManager(TMP_DIR),
-    loopState: new LoopStateManager(TMP_DIR),
-    hitl: new HitlService(),
     memory: fileManager,
-    approvals: new ProjectApprovalManager(silentLogger),
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_write" as const,
   toolCallId,

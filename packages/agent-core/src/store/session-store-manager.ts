@@ -582,8 +582,6 @@ const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
   "compression.block_failed",
   "compression.ref_map_updated",
   "goal.state_change",
-  "goal.done_check",
-  "goal.escalation",
   "hitl.request",
   "hitl.updated",
   "hitl.resolved",

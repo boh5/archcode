@@ -40,7 +40,6 @@ import type {
   LoopWorktreeArtifact as ProtocolLoopWorktreeArtifact,
 } from "@archcode/protocol";
 
-import { ApprovalPointSchema, DoneConditionSchema, RetryPolicySchema } from "../goals/state";
 import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 
@@ -224,13 +223,8 @@ export const LoopIntegrationSnapshotSchema = z.strictObject({
 
 export const LoopGoalTemplateSchema = z.strictObject({
   title: LoopTitleSchema,
-  author: LoopIdentifierSchema,
-  doneConditions: z.array(DoneConditionSchema).max(50),
-  retryPolicy: RetryPolicySchema,
-  approvalPoints: z.array(ApprovalPointSchema),
-  reviewerAgent: LoopIdentifierSchema,
-  prompt: LoopTextSchema.optional(),
-  instructions: LoopTextSchema.optional(),
+  objective: LoopTextSchema,
+  acceptanceCriteria: LoopTextSchema,
 }) satisfies z.ZodType<ProtocolLoopGoalTemplate>;
 
 export const LoopCleanupStateSchema = z.enum([

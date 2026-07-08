@@ -83,7 +83,7 @@ function denyProtectedPathMutation(): PermissionDecision {
     outcome: "deny",
     reason:
       `The ${PROJECT_STATE_DIR_NAME}/ directory is system-managed and cannot be edited directly. ` +
-      "Use the appropriate internal tools (e.g., memory_write or goal_artifact_write) to modify files in this directory.",
+      "Use the appropriate internal lifecycle tools to modify files in this directory.",
     errorKind: "permission-denied" as ToolErrorKind,
     errorCode: "PROTECTED_PATH_WRITE_DENIED",
   };

@@ -2,18 +2,12 @@ import { afterAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { GOAL_HITL_ACTION_ADVANCE_PHASE, GOAL_HITL_ACTION_FINALIZE_REVIEW, type DoneCondition, type HitlRecord, type HitlResponse } from "@archcode/protocol";
+import type { HitlRecord, HitlResponse } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { GoalApprovalGate, approvalOutcomeFromResponse, reviewOutcomeFromResponse } from "./goal-gates";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-gates");
-
-const condition: DoneCondition = {
-  id: "artifact-exists",
-  kind: "file_exists",
-  params: { path: "dist/output.txt" },
-};
 
 let workspaceRoot = "";
 let goalStateManager: GoalStateManager;
@@ -57,67 +51,79 @@ function createGate() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }));
+  const publishRequest = mock(async (_record: HitlRecord) => {});
   const gate = new GoalApprovalGate({
-    hitlService: { create },
+    hitlService: { create, publishRequest },
     goalStateManager,
   });
-  return { gate, create };
+  return { gate, create, publishRequest };
 }
 
-async function createGoal() {
-  const goal = await goalStateManager.create(
-    "project-a",
-    "Ship HITL gates",
-    "architect",
-    [condition],
-    { maxRetries: 1, backoffMs: 0, escalateOnFailure: true },
-    ["after_plan", "before_complete"],
-  );
-  await goalStateManager.lock(goal.id, "architect");
-  return goalStateManager.updateSessionIds(goal.id, "main-session-1", []);
+async function createRunningGoal() {
+  const goal = await goalStateManager.create({
+    projectId: "project-a",
+    title: "Ship HITL gates",
+    objective: "Integrate HITL gates with simplified Goal state.",
+    acceptanceCriteria: "HITL requests block Goals through pending ids and blockers only.",
+    mainSessionId: "main-session-1",
+  });
+  return await goalStateManager.start(goal.id, { mainSessionId: "main-session-1" });
 }
 
 describe("GoalApprovalGate", () => {
-  it("creates Goal-owned after_plan approval records and checkpoints", async () => {
-    const goal = await createGoal();
-    const { gate, create } = createGate();
+  it("creates Goal-owned approval records and blocks with pending HITL refs", async () => {
+    const goal = await createRunningGoal();
+    const { gate, create, publishRequest } = createGate();
 
-    const record = await gate.requestApproval(goal.id, goal.mainSessionId!, "after_plan", goal.title, goal.projectId);
+    const record = await gate.requestApproval({
+      goalId: goal.id,
+      projectSlug: goal.projectId,
+      goalTitle: goal.title,
+      approvalPoint: "after_plan",
+      summary: "Approve continuing the Goal.",
+      resumeStatus: "running",
+    });
 
     expect(record.owner).toEqual({ projectSlug: "project-a", ownerType: "goal", ownerId: goal.id });
     expect(record.source).toEqual({ type: "goal_approval", goalId: goal.id, approvalPoint: "after_plan" });
     expect(create).toHaveBeenCalledTimes(1);
-    expect((await goalStateManager.read(goal.id)).resumeCheckpoint).toMatchObject({
-      kind: "goal_approval",
-      action: GOAL_HITL_ACTION_ADVANCE_PHASE,
-      approvalPoint: "after_plan",
-      hitlId: record.hitlId,
+    expect(publishRequest).toHaveBeenCalledWith(record);
+    expect(await goalStateManager.read(goal.id)).toMatchObject({
+      status: "blocked",
+      pendingHitlIds: [record.hitlId],
+      approvalRefs: [record.hitlId],
+      blocker: {
+        kind: "approval",
+        hitlId: record.hitlId,
+        source: "after_plan",
+        resumeStatus: "running",
+      },
     });
   });
 
-  it("creates Goal-owned before_complete approval records and checkpoints", async () => {
-    const goal = await createGoal();
+  it("creates review HITL records that resume to reviewing", async () => {
+    const goal = await createRunningGoal();
     const { gate } = createGate();
 
-    const record = await gate.requestApproval(goal.id, goal.mainSessionId!, "before_complete", goal.title, goal.projectId);
+    const record = await gate.requestReview({ goalId: goal.id, goalTitle: goal.title, projectSlug: goal.projectId });
 
-    expect(record.source).toEqual({ type: "goal_approval", goalId: goal.id, approvalPoint: "before_complete" });
-    expect((await goalStateManager.read(goal.id)).resumeCheckpoint).toMatchObject({
-      kind: "goal_approval",
-      action: "complete",
-      approvalPoint: "before_complete",
-      hitlId: record.hitlId,
+    expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
+    expect(await goalStateManager.read(goal.id)).toMatchObject({
+      status: "blocked",
+      pendingHitlIds: [record.hitlId],
+      blocker: { kind: "approval", hitlId: record.hitlId, resumeStatus: "reviewing" },
     });
   });
 
-  it("records approval responses on goal state", async () => {
-    const goal = await createGoal();
+  it("records approval responses on goal state without approval artifacts", async () => {
+    const goal = await createRunningGoal();
     const { gate } = createGate();
 
-    const outcome = await gate.recordApprovalResponse(goal.id, "after_plan", goal.mainSessionId!, approvalResponse("approved", "Looks good"));
+    const outcome = await gate.recordApprovalResponse(goal.id, "after_plan", approvalResponse("approved", "Looks good"));
 
     expect(outcome).toEqual({ approved: true, decision: "approved", comment: "Looks good" });
-    expect((await goalStateManager.read(goal.id)).lastError).toContain("Approval after_plan approved: Looks good");
+    expect((await goalStateManager.read(goal.id)).lastError?.message).toContain("Approval after_plan approved: Looks good");
+    expect(await Bun.file(join(workspaceRoot, ".archcode", "goals", goal.id, "approvals.md")).exists()).toBe(false);
   });
 
   it("maps approval and cancelled responses", () => {
@@ -125,20 +131,8 @@ describe("GoalApprovalGate", () => {
     expect(approvalOutcomeFromResponse(terminalResponse())).toEqual({ approved: false, comment: "Cancelled" });
   });
 
-  it("creates review checkpoints without persisting Session tool results", async () => {
-    const goal = await createGoal();
-    const { gate } = createGate();
-
-    const record = await gate.requestReview(goal.id, [{ path: "dist/output.txt", description: "Build output" }], goal.projectId);
-
-    expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
-    const persisted = await goalStateManager.read(goal.id);
-    expect(persisted.resumeCheckpoint).toMatchObject({ kind: "goal_review", action: GOAL_HITL_ACTION_FINALIZE_REVIEW, hitlId: record.hitlId });
-    expect(persisted.doneResults.reviewer_approval).toBeUndefined();
-  });
-
   it("maps review responses", () => {
-    expect(reviewOutcomeFromResponse(reviewResponse("DONE", "Artifacts look correct"))).toEqual({ outcome: "DONE", comment: "Artifacts look correct" });
+    expect(reviewOutcomeFromResponse(reviewResponse("DONE", "Evidence looks correct"))).toEqual({ outcome: "DONE", comment: "Evidence looks correct" });
     expect(reviewOutcomeFromResponse(terminalResponse())).toEqual({ outcome: "NOT_DONE", comment: "Cancelled" });
   });
 });

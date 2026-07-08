@@ -8,12 +8,6 @@ import { createSessionStore, storeManager } from "../store/store";
 import { createRegistry } from "./registry";
 import type { ToolRegistry } from "./registry";
 import { ResolvedToolSet } from "./registry";
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
-import { GoalStateManager } from "../goals/state";
-import { HitlService } from "../hitl/service";
-import { LoopStateManager } from "../loops/state";
-import { MemoryFileManager } from "../memory/file-manager";
 import type { ProjectContext } from "../projects/types";
 import type {
   ToolDescriptor,
@@ -34,6 +28,7 @@ import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { jsonSchema } from "ai";
 import { SessionHitlPause } from "../execution/session-hitl-pause";
+import { createTestProjectContext } from "./test-project-context";
 
 
 // ─── Test helpers ───
@@ -70,21 +65,7 @@ function makeProjectContext(
   approvals = new ProjectApprovalManager(silentLogger),
 ): ProjectContext {
   return {
-    project: {
-      slug: "test-project",
-      name: "Test Project",
-      workspaceRoot,
-      addedAt: new Date().toISOString(),
-    },
-    goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
-    memory: new MemoryFileManager({
-      project: join(workspaceRoot, ".archcode", "memory"),
-      user: join(workspaceRoot, ".archcode", "user-memory"),
-    }),
+    ...createTestProjectContext(workspaceRoot),
     approvals,
   };
 }

@@ -1,6 +1,4 @@
 import { z } from "zod/v4";
-import type { GoalArtifactManager } from "../goals/artifacts";
-import type { GoalMemoryManager } from "../goals/goal-memory";
 import type { GoalStateManager } from "../goals/state";
 import type { HitlService } from "../hitl/service";
 import type { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -25,8 +23,6 @@ export interface ProjectInfo {
 export interface ProjectContext {
   project: ProjectInfo;
   goalState: GoalStateManager;
-  goalArtifacts: GoalArtifactManager;
-  goalMemory: GoalMemoryManager;
   loopState: LoopStateManager;
   hitl: HitlService;
   hitlResumeCoordinator?: ResumeCoordinator;

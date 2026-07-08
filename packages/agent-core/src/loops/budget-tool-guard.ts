@@ -1,10 +1,10 @@
 import type { PermissionDecision, ToolExecutionContext, ToolPermission } from "../tools/types";
-import { TOOL_GOAL_ARTIFACT_WRITE, TOOL_TODO_WRITE } from "../tools/names";
+import { TOOL_GOAL_MANAGE, TOOL_TODO_WRITE } from "../tools/names";
 import { evaluateBudget, effectiveBudget, LoopBudgetLedger } from "./budget-ledger";
 
 const SOFT_ALLOWED_EFFECTFUL_TOOLS = new Set<string>([
   TOOL_TODO_WRITE,
-  TOOL_GOAL_ARTIFACT_WRITE,
+  TOOL_GOAL_MANAGE,
 ]);
 
 export function createLoopBudgetToolPermission(): ToolPermission {

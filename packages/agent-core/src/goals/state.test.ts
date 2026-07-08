@@ -2,30 +2,34 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { GOAL_HITL_ACTION_ADVANCE_PHASE } from "@archcode/protocol";
+
+import { PROJECT_STATE_DIR_NAME, type GoalEvidenceRef } from "@archcode/protocol";
 
 import {
-  GoalEmptyConditionsError,
   GoalInvalidIdError,
-  GoalLockedError,
   GoalNotFoundError,
   GoalPathError,
+  GoalReviewFinalizationError,
+  GoalReviewerAuthorizationError,
   GoalStateError,
   GoalStateManager,
   GoalStateSchema,
-  type DoneCondition,
-  type RetryPolicy,
+  GoalTransitionError,
+  GoalUnsupportedStateError,
 } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const VALID_LOOP_ID = "660e8400-e29b-41d4-a716-446655440001";
 
-const condition: DoneCondition = {
-  id: "tests",
-  kind: "tests_pass",
-  params: { command: "bun test" },
-};
+beforeEach(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true });
+  await mkdir(TMP_DIR, { recursive: true });
+});
+
+afterAll(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true });
+});
 
 async function captureAsyncError(action: () => Promise<unknown>): Promise<unknown> {
   try {
@@ -36,366 +40,312 @@ async function captureAsyncError(action: () => Promise<unknown>): Promise<unknow
   throw new Error("Expected async action to throw");
 }
 
-beforeEach(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
-  await mkdir(TMP_DIR, { recursive: true });
-});
+function evidenceRef(summary = "Tests passed"): GoalEvidenceRef {
+  return {
+    kind: "test_output",
+    ref: "bun-test-output",
+    summary,
+    createdAt: new Date().toISOString(),
+  };
+}
 
-afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true }).catch(() => {});
-});
+function reviewerAuth(goalId: string) {
+  return {
+    agentName: "reviewer",
+    sessionRole: "review",
+    sessionGoalId: goalId,
+    reviewerSessionId: "review-session-1",
+  };
+}
+
+async function createGoal(manager = new GoalStateManager(TMP_DIR)) {
+  return manager.create({
+    projectId: "project-a",
+    title: "Ship thin goal state",
+    objective: "Replace workflow state with a natural language goal envelope.",
+    acceptanceCriteria: "State transitions and reviewer finalization obey the simplified protocol.",
+  });
+}
 
 describe("GoalStateSchema", () => {
-  test("accepts goal state metadata and rejects unknown keys", () => {
+  test("accepts the protocol state envelope and rejects unknown keys", () => {
     const now = new Date().toISOString();
     const state = GoalStateSchema.parse({
       id: VALID_UUID,
       projectId: "project-a",
-      title: "Ship goal state",
-      status: "draft",
-      phase: "plan",
-      doneConditions: [condition],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 2, backoffMs: 1000, escalateOnFailure: true },
-      retryCount: 0,
-      approvalPoints: ["after_plan"],
-      author: "orchestrator",
+      title: "Ship thin state",
+      objective: "Keep only natural-language goal intent.",
+      acceptanceCriteria: "Reviewer finalizes with evidence.",
+      status: "reviewing",
+      attempt: 1,
+      blocker: { kind: "approval", summary: "Waiting", hitlId: "hitl-1", resumeStatus: "reviewing", createdAt: now },
+      lastFailureSummary: "Previous review found missing tests.",
+      budget: { status: "warning", usedTokens: 100, maxTokens: 200, reason: "near limit", updatedAt: now },
+      pendingHitlIds: ["hitl-1"],
+      approvalRefs: ["approval-1"],
+      mainSessionId: "main-session",
+      childSessionIds: ["child-session"],
       loopId: VALID_LOOP_ID,
-      childSessionIds: [],
-      attentionStatus: "waiting_for_human",
-      blockedByHitlIds: ["hitl-1"],
-      resumeCheckpoint: {
-        version: 1,
-        hitlId: "hitl-1",
-        blockedAt: now,
-        kind: "goal_approval",
-        action: GOAL_HITL_ACTION_ADVANCE_PHASE,
-        from: "plan",
-        to: "build",
-        approvalPoint: "after_plan",
-        phase: "plan",
-        reason: "approval required",
-      },
       createdAt: now,
       updatedAt: now,
+      startedAt: now,
+      lastError: { name: "Error", message: "previous failure", at: now },
     });
 
-    expect(state.id).toBe(VALID_UUID);
-    expect(state.loopId).toBe(VALID_LOOP_ID);
-    expect(state.attentionStatus).toBe("waiting_for_human");
-    expect(state.resumeCheckpoint?.hitlId).toBe("hitl-1");
+    expect(state.status).toBe("reviewing");
     expect(() => GoalStateSchema.parse({ ...state, workflowId: VALID_UUID })).toThrow();
   });
 
-  test("normalizes legacy camelCase Goal HITL action names", () => {
+  test("enforces field bounds for natural language and review evidence", () => {
     const now = new Date().toISOString();
-
-    const state = GoalStateSchema.parse({
+    const base = {
       id: VALID_UUID,
       projectId: "project-a",
-      title: "Legacy checkpoint",
-      status: "paused",
-      phase: "plan",
-      doneConditions: [condition],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: false },
-      retryCount: 0,
-      approvalPoints: ["after_plan"],
-      author: "planner",
+      title: "A".repeat(160),
+      objective: "O".repeat(8000),
+      acceptanceCriteria: "C".repeat(8000),
+      status: "reviewing" as const,
+      attempt: 0,
+      pendingHitlIds: [],
+      approvalRefs: [],
       childSessionIds: [],
-      resumeCheckpoint: {
-        version: 1,
-        hitlId: "hitl-legacy",
-        blockedAt: now,
-        kind: "goal_approval",
-        action: "advancePhase",
-        from: "plan",
-        to: "build",
-        approvalPoint: "after_plan",
-      },
       createdAt: now,
       updatedAt: now,
-    });
+    };
 
-    expect(state.resumeCheckpoint?.action).toBe(GOAL_HITL_ACTION_ADVANCE_PHASE);
-  });
-
-  test("validates all done condition variants with required default true", () => {
-    const parsed = GoalStateSchema.parse({
-      id: VALID_UUID,
-      projectId: "project-a",
-      title: "Variants",
-      status: "draft",
-      phase: "plan",
-      doneConditions: [
-        { id: "tests", kind: "tests_pass", params: { command: "bun test" } },
-        { id: "typecheck", kind: "typecheck_pass", params: {} },
-        { id: "lsp", kind: "lsp_clean", params: { paths: ["src"], severity: "warning" } },
-        { id: "file", kind: "file_exists", params: { path: "README.md" } },
-        { id: "contains", kind: "grep_contains", params: { pattern: "Goal", path: "src", minMatches: 1 } },
-        { id: "empty", kind: "grep_empty", params: { pattern: "TODO", path: "src" } },
-        { id: "command", kind: "command_succeeds", params: { command: "bun test", timeoutMs: 1000 } },
-        { id: "user", kind: "user_confirmed", params: { prompt: "Approve?" } },
-        { id: "spec", kind: "spec_compliance", params: { specPath: "SPEC.md", focusAreas: ["state"] }, required: false },
-      ],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 1, backoffMs: 0, escalateOnFailure: false },
-      retryCount: 0,
-      approvalPoints: [],
-      author: "planner",
-      childSessionIds: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    expect(parsed.doneConditions[0]?.required).toBe(true);
-    expect(parsed.doneConditions[8]?.required).toBe(false);
+    expect(GoalStateSchema.parse(base).title).toHaveLength(160);
+    expect(() => GoalStateSchema.parse({ ...base, title: "T".repeat(161) })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, objective: "O".repeat(8001) })).toThrow();
+    expect(() => GoalStateSchema.parse({ ...base, finalSummary: "F".repeat(4001) })).toThrow();
     expect(() => GoalStateSchema.parse({
-      ...parsed,
-      doneConditions: [{ id: "bad", kind: "file_exists", params: { path: "x", extra: true } }],
+      ...base,
+      review: {
+        verdict: "DONE",
+        summary: "R".repeat(4001),
+        evidenceRefs: [],
+        reviewerSessionId: "review-session",
+        decidedAt: now,
+      },
+    })).toThrow();
+    expect(() => GoalStateSchema.parse({
+      ...base,
+      review: {
+        verdict: "DONE",
+        summary: "ok",
+        evidenceRefs: Array.from({ length: 21 }, (_, index) => evidenceRef(`evidence ${index}`)),
+        reviewerSessionId: "review-session",
+        decidedAt: now,
+      },
     })).toThrow();
   });
 });
 
 describe("GoalStateManager", () => {
-  test("create produces a draft goal with correct fields", async () => {
+  test("create persists a draft with only protocol fields", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-
-    const created = await manager.create("project-a", "  My goal  ", "architect");
+    const created = await createGoal(manager);
 
     expect(created).toMatchObject({
       projectId: "project-a",
-      title: "My goal",
+      title: "Ship thin goal state",
       status: "draft",
-      phase: "plan",
-      doneConditions: [],
-      doneResults: {},
-      reviewerAgent: "reviewer",
-      retryPolicy: { maxRetries: 3, backoffMs: 1000, escalateOnFailure: true },
-      retryCount: 0,
-      approvalPoints: [],
-      author: "architect",
+      attempt: 0,
+      pendingHitlIds: [],
+      approvalRefs: [],
       childSessionIds: [],
     });
-    expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    expect(existsSync(join(TMP_DIR, ".archcode", "goals", created.id, "goal.json"))).toBe(true);
+    expect(existsSync(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", created.id, "goal.json"))).toBe(true);
+    expect(Object.keys(created).sort()).toEqual([
+      "acceptanceCriteria",
+      "approvalRefs",
+      "attempt",
+      "childSessionIds",
+      "createdAt",
+      "id",
+      "objective",
+      "pendingHitlIds",
+      "projectId",
+      "status",
+      "title",
+      "updatedAt",
+    ]);
   });
 
-  test("read returns persisted goal", async () => {
+  test("patchDraft is limited to draft goals", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Read me", "architect", [condition]);
-
-    expect(await manager.read(created.id)).toEqual(created);
-  });
-
-  test("listGoals filters by projectId", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const a1 = await manager.create("project-a", "A1", "architect");
-    const b1 = await manager.create("project-b", "B1", "architect");
-    const a2 = await manager.create("project-a", "A2", "architect");
-
-    expect(new Set((await manager.listGoals("project-a")).map((goal) => goal.id))).toEqual(new Set([a1.id, a2.id]));
-    expect(new Set((await manager.listGoals()).map((goal) => goal.id))).toEqual(new Set([a1.id, b1.id, a2.id]));
-  });
-
-  test("listGoals skips stale goal directories missing goal.json", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const valid = await manager.create("project-a", "Valid", "architect");
-    const staleGoalId = "78878538-b50c-4357-b6b8-087b1683adb4";
-    await mkdir(join(TMP_DIR, ".archcode", "goals", staleGoalId), { recursive: true });
-
-    expect(await captureAsyncError(() => manager.read(staleGoalId))).toBeInstanceOf(GoalNotFoundError);
-    expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([valid.id]);
-  });
-
-  test("patch updates draft title, doneConditions, retryPolicy, and approvalPoints", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Draft", "architect");
-    const retryPolicy: RetryPolicy = { maxRetries: 5, backoffMs: 250, escalateOnFailure: false };
-
-    const patched = await manager.patch(created.id, {
-      title: "Patched",
-      doneConditions: [condition],
-      retryPolicy,
-      approvalPoints: ["after_plan", "before_complete"],
-    });
-
+    const created = await createGoal(manager);
+    const patched = await manager.patchDraft(created.id, { title: "Patched", objective: "New objective" });
     expect(patched.title).toBe("Patched");
-    expect(patched.doneConditions).toEqual([{ ...condition, required: true }]);
-    expect(patched.retryPolicy).toEqual(retryPolicy);
-    expect(patched.approvalPoints).toEqual(["after_plan", "before_complete"]);
-    expect(await manager.read(created.id)).toEqual(patched);
+    expect(patched.objective).toBe("New objective");
+
+    await manager.start(created.id, { mainSessionId: "main-session" });
+    expect(await captureAsyncError(() => manager.patchDraft(created.id, { title: "Denied" }))).toBeInstanceOf(GoalStateError);
   });
 
-  test("patch after lock throws GoalLockedError", async () => {
+  test("allows exactly the simplified transition graph", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Lock", "architect", [condition]);
-    await manager.lock(created.id, "user-1");
-
-    expect(await captureAsyncError(() => manager.patch(created.id, { title: "Denied" }))).toBeInstanceOf(GoalLockedError);
-  });
-
-  test("lock rejects empty doneConditions", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "No conditions", "architect");
-
-    expect(await captureAsyncError(() => manager.lock(created.id, "user-1"))).toBeInstanceOf(GoalEmptyConditionsError);
-  });
-
-  test("lock records lockedBy and lockedAt and transitions to locked", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Lock", "architect", [condition]);
-
-    const locked = await manager.lock(created.id, "user-1");
-
-    expect(locked.status).toBe("locked");
-    expect(locked.lockedBy).toBe("user-1");
-    expect(typeof locked.lockedAt).toBe("string");
-    expect(Date.parse(locked.lockedAt ?? "")).not.toBeNaN();
-  });
-
-  test("transitionStatus validates state machine", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Transitions", "architect", [condition]);
-
-    expect(await captureAsyncError(() => manager.transitionStatus(created.id, "running"))).toBeInstanceOf(GoalStateError);
-    await manager.lock(created.id, "user-1");
-    const running = await manager.transitionStatus(created.id, "running");
-    expect(running.status).toBe("running");
-    const verifying = await manager.transitionStatus(created.id, "verifying");
-    expect(verifying.status).toBe("verifying");
-    expect(await captureAsyncError(() => manager.transitionStatus(created.id, "reviewed"))).toBeInstanceOf(GoalStateError);
-    await manager.recordDoneResult(created.id, "tests", {
-      conditionId: "tests",
-      passed: true,
-      evidence: "passed",
-      checkedAt: new Date().toISOString(),
+    const done = await createGoal(manager);
+    await manager.start(done.id);
+    await manager.beginReview(done.id);
+    const finalized = await manager.finalizeReview(done.id, {
+      verdict: "DONE",
+      summary: "All evidence passed.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(done.id),
     });
-    expect((await manager.transitionStatus(created.id, "reviewed")).status).toBe("reviewed");
-    expect((await manager.transitionStatus(created.id, "completed")).status).toBe("completed");
+    expect(finalized.status).toBe("done");
+    expect(await captureAsyncError(() => manager.fail(done.id, "too late"))).toBeInstanceOf(GoalTransitionError);
+
+    const blocked = await createGoal(manager);
+    await manager.start(blocked.id);
+    expect((await manager.block(blocked.id, { kind: "question", summary: "Need answer", hitlId: "hitl-1", resumeStatus: "reviewing" })).status).toBe("blocked");
+    expect((await manager.clearBlocker(blocked.id, "hitl-1")).status).toBe("reviewing");
+    expect((await manager.finalizeReview(blocked.id, {
+      verdict: "NOT_DONE",
+      summary: "Missing acceptance evidence.",
+      authorization: reviewerAuth(blocked.id),
+    })).status).toBe("not_done");
+    expect((await manager.retry(blocked.id, { mainSessionId: "retry-session" })).status).toBe("running");
+
+    const failed = await createGoal(manager);
+    await manager.start(failed.id);
+    expect((await manager.fail(failed.id, new Error("build failed"))).status).toBe("failed");
+    expect((await manager.retry(failed.id)).status).toBe("running");
+
+    const cancelled = await createGoal(manager);
+    expect((await manager.cancel(cancelled.id, "not needed")).status).toBe("cancelled");
   });
 
-  test("transitionStatus only pauses resumable non-terminal states", async () => {
+  test("rejects forbidden transitions", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const draft = await manager.create("project-a", "Draft pause", "architect", [condition]);
+    const created = await createGoal(manager);
 
-    expect(await captureAsyncError(() => manager.transitionStatus(draft.id, "paused"))).toBeInstanceOf(GoalStateError);
-    await manager.lock(draft.id, "user-1");
-    expect((await manager.transitionStatus(draft.id, "paused")).status).toBe("paused");
-
-    const failed = await manager.create("project-a", "Failed pause", "architect", [condition]);
-    await manager.lock(failed.id, "user-1");
-    await manager.transitionStatus(failed.id, "running");
-    await manager.transitionStatus(failed.id, "failed");
-
-    expect(await captureAsyncError(() => manager.transitionStatus(failed.id, "paused"))).toBeInstanceOf(GoalStateError);
+    expect(await captureAsyncError(() => manager.beginReview(created.id))).toBeInstanceOf(GoalTransitionError);
+    await manager.start(created.id);
+    expect(await captureAsyncError(() => manager.retry(created.id))).toBeInstanceOf(GoalTransitionError);
+    await manager.beginReview(created.id);
+    expect(await captureAsyncError(() => manager.start(created.id))).toBeInstanceOf(GoalTransitionError);
   });
 
-  test("updatePhase changes phase", async () => {
+  test("enforces reviewer finalization rules", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Phase", "architect");
+    const created = await createGoal(manager);
+    await manager.start(created.id);
+    await manager.beginReview(created.id);
 
-    expect((await manager.updatePhase(created.id, "build")).phase).toBe("build");
+    await expect(manager.finalizeReview(created.id, {
+      verdict: "DONE",
+      summary: "No evidence.",
+      evidenceRefs: [],
+      authorization: reviewerAuth(created.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+    await expect(manager.finalizeReview(created.id, {
+      verdict: "NOT_DONE",
+      summary: "",
+      authorization: reviewerAuth(created.id),
+    })).rejects.toBeInstanceOf(GoalReviewFinalizationError);
+    await expect(manager.finalizeReview(created.id, {
+      verdict: "DONE",
+      summary: "All good.",
+      evidenceRefs: [evidenceRef()],
+      authorization: { ...reviewerAuth(created.id), agentName: "orchestrator" },
+    })).rejects.toBeInstanceOf(GoalReviewerAuthorizationError);
+
+    const completed = await manager.finalizeReview(created.id, {
+      verdict: "DONE",
+      summary: "All evidence passed.",
+      evidenceRefs: [evidenceRef()],
+      authorization: reviewerAuth(created.id),
+    });
+    expect(completed.status).toBe("done");
+    expect(completed.finalSummary).toBe("All evidence passed.");
   });
 
-  test("recordDoneResult stores result by conditionId", async () => {
+  test("retry increments attempt and clears current review", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Result", "architect", [condition]);
-    const result = { conditionId: "tests", passed: true, evidence: "ok", checkedAt: new Date().toISOString() };
+    const created = await createGoal(manager);
+    await manager.start(created.id);
+    await manager.beginReview(created.id);
+    await manager.finalizeReview(created.id, {
+      verdict: "NOT_DONE",
+      summary: "Tests missing.",
+      authorization: reviewerAuth(created.id),
+    });
+    expect(await captureAsyncError(() => manager.finalizeReview(created.id, {
+      verdict: "NOT_DONE",
+      summary: "duplicate",
+      authorization: reviewerAuth(created.id),
+    }))).toBeInstanceOf(GoalReviewFinalizationError);
 
-    const updated = await manager.recordDoneResult(created.id, "tests", result);
-
-    expect(updated.doneResults.tests).toEqual(result);
+    const retry = await manager.retry(created.id, { mainSessionId: "retry-session" });
+    expect(retry).toMatchObject({ status: "running", attempt: 1, mainSessionId: "retry-session" });
+    expect(retry.review).toBeUndefined();
+    const reviewing = await manager.beginReview(created.id);
+    expect(reviewing.status).toBe("reviewing");
   });
 
-  test("incrementRetryCount increments", async () => {
+  test("records sessions, budget summaries, and HITL refs without duplicates", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Retry", "architect");
+    const created = await createGoal(manager);
+    await manager.start(created.id, { mainSessionId: "main-session" });
 
-    expect((await manager.incrementRetryCount(created.id)).retryCount).toBe(1);
+    await manager.addChildSession(created.id, "child-1");
+    await manager.addChildSession(created.id, "child-1");
+    await manager.recordHitlRef(created.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
+    await manager.recordHitlRef(created.id, { hitlId: "hitl-1", approvalRef: "approval-1" });
+    const budgeted = await manager.updateBudgetSummary(created.id, {
+      status: "warning",
+      usedTokens: 50,
+      maxTokens: 100,
+      reason: "half used",
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(budgeted.childSessionIds).toEqual(["child-1"]);
+    expect(budgeted.pendingHitlIds).toEqual(["hitl-1"]);
+    expect(budgeted.approvalRefs).toEqual(["approval-1"]);
+    expect(budgeted.budget).toMatchObject({ status: "warning", usedTokens: 50, maxTokens: 100 });
   });
 
-  test("updateLastError stores error", async () => {
+  test("rejects old persisted schema with a named unsupported error", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Error", "architect");
-
-    expect((await manager.updateLastError(created.id, "failed tests")).lastError).toBe("failed tests");
-  });
-
-  test("updateTokenBudget overwrites the persisted token budget", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Budget", "architect");
-    const firstBudget = {
-      status: "ok" as const,
-      inputTokens: 10,
-      outputTokens: 5,
-      reasoningTokens: 1,
-      cachedInputTokens: 2,
-      totalTokens: 15,
+    const goalId = VALID_UUID;
+    const goalDir = join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", goalId);
+    await mkdir(goalDir, { recursive: true });
+    const oldState: Record<string, unknown> = {
+      id: goalId,
+      projectId: "project-a",
+      title: "Old state",
+      status: "running",
+      [`done${"Conditions"}`]: [],
+      [`arti${"facts"}`]: [],
+      [`ph${"ase"}`]: "plan",
+      [`retry${"Policy"}`]: { maxRetries: 1 },
+      createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const secondBudget = {
-      ...firstBudget,
-      status: "warning" as const,
-      inputTokens: 20,
-      outputTokens: 10,
-      totalTokens: 30,
-    };
+    await Bun.write(join(goalDir, "goal.json"), `${JSON.stringify(oldState, null, 2)}\n`);
 
-    await manager.updateTokenBudget(created.id, firstBudget);
-    const updated = await manager.updateTokenBudget(created.id, secondBudget);
-
-    expect(updated.tokenBudget).toEqual(secondBudget);
-    expect((await manager.read(created.id)).tokenBudget).toEqual(secondBudget);
+    const error = await captureAsyncError(() => manager.read(goalId));
+    expect(error).toBeInstanceOf(GoalUnsupportedStateError);
+    expect((error as GoalUnsupportedStateError).unsupportedKeys).toEqual(expect.arrayContaining([
+      `done${"Conditions"}`,
+      `arti${"facts"}`,
+      `ph${"ase"}`,
+      `retry${"Policy"}`,
+    ]));
   });
 
-  test("updateSessionIds updates mainSessionId and childSessionIds", async () => {
+  test("path validation and list filtering stay strict", async () => {
     const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "Sessions", "architect");
-
-    const updated = await manager.updateSessionIds(created.id, "main-session", ["plan-session", "build-session"]);
-
-    expect(updated.mainSessionId).toBe("main-session");
-    expect(updated.childSessionIds).toEqual(["plan-session", "build-session"]);
-  });
-
-  test("atomic write produces valid JSON and no temp files", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-    const created = await manager.create("project-a", "JSON", "architect", [condition]);
-    await manager.lock(created.id, "user-1");
-
-    const goalDir = join(TMP_DIR, ".archcode", "goals", created.id);
-    const content = await Bun.file(join(goalDir, "goal.json")).text();
-    expect(JSON.parse(content).id).toBe(created.id);
-    expect((await readdir(goalDir)).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
-  });
-
-  test("goalHitlPath resolves owner-local hitl.json", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-
-    await manager.create("project-a", "HITL", "architect");
-
-    expect(await manager.goalHitlPath(VALID_UUID)).toBe(
-      join(TMP_DIR, ".archcode", "goals", VALID_UUID, "hitl.json"),
-    );
-  });
-
-  test("path traversal attempt rejected", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
+    const valid = await createGoal(manager);
+    const staleGoalId = "78878538-b50c-4357-b6b8-087b1683adb4";
+    await mkdir(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", staleGoalId), { recursive: true });
 
     expect(await captureAsyncError(() => manager.read("../escape"))).toBeInstanceOf(GoalInvalidIdError);
-    expect(await captureAsyncError(() => manager.goalHitlPath("../escape"))).toBeInstanceOf(GoalInvalidIdError);
     expect(await captureAsyncError(() => manager.read(VALID_UUID))).toBeInstanceOf(GoalNotFoundError);
-    // Exercise the containment guard directly for corrupted caller paths that bypass UUID validation.
     expect(await captureAsyncError(() => manager.resolveContainedPathForTest("../escape/goal.json"))).toBeInstanceOf(GoalPathError);
-  });
-
-  test("read non-existent goal throws GoalNotFoundError", async () => {
-    const manager = new GoalStateManager(TMP_DIR);
-
-    expect(await captureAsyncError(() => manager.read(VALID_UUID))).toBeInstanceOf(GoalNotFoundError);
+    expect((await manager.listGoals("project-a")).map((goal) => goal.id)).toEqual([valid.id]);
+    expect((await readdir(join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", valid.id))).filter((entry) => entry.startsWith(".tmp-"))).toEqual([]);
   });
 });

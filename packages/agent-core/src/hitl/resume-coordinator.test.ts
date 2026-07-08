@@ -154,7 +154,12 @@ describe("ResumeCoordinator", () => {
   test("partial adapter recovery skips claimed owner types without a matching adapter", async () => {
     const fixture = await createFixture();
     const sessionHitl = await fixture.createSessionHitl();
-    const goal = await fixture.goalState.create("archcode", "Goal waits for future adapter", "architect");
+    const goal = await fixture.goalState.create({
+      projectId: "archcode",
+      title: "Goal waits for future adapter",
+      objective: "Wait for a future Goal adapter.",
+      acceptanceCriteria: "Claimed Goal HITL remains queued when no adapter exists.",
+    });
     const goalOwner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "goal", ownerId: goal.id };
     const goalHitl = await fixture.service.create({
       owner: goalOwner,

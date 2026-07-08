@@ -15,8 +15,6 @@ import type {
   ToolPermission,
 } from "./types";
 import { createToolExecutionContext, DuplicateToolError } from "./types";
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { LoopStateManager } from "../loops/state";
@@ -33,8 +31,6 @@ function makeProjectContext(workspaceRoot: string): ProjectContext {
   return {
     project: { slug: "types-test", name: "Types Test", workspaceRoot, addedAt: new Date().toISOString() },
     goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
     loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({ project: `${workspaceRoot}/memory`, user: `${workspaceRoot}/user-memory` }),

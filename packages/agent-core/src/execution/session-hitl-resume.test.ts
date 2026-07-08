@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { HitlRecord } from "@archcode/protocol";
-import { GoalArtifactManager } from "../goals/artifacts";
-import { GoalMemoryManager } from "../goals/goal-memory";
 import { GoalStateManager } from "../goals/state";
 import { HitlService } from "../hitl/service";
 import { ResumeCoordinator } from "../hitl/resume-coordinator";
@@ -21,6 +19,7 @@ import { getSessionHitlPath } from "../store/sessions-dir";
 import { createRegistry, defineTool } from "../tools";
 import { askUserTool } from "../tools/builtins";
 import { ProjectApprovalManager } from "../tools/permission";
+import { createTestProjectContext } from "../tools/test-project-context";
 import { SkillService } from "../skills";
 import { silentLogger } from "../logger";
 import { runQueryLoop } from "../agents/query/loop";
@@ -360,10 +359,9 @@ async function createFixture(options: {
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(workspaceRoot);
   const projectContext: ProjectContext = {
+    ...createTestProjectContext(workspaceRoot),
     project: { slug: "archcode", name: "ArchCode", workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
     loopState,
     hitl,
     memory: new MemoryFileManager({ project: join(workspaceRoot, ".archcode", "memory"), user: join(workspaceRoot, ".archcode", "user-memory") }),
@@ -418,10 +416,9 @@ async function recreateResumeRuntime(fixture: Awaited<ReturnType<typeof createFi
   const approvals = new ProjectApprovalManager(silentLogger);
   await approvals.load(fixture.workspaceRoot);
   const projectContext: ProjectContext = {
+    ...createTestProjectContext(fixture.workspaceRoot),
     project: { slug: "archcode", name: "ArchCode", workspaceRoot: fixture.workspaceRoot, addedAt: new Date().toISOString() },
     goalState,
-    goalArtifacts: new GoalArtifactManager(fixture.workspaceRoot),
-    goalMemory: new GoalMemoryManager(fixture.workspaceRoot),
     loopState,
     hitl,
     memory: new MemoryFileManager({ project: join(fixture.workspaceRoot, ".archcode", "memory"), user: join(fixture.workspaceRoot, ".archcode", "user-memory") }),

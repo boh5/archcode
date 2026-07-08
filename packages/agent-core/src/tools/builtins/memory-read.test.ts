@@ -3,15 +3,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createMemoryReadTool } from "./memory-read";
 import { MemoryFileManager } from "../../memory";
-import { GoalArtifactManager } from "../../goals/artifacts";
-import { GoalMemoryManager } from "../../goals/goal-memory";
-import { GoalStateManager } from "../../goals/state";
-import { HitlService } from "../../hitl/service";
-import { LoopStateManager } from "../../loops/state";
 import { storeManager } from "../../store/store";
 import type { ProjectContext } from "../../projects/types";
-import { silentLogger } from "../../logger";
-import { ProjectApprovalManager } from "../permission";
 import {
   DEFAULT_MAX_INDEX_LINES,
   DEFAULT_MAX_PREFERENCES_BYTES,
@@ -28,6 +21,7 @@ import { TOOL_ERROR_META_KEY, inferToolErrorKindFromResult } from "../errors";
 import { SkillService } from "../../skills";
 import { createMockStore } from "../../store/test-helpers";
 import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { createTestProjectContext } from "../test-project-context";
 
 // ---------------------------------------------------------------------------
 // Test setup
@@ -81,14 +75,9 @@ function createIndexEntries(n: number): string {
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   const workspaceRoot = overrides.projectContext?.project.workspaceRoot ?? testDir;
   const projectContext: ProjectContext = overrides.projectContext ?? {
+    ...createTestProjectContext(workspaceRoot),
     project: { slug: "memory-read", name: "Memory Read", workspaceRoot, addedAt: new Date().toISOString() },
-    goalState: new GoalStateManager(workspaceRoot),
-    goalArtifacts: new GoalArtifactManager(workspaceRoot),
-    goalMemory: new GoalMemoryManager(workspaceRoot),
-    loopState: new LoopStateManager(workspaceRoot),
-    hitl: new HitlService(),
     memory: fileManager,
-    approvals: new ProjectApprovalManager(silentLogger),
   };
   return createToolExecutionContext({ store: createMockStore(), storeManager, toolName: "memory_read",
   toolCallId: "call-1",

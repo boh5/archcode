@@ -1,50 +1,124 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
-import { GOAL_HITL_ACTION_ADVANCE_PHASE, TOOL_GOAL_EVIDENCE, TOOL_GOAL_MANAGE, type DoneCondition, type GoalDoneResult, type GoalState, type HitlRecord } from "@archcode/protocol";
-import { GoalArtifactManager } from "../../goals/artifacts";
-import { GoalMemoryManager } from "../../goals/goal-memory";
-import { GoalRunner } from "../../goals/runner";
+import { TOOL_GOAL_MANAGE, type GoalBlockerKind, type GoalReviewReceipt, type GoalState } from "@archcode/protocol";
 import { GoalStateManager } from "../../goals/state";
-import { HitlService, type CreateHitlRecordInput } from "../../hitl/service";
+import { HitlService } from "../../hitl/service";
 import { LoopStateManager } from "../../loops/state";
 import { MemoryFileManager } from "../../memory/file-manager";
 import type { ProjectContext } from "../../projects/types";
-import { ProjectApprovalManager } from "../permission/project-approvals";
-import { inferToolErrorKindFromResult } from "../errors";
-import { createToolErrorResult } from "../errors";
+import { SkillService } from "../../skills";
 import { createMockStore } from "../../store/test-helpers";
 import { storeManager } from "../../store/store";
-import { SkillService } from "../../skills";
-import { silentLogger } from "../../logger";
-import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
 import type { SessionStoreState } from "../../store/types";
-import { GoalEvidenceInputSchema, goalEvidenceTool, GoalManageInputSchema, goalManageTool } from "./goal-tools";
+import { createToolErrorResult, inferToolErrorKindFromResult } from "../errors";
+import { ProjectApprovalManager } from "../permission/project-approvals";
+import { createToolExecutionContext, type ToolExecutionContext, type ToolExecutionResult } from "../types";
+import { silentLogger } from "../../logger";
+import { GoalManageInputSchema, goalManageTool } from "./goal-tools";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-tools");
 const testSkillService = new SkillService({ builtinSkills: {} });
-const GOAL_TOOL_NAMES = [TOOL_GOAL_MANAGE, TOOL_GOAL_EVIDENCE];
 
-const DONE_CONDITION: DoneCondition = {
-  id: "artifact-exists",
-  kind: "file_exists",
-  params: { path: "artifact.txt" },
-};
+interface GoalManageCall {
+  readonly method: string;
+  readonly payload: unknown;
+}
 
-beforeEach(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
-  await mkdir(TMP_DIR, { recursive: true });
-});
+class SimplifiedGoalStateManagerMock {
+  readonly calls: GoalManageCall[] = [];
 
-afterAll(async () => {
-  await rm(TMP_DIR, { recursive: true, force: true });
-});
+  async create(input: {
+    projectId: string;
+    title: string;
+    objective: string;
+    acceptanceCriteria: string;
+  }): Promise<GoalState> {
+    this.calls.push({ method: "create", payload: input });
+    return makeGoalState({
+      projectId: input.projectId,
+      title: input.title,
+      objective: input.objective,
+      acceptanceCriteria: input.acceptanceCriteria,
+    });
+  }
+
+  async start(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState> {
+    const mainSessionId = input.mainSessionId ?? "main-session";
+    this.calls.push({ method: "start", payload: { goalId, mainSessionId } });
+    return makeGoalState({ id: goalId, status: "running", mainSessionId, startedAt: "2026-07-08T00:00:00.000Z" });
+  }
+
+  async block(goalId: string, blocker: {
+    kind: GoalBlockerKind;
+    summary: string;
+    hitlId?: string;
+    source?: string;
+    resumeStatus?: "running" | "reviewing";
+  }): Promise<GoalState> {
+    this.calls.push({ method: "block", payload: { goalId, blocker } });
+    return makeGoalState({
+      id: goalId,
+      status: "blocked",
+      blocker: { ...blocker, createdAt: "2026-07-08T00:00:00.000Z" },
+      pendingHitlIds: blocker.hitlId === undefined ? [] : [blocker.hitlId],
+    });
+  }
+
+  async clearBlocker(goalId: string, hitlId?: string): Promise<GoalState> {
+    this.calls.push({ method: "clearBlocker", payload: { goalId, hitlId } });
+    return makeGoalState({ id: goalId, status: "running" });
+  }
+
+  async beginReview(goalId: string): Promise<GoalState> {
+    this.calls.push({ method: "beginReview", payload: { goalId } });
+    return makeGoalState({ id: goalId, status: "reviewing" });
+  }
+
+  async finalizeReview(goalId: string, input: {
+    readonly verdict: "DONE" | "NOT_DONE";
+    readonly summary: string;
+    readonly evidenceRefs?: readonly GoalReviewReceipt["evidenceRefs"][number][];
+    readonly unresolvedItems?: readonly string[];
+    readonly finalSummary?: string;
+    readonly authorization: { readonly reviewerSessionId?: string };
+  }): Promise<GoalState> {
+    const review: GoalReviewReceipt = {
+      verdict: input.verdict,
+      summary: input.summary,
+      evidenceRefs: [...(input.evidenceRefs ?? [])],
+      reviewerSessionId: input.authorization.reviewerSessionId ?? "review-session",
+      decidedAt: "2026-07-08T00:00:00.000Z",
+      ...(input.unresolvedItems === undefined ? {} : { unresolvedItems: [...input.unresolvedItems] }),
+    };
+    const finalSummary = input.finalSummary;
+    this.calls.push({ method: "finalizeReview", payload: { goalId, review, finalSummary } });
+    return makeGoalState({
+      id: goalId,
+      status: review.verdict === "DONE" ? "done" : "not_done",
+      review,
+      finalSummary,
+      completedAt: review.verdict === "DONE" ? review.decidedAt : undefined,
+      lastFailureSummary: review.verdict === "NOT_DONE" ? review.summary : undefined,
+    });
+  }
+
+  async retry(goalId: string, input: { readonly mainSessionId?: string }): Promise<GoalState> {
+    const mainSessionId = input.mainSessionId ?? "main-session";
+    this.calls.push({ method: "retry", payload: { goalId, mainSessionId } });
+    return makeGoalState({ id: goalId, status: "running", attempt: 2, mainSessionId });
+  }
+
+  async cancel(goalId: string, reason?: string): Promise<GoalState> {
+    this.calls.push({ method: "cancel", payload: { goalId, reason } });
+    return makeGoalState({ id: goalId, status: "cancelled", finalSummary: reason, cancelledAt: "2026-07-08T00:00:00.000Z" });
+  }
+}
 
 function mainStore(overrides: Partial<SessionStoreState> = {}): StoreApi<SessionStoreState> {
   return createMockStore({
-    sessionId: "goal-session",
+    sessionId: "main-session",
     agentName: "orchestrator",
     sessionRole: "main",
     ...overrides,
@@ -61,46 +135,7 @@ function reviewStore(goalId: string, overrides: Partial<SessionStoreState> = {})
   });
 }
 
-function makeCtx(
-  toolName: string,
-  input: unknown,
-  store: StoreApi<SessionStoreState> = mainStore(),
-  projectContext: ProjectContext = createTestProjectContext(),
-): ToolExecutionContext {
-  return createToolExecutionContext({
-    store,
-    storeManager,
-    toolName,
-    toolCallId: `${toolName}-call`,
-    input,
-    step: 1,
-    abort: new AbortController().signal,
-    startedAt: Date.now(),
-    allowedTools: new Set(GOAL_TOOL_NAMES),
-    agentName: store.getState().agentName,
-    agentSkills: [],
-    skillService: testSkillService,
-    projectContext,
-  });
-}
-
-class CapturingHitlService extends HitlService {
-  override async create(input: CreateHitlRecordInput): Promise<HitlRecord> {
-    const now = input.createdAt ?? new Date().toISOString();
-    return {
-      hitlId: "captured-hitl",
-      owner: input.owner,
-      blockingKey: input.blockingKey,
-      source: input.source,
-      status: "pending",
-      displayPayload: input.displayPayload,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-}
-
-function createTestProjectContext(options: { approvalDecision?: "approved" | "denied" } = {}): ProjectContext {
+function makeProjectContext(goalState: SimplifiedGoalStateManagerMock = new SimplifiedGoalStateManagerMock()): ProjectContext {
   return {
     project: {
       slug: "test-project",
@@ -108,11 +143,9 @@ function createTestProjectContext(options: { approvalDecision?: "approved" | "de
       workspaceRoot: TMP_DIR,
       addedAt: new Date().toISOString(),
     },
-    goalState: new GoalStateManager(TMP_DIR),
-    goalArtifacts: new GoalArtifactManager(TMP_DIR),
-    goalMemory: new GoalMemoryManager(TMP_DIR),
+    goalState: goalState as unknown as GoalStateManager,
     loopState: new LoopStateManager(TMP_DIR),
-    hitl: options.approvalDecision === undefined ? new HitlService() : new CapturingHitlService(),
+    hitl: new HitlService(),
     memory: new MemoryFileManager({
       project: join(TMP_DIR, ".archcode", "memory"),
       user: join(TMP_DIR, ".archcode", "user-memory"),
@@ -121,270 +154,96 @@ function createTestProjectContext(options: { approvalDecision?: "approved" | "de
   };
 }
 
+function makeCtx(
+  input: unknown,
+  store: StoreApi<SessionStoreState>,
+  projectContext: ProjectContext,
+): ToolExecutionContext {
+  return createToolExecutionContext({
+    store,
+    storeManager,
+    toolName: TOOL_GOAL_MANAGE,
+    toolCallId: "goal-manage-call",
+    input,
+    step: 1,
+    abort: new AbortController().signal,
+    startedAt: Date.now(),
+    allowedTools: new Set([TOOL_GOAL_MANAGE]),
+    agentName: store.getState().agentName,
+    agentSkills: [],
+    skillService: testSkillService,
+    projectContext,
+  });
+}
+
 async function execute(
   input: unknown,
-  store?: StoreApi<SessionStoreState>,
-  projectContext?: ProjectContext,
-): Promise<ToolExecutionResult> {
+  options: {
+    store?: StoreApi<SessionStoreState>;
+    goalState?: SimplifiedGoalStateManagerMock;
+  } = {},
+): Promise<{ result: ToolExecutionResult; goalState: SimplifiedGoalStateManagerMock }> {
+  const goalState = options.goalState ?? new SimplifiedGoalStateManagerMock();
   const parsed = goalManageTool.inputSchema.safeParse(input);
   if (!parsed.success) {
-    return createToolErrorResult({
-      kind: "schema",
-      zodError: parsed.error,
-      expectedInput: `Tool "${TOOL_GOAL_MANAGE}" input must match its registered Zod schema.`,
-    });
+    return {
+      goalState,
+      result: createToolErrorResult({
+        kind: "schema",
+        zodError: parsed.error,
+        expectedInput: `Tool "${TOOL_GOAL_MANAGE}" input must match its registered Zod schema.`,
+      }),
+    };
   }
 
-  const ctx = makeCtx(TOOL_GOAL_MANAGE, parsed.data, store, projectContext);
-  const output = await goalManageTool.execute(parsed.data, ctx);
-  return typeof output === "string" ? { output, isError: false } : output;
+  const projectContext = makeProjectContext(goalState);
+  const output = await goalManageTool.execute(parsed.data, makeCtx(parsed.data, options.store ?? mainStore(), projectContext));
+  return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
 }
 
-async function executeEvidence(
-  input: unknown,
-  store?: StoreApi<SessionStoreState>,
-  projectContext?: ProjectContext,
-): Promise<ToolExecutionResult> {
-  const parsed = goalEvidenceTool.inputSchema.safeParse(input);
-  if (!parsed.success) {
-    return createToolErrorResult({
-      kind: "schema",
-      zodError: parsed.error,
-      expectedInput: `Tool "${TOOL_GOAL_EVIDENCE}" input must match its registered Zod schema.`,
-    });
-  }
-
-  const ctx = makeCtx(TOOL_GOAL_EVIDENCE, parsed.data, store, projectContext);
-  const output = await goalEvidenceTool.execute(parsed.data, ctx);
-  return typeof output === "string" ? { output, isError: false } : output;
-}
-
-function validCreateInput(overrides: Record<string, unknown> = {}) {
+function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
   return {
-    action: "create",
+    id: overrides.id ?? "11111111-1111-4111-8111-111111111111",
+    projectId: "test-project",
     title: "Ship goal tools",
-    doneConditions: [DONE_CONDITION],
-    retryPolicy: { maxRetries: 3, backoffMs: 0, escalateOnFailure: true },
-    approvalPoints: [] as string[],
-    author: "orchestrator",
+    objective: "Simplify Goal tools.",
+    acceptanceCriteria: "The simplified lifecycle is enforced.",
+    status: "draft",
+    attempt: 1,
+    pendingHitlIds: [],
+    approvalRefs: [],
+    childSessionIds: [],
+    createdAt: "2026-07-08T00:00:00.000Z",
+    updatedAt: "2026-07-08T00:00:00.000Z",
     ...overrides,
   };
 }
 
-async function createDraftGoal(): Promise<GoalState> {
-  await writeFile(join(TMP_DIR, "artifact.txt"), "done\n");
-  const result = await execute(validCreateInput());
-  expect(result.isError).toBe(false);
-  return JSON.parse(result.output) as GoalState;
-}
-
-async function createLockedGoal(store = mainStore({ sessionId: "locker-session" })): Promise<GoalState> {
-  const draft = await createDraftGoal();
-  const locked = await execute({ action: "lock", goalId: draft.id }, store);
-  expect(locked.isError).toBe(false);
-  return JSON.parse(locked.output) as GoalState;
-}
-
-async function createRunningReviewGoal(): Promise<GoalState> {
-  const store = mainStore({ sessionId: "main-session" });
-  const locked = await createLockedGoal(store);
-  const started = await execute({ action: "start", goalId: locked.id }, store);
-  expect(started.isError).toBe(false);
-  const build = await execute({ action: "advance_phase", goalId: locked.id, nextPhase: "build" }, store);
-  expect(build.isError).toBe(false);
-  const review = await execute({ action: "advance_phase", goalId: locked.id, nextPhase: "review" }, store);
-  expect(review.isError).toBe(false);
-  return JSON.parse(review.output) as GoalState;
-}
-
-async function createRunningReviewGoalForReviewer(reviewerAgent: string): Promise<GoalState> {
-  const store = mainStore({ sessionId: "main-session" });
-  const draft = await createDraftGoal();
-  await new GoalStateManager(TMP_DIR).patch(draft.id, { reviewerAgent });
-  const locked = await execute({ action: "lock", goalId: draft.id }, store);
-  expect(locked.isError).toBe(false);
-  const started = await execute({ action: "start", goalId: draft.id }, store);
-  expect(started.isError).toBe(false);
-  const build = await execute({ action: "advance_phase", goalId: draft.id, nextPhase: "build" }, store);
-  expect(build.isError).toBe(false);
-  const review = await execute({ action: "advance_phase", goalId: draft.id, nextPhase: "review" }, store);
-  expect(review.isError).toBe(false);
-  return JSON.parse(review.output) as GoalState;
-}
-
-async function recordPassingEvidence(goalId: string): Promise<GoalState> {
-  const manager = new GoalStateManager(TMP_DIR);
-  const runner = new GoalRunner({
-    goalStateManager: manager,
-    goalArtifacts: new GoalArtifactManager(TMP_DIR),
-    hitlService: {
-      create: async (input) => ({
-        hitlId: crypto.randomUUID(),
-        owner: input.owner,
-        blockingKey: input.blockingKey,
-        source: input.source,
-        status: "pending",
-        displayPayload: input.displayPayload,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-      list: async () => [],
-    },
-    workspaceRoot: TMP_DIR,
-    createSession: async () => "main-session",
-  });
-  return runner.recordAuthorizedReviewerDoneResult(goalId, DONE_CONDITION.id, {
-    conditionId: DONE_CONDITION.id,
-    passed: true,
-    evidence: "artifact.txt exists",
-    checkedAt: new Date().toISOString(),
-  }, {
-    agentName: "reviewer",
-    sessionRole: "review",
-    sessionGoalId: goalId,
-  });
-}
-
-async function expectManageDeniedWithoutStatusMutation(
-  input: Record<string, unknown>,
-  store: StoreApi<SessionStoreState>,
-  expectedCode: string,
-) {
-  const manager = new GoalStateManager(TMP_DIR);
-  const before = typeof input.goalId === "string" ? await manager.read(input.goalId) : undefined;
-
-  const result = await execute(input, store);
-
-  expect(result.isError).toBe(true);
-  expect(result.output).toContain(expectedCode);
-  if (before) {
-    expect(await manager.read(before.id)).toMatchObject({ status: before.status, phase: before.phase });
-  }
-  return result;
-}
-
-async function expectEvidenceDeniedWithoutStatusMutation(
-  input: Record<string, unknown>,
-  store: StoreApi<SessionStoreState>,
-  expectedCode: string,
-) {
-  const manager = new GoalStateManager(TMP_DIR);
-  const before = typeof input.goalId === "string" ? await manager.read(input.goalId) : undefined;
-
-  const result = await executeEvidence(input, store);
-
-  expect(result.isError).toBe(true);
-  expect(result.output).toContain(expectedCode);
-  if (before) {
-    expect(await manager.read(before.id)).toMatchObject({ status: before.status, phase: before.phase });
-  }
-  return result;
+function validEvidenceRef() {
+  return {
+    kind: "test_output",
+    ref: "bun test packages/agent-core/src/tools/builtins/goal-tools.test.ts",
+    summary: "Targeted goal tool tests passed.",
+  };
 }
 
 describe("goal_manage builtin tool", () => {
-  it("exports only the new lifecycle descriptor from the goal-tools barrel", () => {
+  it("exports only the simplified lifecycle descriptor from the goal-tools barrel", () => {
     expect(goalManageTool.name).toBe(TOOL_GOAL_MANAGE);
+    expect(goalManageTool.description).toContain("create, start, block, resume, begin_review, finalize_review, retry, or cancel");
   });
 
-  it("create creates a draft goal through GoalRunner.createDraft", async () => {
-    const result = await execute(validCreateInput({ approvalPoints: ["after_plan"] }));
-
-    expect(result.isError).toBe(false);
-    const goal = JSON.parse(result.output) as GoalState;
-    expect(goal).toMatchObject({
-      projectId: "test-project",
-      title: "Ship goal tools",
-      status: "draft",
-      phase: "plan",
-      author: "orchestrator",
-      retryCount: 0,
-      retryPolicy: { maxRetries: 3, backoffMs: 0, escalateOnFailure: true },
-      approvalPoints: ["after_plan"],
-    });
-    expect(goal.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    expect(goal.doneConditions).toHaveLength(1);
-
-    const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
-    expect(persisted.status).toBe("draft");
-  });
-
-  it("lock locks a draft goal through GoalRunner.lockDraft and records the main session id", async () => {
-    const draft = await createDraftGoal();
-    const store = mainStore({ sessionId: "session-locker" });
-
-    const result = await execute({ action: "lock", goalId: draft.id }, store);
-
-    expect(result.isError).toBe(false);
-    const goal = JSON.parse(result.output) as GoalState;
-    expect(goal).toMatchObject({ id: draft.id, status: "locked", lockedBy: "session-locker" });
-    expect(goal.lockedAt).toBeString();
-  });
-
-  it("start claims a locked goal through GoalRunner.claimStart for the current main session", async () => {
-    const store = mainStore({ sessionId: "main-session" });
-    const locked = await createLockedGoal(store);
-
-    const result = await execute({ action: "start", goalId: locked.id }, store);
-
-    expect(result.isError).toBe(false);
-    const goal = JSON.parse(result.output) as GoalState;
-    expect(goal).toMatchObject({ id: locked.id, status: "running", mainSessionId: "main-session", phase: "plan" });
-  });
-
-  it("advance_phase delegates to GoalRunner.advancePhase", async () => {
-    const store = mainStore({ sessionId: "main-session" });
-    const locked = await createLockedGoal(store);
-    await execute({ action: "start", goalId: locked.id }, store);
-
-    const build = await execute({ action: "advance_phase", goalId: locked.id, nextPhase: "build" }, store);
-    const review = await execute({ action: "advance_phase", goalId: locked.id, nextPhase: "review" }, store);
-
-    expect(build.isError).toBe(false);
-    expect(JSON.parse(build.output)).toMatchObject({ id: locked.id, status: "running", phase: "build" });
-    expect(review.isError).toBe(false);
-    expect(JSON.parse(review.output)).toMatchObject({ id: locked.id, status: "running", phase: "review" });
-  });
-
-  it("advance_phase requests owner-local after_plan approval and pauses", async () => {
-    const projectContext = createTestProjectContext({ approvalDecision: "denied" });
-    await writeFile(join(TMP_DIR, "artifact.txt"), "done\n");
-    const store = mainStore({ sessionId: "main-session" });
-    const created = await execute(validCreateInput({ approvalPoints: ["after_plan"] }), store, projectContext);
-    expect(created.isError).toBe(false);
-    const goal = JSON.parse(created.output) as GoalState;
-    await execute({ action: "lock", goalId: goal.id }, store, projectContext);
-    await execute({ action: "start", goalId: goal.id }, store, projectContext);
-
-    const result = await execute({ action: "advance_phase", goalId: goal.id, nextPhase: "build" }, store, projectContext);
-
-    expect(result.isError).toBe(false);
-    const paused = JSON.parse(result.output) as GoalState;
-    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "plan", lastError: "Waiting for after_plan approval" });
-    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: GOAL_HITL_ACTION_ADVANCE_PHASE, approvalPoint: "after_plan" });
-  });
-
-  it("retry delegates to GoalRunner.handleFailedVerification", async () => {
-    const reviewGoal = await createRunningReviewGoal();
-    const manager = new GoalStateManager(TMP_DIR);
-    await manager.transitionStatus(reviewGoal.id, "failed");
-
-    const result = await execute({ action: "retry", goalId: reviewGoal.id }, mainStore({ sessionId: "retry-session" }));
-
-    expect(result.isError).toBe(false);
-    const goal = JSON.parse(result.output) as GoalState;
-    expect(goal).toMatchObject({ id: reviewGoal.id, status: "running", phase: "plan", retryCount: 1, mainSessionId: "retry-session" });
-    expect(goal.lastError).toBe("Retry requested by goal_manage.retry");
-  });
-
-  it("rejects invalid actions plus irrelevant and extra fields for every strict action schema", async () => {
-    const draft = await createDraftGoal();
+  it("accepts exactly the simplified action allowlist and rejects legacy fields", () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
     const validCases = [
-      validCreateInput(),
-      { action: "lock", goalId: draft.id },
-      { action: "start", goalId: draft.id },
-      { action: "advance_phase", goalId: draft.id, nextPhase: "build" },
-      { action: "retry", goalId: draft.id },
-      { action: "finalize_review", goalId: draft.id, outcome: "NOT_DONE", summary: "Needs repair" },
+      { action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "start", goalId },
+      { action: "block", goalId, kind: "approval", summary: "Waiting on approval", hitlId: "hitl-1", source: "test", resumeStatus: "running" },
+      { action: "resume", goalId, hitlId: "hitl-1" },
+      { action: "begin_review", goalId, reviewerSessionId: "review-session" },
+      { action: "finalize_review", goalId, verdict: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()], finalSummary: "Done" },
+      { action: "retry", goalId },
+      { action: "cancel", goalId, reason: "No longer needed" },
     ];
 
     for (const input of validCases) {
@@ -392,251 +251,121 @@ describe("goal_manage builtin tool", () => {
       expect(GoalManageInputSchema.safeParse({ ...input, extra: true }).success).toBe(false);
     }
 
-    expect(GoalManageInputSchema.safeParse({ ...validCreateInput(), goalId: draft.id }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "lock", goalId: draft.id, title: "irrelevant" }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "start", goalId: draft.id, title: "irrelevant" }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "advance_phase", goalId: draft.id, nextPhase: "build", outcome: "DONE" }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "retry", goalId: draft.id, nextPhase: "review" }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId: draft.id, outcome: "NOT_DONE", nextPhase: "build" }).success).toBe(false);
-    expect(GoalManageInputSchema.safeParse({ action: "complete", goalId: draft.id }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "lock", goalId }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "advance_phase", goalId, nextPhase: "build" }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "create", title: "Goal", doneConditions: [], retryPolicy: {}, approvalPoints: [] }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId, outcome: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()] }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId, verdict: "DONE", summary: "Verified", evidenceRefs: [] }).success).toBe(false);
+  });
 
-    const result = await execute({ action: "lock", goalId: draft.id, extra: true });
+  it("dispatches create/start/block/resume/begin_review/retry/cancel to the simplified manager", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
+    const goalState = new SimplifiedGoalStateManagerMock();
+    const inputs = [
+      { action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "start", goalId },
+      { action: "block", goalId, kind: "permission", summary: "Need permission", source: "tool", resumeStatus: "reviewing" },
+      { action: "resume", goalId, hitlId: "hitl-1" },
+      { action: "begin_review", goalId, reviewerSessionId: "review-session" },
+      { action: "retry", goalId },
+      { action: "cancel", goalId, reason: "Stopped" },
+    ];
+
+    for (const input of inputs) {
+      const { result } = await execute(input, { goalState });
+      expect(result.isError).toBe(false);
+    }
+
+    expect(goalState.calls.map((call) => call.method)).toEqual([
+      "create",
+      "start",
+      "block",
+      "clearBlocker",
+      "beginReview",
+      "retry",
+      "cancel",
+    ]);
+  });
+
+  it("denies lifecycle actions for Reviewer sessions", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
+
+    const { result, goalState } = await execute(
+      { action: "start", goalId },
+      { store: reviewStore(goalId) },
+    );
 
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
+    expect(result.output).toContain("GOAL_MANAGE_ACTION_DENIED");
+    expect(goalState.calls).toEqual([]);
   });
 
-  it("denies finalize_review for orchestrator main sessions", async () => {
-    const goal = await createRunningReviewGoal();
+  it("rejects finalize_review for non-Reviewer sessions before mutation", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
 
-    await expectManageDeniedWithoutStatusMutation(
-      { action: "finalize_review", goalId: goal.id, outcome: "NOT_DONE", summary: "Needs repair" },
-      mainStore({ sessionId: "main-session" }),
-      "GOAL_REVIEWER_REQUIRED",
-    );
-  });
-
-  it("allows the matching reviewer review session to finalize NOT_DONE", async () => {
-    const goal = await createRunningReviewGoal();
-
-    const result = await execute(
-      { action: "finalize_review", goalId: goal.id, outcome: "NOT_DONE", summary: "Required artifact evidence is still missing." },
-      reviewStore(goal.id),
-    );
-
-    expect(result.isError).toBe(false);
-    const failed = JSON.parse(result.output) as GoalState;
-    expect(failed).toMatchObject({ id: goal.id, status: "running", phase: "plan", retryCount: 1 });
-    expect(failed.mainSessionId).toBeString();
-    expect(failed.mainSessionId).not.toBe("review-session");
-    expect(failed.reviewReport).toMatchObject({ outcome: "NOT_DONE", summary: "Required artifact evidence is still missing." });
-  });
-
-  it("denies reviewer lifecycle actions", async () => {
-    const draft = await createDraftGoal();
-
-    await expectManageDeniedWithoutStatusMutation(
-      { action: "lock", goalId: draft.id },
-      reviewStore(draft.id),
-      "GOAL_MANAGE_ACTION_DENIED",
-    );
-  });
-
-  it("denies finalize_review for wrong goal sessions and wrong reviewer agents", async () => {
-    const goal = await createRunningReviewGoalForReviewer("qa-reviewer");
-    const otherGoal = await createRunningReviewGoal();
-
-    await expectManageDeniedWithoutStatusMutation(
-      { action: "finalize_review", goalId: goal.id, outcome: "NOT_DONE" },
-      reviewStore(goal.id),
-      "GOAL_REVIEWER_REQUIRED",
-    );
-
-    await expectManageDeniedWithoutStatusMutation(
-      { action: "finalize_review", goalId: goal.id, outcome: "NOT_DONE" },
-      reviewStore(otherGoal.id, { agentName: "qa-reviewer" }),
-      "GOAL_REVIEWER_REQUIRED",
-    );
-  });
-
-  it("finalize_review DONE cannot bypass missing Done Condition evidence", async () => {
-    const goal = await createRunningReviewGoal();
-
-    const result = await execute({ action: "finalize_review", goalId: goal.id, outcome: "DONE" }, reviewStore(goal.id));
+    const { result, goalState } = await execute({
+      action: "finalize_review",
+      goalId,
+      verdict: "NOT_DONE",
+      summary: "Missing test evidence.",
+      evidenceRefs: [],
+    });
 
     expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("GOAL_REVIEW_PHASE_REQUIRED");
-    const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
-    expect(persisted.status).toBe("running");
-    expect(persisted.reviewReport).toBeUndefined();
+    expect(inferToolErrorKindFromResult(result)).toBe("permission-denied");
+    expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+    expect(goalState.calls).toEqual([]);
   });
 
-  it("allows matching reviewer to finalize DONE after required evidence", async () => {
-    const goal = await createRunningReviewGoal();
-    await recordPassingEvidence(goal.id);
+  it("allows the matching Reviewer review session to finalize a receipt", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
 
-    const result = await execute(
-      { action: "finalize_review", goalId: goal.id, outcome: "DONE", summary: "All required Done Conditions passed." },
-      reviewStore(goal.id),
+    const { result, goalState } = await execute(
+      {
+        action: "finalize_review",
+        goalId,
+        verdict: "DONE",
+        summary: "All acceptance criteria are verified.",
+        evidenceRefs: [validEvidenceRef()],
+        unresolvedItems: [],
+        finalSummary: "Goal completed.",
+      },
+      { store: reviewStore(goalId) },
     );
 
     expect(result.isError).toBe(false);
     const completed = JSON.parse(result.output) as GoalState;
-    expect(completed.status).toBe("completed");
-    expect(completed.reviewReport).toMatchObject({ outcome: "DONE", summary: "All required Done Conditions passed." });
-  });
-
-  it("finalize_review DONE requests owner-local before_complete approval and pauses", async () => {
-    const projectContext = createTestProjectContext({ approvalDecision: "denied" });
-    await writeFile(join(TMP_DIR, "artifact.txt"), "done\n");
-    const store = mainStore({ sessionId: "main-session" });
-    const created = await execute(validCreateInput({ approvalPoints: ["before_complete"] }), store, projectContext);
-    expect(created.isError).toBe(false);
-    const goal = JSON.parse(created.output) as GoalState;
-    await execute({ action: "lock", goalId: goal.id }, store, projectContext);
-    await execute({ action: "start", goalId: goal.id }, store, projectContext);
-    await execute({ action: "advance_phase", goalId: goal.id, nextPhase: "build" }, store, projectContext);
-    await execute({ action: "advance_phase", goalId: goal.id, nextPhase: "review" }, store, projectContext);
-    await new GoalRunner({
-      goalStateManager: projectContext.goalState,
-      goalArtifacts: projectContext.goalArtifacts,
-      hitlService: projectContext.hitl,
-      workspaceRoot: TMP_DIR,
-      createSession: async () => "main-session",
-    }).recordAuthorizedReviewerDoneResult(goal.id, DONE_CONDITION.id, {
-      conditionId: DONE_CONDITION.id,
-      passed: true,
-      evidence: "artifact.txt exists",
-      checkedAt: new Date().toISOString(),
-    }, {
-      agentName: "reviewer",
-      sessionRole: "review",
-      sessionGoalId: goal.id,
+    expect(completed.status).toBe("done");
+    expect(completed.review).toMatchObject({
+      verdict: "DONE",
+      summary: "All acceptance criteria are verified.",
+      reviewerSessionId: "review-session",
     });
-
-    const result = await execute({ action: "finalize_review", goalId: goal.id, outcome: "DONE" }, reviewStore(goal.id), projectContext);
-
-    expect(result.isError).toBe(false);
-    const paused = JSON.parse(result.output) as GoalState;
-    expect(paused).toMatchObject({ id: goal.id, status: "paused", phase: "review", lastError: "Waiting for before_complete approval" });
-    expect(paused.resumeCheckpoint).toMatchObject({ hitlId: "captured-hitl", kind: "goal_approval", action: "complete", approvalPoint: "before_complete" });
-    expect(paused.reviewReport?.outcome).toBe("DONE");
+    expect(goalState.calls).toHaveLength(1);
+    expect(goalState.calls[0]).toMatchObject({ method: "finalizeReview" });
   });
 
-  it("returns GOAL_NOT_FOUND for missing goals", async () => {
-    const missingGoalId = crypto.randomUUID();
+  it("denies finalize_review for wrong roles and wrong Goal-scoped review sessions", async () => {
+    const goalId = "11111111-1111-4111-8111-111111111111";
+    const otherGoalId = "22222222-2222-4222-8222-222222222222";
+    const input = {
+      action: "finalize_review",
+      goalId,
+      verdict: "NOT_DONE",
+      summary: "More work required.",
+      evidenceRefs: [],
+    };
 
-    const result = await execute({ action: "lock", goalId: missingGoalId });
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("GOAL_NOT_FOUND");
-  });
-});
-
-describe("goal_evidence builtin tool", () => {
-  it("exports the Reviewer evidence descriptor from the goal-tools barrel", () => {
-    expect(goalEvidenceTool.name).toBe(TOOL_GOAL_EVIDENCE);
-  });
-
-  it("records passing evidence through GoalRunner and transitions running goals to verifying without finalizing", async () => {
-    const goal = await createRunningReviewGoal();
-
-    const result = await executeEvidence(
-      { action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id },
-      reviewStore(goal.id),
-    );
-
-    expect(result.isError).toBe(false);
-    const done = JSON.parse(result.output) as GoalDoneResult;
-    expect(done).toMatchObject({ conditionId: DONE_CONDITION.id, passed: true });
-    const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
-    expect(persisted.status).toBe("verifying");
-    expect(persisted.phase).toBe("review");
-    expect(persisted.doneResults[DONE_CONDITION.id]).toMatchObject({ conditionId: DONE_CONDITION.id, passed: true });
-    expect(persisted.reviewReport).toBeUndefined();
-  });
-
-  it("records failing evidence and still preserves the running to verifying transition", async () => {
-    await rm(join(TMP_DIR, "artifact.txt"), { force: true });
-    const goal = await createRunningReviewGoal();
-    await rm(join(TMP_DIR, "artifact.txt"), { force: true });
-
-    const result = await executeEvidence(
-      { action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id },
-      reviewStore(goal.id),
-    );
-
-    expect(result.isError).toBe(false);
-    const done = JSON.parse(result.output) as GoalDoneResult;
-    expect(done).toMatchObject({ conditionId: DONE_CONDITION.id, passed: false });
-    const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
-    expect(persisted.status).toBe("verifying");
-    expect(persisted.doneResults[DONE_CONDITION.id]).toMatchObject({ passed: false });
-    expect(persisted.reviewReport).toBeUndefined();
-  });
-
-  it("denies orchestrator, wrong roles, wrong goals, and wrong reviewer agents", async () => {
-    const goal = await createRunningReviewGoalForReviewer("qa-reviewer");
-    const otherGoal = await createRunningReviewGoal();
-    const input = { action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id };
-
-    await expectEvidenceDeniedWithoutStatusMutation(input, mainStore({ sessionId: "main-session" }), "GOAL_REVIEWER_REQUIRED");
-    await expectEvidenceDeniedWithoutStatusMutation(input, reviewStore(goal.id, { agentName: "qa-reviewer", sessionRole: "main" }), "GOAL_REVIEWER_REQUIRED");
-    await expectEvidenceDeniedWithoutStatusMutation(input, reviewStore(otherGoal.id, { agentName: "qa-reviewer" }), "GOAL_REVIEWER_REQUIRED");
-    await expectEvidenceDeniedWithoutStatusMutation(input, reviewStore(goal.id), "GOAL_REVIEWER_REQUIRED");
-  });
-
-  it("denies wrong phase and wrong status before evaluating evidence", async () => {
-    const store = mainStore({ sessionId: "main-session" });
-    const locked = await createLockedGoal(store);
-    const started = await execute({ action: "start", goalId: locked.id }, store);
-    expect(started.isError).toBe(false);
-    await expectEvidenceDeniedWithoutStatusMutation(
-      { action: "check_done", goalId: locked.id, conditionId: DONE_CONDITION.id },
-      reviewStore(locked.id),
-      "GOAL_REVIEW_PHASE_REQUIRED",
-    );
-
-    const reviewGoal = await createRunningReviewGoal();
-    await new GoalStateManager(TMP_DIR).transitionStatus(reviewGoal.id, "paused");
-    await expectEvidenceDeniedWithoutStatusMutation(
-      { action: "check_done", goalId: reviewGoal.id, conditionId: DONE_CONDITION.id },
-      reviewStore(reviewGoal.id),
-      "GOAL_REVIEW_PHASE_REQUIRED",
-    );
-  });
-
-  it("returns GOAL_CONDITION_NOT_FOUND for missing Done Conditions", async () => {
-    const goal = await createRunningReviewGoal();
-
-    const result = await executeEvidence(
-      { action: "check_done", goalId: goal.id, conditionId: "missing-condition" },
-      reviewStore(goal.id),
-    );
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("workspace");
-    expect(result.output).toContain("GOAL_CONDITION_NOT_FOUND");
-    const persisted = await new GoalStateManager(TMP_DIR).read(goal.id);
-    expect(persisted.status).toBe("running");
-    expect(persisted.doneResults).toEqual({});
-  });
-
-  it("rejects invalid actions plus irrelevant and extra fields through the strict action schema", async () => {
-    const goal = await createRunningReviewGoal();
-    const validInput = { action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id };
-
-    expect(GoalEvidenceInputSchema.safeParse(validInput).success).toBe(true);
-    expect(GoalEvidenceInputSchema.safeParse({ ...validInput, extra: true }).success).toBe(false);
-    expect(GoalEvidenceInputSchema.safeParse({ action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id, outcome: "DONE" }).success).toBe(false);
-    expect(GoalEvidenceInputSchema.safeParse({ action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id, summary: "irrelevant" }).success).toBe(false);
-    expect(GoalEvidenceInputSchema.safeParse({ action: "finalize_review", goalId: goal.id, conditionId: DONE_CONDITION.id }).success).toBe(false);
-
-    const result = await executeEvidence({ action: "check_done", goalId: goal.id, conditionId: DONE_CONDITION.id, extra: true }, reviewStore(goal.id));
-
-    expect(result.isError).toBe(true);
-    expect(inferToolErrorKindFromResult(result)).toBe("schema");
+    for (const store of [
+      reviewStore(goalId, { sessionRole: "main" }),
+      reviewStore(otherGoalId),
+      mainStore({ agentName: "build", sessionRole: "review", goalId }),
+    ]) {
+      const { result, goalState } = await execute(input, { store });
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("GOAL_REVIEWER_REQUIRED");
+      expect(goalState.calls).toEqual([]);
+    }
   });
 });

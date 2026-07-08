@@ -20,16 +20,7 @@ export interface LoopRunnerSessionRuntime {
 }
 
 export interface LoopRunnerGoalStateManager {
-  create(
-    projectId: string,
-    title: string,
-    author: string,
-    doneConditions: GoalState["doneConditions"],
-    retryPolicy: GoalState["retryPolicy"],
-    approvalPoints: GoalState["approvalPoints"],
-    reviewerAgent: string,
-  ): Promise<GoalState>;
-  lock(goalId: string, lockedBy: string): Promise<GoalState>;
+  create(input: { projectId: string; title: string; objective: string; acceptanceCriteria: string; loopId?: string }): Promise<GoalState>;
 }
 
 export interface LoopRunnerGoalRuntime {
@@ -299,18 +290,15 @@ export class LoopRunner {
     let executionStarted = false;
 
     try {
-      const draft = await goalStateManager.create(
-        input.loop.projectId,
-        template.title,
-        template.author,
-        template.doneConditions,
-        template.retryPolicy,
-        template.approvalPoints,
-        template.reviewerAgent,
-      );
+      const draft = await goalStateManager.create({
+        projectId: input.loop.projectId,
+        title: template.title,
+        objective: template.objective,
+        acceptanceCriteria: template.acceptanceCriteria,
+        loopId: input.loop.loopId,
+      });
       goalId = draft.id;
-      const locked = await goalStateManager.lock(draft.id, template.author);
-      const started = await goalRunner.start(locked.id, {
+      const started = await goalRunner.start(draft.id, {
         loopId: input.loop.loopId,
         sessionTitle: `Loop Goal: ${input.loop.config.title}`,
         workspaceRoot: scope.workspaceRoot,
@@ -786,10 +774,12 @@ function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
     "Bootstrap an ArchCode Goal run.",
     `Goal ID: ${goal.id}`,
     `Goal title JSON: ${JSON.stringify(goal.title)}`,
+    `Goal objective JSON: ${JSON.stringify(goal.objective)}`,
+    `Goal acceptance criteria JSON: ${JSON.stringify(goal.acceptanceCriteria)}`,
     `Loop ID: ${loop.loopId}`,
     `Loop title JSON: ${JSON.stringify(loop.config.title)}`,
     "Your first action must be calling goal_manage with action=\"start\" for this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_manage.start succeeds.",
-    "After goal_manage.start succeeds, load the Goal state, follow the Goal operating loop, keep Done Conditions locked, use Plan/Build/Reviewer delegation, record Reviewer evidence with goal_evidence action=\"check_done\", and report progress.",
+    "After goal_manage.start succeeds, load the Goal state, work against the natural-language objective and acceptance criteria, use Plan/Build/Reviewer delegation, and have Reviewer finalize the review receipt through goal_manage.finalize_review.",
   ].join("\n");
 }
 

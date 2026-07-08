@@ -75,10 +75,8 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("goal_manage");
     expect(result).toContain("action=create");
-    expect(result).toContain("action=lock");
     expect(result).toContain("action=start");
-    expect(result).toContain("action=advance_phase build");
-    expect(result).toContain("action=advance_phase review");
+    expect(result).toContain("action=begin_review");
     expect(result).toContain("action=retry");
     expect(result).not.toContain("goal_create");
     expect(result).not.toContain("goal_lock");
@@ -99,7 +97,7 @@ describe("buildRoleSection", () => {
 
     expect(result).toContain("read-only");
     expect(result).toContain("implementation guidance");
-    expect(result).toContain("scope, constraints, ordered steps, tests, and risk notes");
+    expect(result).toContain("scope, constraints, ordered steps, tests, evidence refs, and risk notes");
   });
 
   test("build role prompt contains TDD instruction and verification evidence contract", () => {
@@ -121,8 +119,9 @@ describe("buildRoleSection", () => {
     expect(result).toContain("DONE");
     expect(result).toContain("NOT_DONE");
     expect(result).not.toContain("ESCALATE_HUMAN");
-    expect(result).toContain("goal_evidence");
     expect(result).toContain("goal_manage.finalize_review");
+    expect(result).toContain("DONE requires evidence");
+    expect(result).toContain("Insufficient evidence means NOT_DONE");
     expect(result).not.toContain("goal_check_done");
     expect(result).toContain("no file_write, file_edit, bash, or ast_grep_replace");
   });

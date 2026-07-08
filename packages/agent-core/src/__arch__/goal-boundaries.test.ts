@@ -3,12 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
 
 import { agentDefinitions } from "../agents/definitions";
-import {
-  TOOL_GOAL_ARTIFACT_READ,
-  TOOL_GOAL_ARTIFACT_WRITE,
-  TOOL_GOAL_EVIDENCE,
-  TOOL_GOAL_MANAGE,
-} from "../tools/names";
+import { TOOL_GOAL_MANAGE } from "../tools/names";
 
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
@@ -79,9 +74,12 @@ const directLifecycleMutationPatterns = [
 
 const activeGoalToolNames = [
   TOOL_GOAL_MANAGE,
-  TOOL_GOAL_EVIDENCE,
-  TOOL_GOAL_ARTIFACT_READ,
-  TOOL_GOAL_ARTIFACT_WRITE,
+] as const;
+
+const removedGoalToolNames = [
+  "goal_evidence",
+  "goal_artifact_read",
+  "goal_artifact_write",
 ] as const;
 
 const removedGoalExecutableToolNames = [
@@ -420,25 +418,20 @@ describe("Goal migration boundaries", () => {
   });
 
   test("active Goal tool allowlists match the agent-driven lifecycle boundary", () => {
-    expect(goalToolsFor("orchestrator")).toEqual([TOOL_GOAL_MANAGE, TOOL_GOAL_ARTIFACT_READ]);
-    expect(goalToolsFor("plan")).toEqual([TOOL_GOAL_ARTIFACT_READ, TOOL_GOAL_ARTIFACT_WRITE]);
-    expect(goalToolsFor("build")).toEqual([TOOL_GOAL_ARTIFACT_READ, TOOL_GOAL_ARTIFACT_WRITE]);
-    expect(goalToolsFor("reviewer")).toEqual([
-      TOOL_GOAL_EVIDENCE,
-      TOOL_GOAL_MANAGE,
-      TOOL_GOAL_ARTIFACT_READ,
-      TOOL_GOAL_ARTIFACT_WRITE,
-    ]);
+    expect(goalToolsFor("orchestrator")).toEqual([TOOL_GOAL_MANAGE]);
+    expect(goalToolsFor("plan")).toEqual([]);
+    expect(goalToolsFor("build")).toEqual([]);
+    expect(goalToolsFor("reviewer")).toEqual([TOOL_GOAL_MANAGE]);
     expect(goalToolsFor("explore")).toEqual([]);
     expect(goalToolsFor("librarian")).toEqual([]);
   });
 
-  test("goal_evidence is exposed only to Reviewer tool allowlists", () => {
-    const exposedTo = agentDefinitions
-      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_EVIDENCE))
-      .map((definition) => definition.name);
-
-    expect(exposedTo).toEqual(["reviewer"]);
+  test("removed Goal evidence and artifact tools are absent from all active allowlists", () => {
+    for (const definition of agentDefinitions) {
+      for (const toolName of removedGoalToolNames) {
+        expect(definition.tools.tools).not.toContain(toolName);
+      }
+    }
   });
 
   test("goal_manage is exposed only to lifecycle roles", () => {
@@ -447,6 +440,20 @@ describe("Goal migration boundaries", () => {
       .map((definition) => definition.name);
 
     expect(exposedTo).toEqual(["orchestrator", "reviewer"]);
+  });
+
+  test("Reviewer keeps finalization authority while non-review roles do not advertise it", () => {
+    const reviewer = agentDefinitions.find((definition) => definition.name === "reviewer");
+    if (!reviewer) throw new Error("Missing reviewer definition");
+
+    expect(reviewer.tools.tools).toContain(TOOL_GOAL_MANAGE);
+    expect(reviewer.rolePrompt).toContain("goal_manage.finalize_review");
+    expect(reviewer.rolePrompt).toContain("DONE requires evidence");
+    expect(reviewer.rolePrompt).toContain("Insufficient evidence means NOT_DONE");
+
+    for (const definition of agentDefinitions.filter((candidate) => candidate.name !== "reviewer")) {
+      expect(definition.rolePrompt).not.toContain("goal_manage.finalize_review");
+    }
   });
 
   test("removed Goal executable names are absent from active agent allowlists and prompts", () => {

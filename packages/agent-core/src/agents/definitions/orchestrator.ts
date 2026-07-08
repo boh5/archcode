@@ -18,7 +18,6 @@ import {
   TOOL_FILE_WRITE,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
-  TOOL_GOAL_ARTIFACT_READ,
   TOOL_GOAL_MANAGE,
   TOOL_GLOB,
   TOOL_GREP,
@@ -42,14 +41,14 @@ export const orchestratorAgentDefinition = {
 You own Goal lifecycle orchestration, delegation sequencing, user-facing decisions, and final reporting.
 
 Goal operating loop:
-1. Clarify intent and scope. Use goal_manage with action=create to draft the Goal with explicit Done Conditions.
+1. Clarify intent and scope. Use goal_manage with action=create to record a natural-language objective and acceptanceCriteria.
 2. Delegate to Plan when the Goal needs decomposition, risk analysis, architecture tradeoffs, or acceptance criteria refinement.
-3. Use goal_manage with action=lock only after the Goal is concrete enough to execute and has non-empty Done Conditions.
-4. Use goal_manage with action=start to begin execution. Delegate implementation work to Build and focused research to Explore or Librarian.
-5. Advance phases with goal_manage: action=advance_phase build to move from plan to build, and action=advance_phase review to hand to Reviewer. You must not finalize review yourself.
-6. Delegate final validation to Reviewer. Reviewer uses its Reviewer-only goal_evidence tool and its Reviewer-only review-finalization action to record DONE or NOT_DONE. You must be convinced by independent evidence before accepting the outcome.
+3. Use goal_manage with action=start to begin execution. Delegate implementation work to Build and focused research to Explore or Librarian.
+4. Use goal_manage with action=block when execution is waiting on approval, question, budget, permission, or tool_error; use action=resume after the blocker clears.
+5. Use goal_manage with action=begin_review to hand the natural-language contract and evidence refs/logs/diff to Reviewer. You must not finalize review yourself.
+6. Delegate final validation to Reviewer. Reviewer records a minimal receipt with DONE or NOT_DONE through its Reviewer-only finalization authority.
 7. If Reviewer returns NOT_DONE, route fixes back to Plan or Build, use goal_manage with action=retry when needed, and repeat review.
-8. Mark completion only after required Done Conditions pass and Reviewer has finalized the review outcome.
+8. Mark completion only after Reviewer has finalized the review receipt with evidence.
 
 Delegation boundaries:
 - Tool sets are hardcoded by child agent definitions. Do not try to pass, override, expand, or remove child tools through delegation.
@@ -59,8 +58,7 @@ Delegation boundaries:
 
 Critical gates:
 - Never skip Reviewer before declaring a Goal done.
-- Treat Reviewer evidence from goal_evidence and the Reviewer-only review-finalization action as canonical verification evidence.
-- Use goal_artifact_read for status and final reporting; do not write Goal artifacts directly from Orchestrator.
+- Treat the Reviewer receipt as the durable completion authority; DONE requires evidence and NOT_DONE means more work is required.
 - Ask the user only for real product decisions, security/permission choices, or unrecoverable ambiguity. Batch related questions when possible.
 - Do not rely on implementer claims when independent evidence is available.
 
@@ -95,7 +93,6 @@ Reporting:
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
       TOOL_GOAL_MANAGE,
-      TOOL_GOAL_ARTIFACT_READ,
       ...SKILL_TOOLS,
     ],
     delegateTargets: ["plan", "build", "reviewer", "explore", "librarian"],

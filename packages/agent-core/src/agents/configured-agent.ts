@@ -11,7 +11,6 @@ import type { MemoryRoots } from "../memory";
 import { ProjectContextResolver } from "../projects/context-resolver";
 import type { ProjectContext } from "../projects/types";
 import { createGoalBudgetEnforcementHooks } from "../goals/budget-enforcement";
-import { shouldExposeOperatorRepairContext } from "../goals/operator-repair-context";
 import { createLoopBudgetEnforcementHooks } from "../loops/budget-hooks";
 import type { ProviderRegistry } from "../provider/index";
 import type { ModelInfo } from "../provider/model";
@@ -199,7 +198,6 @@ export class ConfiguredAgent implements Agent {
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
       const storeState = this.store.getState();
-      const goalRepairContext = await this.loadGoalRepairContext(projectContext, storeState);
       const promptContext: PromptContext = {
         allowedTools,
         workspaceRoot: this.workspaceRoot,
@@ -212,12 +210,10 @@ export class ConfiguredAgent implements Agent {
         ...(this.definition.includeMemoryInPrompt
           ? {
             memoryRoots: this.memoryRoots,
-            goalMemory: projectContext.goalMemory,
             ...(storeState.goalId === undefined ? {} : { goalId: storeState.goalId }),
             ...(storeState.sessionRole === undefined ? {} : { sessionRole: storeState.sessionRole }),
           }
           : {}),
-        ...(goalRepairContext === undefined ? {} : { goalRepairContext }),
       };
       const systemPrompt = await buildSystemPrompt(promptContext);
       const hooks = this.buildHooks(btm, origin);
@@ -460,15 +456,4 @@ export class ConfiguredAgent implements Agent {
       );
   }
 
-  private async loadGoalRepairContext(
-    projectContext: ProjectContext,
-    storeState: SessionStoreState,
-  ): Promise<PromptContext["goalRepairContext"]> {
-    if (storeState.goalId === undefined) return undefined;
-    if (!shouldExposeOperatorRepairContext({ sessionRole: storeState.sessionRole })) return undefined;
-
-    const goal = await projectContext.goalState.read(storeState.goalId);
-    if (goal.reviewReport?.outcome !== "NOT_DONE") return undefined;
-    return goal.repairContext;
-  }
 }

@@ -1,5 +1,5 @@
 import { addUsage, normalizeUsage } from "@archcode/protocol";
-import type { GoalState, GoalTokenBudgetState, NormalizedUsage, ToolChildSessionLink } from "@archcode/protocol";
+import type { GoalBudgetSummary, GoalState, NormalizedUsage, ToolChildSessionLink } from "@archcode/protocol";
 
 import { sessionFileInternals, type SessionFile } from "../store/helpers";
 import type { GoalStateManager } from "./state";
@@ -18,23 +18,22 @@ const EMPTY_USAGE: NormalizedUsage = {
   cachedInputTokens: 0,
 };
 
-export interface GoalTokenBudgetOptions {
+export interface GoalBudgetOptions {
   readonly maxTokens?: number;
-  readonly warningThresholdTokens?: number;
   readonly now?: () => Date;
 }
 
-export interface GoalTokenBudgetCalculation {
-  readonly budget: GoalTokenBudgetState;
+export interface GoalBudgetCalculation {
+  readonly budget: GoalBudgetSummary;
   readonly includedSessionIds: string[];
   readonly excludedMaintenanceSessionIds: string[];
 }
 
-export async function calculateGoalTokenBudget(
+export async function calculateGoalBudget(
   workspaceRoot: string,
   goal: GoalState,
-  options: GoalTokenBudgetOptions = {},
-): Promise<GoalTokenBudgetCalculation> {
+  options: GoalBudgetOptions = {},
+): Promise<GoalBudgetCalculation> {
   const files = await readAllSessionFiles(workspaceRoot);
   const fileById = new Map(files.map((file) => [file.sessionId, file]));
   const childrenByParent = buildChildrenByParent(files);
@@ -79,19 +78,11 @@ export async function calculateGoalTokenBudget(
     .sort()
     .map((sessionId) => normalizeUsage(fileById.get(sessionId)?.stats.usage))
     .reduce((total, current) => addUsage(total, current), EMPTY_USAGE);
-
-  const maxTokens = options.maxTokens ?? goal.tokenBudget?.maxTokens;
-  const warningThresholdTokens = options.warningThresholdTokens ?? goal.tokenBudget?.warningThresholdTokens;
-  const budget: GoalTokenBudgetState = {
-    status: budgetStatus(usage.totalTokens, maxTokens, warningThresholdTokens),
+  const maxTokens = options.maxTokens ?? goal.budget?.maxTokens;
+  const budget: GoalBudgetSummary = {
+    status: maxTokens !== undefined && usage.totalTokens >= maxTokens ? "blocked" : "ok",
+    usedTokens: usage.totalTokens,
     ...(maxTokens === undefined ? {} : { maxTokens }),
-    ...(warningThresholdTokens === undefined ? {} : { warningThresholdTokens }),
-    ...preservedWarningApproval(goal.tokenBudget, warningThresholdTokens),
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    reasoningTokens: usage.reasoningTokens,
-    cachedInputTokens: usage.cachedInputTokens,
-    totalTokens: usage.totalTokens,
     updatedAt: (options.now ?? (() => new Date()))().toISOString(),
   };
 
@@ -102,60 +93,28 @@ export async function calculateGoalTokenBudget(
   };
 }
 
-function preservedWarningApproval(
-  existing: GoalTokenBudgetState | undefined,
-  warningThresholdTokens: number | undefined,
-): Partial<GoalTokenBudgetState> {
-  if (existing?.warningApprovalPoint === undefined || existing.warningApprovedAt === undefined) return {};
-  if (existing.warningApprovalThresholdTokens !== warningThresholdTokens) return {};
-  return {
-    warningApprovalPoint: existing.warningApprovalPoint,
-    warningApprovalThresholdTokens: existing.warningApprovalThresholdTokens,
-    warningApprovedAt: existing.warningApprovedAt,
-    warningApprovedTotalTokens: existing.warningApprovedTotalTokens,
-  };
-}
-
-export async function updateGoalTokenBudget(
+export async function updateGoalBudget(
   goalStateManager: GoalStateManager,
   workspaceRoot: string,
   goalId: string,
-  options: GoalTokenBudgetOptions = {},
-): Promise<GoalTokenBudgetCalculation> {
+  options: GoalBudgetOptions = {},
+): Promise<GoalBudgetCalculation> {
   const goal = await goalStateManager.read(goalId);
-  const calculation = await calculateGoalTokenBudget(workspaceRoot, goal, options);
-  await goalStateManager.updateTokenBudget(goalId, calculation.budget);
+  const calculation = await calculateGoalBudget(workspaceRoot, goal, options);
+  await goalStateManager.updateBudgetSummary(goalId, calculation.budget);
   return calculation;
 }
 
-function budgetStatus(
-  totalTokens: number,
-  maxTokens: number | undefined,
-  warningThresholdTokens: number | undefined,
-): GoalTokenBudgetState["status"] {
-  if (maxTokens !== undefined && totalTokens >= maxTokens) return "exceeded";
-  if (warningThresholdTokens !== undefined && totalTokens >= warningThresholdTokens) return "warning";
-  return "ok";
-}
-
 async function readAllSessionFiles(workspaceRoot: string): Promise<SessionFile[]> {
-  const rootSummaries = (await sessionFileInternals.listSessionSummaries(workspaceRoot))
-    .slice()
-    .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   const files = new Map<string, SessionFile>();
-
-  for (const root of rootSummaries) {
+  for (const root of (await sessionFileInternals.listSessionSummaries(workspaceRoot)).sort((left, right) => left.sessionId.localeCompare(right.sessionId))) {
     const rootFile = await sessionFileInternals.readSessionFile(root.sessionId, workspaceRoot, root.rootSessionId);
     files.set(rootFile.sessionId, rootFile);
-
-    const descendantIds = [...(await sessionFileInternals.scanDescendants(workspaceRoot, root.rootSessionId)).keys()]
-      .sort();
-    for (const descendantId of descendantIds) {
+    for (const descendantId of [...(await sessionFileInternals.scanDescendants(workspaceRoot, root.rootSessionId)).keys()].sort()) {
       const descendant = await sessionFileInternals.readSessionFile(descendantId, workspaceRoot, root.rootSessionId);
       files.set(descendant.sessionId, descendant);
     }
   }
-
   return [...files.values()].sort((left, right) => left.sessionId.localeCompare(right.sessionId));
 }
 
@@ -167,11 +126,7 @@ function buildChildrenByParent(files: readonly SessionFile[]): Map<string, Sessi
     children.push(file);
     childrenByParent.set(file.parentSessionId, children);
   }
-
-  for (const children of childrenByParent.values()) {
-    children.sort((left, right) => left.sessionId.localeCompare(right.sessionId));
-  }
-
+  for (const children of childrenByParent.values()) children.sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   return childrenByParent;
 }
 
@@ -189,9 +144,6 @@ function buildLinksByChild(files: readonly SessionFile[]): Map<string, ToolChild
 
 function isMaintenanceSession(file: SessionFile, parentLinks: readonly ToolChildSessionLink[]): boolean {
   const values = [file.agentName, file.title ?? "", file.sessionRole ?? ""];
-  for (const link of parentLinks) {
-    values.push(link.toolName, link.childAgentName, link.title ?? "", link.description ?? "");
-  }
-
+  for (const link of parentLinks) values.push(link.toolName, link.childAgentName, link.title ?? "", link.description ?? "");
   return values.some((value) => MAINTENANCE_NAMES.has(value.trim().toLowerCase()));
 }

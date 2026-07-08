@@ -153,11 +153,8 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
       approvalPolicy: "explicit_per_run",
       toolProfileId: "loop_goal_action",
       goalTitle: "Dependency Sweeper Goal",
-      goalPrompt: "Inspect dependency manifests, choose a scoped update or report, verify, and record evidence.",
-      goalConditions: [
-        { id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" }, required: true },
-        { id: "tests", kind: "tests_pass", params: { command: "bun test" }, required: true },
-      ],
+      goalObjective: "Inspect dependency manifests, choose a scoped update or report, verify the result, and record evidence.",
+      goalAcceptanceCriteria: "Reviewer can decide DONE from the dependency change summary, verification output, and any follow-up notes.",
       ...budgetTemplate({ maxIterationsPerRun: 20, maxTokensPerRun: 240000, maxWallClockMsPerRun: 45 * 60_000, maxRunsPerDay: 2 }),
     },
   },

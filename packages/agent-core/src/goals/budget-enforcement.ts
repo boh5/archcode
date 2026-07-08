@@ -1,11 +1,10 @@
-import { GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL, normalizeUsage } from "@archcode/protocol";
+import { normalizeUsage } from "@archcode/protocol";
+import type { GoalBudgetSummary } from "@archcode/protocol";
 
 import type { ModelCallOptions } from "../config/provider";
 import type { ProjectContext } from "../projects/types";
 import type { SessionStoreState } from "../store/types";
-import type { GoalState, GoalTokenBudgetState } from "./state";
-import { updateGoalTokenBudget } from "./budget";
-import { writeGoalBudgetArtifact } from "./artifact-lifecycle";
+import type { GoalState } from "./state";
 
 export const BUDGET_APPROVAL_POINT = "approval_budget_1";
 
@@ -37,11 +36,11 @@ export async function enforceGoalBudgetBeforeModelCall(ctx: GoalBudgetEnforcemen
   if (resolved === undefined) return;
 
   const { goal, projectContext } = resolved;
-  const budget = goal.tokenBudget;
+  const budget = goal.budget;
   if (budget === undefined) return;
 
   if (isHardExceeded(budget)) {
-    await pauseForHardStop(projectContext, goal, budget, "before_model_call");
+    await blockForHardStop(projectContext, goal, budget, "Budget hard limit exceeded");
   }
 
   const estimatedNextCallTokens = estimateNextModelCallTokens(ctx.modelOptions);
@@ -53,32 +52,37 @@ export async function enforceGoalBudgetBeforeModelCall(ctx: GoalBudgetEnforcemen
 export async function enforceGoalBudgetAfterStepEnd(ctx: GoalBudgetEnforcementContext): Promise<void> {
   const resolved = await resolveGoalBudgetContext(ctx);
   if (resolved === undefined) return;
-
   const { goal, projectContext } = resolved;
-  if (goal.tokenBudget?.maxTokens === undefined && goal.tokenBudget?.warningThresholdTokens === undefined) return;
+  const budget = goal.budget;
+  if (budget?.maxTokens === undefined) return;
 
-  const calculation = await updateGoalTokenBudget(projectContext.goalState, projectContext.project.workspaceRoot, goal.id);
-  const budget = await mergeLatestLiveStepUsage(projectContext, goal, calculation.budget, ctx.store.getState());
-  if (isHardExceeded(budget)) {
+  const latestUsage = normalizeUsage(ctx.store.getState().steps.at(-1)?.usage);
+  if (latestUsage.totalTokens === 0) return;
+
+  const nextBudget: GoalBudgetSummary = {
+    ...budget,
+    status: budget.usedTokens !== undefined && budget.usedTokens + latestUsage.totalTokens >= budget.maxTokens ? "blocked" : budget.status,
+    usedTokens: (budget.usedTokens ?? 0) + latestUsage.totalTokens,
+    updatedAt: new Date().toISOString(),
+  };
+  await projectContext.goalState.updateBudgetSummary(goal.id, nextBudget);
+  if (isHardExceeded(nextBudget)) {
     const latest = await projectContext.goalState.read(goal.id);
-    await pauseForHardStop(projectContext, latest, budget, "after_step_usage_update");
+    await blockForHardStop(projectContext, latest, nextBudget, "Budget hard limit exceeded");
   }
 }
 
 async function resolveGoalBudgetContext(ctx: GoalBudgetEnforcementContext): Promise<{
   goal: GoalState;
-  sessionId: string;
   projectContext: ProjectContext;
 } | undefined> {
   const projectContext = ctx.projectContext;
   if (projectContext === undefined) return undefined;
-
-  const state = ctx.store.getState();
-  if (state.goalId === undefined) return undefined;
-
-  const goal = await projectContext.goalState.read(state.goalId);
-  if (goal.tokenBudget === undefined) return undefined;
-  return { goal, sessionId: state.sessionId, projectContext };
+  const goalId = ctx.store.getState().goalId;
+  if (goalId === undefined) return undefined;
+  const goal = await projectContext.goalState.read(goalId);
+  if (goal.budget === undefined) return undefined;
+  return { goal, projectContext };
 }
 
 function estimateNextModelCallTokens(modelOptions: ModelCallOptions | undefined): number {
@@ -88,145 +92,75 @@ function estimateNextModelCallTokens(modelOptions: ModelCallOptions | undefined)
     : 0;
 }
 
-function isHardExceeded(budget: GoalTokenBudgetState): boolean {
-  return budget.maxTokens !== undefined && budget.totalTokens >= budget.maxTokens;
+function isHardExceeded(budget: GoalBudgetSummary): boolean {
+  return budget.maxTokens !== undefined && (budget.usedTokens ?? 0) >= budget.maxTokens;
 }
 
-function shouldRequestWarningApproval(budget: GoalTokenBudgetState, estimatedNextCallTokens: number): boolean {
-  if (budget.warningThresholdTokens === undefined) return false;
-  if (budget.warningApprovalPoint === BUDGET_APPROVAL_POINT && budget.warningApprovalThresholdTokens === budget.warningThresholdTokens) {
-    return false;
-  }
-  return budget.totalTokens + estimatedNextCallTokens >= budget.warningThresholdTokens;
+function shouldRequestWarningApproval(budget: GoalBudgetSummary, estimatedNextCallTokens: number): boolean {
+  if (budget.status !== "warning") return false;
+  if (budget.reason === "Budget warning approval is pending") return false;
+  return (budget.usedTokens ?? 0) + estimatedNextCallTokens >= (budget.usedTokens ?? 0);
 }
 
 async function requestBudgetApproval(
   projectContext: ProjectContext,
   goal: GoalState,
-  budget: GoalTokenBudgetState,
+  budget: GoalBudgetSummary,
   estimatedNextCallTokens: number,
-): Promise<void> {
+): Promise<never> {
   const record = await projectContext.hitl.create({
     owner: { projectSlug: projectContext.project.slug, ownerType: "goal", ownerId: goal.id },
     blockingKey: `goal:${goal.id}:budget:${BUDGET_APPROVAL_POINT}`,
     source: { type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT },
     displayPayload: {
       title: "Approve Goal budget warning",
-      summary: `Goal "${goal.title}" is projected to cross its token warning threshold before the next model call.`,
+      summary: `Goal "${goal.title}" is projected to cross its token budget warning before the next model call.`,
       fields: [
         { label: "Goal", value: goal.title },
-        { label: "Total tokens", value: String(budget.totalTokens) },
+        { label: "Used tokens", value: String(budget.usedTokens ?? 0) },
         { label: "Estimated next call tokens", value: String(estimatedNextCallTokens) },
-        { label: "Warning threshold", value: String(budget.warningThresholdTokens ?? "unset") },
         { label: "Maximum tokens", value: String(budget.maxTokens ?? "unset") },
       ],
       redacted: true,
     },
   });
-
-  await writeBudgetLedger(projectContext, goal, budget, {
-    event: "warning_pending",
-    source: "before_model_call",
+  await projectContext.goalState.updateBudgetSummary(goal.id, {
+    ...budget,
+    status: "warning",
     reason: "Budget warning approval is pending",
-    estimatedNextCallTokens,
+    updatedAt: new Date().toISOString(),
   });
-  await projectContext.goalState.blockOnHitl(goal.id, {
-    version: 1,
+  await projectContext.goalState.block(goal.id, {
+    kind: "budget",
+    summary: "Budget warning approval is pending",
     hitlId: record.hitlId,
-    blockedAt: new Date().toISOString(),
-    phase: goal.phase,
-    kind: "goal_budget",
-    action: GOAL_HITL_ACTION_AWAIT_BUDGET_APPROVAL,
-    approvalPoint: BUDGET_APPROVAL_POINT,
-    estimatedNextCallTokens,
-    reason: "Budget warning approval is pending",
+    source: BUDGET_APPROVAL_POINT,
+    resumeStatus: "running",
   });
-  await pauseGoal(projectContext, goal, budget, "Budget warning approval is pending");
+  await projectContext.goalState.recordHitlRef(goal.id, { hitlId: record.hitlId, approvalRef: record.hitlId });
   await projectContext.hitl.publishRequest(record);
-  throw new GoalBudgetEnforcementStopError(goal.id, "Goal paused: budget warning approval is pending");
+  throw new GoalBudgetEnforcementStopError(goal.id, "Goal blocked: budget warning approval is pending");
 }
 
-async function pauseForHardStop(
+async function blockForHardStop(
   projectContext: ProjectContext,
   goal: GoalState,
-  budget: GoalTokenBudgetState,
-  source: string,
-): Promise<never> {
-  await pauseGoal(projectContext, goal, { ...budget, status: "paused" }, "Budget hard limit exceeded");
-  try {
-    await writeBudgetLedger(projectContext, goal, budget, {
-      event: "hard_stop",
-      source,
-      reason: "Goal paused because the hard limit was reached or exceeded.",
-    });
-  } catch {
-    await projectContext.goalState.updateLastError(goal.id, "Budget hard limit exceeded; budget ledger write failed");
-  }
-  throw new GoalBudgetEnforcementStopError(goal.id, "Goal paused: budget hard limit exceeded");
-}
-
-async function pauseGoal(
-  projectContext: ProjectContext,
-  goal: GoalState,
-  budget: GoalTokenBudgetState,
+  budget: GoalBudgetSummary,
   reason: string,
-): Promise<void> {
-  const now = new Date().toISOString();
-  await projectContext.goalState.updateTokenBudget(goal.id, { ...budget, status: "paused", updatedAt: now });
-  await projectContext.goalState.updateLastError(goal.id, reason);
-  const current = await projectContext.goalState.read(goal.id);
-  if (current.status !== "paused" && canPause(current.status)) {
-    await projectContext.goalState.transitionStatus(goal.id, "paused");
+): Promise<never> {
+  await projectContext.goalState.updateBudgetSummary(goal.id, {
+    ...budget,
+    status: "blocked",
+    reason,
+    updatedAt: new Date().toISOString(),
+  });
+  if (goal.status !== "blocked") {
+    await projectContext.goalState.block(goal.id, {
+      kind: "budget",
+      summary: reason,
+      source: "hard_limit",
+      resumeStatus: "running",
+    });
   }
-}
-
-function canPause(status: GoalState["status"]): boolean {
-  return status === "locked" || status === "running" || status === "verifying" || status === "reviewed";
-}
-
-function budgetStatus(budget: GoalTokenBudgetState): GoalTokenBudgetState["status"] {
-  if (budget.maxTokens !== undefined && budget.totalTokens >= budget.maxTokens) return "exceeded";
-  if (budget.warningThresholdTokens !== undefined && budget.totalTokens >= budget.warningThresholdTokens) return "warning";
-  return "ok";
-}
-
-async function mergeLatestLiveStepUsage(
-  projectContext: ProjectContext,
-  goal: GoalState,
-  persistedBudget: GoalTokenBudgetState,
-  state: SessionStoreState,
-): Promise<GoalTokenBudgetState> {
-  const previousBudget = goal.tokenBudget ?? persistedBudget;
-  if (persistedBudget.totalTokens > previousBudget.totalTokens) return persistedBudget;
-
-  const latestUsage = normalizeUsage(state.steps.at(-1)?.usage);
-  if (latestUsage.totalTokens === 0) return persistedBudget;
-
-  const now = new Date().toISOString();
-  const merged: GoalTokenBudgetState = {
-    ...previousBudget,
-    status: budgetStatus({ ...previousBudget, totalTokens: previousBudget.totalTokens + latestUsage.totalTokens }),
-    inputTokens: previousBudget.inputTokens + latestUsage.inputTokens,
-    outputTokens: previousBudget.outputTokens + latestUsage.outputTokens,
-    reasoningTokens: (previousBudget.reasoningTokens ?? 0) + latestUsage.reasoningTokens,
-    cachedInputTokens: (previousBudget.cachedInputTokens ?? 0) + latestUsage.cachedInputTokens,
-    totalTokens: previousBudget.totalTokens + latestUsage.totalTokens,
-    updatedAt: now,
-  };
-  await projectContext.goalState.updateTokenBudget(goal.id, merged);
-  return merged;
-}
-
-async function writeBudgetLedger(
-  projectContext: ProjectContext,
-  goal: GoalState,
-  budget: GoalTokenBudgetState,
-  event: {
-    event: "warning_pending" | "warning_denied" | "warning_approved" | "hard_stop";
-    source: string;
-    reason: string;
-    estimatedNextCallTokens?: number;
-  },
-): Promise<void> {
-  await writeGoalBudgetArtifact(projectContext.goalArtifacts, goal, budget, event);
+  throw new GoalBudgetEnforcementStopError(goal.id, `Goal blocked: ${reason.toLowerCase()}`);
 }

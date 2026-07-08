@@ -20,9 +20,6 @@ import {
   TOOL_DELEGATE,
   TOOL_FILE_EDIT,
   TOOL_FILE_WRITE,
-  TOOL_GOAL_ARTIFACT_READ,
-  TOOL_GOAL_ARTIFACT_WRITE,
-  TOOL_GOAL_EVIDENCE,
   TOOL_GOAL_MANAGE,
 } from "../../tools/names";
 
@@ -117,10 +114,8 @@ describe("agentDefinitions", () => {
     const tools = orchestratorAgentDefinition.tools.tools;
 
     expect(tools).toContain(TOOL_GOAL_MANAGE);
-    expect(tools).not.toContain(TOOL_GOAL_EVIDENCE);
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
+    expect(tools).toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain(TOOL_COMPRESS);
-    expect(tools).not.toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_DELEGATE);
     expect(orchestratorAgentDefinition.tools.delegateTargets).toEqual([
       "plan",
@@ -133,10 +128,8 @@ describe("agentDefinitions", () => {
     expect(orchestratorAgentDefinition.rolePrompt).toContain("## Goal Role: Orchestrator");
     expect(orchestratorAgentDefinition.rolePrompt).toContain("goal_manage");
     expect(orchestratorAgentDefinition.rolePrompt).toContain("action=create");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=lock");
     expect(orchestratorAgentDefinition.rolePrompt).toContain("action=start");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=advance_phase build");
-    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=advance_phase review");
+    expect(orchestratorAgentDefinition.rolePrompt).toContain("action=begin_review");
     expect(orchestratorAgentDefinition.rolePrompt).toContain("action=retry");
     expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_create");
     expect(orchestratorAgentDefinition.rolePrompt).not.toContain("goal_lock");
@@ -156,8 +149,6 @@ describe("agentDefinitions", () => {
     expect(tools).toContain("glob");
     expect(tools).toContain("web_fetch");
     expect(tools).toContain("lsp_diagnostics");
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(planAgentDefinition.mcpTools).toEqual(["context7"]);
@@ -168,9 +159,7 @@ describe("agentDefinitions", () => {
     const tools = buildAgentDefinition.tools.tools;
 
     for (const tool of SOURCE_WRITE_TOOLS) expect(tools).toContain(tool);
-    expectNoTools(tools, [TOOL_GOAL_MANAGE, TOOL_GOAL_EVIDENCE]);
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
+    expectNoTools(tools, [TOOL_GOAL_MANAGE]);
     expect(tools).toContain(TOOL_COMPRESS);
     expect("mcpTools" in buildAgentDefinition).toBe(false);
     expect(buildAgentDefinition.tools.delegateTargets).toEqual(["explore"]);
@@ -179,14 +168,11 @@ describe("agentDefinitions", () => {
   test("Reviewer can verify goals but cannot mutate source", () => {
     const tools = reviewerAgentDefinition.tools.tools;
 
-    expect(tools).toContain(TOOL_GOAL_EVIDENCE);
     expect(tools).toContain(TOOL_GOAL_MANAGE);
     expect(tools).toContain("git_diff");
     expect(tools).toContain("grep");
     expect(tools).toContain("glob");
     expect(tools).toContain("lsp_diagnostics");
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_READ);
-    expect(tools).toContain(TOOL_GOAL_ARTIFACT_WRITE);
     expect(tools).toContain(TOOL_COMPRESS);
     expectNoTools(tools, SOURCE_WRITE_TOOLS);
     expect(reviewerAgentDefinition.tools.delegateTargets).toEqual(["explore", "librarian"]);
@@ -196,12 +182,8 @@ describe("agentDefinitions", () => {
     const goalManageAgents = agentDefinitions
       .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_MANAGE))
       .map((definition) => definition.name);
-    const goalEvidenceAgents = agentDefinitions
-      .filter((definition) => (definition.tools.tools as readonly string[]).includes(TOOL_GOAL_EVIDENCE))
-      .map((definition) => definition.name);
 
     expect(goalManageAgents).toEqual(["orchestrator", "reviewer"]);
-    expect(goalEvidenceAgents).toEqual(["reviewer"]);
   });
 
   test("Reviewer prompt is default-deny and includes the required five-point checklist", () => {
@@ -214,8 +196,9 @@ describe("agentDefinitions", () => {
     expect(prompt).toContain("DONE");
     expect(prompt).toContain("NOT_DONE");
     expect(prompt).not.toContain("ESCALATE_HUMAN");
-    expect(prompt).toContain("goal_evidence");
     expect(prompt).toContain("goal_manage.finalize_review");
+    expect(prompt).toContain("DONE requires evidence");
+    expect(prompt).toContain("Insufficient evidence means NOT_DONE");
     expect(prompt).not.toContain("goal_check_done");
   });
 
@@ -224,9 +207,6 @@ describe("agentDefinitions", () => {
       expectNoTools(definition.tools.tools, SOURCE_WRITE_TOOLS);
       expectNoTools(definition.tools.tools, [
         TOOL_GOAL_MANAGE,
-        TOOL_GOAL_EVIDENCE,
-        TOOL_GOAL_ARTIFACT_READ,
-        TOOL_GOAL_ARTIFACT_WRITE,
       ]);
       expect(definition.tools.tools).toContain(TOOL_COMPRESS);
       expect("delegateTargets" in definition.tools).toBe(false);

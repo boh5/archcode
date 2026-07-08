@@ -46,9 +46,9 @@ export function createGoalBootstrapPermission(): ToolPermission {
     if (goal.status === "running") return { outcome: "allow" };
     if (SAFE_BOOTSTRAP_TOOLS.has(ctx.toolName)) return { outcome: "allow" };
 
-    const expectedAction = goal.status === "failed" ? "retry" : "start";
+    const expectedAction = goal.status === "failed" || goal.status === "not_done" ? "retry" : "start";
     if (
-      (goal.status === "locked" || goal.status === "paused" || goal.status === "failed")
+      (goal.status === "draft" || goal.status === "blocked" || goal.status === "failed" || goal.status === "not_done")
       && ctx.toolName === TOOL_GOAL_MANAGE
       && getGoalManageAction(input) === expectedAction
     ) {

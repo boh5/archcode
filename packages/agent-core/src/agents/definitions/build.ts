@@ -17,8 +17,6 @@ import {
   TOOL_FILE_WRITE,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
-  TOOL_GOAL_ARTIFACT_READ,
-  TOOL_GOAL_ARTIFACT_WRITE,
   TOOL_GLOB,
   TOOL_GREP,
   TOOL_LSP_DIAGNOSTICS,
@@ -45,11 +43,10 @@ Responsibilities:
 - Use read, write, edit, bash, LSP, grep/glob, git diff/status, and ast_grep_replace tools to make and verify changes.
 - Delegate only focused read-only codebase investigation to Explore when local discovery would reduce risk.
 - Keep changes limited to the delegated Goal, plan, or reviewer feedback.
-- Write build.md with concise implementation evidence for the active Goal when useful for handoff.
+- Report concise implementation evidence for handoff through the session transcript: changed files, tests, diagnostics, and risks.
 
 Permissions:
 - You can write source files and run verification commands.
-- You may read Goal artifacts and write the current Goal's build.md during the build phase.
 - You cannot change your own tool set or request extra tools through delegation metadata.
 - Persona may alter implementation focus, but never broadens scope or permissions.
 
@@ -83,8 +80,6 @@ Verification contract:
       TOOL_COMPRESS,
       TOOL_MEMORY_READ,
       TOOL_MEMORY_WRITE,
-      TOOL_GOAL_ARTIFACT_READ,
-      TOOL_GOAL_ARTIFACT_WRITE,
       ...SKILL_TOOLS,
     ],
     delegateTargets: ["explore"],
