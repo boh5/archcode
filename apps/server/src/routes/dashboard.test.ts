@@ -1,118 +1,99 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import type { AgentRuntime, LoopConfig, LoopState, ProjectInfo } from "@archcode/agent-core";
-import type { DoneCondition, GoalState } from "@archcode/protocol";
-import { createServerApp } from "../app";
+import { resolve } from "node:path";
+import { Hono } from "hono";
+import type { GoalState, GoalStatus, LoopState } from "@archcode/protocol";
+import { errorHandler } from "../error-handler";
+import { createDashboardRoutes } from "./dashboard";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "dashboard-routes");
 
-const doneCondition: DoneCondition = {
-  id: "typecheck",
-  kind: "typecheck_pass",
-  required: true,
-  params: { command: "bun run typecheck" },
-};
+type RouteRuntime = Parameters<typeof createDashboardRoutes>[0];
 
-function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
-  const contextResolver = new ProjectContextResolver({
-    logger: silentLogger,
-    projectInfoFactory: async (workspaceRoot: string) => {
-      const projects = await projectRegistry.list();
-      return projects.find((p) => p.workspaceRoot === workspaceRoot);
+interface ProjectInfo {
+  slug: string;
+  name: string;
+  workspaceRoot: string;
+  addedAt: string;
+}
+
+class FakeGoalStateManager {
+  readonly #goals: GoalState[] = [];
+  readonly #now = new Date("2026-07-08T00:00:00.000Z").toISOString();
+
+  add(projectId: string, title: string, status: GoalStatus): GoalState {
+    const goal: GoalState = {
+      id: crypto.randomUUID(),
+      projectId,
+      title,
+      objective: `Objective for ${title}`,
+      acceptanceCriteria: `Acceptance criteria for ${title}`,
+      status,
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      childSessionIds: [],
+      createdAt: this.#now,
+      updatedAt: this.#now,
+      ...(status === "done" ? { completedAt: this.#now } : {}),
+      ...(status === "cancelled" ? { cancelledAt: this.#now } : {}),
+    };
+    this.#goals.push(goal);
+    return goal;
+  }
+
+  async listGoals(projectId?: string): Promise<GoalState[]> {
+    return this.#goals.filter((goal) => projectId === undefined || goal.projectId === projectId);
+  }
+}
+
+async function createFixture(testName: string) {
+  const managers = new Map<string, FakeGoalStateManager>();
+  const projects: ProjectInfo[] = [];
+
+  for (const name of ["alpha", "beta"]) {
+    const workspaceRoot = resolve(tempRoot, "workspaces", testName, name);
+    await mkdir(workspaceRoot, { recursive: true });
+    const project: ProjectInfo = {
+      slug: `${testName}-${name}`,
+      name: `${name} project`,
+      workspaceRoot,
+      addedAt: new Date("2026-07-08T00:00:00.000Z").toISOString(),
+    };
+    projects.push(project);
+    managers.set(workspaceRoot, new FakeGoalStateManager());
+  }
+
+  const runtime = {
+    projectRegistry: {
+      listProjects: mock(async () => projects),
+      list: mock(async () => projects),
     },
-  });
+    contextResolver: {
+      resolve: mock(async (workspaceRoot: string) => {
+        const goalState = managers.get(workspaceRoot);
+        if (goalState === undefined) throw new Error(`Missing manager for ${workspaceRoot}`);
+        return { goalState };
+      }),
+    },
+    listLoops: mock(async () => []),
+  } as unknown as RouteRuntime;
 
-  return {
-    projectRegistry,
-    contextResolver,
-    warnings: [],
-    mcpManager: undefined,
-    toolRegistry: undefined,
-    providerRegistry: undefined,
-    skillService: undefined,
-    hitl: undefined,
-    createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    listSessions: mock(async () => []),
-    startSessionExecution: mock(() => {
-      throw new Error("not implemented");
-    }),
-    abortSessionExecution: mock(() => false),
-    abortSessionExecutionAndWait: mock(async () => undefined),
-    abortAllSessionExecutions: mock(async () => undefined),
-    isSessionExecutionRunning: mock(() => false),
-    getSessionExecution: mock(() => undefined),
-    subscribeSessionEvents: mock(() => () => undefined),
-    deleteSession: mock(async () => undefined),
-    listSessionTree: mock(async () => ({ root: null, sessions: [] })),
-    disposeSessionAgent: mock(() => undefined),
-    disposeAllSessionAgents: mock(() => undefined),
-    isSessionTombstoned: mock(() => false),
-    dispatchCommand: mock(async () => null),
-    notifyRuntimeShutdown: mock(() => undefined),
-    listLoops: mock(async (workspaceRoot: string) => {
-      const context = await contextResolver.resolve(workspaceRoot);
-      return await context.loopState.list(context.project.slug);
-    }),
-    readLoop: mock(async () => { throw new Error("not implemented"); }),
-    createLoop: mock(async () => { throw new Error("not implemented"); }),
-    updateLoop: mock(async () => { throw new Error("not implemented"); }),
-    pauseLoop: mock(async () => { throw new Error("not implemented"); }),
-    resumeLoop: mock(async () => { throw new Error("not implemented"); }),
-    triggerLoopRun: mock(async () => undefined),
-    readLoopRunLog: mock(async () => []),
-    readLoopStateMarkdown: mock(async () => ""),
-    startLoopSchedulers: mock(async () => undefined),
-    stopLoopSchedulers: mock(() => undefined),
-  } as unknown as AgentRuntime;
+  const app = new Hono();
+  app.onError(errorHandler);
+  app.route("/api", createDashboardRoutes(runtime));
+
+  return { app, managers, projects, runtime };
 }
 
-async function createTestApp(testName: string) {
-  const homeDir = resolve(tempRoot, "homes", testName);
-  await mkdir(homeDir, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
-  const runtime = createTestRuntime(projectRegistry);
-
-  return {
-    app: createServerApp(runtime, { dev: true }).app,
-    runtime,
-  };
+function managerFor(managers: Map<string, FakeGoalStateManager>, project: ProjectInfo): FakeGoalStateManager {
+  const manager = managers.get(project.workspaceRoot);
+  if (manager === undefined) throw new Error(`Missing manager for ${project.workspaceRoot}`);
+  return manager;
 }
 
-async function addProject(runtime: AgentRuntime, testName: string, name: string): Promise<ProjectInfo> {
-  const workspaceRoot = resolve(tempRoot, "workspaces", testName, name);
-  await mkdir(workspaceRoot, { recursive: true });
-  return await runtime.projectRegistry.add({ workspaceRoot, name });
-}
-
-async function createGoal(runtime: AgentRuntime, project: ProjectInfo, title: string): Promise<GoalState> {
-  const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-  return await context.goalState.create(
-    project.slug,
-    title,
-    "tester",
-    [doneCondition],
-    { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-    ["after_plan"],
-    "reviewer",
-  );
-}
-
-const LOOP_CONFIG: LoopConfig = {
-  title: "Test loop",
-  schedule: { kind: "interval", everyMs: 60_000 },
-  runKind: "session",
-  mode: "report",
-  approvalPolicy: "interactive",
-  limits: { maxIterationsPerRun: 5 },
-  taskPrompt: "Summarize local project state.",
-};
-
-async function createLoop(runtime: AgentRuntime, project: ProjectInfo, title: string): Promise<LoopState> {
-  const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-  return await context.loopState.create(project.slug, { ...LOOP_CONFIG, title });
+function addGoal(managers: Map<string, FakeGoalStateManager>, project: ProjectInfo, title: string, status: GoalStatus): GoalState {
+  return managerFor(managers, project).add(project.slug, title, status);
 }
 
 describe("dashboard routes", () => {
@@ -125,230 +106,121 @@ describe("dashboard routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("GET /api/goals aggregates active goals across registered projects", async () => {
-    const { app, runtime } = await createTestApp("aggregate-active");
-    const firstProject = await addProject(runtime, "aggregate-active", "Alpha Project");
-    const secondProject = await addProject(runtime, "aggregate-active", "Beta Project");
-    const firstGoal = await createGoal(runtime, firstProject, "Alpha goal");
-    const secondGoal = await createGoal(runtime, secondProject, "Beta goal");
-    await (await runtime.contextResolver.resolve(firstProject.workspaceRoot)).goalState.lock(firstGoal.id, "planner");
-    await (await runtime.contextResolver.resolve(firstProject.workspaceRoot)).goalState.transitionStatus(firstGoal.id, "running");
-    await (await runtime.contextResolver.resolve(secondProject.workspaceRoot)).goalState.lock(secondGoal.id, "planner");
-    await (await runtime.contextResolver.resolve(secondProject.workspaceRoot)).goalState.transitionStatus(secondGoal.id, "running");
+  test("GET /api/goals?status=active includes simplified active display statuses", async () => {
+    const { app, managers, projects } = await createFixture("active-goals");
+    const activeStatuses: GoalStatus[] = ["draft", "running", "blocked", "reviewing", "not_done", "failed"];
+    for (const status of activeStatuses) {
+      addGoal(managers, projects[0], `${status} goal`, status);
+    }
+    addGoal(managers, projects[0], "done goal", "done");
+    addGoal(managers, projects[1], "cancelled goal", "cancelled");
 
     const res = await app.request("/api/goals?status=active");
     const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
 
     expect(res.status).toBe(200);
-    expect(body.goals.map((goal) => goal.title).sort()).toEqual(["Alpha goal", "Beta goal"]);
-    expect(body.goals).toContainEqual(expect.objectContaining({ id: firstGoal.id, projectSlug: firstProject.slug, projectName: firstProject.name }));
-    expect(body.goals).toContainEqual(expect.objectContaining({ id: secondGoal.id, projectSlug: secondProject.slug, projectName: secondProject.name }));
+    expect(body.goals.map((goal) => goal.status).sort()).toEqual([...activeStatuses].sort());
+    expect(body.goals).toContainEqual(expect.objectContaining({ title: "draft goal", projectSlug: projects[0].slug, projectName: projects[0].name }));
+    expect(body.goals).not.toContainEqual(expect.objectContaining({ status: "done" }));
+    expect(body.goals).not.toContainEqual(expect.objectContaining({ status: "cancelled" }));
   });
 
-  test("GET /api/goals supports explicit status filter", async () => {
-    const { app, runtime } = await createTestApp("status-filter");
-    const project = await addProject(runtime, "status-filter", "Status Project");
-    const draftGoal = await createGoal(runtime, project, "Draft goal");
-    const lockedGoal = await createGoal(runtime, project, "Locked goal");
-    await (await runtime.contextResolver.resolve(project.workspaceRoot)).goalState.lock(lockedGoal.id, "planner");
+  test("GET /api/goals?status=terminal includes done and cancelled only", async () => {
+    const { app, managers, projects } = await createFixture("terminal-goals");
+    addGoal(managers, projects[0], "running goal", "running");
+    const done = addGoal(managers, projects[0], "done goal", "done");
+    const cancelled = addGoal(managers, projects[1], "cancelled goal", "cancelled");
 
-    const res = await app.request("/api/goals?status=draft");
+    const res = await app.request("/api/goals?status=terminal");
+    const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
+
+    expect(res.status).toBe(200);
+    expect(body.goals.map((goal) => goal.id).sort()).toEqual([cancelled.id, done.id].sort());
+    expect(body.goals.map((goal) => goal.status).sort()).toEqual(["cancelled", "done"]);
+  });
+
+  test("GET /api/goals supports explicit simplified status filters", async () => {
+    const { app, managers, projects } = await createFixture("explicit-status");
+    const notDone = addGoal(managers, projects[0], "needs retry", "not_done");
+    addGoal(managers, projects[0], "running goal", "running");
+
+    const res = await app.request("/api/goals?status=not_done");
     const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
 
     expect(res.status).toBe(200);
     expect(body.goals).toHaveLength(1);
-    expect(body.goals[0]).toMatchObject({ id: draftGoal.id, title: "Draft goal", projectSlug: project.slug, projectName: project.name });
+    expect(body.goals[0]).toMatchObject({ id: notDone.id, status: "not_done", projectSlug: projects[0].slug, projectName: projects[0].name });
   });
 
-  test("GET /api/loops aggregates loops across registered projects", async () => {
-    const { app, runtime } = await createTestApp("aggregate-loops");
-    const firstProject = await addProject(runtime, "aggregate-loops", "Alpha Project");
-    const secondProject = await addProject(runtime, "aggregate-loops", "Beta Project");
-    const firstLoop = await createLoop(runtime, firstProject, "Alpha loop");
-    const secondLoop = await createLoop(runtime, secondProject, "Beta loop");
+  test("GET /api/goals rejects old Goal statuses", async () => {
+    const { app } = await createFixture("old-statuses");
 
-    const res = await app.request("/api/loops");
-    const body = await res.json() as {
-      loops: Array<{
-        loopId: string;
-        title: string;
-        status: string;
-        currentRun?: unknown;
-        lastRun?: unknown;
-        nextRunAt?: number;
-        runKind: string;
-        mode: string;
-        projectSlug: string;
-        projectName: string;
-      }>;
-      errors?: Array<{ projectSlug: string; projectName: string; message: string }>;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.loops.map((l) => l.title).sort()).toEqual(["Alpha loop", "Beta loop"]);
-    expect(body.loops).toContainEqual(expect.objectContaining({
-      loopId: firstLoop.loopId,
-      title: "Alpha loop",
-      status: "active",
-      runKind: "session",
-      mode: "report",
-      projectSlug: firstProject.slug,
-      projectName: firstProject.name,
-    }));
-    expect(body.loops).toContainEqual(expect.objectContaining({
-      loopId: secondLoop.loopId,
-      title: "Beta loop",
-      status: "active",
-      runKind: "session",
-      mode: "report",
-      projectSlug: secondProject.slug,
-      projectName: secondProject.name,
-    }));
+    for (const status of ["locked", "verifying", "reviewed", "completed", "escalated", "paused"]) {
+      const res = await app.request(`/api/goals?status=${status}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "BAD_REQUEST", message: "status must be active, terminal, or a valid goal status" },
+      });
+    }
   });
 
-  test("GET /api/loops?status=active returns active loops with run fields", async () => {
-    const { app, runtime } = await createTestApp("active-loops");
-    const project = await addProject(runtime, "active-loops", "Active Loop Project");
-    const loop = await createLoop(runtime, project, "Active loop");
-
-    // Record a completed run to populate lastRun
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const completedRunId = crypto.randomUUID();
-    const completedAt = Date.now() - 60_000;
-    await context.loopState.recordRunStart(loop.loopId, {
-      runId: completedRunId,
-      loopId: loop.loopId,
-      status: "running",
-      trigger: "interval",
-      startedAt: completedAt - 10_000,
-    });
-    await context.loopState.recordRunFinish(loop.loopId, {
-      runId: completedRunId,
-      loopId: loop.loopId,
-      status: "succeeded",
-      trigger: "interval",
-      startedAt: completedAt - 10_000,
-      endedAt: completedAt,
+  test("GET /api/goals reports per-project aggregation errors without blocking healthy projects", async () => {
+    const { app, managers, projects, runtime } = await createFixture("partial-failure");
+    const healthy = addGoal(managers, projects[0], "healthy goal", "running");
+    (runtime.contextResolver.resolve as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => {
+      if (workspaceRoot === projects[1].workspaceRoot) throw new Error("corrupt goal state");
+      return { goalState: managerFor(managers, projects[0]) };
     });
 
-    // Record a new running run to populate currentRun
-    const startedAt = Date.now();
-    await context.loopState.recordRunStart(loop.loopId, {
-      runId: crypto.randomUUID(),
-      loopId: loop.loopId,
-      status: "running",
-      trigger: "manual",
-      startedAt,
-    });
-
-    const res = await app.request("/api/loops?status=active");
+    const res = await app.request("/api/goals");
     const body = await res.json() as {
-      loops: Array<{
-        loopId: string;
-        title: string;
-        status: string;
-        currentRun: { runId: string; status: string; startedAt: number };
-        lastRun: { runId: string; status: string; startedAt: number; endedAt: number };
-        nextRunAt: number;
-        runKind: string;
-        mode: string;
-        projectSlug: string;
-        projectName: string;
-      }>;
+      goals: Array<GoalState & { projectSlug: string; projectName: string }>;
+      errors: Array<{ projectSlug: string; projectName: string; message: string }>;
     };
 
     expect(res.status).toBe(200);
-    expect(body.loops).toHaveLength(1);
-    const match = body.loops[0];
-    expect(match.loopId).toBe(loop.loopId);
-    expect(match.title).toBe("Active loop");
-    expect(match.status).toBe("active");
-    expect(match.runKind).toBe("session");
-    expect(match.mode).toBe("report");
-    expect(match.currentRun).toBeDefined();
-    expect(match.currentRun.status).toBe("running");
-    expect(match.currentRun.startedAt).toBe(startedAt);
-    expect(match.lastRun).toBeDefined();
-    expect(match.lastRun.status).toBe("succeeded");
-    expect(match.lastRun.endedAt).toBe(completedAt);
-    expect(match.nextRunAt).toBeGreaterThan(completedAt);
-    expect(match.nextRunAt).toBeLessThan(completedAt + 120_000);
-    expect(match.projectSlug).toBe(project.slug);
-    expect(match.projectName).toBe(project.name);
-  });
-
-  test("GET /api/loops?status=active excludes disabled loops", async () => {
-    const { app, runtime } = await createTestApp("active-excludes-disabled");
-    const project = await addProject(runtime, "active-excludes-disabled", "Disabled Project");
-    await createLoop(runtime, project, "Active loop");
-    const disabledLoop = await createLoop(runtime, project, "Disabled loop");
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.loopState.update(disabledLoop.loopId, { status: "disabled" });
-
-    const res = await app.request("/api/loops?status=active");
-    const body = await res.json() as {
-      loops: Array<{ loopId: string; title: string; status: string }>;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.loops).toHaveLength(1);
-    expect(body.loops[0].title).toBe("Active loop");
-    expect(body.loops[0].status).toBe("active");
-  });
-
-  test("GET /api/loops?status=invalid returns 400", async () => {
-    const { app } = await createTestApp("invalid-status");
-
-    const res = await app.request("/api/loops?status=invalid");
-
-    expect(res.status).toBe(400);
-    const body = await res.json() as { error?: { code: string; message: string } };
-    expect(body.error?.code).toBe("BAD_REQUEST");
-    expect(body.error?.message).toMatch(/active|valid/);
-  });
-
-  test("GET /api/loops excludes generatedStateSummary and readinessScore", async () => {
-    const { app, runtime } = await createTestApp("loop-no-rich-fields");
-    const project = await addProject(runtime, "loop-no-rich-fields", "No Rich Project");
-    await createLoop(runtime, project, "No rich loop");
-
-    const res = await app.request("/api/loops");
-    const body = await res.json() as {
-      loops: Array<Record<string, unknown>>;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.loops).toHaveLength(1);
-    const loop = body.loops[0];
-    expect(loop).not.toHaveProperty("generatedStateSummary");
-    expect(loop).not.toHaveProperty("readinessScore");
-    expect(loop).not.toHaveProperty("config");
-    expect(loop).not.toHaveProperty("stateVersion");
-    expect(loop).not.toHaveProperty("runCount");
-  });
-
-  test("GET /api/loops reports corrupt project loop data as partial failure metadata", async () => {
-    const { app, runtime } = await createTestApp("loop-partial-failure");
-    const healthyProject = await addProject(runtime, "loop-partial-failure", "Healthy Project");
-    const corruptProject = await addProject(runtime, "loop-partial-failure", "Corrupt Project");
-    await createLoop(runtime, healthyProject, "Healthy loop");
-    // Write invalid JSON into a loop state file to corrupt it
-    const corruptLoopDir = join(corruptProject.workspaceRoot, ".archcode", "loops", "00000000-0000-0000-0000-000000000001");
-    await mkdir(corruptLoopDir, { recursive: true });
-    await Bun.write(join(corruptLoopDir, "state.json"), "{ invalid json");
-
-    const res = await app.request("/api/loops");
-    const body = await res.json() as {
-      loops: Array<{ loopId: string; title: string }>;
-      errors?: Array<{ projectSlug: string; projectName: string; message: string }>;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.loops).toHaveLength(1);
-    expect(body.loops[0]).toMatchObject({ title: "Healthy loop", projectSlug: healthyProject.slug, projectName: healthyProject.name });
+    expect(body.goals).toContainEqual(expect.objectContaining({ id: healthy.id, projectSlug: projects[0].slug }));
     expect(body.errors).toContainEqual(expect.objectContaining({
-      projectSlug: corruptProject.slug,
-      projectName: corruptProject.name,
+      projectSlug: projects[1].slug,
+      projectName: projects[1].name,
+      message: "corrupt goal state",
     }));
+  });
+
+  test("GET /api/loops still exposes existing dashboard loop summary shape", async () => {
+    const { app, projects, runtime } = await createFixture("loop-smoke");
+    const loop: LoopState = {
+      loopId: crypto.randomUUID(),
+      projectId: projects[0].slug,
+      config: {
+        title: "Daily loop",
+        schedule: { kind: "manual" },
+        runKind: "session",
+        mode: "report",
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 1 },
+      },
+      status: "active",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      runCount: 0,
+      stateVersion: 1,
+    };
+    (runtime.listLoops as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => workspaceRoot === projects[0].workspaceRoot ? [loop] : []);
+
+    const res = await app.request("/api/loops?status=active");
+    const body = await res.json() as { loops: Array<Record<string, unknown>> };
+
+    expect(res.status).toBe(200);
+    expect(body.loops).toContainEqual(expect.objectContaining({
+      loopId: loop.loopId,
+      title: "Daily loop",
+      status: "active",
+      runKind: "session",
+      mode: "report",
+      projectSlug: projects[0].slug,
+      projectName: projects[0].name,
+    }));
+    expect(body.loops[0]).not.toHaveProperty("config");
   });
 });

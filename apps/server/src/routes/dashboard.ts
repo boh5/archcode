@@ -5,22 +5,27 @@ import { BadRequestError } from "../errors";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
   "draft",
-  "locked",
   "running",
-  "verifying",
-  "reviewed",
-  "completed",
+  "blocked",
+  "reviewing",
+  "done",
+  "not_done",
   "failed",
-  "escalated",
-  "paused",
+  "cancelled",
 ]);
 
 const ActiveGoalStatuses = new Set<GoalStatus>([
-  "locked",
+  "draft",
   "running",
-  "verifying",
-  "reviewed",
-  "paused",
+  "blocked",
+  "reviewing",
+  "not_done",
+  "failed",
+]);
+
+const TerminalGoalStatuses = new Set<GoalStatus>([
+  "done",
+  "cancelled",
 ]);
 
 const LoopStatusSchemaValues = new Set<LoopStatus>([
@@ -116,18 +121,20 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
   return app;
 }
 
-function parseGoalStatusFilter(status: string | undefined): GoalStatus | "active" | undefined {
+function parseGoalStatusFilter(status: string | undefined): GoalStatus | "active" | "terminal" | undefined {
   if (status === undefined) return undefined;
   if (status === "active") return "active";
+  if (status === "terminal") return "terminal";
   if (!GoalStatusSchemaValues.has(status as GoalStatus)) {
-    throw new BadRequestError("status must be active or a valid goal status");
+    throw new BadRequestError("status must be active, terminal, or a valid goal status");
   }
   return status as GoalStatus;
 }
 
-function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | undefined): boolean {
+function matchesGoalStatus(goal: GoalState, status: GoalStatus | "active" | "terminal" | undefined): boolean {
   if (status === undefined) return true;
   if (status === "active") return ActiveGoalStatuses.has(goal.status);
+  if (status === "terminal") return TerminalGoalStatuses.has(goal.status);
   return goal.status === status;
 }
 

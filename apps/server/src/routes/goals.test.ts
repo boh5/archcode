@@ -1,54 +1,172 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { ProjectContextResolver, ProjectRegistry, silentLogger } from "@archcode/agent-core";
-import type { AgentRuntime } from "@archcode/agent-core";
-import type { DoneCondition, GoalArtifactName, GoalState } from "@archcode/protocol";
-import { createServerApp } from "../app";
+import { Hono } from "hono";
+import type { GoalState, GoalStatus } from "@archcode/protocol";
+import { errorHandler } from "../error-handler";
+import { createGoalsRoutes } from "./goals";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "goals-routes");
 
-const doneCondition: DoneCondition = {
-  id: "typecheck",
-  kind: "typecheck_pass",
-  required: true,
-  params: { command: "bun run typecheck" },
-};
+type RouteRuntime = Parameters<typeof createGoalsRoutes>[0];
 
-const canonicalArtifactNames: GoalArtifactName[] = [
-  "plan.md",
-  "build.md",
-  "review.md",
-  "spec-compliance.md",
-  "approvals.md",
-  "budget.md",
-  "retry-log.md",
-  "final-report.md",
-];
+interface ProjectInfo {
+  slug: string;
+  name: string;
+  workspaceRoot: string;
+  addedAt: string;
+}
 
-const removedGoalExecutableNames = [
-  `goal_${"run"}`,
-  `goal_${"retry"}`,
-  `goal_${"check"}_${"done"}`,
-  `goal_${"create"}`,
-  `goal_${"lock"}`,
-];
+interface RuntimeFixture {
+  app: Hono;
+  manager: FakeGoalStateManager;
+  project: ProjectInfo;
+  runtime: RouteRuntime;
+}
 
-function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
-  const contextResolver = new ProjectContextResolver({ logger: silentLogger });
+class FakeGoalStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GoalStateError";
+  }
+}
 
-  return {
-    projectRegistry,
-    contextResolver,
-    warnings: [],
-    mcpManager: undefined,
-    toolRegistry: undefined,
-    providerRegistry: undefined,
-    skillService: undefined,
-    hitl: undefined,
-    createSession: mock(async () => ({ sessionId: crypto.randomUUID(), title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => ({ sessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
-    listSessions: mock(async () => []),
+class FakeGoalNotFoundError extends Error {
+  constructor(goalId: string) {
+    super(`Goal not found: ${goalId}`);
+    this.name = "GoalNotFoundError";
+  }
+}
+
+class FakeGoalStateManager {
+  readonly #goals = new Map<string, GoalState>();
+  readonly #now = new Date("2026-07-08T00:00:00.000Z").toISOString();
+
+  async listGoals(projectId?: string): Promise<GoalState[]> {
+    return [...this.#goals.values()].filter((goal) => projectId === undefined || goal.projectId === projectId);
+  }
+
+  async create(projectId: string, title: string, objective: string, acceptanceCriteria: string): Promise<GoalState> {
+    const goal: GoalState = {
+      id: crypto.randomUUID(),
+      projectId,
+      title,
+      objective,
+      acceptanceCriteria,
+      status: "draft",
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      childSessionIds: [],
+      createdAt: this.#now,
+      updatedAt: this.#now,
+    };
+    this.#goals.set(goal.id, goal);
+    return goal;
+  }
+
+  async read(goalId: string): Promise<GoalState> {
+    const goal = this.#goals.get(goalId);
+    if (goal === undefined) throw new FakeGoalNotFoundError(goalId);
+    return goal;
+  }
+
+  async patchDraft(goalId: string, updates: Partial<Pick<GoalState, "title" | "objective" | "acceptanceCriteria">>): Promise<GoalState> {
+    const goal = await this.read(goalId);
+    if (goal.status !== "draft") {
+      throw new FakeGoalStateError(`Goal ${goalId} is ${goal.status}; patch is only allowed while draft`);
+    }
+    return this.#update(goalId, { ...updates, updatedAt: this.#now });
+  }
+
+  async start(goalId: string): Promise<GoalState> {
+    const goal = await this.read(goalId);
+    if (goal.status !== "draft" && goal.status !== "running") {
+      throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
+    }
+    return this.#update(goalId, { status: "running", startedAt: goal.startedAt ?? this.#now, updatedAt: this.#now });
+  }
+
+  async retry(goalId: string): Promise<GoalState> {
+    const goal = await this.read(goalId);
+    if (goal.status !== "not_done" && goal.status !== "failed" && goal.status !== "running") {
+      throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
+    }
+    return this.#update(goalId, {
+      status: "running",
+      attempt: goal.status === "running" ? goal.attempt : goal.attempt + 1,
+      review: undefined,
+      lastError: undefined,
+      startedAt: goal.startedAt ?? this.#now,
+      updatedAt: this.#now,
+    });
+  }
+
+  async cancel(goalId: string): Promise<GoalState> {
+    const goal = await this.read(goalId);
+    if (goal.status === "done" || goal.status === "cancelled") {
+      throw new FakeGoalStateError(`Cannot cancel terminal goal ${goalId}`);
+    }
+    return this.#update(goalId, { status: "cancelled", cancelledAt: this.#now, updatedAt: this.#now });
+  }
+
+  async setMainSession(goalId: string, mainSessionId: string): Promise<GoalState> {
+    return this.#update(goalId, { mainSessionId, updatedAt: this.#now });
+  }
+
+  async addChildSession(goalId: string, childSessionId: string): Promise<GoalState> {
+    const goal = await this.read(goalId);
+    const childSessionIds = goal.childSessionIds.includes(childSessionId)
+      ? goal.childSessionIds
+      : [...goal.childSessionIds, childSessionId];
+    return this.#update(goalId, { childSessionIds, updatedAt: this.#now });
+  }
+
+  async fail(goalId: string, error: { name: string; message: string; at?: string }): Promise<GoalState> {
+    return this.#update(goalId, {
+      status: "failed",
+      lastError: { name: error.name, message: error.message, at: error.at ?? this.#now },
+      updatedAt: this.#now,
+    });
+  }
+
+  async setStatus(goalId: string, status: GoalStatus): Promise<GoalState> {
+    return this.#update(goalId, { status, updatedAt: this.#now });
+  }
+
+  async setReview(goalId: string): Promise<GoalState> {
+    return this.#update(goalId, {
+      status: "not_done",
+      lastFailureSummary: "Reviewer found missing evidence.",
+      review: {
+        verdict: "NOT_DONE",
+        summary: "More work is required.",
+        evidenceRefs: [],
+        reviewerSessionId: "reviewer-session",
+        decidedAt: this.#now,
+      },
+      updatedAt: this.#now,
+    });
+  }
+
+  #update(goalId: string, updates: Partial<GoalState>): GoalState {
+    const goal = this.#goals.get(goalId);
+    if (goal === undefined) throw new FakeGoalNotFoundError(goalId);
+    const updated = { ...goal, ...updates };
+    this.#goals.set(goalId, updated);
+    return updated;
+  }
+}
+
+function createRuntime(project: ProjectInfo, manager: FakeGoalStateManager): RouteRuntime {
+  const runtime = {
+    projectRegistry: {
+      get: mock(async (slug: string) => slug === project.slug ? project : undefined),
+    },
+    contextResolver: {
+      resolve: mock(async () => ({ goalState: manager })),
+    },
+    createSession: mock(async () => ({ sessionId: "created-main-session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
     startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
       sessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
@@ -59,57 +177,43 @@ function createTestRuntime(projectRegistry: ProjectRegistry): AgentRuntime {
       executionToken: Symbol("test-execution"),
       startedAt: Date.now(),
     })),
-    abortSessionExecution: mock(() => false),
-    abortSessionExecutionAndWait: mock(async () => undefined),
-    abortAllSessionExecutions: mock(async () => undefined),
     isSessionExecutionRunning: mock(() => false),
-    getSessionExecution: mock(() => undefined),
-    subscribeSessionEvents: mock(() => () => undefined),
-    deleteSession: mock(async () => undefined),
-    disposeSessionAgent: mock(() => undefined),
-    disposeAllSessionAgents: mock(() => undefined),
-    isSessionTombstoned: mock(() => false),
-    dispatchCommand: mock(async () => null),
-    notifyRuntimeShutdown: mock(() => undefined),
-  } as unknown as AgentRuntime;
-}
-
-async function createTestApp(testName: string) {
-  const homeDir = resolve(tempRoot, "homes", testName);
-  const workspaceRoot = resolve(tempRoot, "workspaces", testName);
-  await mkdir(homeDir, { recursive: true });
-  await mkdir(workspaceRoot, { recursive: true });
-  const projectRegistry = new ProjectRegistry({ homeDir, logger: silentLogger });
-  const project = await projectRegistry.add({ workspaceRoot, name: testName });
-  const runtime = createTestRuntime(projectRegistry);
-
-  return {
-    app: createServerApp(runtime, { dev: true }).app,
-    project,
-    runtime,
-    workspaceRoot,
   };
+  return runtime as unknown as RouteRuntime;
 }
 
-async function createGoal(app: ReturnType<typeof createServerApp>["app"], slug: string, title = "Ship Goal routes"): Promise<GoalState> {
+async function createFixture(testName: string): Promise<RuntimeFixture> {
+  const workspaceRoot = resolve(tempRoot, "workspaces", testName);
+  await mkdir(workspaceRoot, { recursive: true });
+  const project: ProjectInfo = {
+    slug: testName,
+    name: testName,
+    workspaceRoot,
+    addedAt: new Date("2026-07-08T00:00:00.000Z").toISOString(),
+  };
+  const manager = new FakeGoalStateManager();
+  const runtime = createRuntime(project, manager);
+  const app = new Hono();
+  app.onError(errorHandler);
+  app.route("/api/projects", createGoalsRoutes(runtime));
+  return { app, manager, project, runtime };
+}
+
+async function postGoal(app: Hono, slug: string, title = "Simplify Goal API"): Promise<GoalState> {
   const res = await app.request(`/api/projects/${slug}/goals`, {
     method: "POST",
     body: JSON.stringify({
       title,
-      doneConditions: [doneCondition],
-      retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-      approvalPoints: ["after_plan"],
-      reviewerAgent: "reviewer",
-      author: "tester",
+      objective: "Expose a natural-language Goal contract from the server.",
+      acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
     }),
     headers: { "content-type": "application/json" },
   });
-
   expect(res.status).toBe(201);
   return await res.json() as GoalState;
 }
 
-function lastStartedUserMessage(runtime: AgentRuntime): string {
+function lastStartedUserMessage(runtime: RouteRuntime): string {
   const calls = (runtime.startSessionExecution as ReturnType<typeof mock>).mock.calls;
   expect(calls.length).toBeGreaterThan(0);
   const input = calls[calls.length - 1]?.[0] as { userMessage?: string } | undefined;
@@ -117,10 +221,31 @@ function lastStartedUserMessage(runtime: AgentRuntime): string {
   return input?.userMessage ?? "";
 }
 
-function expectNoRemovedGoalExecutableGuidance(message: string): void {
-  for (const name of removedGoalExecutableNames) {
-    expect(message).not.toContain(name);
-  }
+function expectSimplifiedGoalShape(goal: Record<string, unknown>): void {
+  expect(goal.title).toBeString();
+  expect(goal.objective).toBeString();
+  expect(goal.acceptanceCriteria).toBeString();
+  expect(goal).not.toHaveProperty("doneConditions");
+  expect(goal).not.toHaveProperty("retryPolicy");
+  expect(goal).not.toHaveProperty("approvalPoints");
+  expect(goal).not.toHaveProperty("reviewerAgent");
+  expect(goal).not.toHaveProperty("author");
+  expect(goal).not.toHaveProperty("artifacts");
+  expect(JSON.stringify(goal)).not.toContain("plan.md");
+  expect(JSON.stringify(goal)).not.toContain("/artifacts");
+}
+
+function expectPromptUsesNaturalLanguageOnly(message: string): void {
+  expect(message).toContain("Objective:");
+  expect(message).toContain("Expose a natural-language Goal contract from the server.");
+  expect(message).toContain("Acceptance criteria:");
+  expect(message).toContain("The API accepts title, objective, and acceptance criteria only.");
+  expect(message).not.toContain("DoneCondition");
+  expect(message).not.toContain("Done Conditions");
+  expect(message).not.toContain("doneConditions");
+  expect(message).not.toContain("validation command");
+  expect(message).not.toContain("command_succeeds");
+  expect(message).not.toContain("typecheck_pass");
 }
 
 describe("goals routes", () => {
@@ -133,284 +258,142 @@ describe("goals routes", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
-  test("POST lock run lifecycle uses project goal state", async () => {
-    const { app, project, runtime } = await createTestApp("lifecycle");
+  test("POST create accepts only the simplified natural-language contract", async () => {
+    const { app, project } = await createFixture("create-simplified");
 
-    const created = await createGoal(app, project.slug);
-    expect(created.projectId).toBe(project.slug);
-    expect(created.status).toBe("draft");
+    const goal = await postGoal(app, project.slug);
 
-    const lockRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
+    expect(goal).toMatchObject({
+      projectId: project.slug,
+      title: "Simplify Goal API",
+      objective: "Expose a natural-language Goal contract from the server.",
+      acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
+      status: "draft",
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      childSessionIds: [],
+    });
+    expectSimplifiedGoalShape(goal as unknown as Record<string, unknown>);
+  });
+
+  test("POST create rejects old structured Goal payload fields with 400", async () => {
+    const { app, project } = await createFixture("reject-old-payload");
+
+    const res = await app.request(`/api/projects/${project.slug}/goals`, {
       method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
+      body: JSON.stringify({
+        title: "Old Goal",
+        objective: "This should be rejected.",
+        acceptanceCriteria: "Old fields are not allowed.",
+        doneConditions: [{ id: "typecheck", kind: "typecheck_pass", params: { command: "bun run typecheck" } }],
+        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
+        approvalPoints: ["after_plan"],
+        reviewerAgent: "reviewer",
+        author: "tester",
+        artifacts: ["plan.md"],
+        validationCommands: ["bun test"],
+      }),
       headers: { "content-type": "application/json" },
     });
-    const locked = await lockRes.json() as GoalState;
-    expect(lockRes.status).toBe(200);
-    expect(locked.status).toBe("locked");
-    expect(locked.lockedBy).toBe("planner-session");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+  });
+
+  test("PATCH edits draft title objective and acceptanceCriteria only", async () => {
+    const { app, project } = await createFixture("patch-draft");
+    const created = await postGoal(app, project.slug);
+
+    const patchRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        title: "Updated title",
+        objective: "Updated objective.",
+        acceptanceCriteria: "Updated natural-language acceptance criteria.",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const patched = await patchRes.json() as GoalState;
+
+    expect(patchRes.status).toBe(200);
+    expect(patched).toMatchObject({
+      title: "Updated title",
+      objective: "Updated objective.",
+      acceptanceCriteria: "Updated natural-language acceptance criteria.",
+    });
+    expectSimplifiedGoalShape(patched as unknown as Record<string, unknown>);
+  });
+
+  test("PATCH rejects old fields and non-draft edits", async () => {
+    const { app, manager, project } = await createFixture("patch-rejects");
+    const created = await postGoal(app, project.slug);
+
+    const oldFieldRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ doneConditions: [] }),
+      headers: { "content-type": "application/json" },
+    });
+    await manager.setStatus(created.id, "running");
+    const runningPatchRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title: "Too late" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(oldFieldRes.status).toBe(400);
+    expect(await oldFieldRes.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+    expect(runningPatchRes.status).toBe(409);
+    expect(await runningPatchRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Goal ${created.id} is running; patch is only allowed while draft` },
+    });
+  });
+
+  test("POST run starts a draft Goal and sends objective plus acceptanceCriteria only", async () => {
+    const { app, manager, project, runtime } = await createFixture("run-simplified");
+    const created = await postGoal(app, project.slug, "Run simplified Goal");
 
     const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
       method: "POST",
-      body: JSON.stringify({ mainSessionId: "main-session", childSessionIds: ["child-a"] }),
+      body: JSON.stringify({ mainSessionId: "main-session", childSessionIds: ["child-session"] }),
       headers: { "content-type": "application/json" },
     });
     const running = await runRes.json() as GoalState;
+
     expect(runRes.status).toBe(200);
-    expect(running.status).toBe("locked");
-    expect(running.mainSessionId).toBe("main-session");
-    expect(running.childSessionIds).toEqual(["child-a"]);
+    expect(running).toMatchObject({ status: "running", mainSessionId: "main-session", childSessionIds: ["child-session"] });
     expect(runtime.createSession).not.toHaveBeenCalled();
-    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(1);
     expect(runtime.startSessionExecution).toHaveBeenCalledWith({
       slug: project.slug,
       workspaceRoot: project.workspaceRoot,
       sessionId: "main-session",
       userMessage: expect.stringContaining(`Goal ID: ${created.id}`),
     });
-
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const persisted = await context.goalState.read(created.id);
-    expect(persisted).toMatchObject({ status: "locked", mainSessionId: "main-session" });
+    expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
+    expect(await manager.read(created.id)).toMatchObject({ status: "running", mainSessionId: "main-session" });
   });
 
-  test("POST run without body creates a main session and starts orchestrator execution", async () => {
-    const { app, project, runtime } = await createTestApp("run-creates-session");
-    const created = await createGoal(app, project.slug, "Execute the plan");
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
-      headers: { "content-type": "application/json" },
-    });
-    (runtime.createSession as ReturnType<typeof mock>).mockImplementation(async () => ({
-      sessionId: "created-main-session",
-      title: null,
-      createdAt: Date.now(),
-      messages: [],
-      steps: [],
-      todos: [],
-      reminders: [],
-    }));
+  test("POST run without body creates a main session", async () => {
+    const { app, project, runtime } = await createFixture("run-creates-session");
+    const created = await postGoal(app, project.slug);
 
     const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
-    const reserved = await runRes.json() as GoalState;
+    const running = await runRes.json() as GoalState;
 
     expect(runRes.status).toBe(200);
-    expect(reserved.status).toBe("locked");
-    expect(reserved.mainSessionId).toBe("created-main-session");
-    expect(runtime.createSession).toHaveBeenCalledTimes(1);
+    expect(running).toMatchObject({ status: "running", mainSessionId: "created-main-session" });
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
       goalId: created.id,
       sessionRole: "main",
       title: created.title,
     });
-    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(1);
-    expect(runtime.startSessionExecution).toHaveBeenCalledWith({
-      slug: project.slug,
-      workspaceRoot: project.workspaceRoot,
-      sessionId: "created-main-session",
-      userMessage: expect.stringContaining("Your first action must be calling goal_manage with action:\"start\""),
-    });
-    const runMessage = lastStartedUserMessage(runtime);
-    expect(runMessage).toContain("goal_manage.action=\"advance_phase\"");
-    expect(runMessage).toContain("goal_evidence action:\"check_done\"");
-    expectNoRemovedGoalExecutableGuidance(runMessage);
-
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const persisted = await context.goalState.read(created.id);
-    expect(persisted.mainSessionId).toBe("created-main-session");
+    expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
   });
 
-  test("POST run reuses an active reserved session without mutating goal", async () => {
-    const { app, project, runtime } = await createTestApp("run-active-conflict");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
-      headers: { "content-type": "application/json" },
-    });
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalState.updateSessionIds(created.id, "busy-session");
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => true);
-
-    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: "busy-session" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(runRes.status).toBe(200);
-    expect(await runRes.json()).toMatchObject({ status: "locked", mainSessionId: "busy-session" });
-    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
-
-    const persisted = await context.goalState.read(created.id);
-    expect(persisted).toMatchObject({ status: "locked", mainSessionId: "busy-session" });
-  });
-
-  test("POST run start failure leaves goal locked and records lastError", async () => {
-    const { app, project, runtime } = await createTestApp("run-start-failure-pauses");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
-      headers: { "content-type": "application/json" },
-    });
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation(() => false);
-    (runtime.startSessionExecution as ReturnType<typeof mock>).mockImplementation(() => {
-      throw new Error("boom");
-    });
-
-    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
-      method: "POST",
-      body: JSON.stringify({ mainSessionId: "start-fails-session" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(runRes.status).toBe(500);
-    expect(runtime.startSessionExecution).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "start-fails-session" }));
-
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    const persisted = await context.goalState.read(created.id);
-    expect(persisted.status).toBe("locked");
-    expect(persisted.mainSessionId).toBe("start-fails-session");
-    expect(persisted.lastError).toBe("Goal run bootstrap could not start: boom");
-  });
-
-  test("POST run reuses reserved main session on duplicate requests", async () => {
-    const { app, project, runtime } = await createTestApp("run-duplicate-reuses-session");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
-      headers: { "content-type": "application/json" },
-    });
-    (runtime.createSession as ReturnType<typeof mock>).mockImplementation(async () => ({
-      sessionId: "created-main-session",
-      title: null,
-      createdAt: Date.now(),
-      messages: [],
-      steps: [],
-      todos: [],
-      reminders: [],
-    }));
-
-    const firstRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
-    const secondRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
-
-    expect(firstRes.status).toBe(200);
-    expect(secondRes.status).toBe(200);
-    expect(await firstRes.json()).toMatchObject({ status: "locked", mainSessionId: "created-main-session" });
-    expect(await secondRes.json()).toMatchObject({ status: "locked", mainSessionId: "created-main-session" });
-    expect(runtime.createSession).toHaveBeenCalledTimes(1);
-    expect(runtime.startSessionExecution).toHaveBeenCalledTimes(2);
-  });
-
-  test("POST run rejects malformed JSON instead of treating it as empty body", async () => {
-    const { app, project } = await createTestApp("run-malformed-json");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner-session" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
-      method: "POST",
-      body: "{bad json",
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(runRes.status).toBe(400);
-    expect(await runRes.json()).toEqual({ error: { code: "BAD_REQUEST", message: "Request body must be valid JSON" } });
-  });
-
-  test("POST create rejects malformed done condition params", async () => {
-    const { app, project } = await createTestApp("strict-done-condition");
-
-    const res = await app.request(`/api/projects/${project.slug}/goals`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: "Bad condition",
-        doneConditions: [{ id: "artifact", kind: "file_exists", params: {} }],
-        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
-        author: "tester",
-      }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
-  });
-
-  test("POST create accepts grep_empty done condition", async () => {
-    const { app, project } = await createTestApp("grep-empty-condition");
-
-    const res = await app.request(`/api/projects/${project.slug}/goals`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: "No TODOs",
-        doneConditions: [{ id: "no-todos", kind: "grep_empty", params: { pattern: "TODO", path: "src" } }],
-        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
-        author: "tester",
-      }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ doneConditions: [{ id: "no-todos", kind: "grep_empty" }] });
-  });
-
-  test("POST create rejects too many done conditions", async () => {
-    const { app, project } = await createTestApp("too-many-conditions");
-
-    const res = await app.request(`/api/projects/${project.slug}/goals`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: "Too many conditions",
-        doneConditions: Array.from({ length: 51 }, (_value, index) => ({
-          id: `condition-${index}`,
-          kind: "tests_pass",
-          params: { command: "bun test" },
-        })),
-        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
-        author: "tester",
-      }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
-  });
-
-  test("POST create rejects oversized command timeout", async () => {
-    const { app, project } = await createTestApp("oversized-command-timeout");
-
-    const res = await app.request(`/api/projects/${project.slug}/goals`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: "Unsafe timeout",
-        doneConditions: [{ id: "long-command", kind: "command_succeeds", params: { command: "pwd", timeoutMs: 600_001 } }],
-        retryPolicy: { maxRetries: 2, backoffMs: 100, escalateOnFailure: true },
-        approvalPoints: [],
-        reviewerAgent: "reviewer",
-        author: "tester",
-      }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
-  });
-
-  test("POST run keeps invalid transitions rejected and does not start execution", async () => {
-    const { app, project, runtime } = await createTestApp("run-invalid-transition");
-    const created = await createGoal(app, project.slug);
+  test("POST run rejects terminal and non-runnable statuses", async () => {
+    const { app, manager, project, runtime } = await createFixture("run-invalid-status");
+    const created = await postGoal(app, project.slug);
+    await manager.setStatus(created.id, "done");
 
     const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
 
@@ -422,214 +405,10 @@ describe("goals routes", () => {
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
-  test("PATCH after lock returns 409", async () => {
-    const { app, project } = await createTestApp("patch-after-lock");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "locker" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    const res = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title: "Too late" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: `Goal ${created.id} is locked; generic patch is only allowed while draft` },
-    });
-  });
-
-  test("global goals include project metadata for each registered project", async () => {
-    const { app, project, runtime } = await createTestApp("global-project-metadata");
-    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "global-project-metadata-other");
-    await mkdir(otherWorkspaceRoot, { recursive: true });
-    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "global-project-metadata-other" });
-
-    const firstGoal = await createGoal(app, project.slug, "First active goal");
-    const otherGoal = await createGoal(app, otherProject.slug, "Other active goal");
-    await app.request(`/api/projects/${project.slug}/goals/${firstGoal.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner" }),
-      headers: { "content-type": "application/json" },
-    });
-    await app.request(`/api/projects/${project.slug}/goals/${firstGoal.id}/run`, { method: "POST" });
-    await app.request(`/api/projects/${otherProject.slug}/goals/${otherGoal.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "planner" }),
-      headers: { "content-type": "application/json" },
-    });
-    await app.request(`/api/projects/${otherProject.slug}/goals/${otherGoal.id}/run`, { method: "POST" });
-
-    const res = await app.request("/api/goals?status=active");
-    const body = await res.json() as { goals: Array<GoalState & { projectSlug: string; projectName: string }> };
-
-    expect(res.status).toBe(200);
-    expect(body.goals).toContainEqual(expect.objectContaining({ id: firstGoal.id, projectSlug: project.slug, projectName: project.name }));
-    expect(body.goals).toContainEqual(expect.objectContaining({ id: otherGoal.id, projectSlug: otherProject.slug, projectName: otherProject.name }));
-  });
-
-  test("goals are isolated by project workspace", async () => {
-    const { app, project, runtime } = await createTestApp("cross-project");
-    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "cross-project-other");
-    await mkdir(otherWorkspaceRoot, { recursive: true });
-    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "cross-project-other" });
-
-    const firstGoal = await createGoal(app, project.slug, "First workspace");
-    const otherGoal = await createGoal(app, otherProject.slug, "Other workspace");
-
-    const firstRes = await app.request(`/api/projects/${project.slug}/goals`);
-    const otherRes = await app.request(`/api/projects/${otherProject.slug}/goals`);
-    const firstBody = await firstRes.json() as { goals: GoalState[] };
-    const otherBody = await otherRes.json() as { goals: GoalState[] };
-
-    expect(firstBody.goals.map((goal) => goal.id)).toEqual([firstGoal.id]);
-    expect(otherBody.goals.map((goal) => goal.id)).toEqual([otherGoal.id]);
-  });
-
-  test("project-scoped route returns 404 for a goal from another workspace", async () => {
-    const { app, project, runtime } = await createTestApp("foreign-goal-read");
-    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "foreign-goal-read-other");
-    await mkdir(otherWorkspaceRoot, { recursive: true });
-    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "foreign-goal-read-other" });
-    const firstGoal = await createGoal(app, project.slug, "First workspace only");
-
-    const res = await app.request(`/api/projects/${otherProject.slug}/goals/${firstGoal.id}`);
-
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
-      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${firstGoal.id}` },
-    });
-  });
-
-  test("artifacts list/read returns canonical current artifacts and markdown content", async () => {
-    const { app, project, runtime } = await createTestApp("artifacts-list-read");
-    const goal = await createGoal(app, project.slug, "Artifact API");
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    for (const name of canonicalArtifactNames) {
-      await context.goalArtifacts.writeArtifact(goal, name, `# ${name}\n\nCurrent artifact for ${name}.`, { agentName: name === "plan.md" ? "plan" : "goal-lifecycle" });
-    }
-
-    const listRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts`);
-    const listBody = await listRes.json() as { artifacts: Array<{ name: string; path: string; mediaType: string; sha256?: string }> };
-    const readRes = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/final-report.md`);
-    const readBody = await readRes.json() as { artifact: { name: string; path: string; mediaType: string }; content: string };
-
-    expect(listRes.status).toBe(200);
-    expect(listBody.artifacts.map((artifact) => artifact.name)).toEqual(canonicalArtifactNames);
-    expect(listBody.artifacts.every((artifact) => artifact.mediaType === "text/markdown")).toBe(true);
-    expect(listBody.artifacts.every((artifact) => typeof artifact.sha256 === "string" && artifact.sha256.length > 0)).toBe(true);
-    expect(listBody.artifacts[0]).toMatchObject({
-      name: "plan.md",
-      path: `.archcode/goals/${goal.id}/artifacts/plan.md`,
-      mediaType: "text/markdown",
-    });
-
-    expect(readRes.status).toBe(200);
-    expect(readBody).toMatchObject({
-      artifact: { name: "final-report.md", path: `.archcode/goals/${goal.id}/artifacts/final-report.md`, mediaType: "text/markdown" },
-      content: "# final-report.md\n\nCurrent artifact for final-report.md.\n",
-    });
-  });
-
-  test("artifacts route validates project scope, canonical names, and exposes no edit endpoint", async () => {
-    const { app, project, runtime } = await createTestApp("artifacts-boundaries");
-    const otherWorkspaceRoot = resolve(tempRoot, "workspaces", "artifacts-boundaries-other");
-    await mkdir(otherWorkspaceRoot, { recursive: true });
-    const otherProject = await runtime.projectRegistry.add({ workspaceRoot: otherWorkspaceRoot, name: "artifacts-boundaries-other" });
-    const goal = await createGoal(app, project.slug, "Artifact boundaries");
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalArtifacts.writeArtifact(goal, "plan.md", "# Plan", { agentName: "plan" });
-
-    const foreignList = await app.request(`/api/projects/${otherProject.slug}/goals/${goal.id}/artifacts`);
-    const traversalRead = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/..%2Fplan.md`);
-    const noncanonicalRead = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan-v2.md`);
-    const editAttempt = await app.request(`/api/projects/${project.slug}/goals/${goal.id}/artifacts/plan.md`, {
-      method: "PATCH",
-      body: JSON.stringify({ content: "# Hacked" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    expect(foreignList.status).toBe(404);
-    expect(await foreignList.json()).toEqual({
-      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${goal.id}` },
-    });
-    expect(traversalRead.status).toBe(400);
-    expect(await traversalRead.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: "artifactName must be a canonical Goal artifact name" },
-    });
-    expect(noncanonicalRead.status).toBe(400);
-    expect(editAttempt.status).toBe(404);
-    expect(await context.goalArtifacts.readArtifact(goal.id, "plan.md")).toBe("# Plan\n");
-  });
-
-  test("GET list supports status filter", async () => {
-    const { app, project } = await createTestApp("status-filter");
-    const draft = await createGoal(app, project.slug, "Draft goal");
-    const locked = await createGoal(app, project.slug, "Locked goal");
-    await app.request(`/api/projects/${project.slug}/goals/${locked.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "locker" }),
-      headers: { "content-type": "application/json" },
-    });
-
-    const res = await app.request(`/api/projects/${project.slug}/goals?status=draft`);
-    const body = await res.json() as { goals: GoalState[] };
-
-    expect(res.status).toBe(200);
-    expect(body.goals.map((goal) => goal.id)).toEqual([draft.id]);
-  });
-
-  test("GET missing goal returns 404", async () => {
-    const { app, project } = await createTestApp("missing-goal");
-    const missingGoalId = crypto.randomUUID();
-
-    const res = await app.request(`/api/projects/${project.slug}/goals/${missingGoalId}`);
-
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
-      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${missingGoalId}` },
-    });
-  });
-
-  test("invalid goal id path returns 400", async () => {
-    const { app, project } = await createTestApp("invalid-goal-id");
-
-    const res = await app.request(`/api/projects/${project.slug}/goals/not-a-uuid`);
-
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: "goalId must be a UUID" },
-    });
-  });
-
-  test("retry escalate and cancel endpoints mutate via goal state", async () => {
-    const { app, project, runtime } = await createTestApp("actions");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "locker" }),
-      headers: { "content-type": "application/json" },
-    });
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
-
-    const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
-    const cancelled = await cancelRes.json() as GoalState;
-    expect(cancelRes.status).toBe(200);
-    expect(cancelled.status).toBe("paused");
-
-    const resumeRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, { method: "POST" });
-    const resumed = await resumeRes.json() as GoalState;
-    expect(resumeRes.status).toBe(200);
-    expect(resumed.status).toBe("paused");
-    expect(resumed.mainSessionId).toBeString();
-
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalState.transitionStatus(created.id, "running");
-    await context.goalState.transitionStatus(created.id, "failed");
+  test("POST retry restarts not_done Goal and sends objective plus acceptanceCriteria only", async () => {
+    const { app, manager, project, runtime } = await createFixture("retry-simplified");
+    const created = await postGoal(app, project.slug, "Retry simplified Goal");
+    await manager.setReview(created.id);
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
@@ -637,37 +416,22 @@ describe("goals routes", () => {
       headers: { "content-type": "application/json" },
     });
     const retried = await retryRes.json() as GoalState;
+
     expect(retryRes.status).toBe(200);
-    expect(retried.status).toBe("failed");
-    expect(retried.retryCount).toBe(0);
-    expect(retried.mainSessionId).toBe("retry-session");
+    expect(retried).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
+    expect(retried.review).toBeUndefined();
     expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: "retry-session",
       userMessage: expect.stringContaining("goal_manage with action:\"retry\""),
     }));
-    const retryMessage = lastStartedUserMessage(runtime);
-    expect(retryMessage).toContain("goal_manage.action=\"advance_phase\"");
-    expect(retryMessage).toContain("goal_evidence action:\"check_done\"");
-    expectNoRemovedGoalExecutableGuidance(retryMessage);
-
-    const escalateRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/escalate`, { method: "POST" });
-    const escalated = await escalateRes.json() as GoalState;
-    expect(escalateRes.status).toBe(200);
-    expect(escalated.status).toBe("escalated");
+    expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
   });
 
-  test("POST retry rejects a different requested session when an active retry session is reserved", async () => {
-    const { app, project, runtime } = await createTestApp("retry-active-reservation-mismatch");
-    const created = await createGoal(app, project.slug);
-    await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "locker" }),
-      headers: { "content-type": "application/json" },
-    });
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalState.transitionStatus(created.id, "running");
-    await context.goalState.transitionStatus(created.id, "failed");
-    await context.goalState.updateSessionIds(created.id, "active-retry-session");
+  test("POST retry rejects active reserved session mismatch", async () => {
+    const { app, manager, project, runtime } = await createFixture("retry-session-mismatch");
+    const created = await postGoal(app, project.slug);
+    await manager.setReview(created.id);
+    await manager.setMainSession(created.id, "active-retry-session");
     (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation((_workspaceRoot: string, sessionId: string) => sessionId === "active-retry-session");
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
@@ -681,35 +445,64 @@ describe("goals routes", () => {
       error: { code: "BAD_REQUEST", message: `Goal ${created.id} is already reserved for session active-retry-session` },
     });
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
-    expect(await context.goalState.read(created.id)).toMatchObject({ status: "failed", mainSessionId: "active-retry-session" });
   });
 
-  test("cancel rejects draft and failed goals so run cannot bypass lock or retry", async () => {
-    const { app, project, runtime } = await createTestApp("cancel-invalid-sources");
-    const draft = await createGoal(app, project.slug, "Draft cannot pause");
+  test("POST cancel moves an active Goal to cancelled", async () => {
+    const { app, manager, project } = await createFixture("cancel-goal");
+    const created = await postGoal(app, project.slug);
+    await manager.setStatus(created.id, "running");
 
-    const draftCancelRes = await app.request(`/api/projects/${project.slug}/goals/${draft.id}/cancel`, { method: "POST" });
-    const draftRunRes = await app.request(`/api/projects/${project.slug}/goals/${draft.id}/run`, { method: "POST" });
+    const cancelRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/cancel`, { method: "POST" });
+    const cancelled = await cancelRes.json() as GoalState;
 
-    expect(draftCancelRes.status).toBe(409);
-    expect(draftRunRes.status).toBe(409);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.cancelledAt).toBeString();
+  });
 
-    const failed = await createGoal(app, project.slug, "Failed cannot pause");
-    await app.request(`/api/projects/${project.slug}/goals/${failed.id}/lock`, {
-      method: "POST",
-      body: JSON.stringify({ lockedBy: "locker" }),
-      headers: { "content-type": "application/json" },
+  test("GET list and read expose simplified GoalState only", async () => {
+    const { app, project } = await createFixture("list-read");
+    const created = await postGoal(app, project.slug);
+
+    const listRes = await app.request(`/api/projects/${project.slug}/goals?status=draft`);
+    const listBody = await listRes.json() as { goals: GoalState[] };
+    const readRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`);
+    const readGoal = await readRes.json() as GoalState;
+
+    expect(listRes.status).toBe(200);
+    expect(listBody.goals.map((goal) => goal.id)).toEqual([created.id]);
+    expect(readRes.status).toBe(200);
+    expect(readGoal.id).toBe(created.id);
+    expectSimplifiedGoalShape(readGoal as unknown as Record<string, unknown>);
+  });
+
+  test("deleted artifact lock and escalate routes are not registered", async () => {
+    const { app, project } = await createFixture("deleted-routes");
+    const created = await postGoal(app, project.slug);
+
+    const artifactList = await app.request(`/api/projects/${project.slug}/goals/${created.id}/artifacts`);
+    const artifactRead = await app.request(`/api/projects/${project.slug}/goals/${created.id}/artifacts/plan.md`);
+    const lock = await app.request(`/api/projects/${project.slug}/goals/${created.id}/lock`, { method: "POST" });
+    const escalate = await app.request(`/api/projects/${project.slug}/goals/${created.id}/escalate`, { method: "POST" });
+
+    expect(artifactList.status).toBe(404);
+    expect(artifactRead.status).toBe(404);
+    expect(lock.status).toBe(404);
+    expect(escalate.status).toBe(404);
+  });
+
+  test("invalid goal id path returns 400 and missing goal returns 404", async () => {
+    const { app, project } = await createFixture("missing-invalid");
+    const missingGoalId = crypto.randomUUID();
+
+    const invalidRes = await app.request(`/api/projects/${project.slug}/goals/not-a-uuid`);
+    const missingRes = await app.request(`/api/projects/${project.slug}/goals/${missingGoalId}`);
+
+    expect(invalidRes.status).toBe(400);
+    expect(await invalidRes.json()).toEqual({ error: { code: "BAD_REQUEST", message: "goalId must be a UUID" } });
+    expect(missingRes.status).toBe(404);
+    expect(await missingRes.json()).toEqual({
+      error: { code: "SESSION_NOT_FOUND", message: `Goal not found: ${missingGoalId}` },
     });
-    const context = await runtime.contextResolver.resolve(project.workspaceRoot);
-    await context.goalState.transitionStatus(failed.id, "running");
-    await context.goalState.transitionStatus(failed.id, "failed");
-
-    const failedCancelRes = await app.request(`/api/projects/${project.slug}/goals/${failed.id}/cancel`, { method: "POST" });
-    const failedRunRes = await app.request(`/api/projects/${project.slug}/goals/${failed.id}/run`, { method: "POST" });
-
-    expect(failedCancelRes.status).toBe(409);
-    expect(failedRunRes.status).toBe(409);
-    expect(runtime.createSession).not.toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({ goalId: draft.id }));
-    expect(runtime.createSession).not.toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({ goalId: failed.id }));
   });
 });
