@@ -9,6 +9,8 @@
 **配套技术设计在 `docs/workbench-refactor/TDD.md`** —— 那里定义"怎么实现"(类型/schema/路由/组件)。
 **状态**:产品规格,描述完整产品意图。实施按 5 阶段(先 Goal 后 Loop)分步,由用户根据本 PRD 拆任务执行。Phase 2 Goal 语义以 §5.2 为当前实现边界。
 
+> **Current implementation note (2026-07):** The detailed Goal design below predates the simplified Goal integration. Current runtime uses natural-language objectives/acceptance criteria, `goal_manage` lifecycle/finalization, ordinary session output and verification logs as evidence, and no separate Goal artifact/evidence tools or typed validation DSL. Historical wording has been normalized to avoid documenting removed APIs as current behavior.
+
 ---
 
 ## 1. 定位
@@ -59,7 +61,7 @@
 | 痛点 | 现状 | ArchCode 解决 |
 |---|---|---|
 | 多项目 AI 编码没有统一指挥台 | 每个仓库开一个 Claude Code/Cursor tab,context 割裂 | 跨项目 Mission Control,一处看全部 |
-| AI 说"我做完了"但不可信 | 模型自评,无独立验证 | 机器可检 Done 条件 + 独立 Reviewer + 默认拒绝 |
+| AI 说"我做完了"但不可信 | 模型自评,无独立验证 | 机器可检 验收条件 + 独立 Reviewer + 默认拒绝 |
 | 长任务不敢放手跑 | 怕 token 烧穿、怕跑飞、怕回来不知道发生了什么 | token Budget 护栏 + kill switch + 审计日志 + run-log |
 | 重复性维护工作占精力 | 每天手动看 CI、triage PR、查依赖 | Loop 自动跑,人审门控风险,State 持续积累 |
 | 代码不出域 | 云端 AI 工程师 SaaS 黑盒 | 自托管 + BYOM + 全透明可审计 |
@@ -72,7 +74,7 @@
 ### 3.1 典型使用流程
 
 ```
-1. 架构师设计意图 → Goal(不可变 Done 条件 + 独立 Reviewer)
+1. 架构师设计意图 → Goal(不可变 验收条件 + 独立 Reviewer)
 2. ArchCode 分解 → plan / build / review 任务
 3. AI agents 执行 → 架构师不写代码
 4. 架构师监督 → Web UI 显示进度,审批关键操作,审查证据
@@ -83,7 +85,7 @@
 ### 3.2 三个使用场景
 
 **场景 A:复杂功能开发(Goal)**
-架构师描述"给 auth 模块加 refresh token 轮转",设定 Done 条件(`tests_pass` + `typecheck_pass` + `spec_compliance`),审批门在 plan 完成后。ArchCode 自主分解 plan→build→review,架构师在 plan 完成时审查方向,合上笔记本,回来看到 Reviewer 的机检证据,决定 merge。
+架构师描述"给 auth 模块加 refresh token 轮转",设定 验收条件(`tests pass` + `typecheck passes` + `spec compliance`),审批门在 plan 完成后。ArchCode 自主分解 plan→build→review,架构师在 plan 完成时审查方向,合上笔记本,回来看到 Reviewer 的机检证据,决定 merge。
 
 **场景 B:重复性维护(Loop)**
 架构师创建 daily-triage Loop,设定 schedule(每天 9:00)、budget(每日 100k tokens)、approvalPoints(破坏性操作必须人审)。Loop 每天扫 CI/issue/commit,报告高优先级项,小 fix 自动提 PR(人审后 merge),大问题 escalate。架构师每天看 5 分钟报告,不用盯。
@@ -100,11 +102,11 @@
 | 原语 | 定义 | 终止条件 |
 |---|---|---|
 | **Session** | 一次对话 + 工具执行,架构师掌控 | 架构师说停就停 |
-| **Goal** | Session + 机器可检 Done 条件 + 独立 Reviewer + 失败换新上下文重试 + **显式 phases**(plan→build→review) | Done 条件全 true,或重试上限耗尽 |
+| **Goal** | Session + 机器可检 验收条件 + 独立 Reviewer + 失败换新上下文重试 + **显式 phases**(plan→build→review) | 验收条件全 true,或重试上限耗尽 |
 | **Loop** | Goal/Session + 调度 + 跨 run State + Budget | 被杀 / 预算耗尽 / 自清理 / 人审挂起 |
 
 **三条铁律**(来自社区失败案例):
-1. **Done 条件锁死**:运行前锁定,运行中不可变。完成判定走机器可检,不走人类主观判断。
+1. **验收条件锁死**:运行前锁定,运行中不可变。完成判定走机器可检,不走人类主观判断。
 2. **Reviewer ≠ Implementer**:Maker/Checker 非协商。Reviewer 默认拒绝,必须用证据说服它放行。
 3. **Loop ≠ 自主改进项目**:Loop = 自动化你本来就会做的重复性维护。把 Loop 当"让 agent 自由改进代码库"是 $47K 失控案例的根源。
 
@@ -119,24 +121,24 @@
 
 **Loop 不是 Goal 超集**:Loop 是调度容器,可跑 Session(简单重复任务)或 Goal(复杂重复任务带 Done + Reviewer)。
 
-### 4.2 Done Conditions:混合两层
+### 4.2 Acceptance Criteria:混合两层
 
 **Layer 1:机器可检(7 种 machine + 1 HITL)**:
-- `tests_pass` / `typecheck_pass` / `lsp_clean` —— 代码质量
-- `file_exists` / `grep_contains` / `grep_empty` —— 产物/内容检查
-- `command_succeeds` —— **万能逃生口**(任何条件都能用一条 shell 命令表达)
-- `user_confirmed` —— HITL 审批(**唯一非机器 check**,走 HITL `approval` kind)
+- `tests pass` / `typecheck passes` / `LSP diagnostics are clean` —— 代码质量
+- `file exists` / `grep contains` / `grep has no matches` —— 产物/内容检查
+- `command succeeds` —— **万能逃生口**(任何条件都能用一条 shell 命令表达)
+- `user confirmation` —— HITL 审批(**唯一非机器 check**,走 HITL `approval` kind)
 
-**Done 条件谁生成**:AI(orchestrator/plan)可生成所有 kind 包括 `command_succeeds`,但**用户 `lock` 确认后才生效**。安全由三层保证:(1) 用户 lock 确认 (2) Reviewer 独立验证(Reviewer ≠ 生成 doneConditions 的 agent) (3) `command_succeeds` 的 bash guard(限制破坏性命令)。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI orchestrator 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI orchestrator 生成 done_conditions,自动验证器执行。
+**验收条件谁生成**:AI(orchestrator/plan)可生成所有 kind 包括 `command succeeds`,但**用户 `lock` 确认后才生效**。安全由三层保证:(1) 用户 lock 确认 (2) Reviewer 独立验证(Reviewer ≠ 生成 acceptanceCriteria 的 agent) (3) `command succeeds` 的 bash guard(限制破坏性命令)。`goal.json` 记录 `author`(生成者)和 `lockedBy`(锁定者)。竞品先例:Factory Missions 的 AI orchestrator 生成 Validation Contract,用户审批计划,独立 fresh validator 验证;Castor 的 AI orchestrator 生成 done_conditions,自动验证器执行。
 
 **Layer 2:AI 判断(可选)** —— 1 种:
-- `spec_compliance` —— Reviewer 读 spec + 代码 + 跑工具,判断实现是否匹配 spec。复杂 Goal 用,简单 Goal 不用。
+- `spec compliance` —— Reviewer 读 spec + 代码 + 跑工具,判断实现是否匹配 spec。复杂 Goal 用,简单 Goal 不用。
 
 **为什么是混合**:纯 AI 自判不可靠(Steinberger/SonarSource 警告"slop machine";Claude Code `/goal` evaluator 官方承认"不调工具,只能读对话")。纯硬编码不够(需要 maker/checker split + AI 判断 spec 符合度)。Castor 的固定 enum 是有效先例。
 
 **Goal 状态机**:draft → locked → running → verifying → reviewed → completed(全 true)/ failed → retry(fresh session)/ escalated(重试耗尽)。**`reviewed` 是 `done` 的前置** —— orchestrator 不能跳过 Reviewer。Goal 内部有 3 个 phase(plan→build→review),`approvalPoints` 是 phase 转换门(不是独立状态机节点)。
 
-**Reviewer day-one 强制**:Goal 核心价值就是 locked Done 条件 + 独立 Reviewer 验证。没有 Reviewer 的 Goal 退化为 Session(用 Session 即可)。Phase 1 起 Reviewer **强制**,orchestrator 不能跳过。
+**Reviewer day-one 强制**:Goal 核心价值就是 locked 验收条件 + 独立 Reviewer 验证。没有 Reviewer 的 Goal 退化为 Session(用 Session 即可)。Phase 1 起 Reviewer **强制**,orchestrator 不能跳过。
 
 ### 4.3 HITL:横切关注点
 
@@ -184,7 +186,7 @@
 
 **统一 Approval Queue**:全局 Dashboard 集中(跨项目/Goal/Loop)+ Goal 详情就地,两端都能操作。每条 HITL 指向来源 session,点击跳转。
 
-**HITL 是与 Goal 平级的服务**,不是 Goal 的子模块。Goal 的 done-checker 依赖 HITL 回答 `user_confirmed`。HITL 可在任意 session(主或子)弹出。HITL **不合并**现有 `PermissionService`/`AskUserService`——它们保持不变,HITL 是新增的独立 service。
+**HITL 是与 Goal 平级的服务**,不是 Goal 的子模块。Goal 的 Reviewer validation flow 依赖 HITL 回答 `user confirmation`。HITL 可在任意 session(主或子)弹出。HITL **不合并**现有 `PermissionService`/`AskUserService`——它们保持不变,HITL 是新增的独立 service。
 
 ### 4.4 6-agent 架构(4 core + 2 ancillary)
 
@@ -193,7 +195,7 @@
 | **orchestrator** | core | 拥有 Goal,委派,决策,与架构师对话 | 全工具 + 委派 |
 | **plan** | core | 想清楚要做什么 | 只读 + lsp + web_fetch |
 | **build** | core | 实现代码 | 读写工具 |
-| **reviewer** | core | 默认拒绝,用证据判完成 | 只读 + lsp + 跑测试 + `goal_evidence` + `goal_manage.finalize_review` + `goal_artifact_read`/`goal_artifact_write`,**独立 session store** |
+| **reviewer** | core | 默认拒绝,用证据判完成 | 只读 + lsp + 跑测试 + `Reviewer evidence flow` + `goal_manage.finalize_review` + `Goal session evidence read access`/`Goal session evidence write access`,**独立 session store** |
 | **explore** | ancillary | 代码库检索 | 只读 grep |
 | **librarian** | ancillary | 外部文档/库检索 | web_fetch + MCP |
 
@@ -202,7 +204,7 @@
 **Reviewer 的核心差异化**:
 - **强制**(orchestrator 不能跳过)
 - **独立 session store**(不共享 Build 的,避免被带偏)
-- **能跑工具**(lsp_diagnostics / tests / grep / git_diff / goal_evidence / goal_manage.finalize_review / goal_artifact_read/write)—— 核心差异化 vs Claude Code `/goal` evaluator(不调工具,只读对话)
+- **能跑工具**(lsp_diagnostics / tests / grep / git_diff / Reviewer evidence flow / goal_manage.finalize_review / Goal session evidence access)—— 核心差异化 vs Claude Code `/goal` evaluator(不调工具,只读对话)
 - **默认拒绝 + 5 点检查清单**(全部通过才 APPROVE):
   1. Scope —— 只改了相关文件,没碰 denylist,没有无关 diff
   2. Intent —— 改动确实针对声明的目标
@@ -221,8 +223,8 @@
 **8 个硬约束迁移**(不丢弃,迁移到新原语):
 - Tool permissions per role → agent definition 工具集硬编码
 - Transition graph validity → **Goal phase 转换 guard**(plan→build→review 显式 phases,approvalPoints 是转换门)
-- Artifact prerequisites → Goal `doneConditions: [file_exists]`
-- User approval gate → HITL `approval` + Goal `doneConditions[user_confirmed]`
+- Artifact prerequisites → Goal `acceptanceCriteria: [file exists]`
+- User approval gate → HITL `approval` + Goal `acceptanceCriteria[user confirmation]`
 - Critic retry limit → Goal `retryPolicy.maxRetries`
 - Unresolved interactions block → HITL pending check + Goal gate
 - No concurrent workflows → Goal session binding
@@ -247,7 +249,7 @@
 - **Dashboard**:跨项目 Mission Control —— Active Goals / Active Loops + budget 仪表 / 全局 Approval Queue / 近期活动
 - **Projects**:点进项目看 Goals / Loops / Sessions / Memory
 
-**Goal 详情 tabs**:Overview(Done 条件 + 进度)/ Plan / Build / Review / Chat(主 session 对话)/ Sessions(子 session 列表 + retry 链)
+**Goal 详情 tabs**:Overview(验收条件 + 进度)/ Plan / Build / Review / Chat(主 session 对话)/ Sessions(子 session 列表 + retry 链)
 
 **Loop 详情 tabs**:Config / Live Status(预算仪表)/ Run History / State(可编辑)
 
@@ -263,17 +265,17 @@
 
 **目标**:能跑通一个完整 Goal = 验证"架构师设计意图 → AI 执行 → 机检证明完成 → 架构师审查"核心闭环。
 
-- 三层原语:Goal/Session(HITL 跟着 Goal 一起做,因为 approvalPoints + done `user_confirmed` 依赖它;Loop 暂不做)
-- Done Conditions 7 种 machine + 1 HITL kind(Layer 1)
+- 三层原语:Goal/Session(HITL 跟着 Goal 一起做,因为 approvalPoints + done `user confirmation` 依赖它;Loop 暂不做)
+- Acceptance Criteria 7 种 machine + 1 HITL kind(Layer 1)
 - HITL 3 种 kind(question/approval/review)+ 统一 Approval Queue(新增 HitlService,不合并现有 PermissionService/AskUserService)
 - 6-agent 定义(orchestrator/plan/build/reviewer/explore/librarian),工具集硬编码
 - **Reviewer day-one 强制**(orchestrator 不能跳过,`reviewed` 是 `done` 前置)
 - Reviewer 默认拒绝 + 5 点检查清单
 - Goal 状态机:draft→locked→running→verifying→reviewed→completed/failed/escalated + 显式 phases(plan→build→review)
-- Goal 执行:lock → orchestrator 自主分解 → 委派 plan/build/reviewer → reviewer 用 `goal_evidence` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
+- Goal 执行:lock → orchestrator 自主分解 → 委派 plan/build/reviewer → reviewer 用 `Reviewer evidence flow` 逐条 check_done → reviewer 用 `goal_manage.finalize_review` 给出 DONE/NOT_DONE → retry(fresh session)
 - approvalPoints:`after_plan` / `before_complete`(Goal phase 转换门);`on_destructive_op` 是 tool guard(不是 approvalPoint)
-- `goal_manage` 生命周期动作工具(create/lock/start/advance_phase/retry/finalize_review) + `goal_evidence` Reviewer 证据工具(action="check_done") + `goal_artifact_read`/`goal_artifact_write`
-- AI 可生成 Done 条件(包括 `command_succeeds`),用户 lock 确认后生效;`goal.json` 记录 author + lockedBy
+- `goal_manage` 生命周期动作工具(create/lock/start/advance lifecycle state/retry/finalize_review) + `Reviewer evidence flow` Reviewer 证据工具(action="check_done") + `Goal session evidence read access`/`Goal session evidence write access`
+- AI 可生成 验收条件(包括 `command succeeds`),用户 lock 确认后生效;`goal.json` 记录 author + lockedBy
 - Workflow 删除(code 一次性删,用户数据 `.archcode/workflows/` 保留只读)
 - Web UI:Goal 列表 + 详情(Overview/Plan/Build/Review/Chat/Sessions)、Approval Queue(集中+就地)、项目导航
 - **Dashboard**(跨项目 Mission Control):Active Goals + Approval Queue(REST 初始快照 + SSE 增量;遍历 `ProjectRegistry.list()` + 各项目 `.archcode/goals/` 文件聚合)
@@ -283,9 +285,9 @@
 **目标**:Goal 体验完整,架构师可日常依赖 Goal 做真实工程工作。
 
 - retry/fresh-context retry 完整:`retryPolicy`/`retryState` 持久化 `maxRetries`、`backoffMs`、`nextRetryAt` 和 exhausted escalation;到期 retry 可在 runner/service 重建后恢复。
-- `spec_compliance` Done 条件由 Reviewer 在 `goal_evidence` 工具下产生结构化逐 criterion 证据;不保存 raw LLM 输出,不加单独 spec agent/model/config。
-- Reviewer 验证是硬边界:`goal_evidence` 仅 Reviewer review session 可用;`goal_manage.finalize_review` 也仅 Reviewer review session 可用。外部 verdict 只有 `DONE` / `NOT_DONE`,其中 `NOT_DONE` 生成 Operator 修复上下文并进入现有 failed/retry/escalated 流程。
-- Goal artifacts 是当前 canonical Markdown 文件:`plan.md`,`build.md`,`review.md`,`spec-compliance.md`,`approvals.md`,`budget.md`,`retry-log.md`,`final-report.md`;不做 artifact version/revision/latest 指针。
+- `spec compliance` 验收条件由 Reviewer 在 `Reviewer evidence flow` 工具下产生结构化逐 criterion 证据;不保存 raw LLM 输出,不加单独 spec agent/model/config。
+- Reviewer 验证是硬边界:`Reviewer evidence flow` 仅 Reviewer review session 可用;`goal_manage.finalize_review` 也仅 Reviewer review session 可用。外部 verdict 只有 `DONE` / `NOT_DONE`,其中 `NOT_DONE` 生成 Operator 修复上下文并进入现有 failed/retry/escalated 流程。
+- Goal evidence 来自普通 session 输出、diff、工具结果、审批记录、预算/重试状态和 Reviewer summaries;不做 Goal-specific artifact version/revision/latest 指针。
 - Approval Queue 完整:durable、project-scoped、全局 Dashboard + 就地列表同步;Web/Dashboard 使用 redacted `displayPayload`,不展示 raw payload。
 - Goal budget 基础:per-Goal token 上限 + warning/hard pause;只统计 token,不做价格/cost accounting。
 - Goal memory 接通 Plan/Build/Review prompt,且与 Project memory 隔离;不自动 promotion/transfer。
@@ -349,7 +351,7 @@
 |---|---|
 | 架构师能跨项目监督 AI 编码工作 | Dashboard 一屏看全 active goals/loops/approvals |
 | 架构师能合上笔记本工作继续 | 持久 server + SSE,回来看到完整 run-log + evidence |
-| AI 不能虚假完成 | Done 条件机器可检,Reviewer 独立 + 能跑工具 + 默认拒绝 |
+| AI 不能虚假完成 | 验收条件机器可检,Reviewer 独立 + 能跑工具 + 默认拒绝 |
 | AI 不能 token 烧穿 | Budget hardStop + kill switch + stagnation breaker |
 | 重复性维护可委派给 AI | Loop 跑 triage/fix/verify,人审门控风险 |
 | 代码不出域 | 自托管 + BYOM + 全透明审计 |
@@ -359,7 +361,7 @@
 
 | 维度 | ArchCode | 竞品 |
 |---|---|---|
-| Done 条件 | 机器可检 + Reviewer 跑工具 | Claude Code:evaluator 不调工具,只读对话 |
+| 验收条件 | 机器可检 + Reviewer 跑工具 | Claude Code:evaluator 不调工具,只读对话 |
 | 跨会话 state | 项目内 git 可跟踪,state.md 人类可读 | Claude Code:session-scoped 7 天过期;Routines 云端黑盒 |
 | Budget | 结构化代码强制(throttle/hardStop) | Claude Code:ad-hoc 文本 |
 | Maker/Checker split | 独立 agent + 独立 store + fresh-context retry | Claude Code:固定 evaluator 模型自检 |
@@ -379,7 +381,7 @@
 
 ### 7.2 设计约束
 
-- **Done 条件运行前锁定,运行中不可变**(铁律 1)
+- **验收条件运行前锁定,运行中不可变**(铁律 1)
 - **Reviewer ≠ Implementer,独立 session store**(铁律 2)
 - **Loop ≠ 自主改进项目**(铁律 3)
 - **工具集在 agent definition 硬编码**(安全边界)
@@ -457,7 +459,7 @@
 时间线:社区(Huntley Ralph, 2025-07)→ OpenAI Codex `/goal`(2026-04-30)→ 社区命名 Osmani(2026-06-07)→ Anthropic Claude Code `/goal`(2026-06 中,迟到)。
 
 **ArchCode 差异化在工程深度,不在"有没有"**:
-1. 机器可检 Done 条件(Reviewer 跑工具,不只读对话)
+1. 机器可检 验收条件(Reviewer 跑工具,不只读对话)
 2. 跨会话 git 可跟踪 state(不是 session-scoped 7 天过期)
 3. 结构化 Budget(代码强制,不是 ad-hoc 文本)
 4. 显式 Maker/Checker split + fresh-context retry
@@ -470,11 +472,11 @@
 
 | 风险 | 严重度 | 缓解 |
 |---|---|---|
-| AI 虚假完成 | S1 | 机器可检 Done 条件 + 独立 Reviewer + 默认拒绝 + 能跑工具 |
+| AI 虚假完成 | S1 | 机器可检 验收条件 + 独立 Reviewer + 默认拒绝 + 能跑工具 |
 | Infinite fix loop | S1 | `retryPolicy.maxRetries` + 超限 escalate |
 | Token burn | S1 | Budget hardStop + kill switch + stagnation breaker + 心跳超时 pause |
 | Reviewer theater(Reviewer 形同虚设) | S1 | 强制独立 session store + 工具集硬编码 + 默认拒绝 prompt + 5 点检查清单 |
-| Compaction 丢 Done 条件 | S2 | Done 条件在 `goal.json` 持久化,不在对话上下文 |
+| Compaction 丢 验收条件 | S2 | 验收条件在 `goal.json` 持久化,不在对话上下文 |
 | Cognitive Surrender("loop 会处理"逃避思考) | S2 | UI 强制展示 last summary + run-log + 架构师必须 review escalate |
 | Comprehension debt spiral | S2 | 每次 run 产 summary + run-log;UI 强制展示 |
 | Over-reach(Loop 擅自大改) | S2 | Phase 4 用 tool profile、approvalPoints、collision guard 和 kill switch 限制风险;L2 minimal-fix 是未来 advisory |
@@ -497,7 +499,7 @@
 
 以下在 TDD 里有推荐答案,设计阶段已全部决策锁定:
 
-1. **Reviewer 是新增 agent** —— 新建 `reviewer` agent 定义,工具集硬编码(read-only + lsp + goal_evidence + goal_manage.finalize_review + goal_artifact_read/write),独立 session store(决策 2026-06)
+1. **Reviewer 是新增 agent** —— 新建 `reviewer` agent 定义,工具集硬编码(read-only + lsp + Reviewer evidence flow + goal_manage.finalize_review + Goal session evidence access),独立 session store(决策 2026-06)
 2. **state.md 只读视图** —— state.json 是 source of truth,state.md 是生成视图,不做双向同步。用户编辑 state 通过 UI form(JSON-backed)或 `PATCH /loops/:id/state` API(决策 2026-06)
 3. **L0 起步范围** —— Phase 1 只做 Goal(不做 Loop)。Goal 单独有价值且风险低。Loop 留 Phase 3(决策 2026-06)
 4. **Workflow 用户数据保留只读** —— `.archcode/workflows/` 目录保留,runtime 不再读写,不删用户数据。迁移工具后续提供(决策 2026-06)
@@ -505,7 +507,7 @@
 6. **Goal phases 承认** —— Goal 有显式 phases(plan→build→review),持久化到 goal.json,approvalPoints 是 phase 转换门(决策 2026-06)
 7. **Reviewer day-one 强制** —— Phase 1 起 Reviewer 强制,不分阶段(决策 2026-06)
 8. **HITL 不合并** —— 保留 PermissionService + AskUserService 不动,新增 HitlService。Phase 2 使用 durable project-scoped queue;旧 live Promise 不恢复,但 pending record 可通过 deterministic key 复用(Phase 2 实现更新,2026-07)
-9. **command_succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command_succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
+9. **command succeeds AI 可生成** —— AI 可生成所有 Done kind(含 command succeeds),用户 lock 确认后生效。安全由"用户 lock + Reviewer 独立验证 + bash guard"三层保证。goal.json 记录 author + lockedBy(决策 2026-06)
 10. **Dashboard 留 Phase 1** —— 遍历 ProjectRegistry.list() + 各项目 .archcode/goals/ 文件聚合,REST 初始快照 + SSE 增量,不需新存储(决策 2026-06)
 11. **Phase 3 Loop 允许 action loop** —— 允许 Loop 跑 Goal(可改代码),靠 Reviewer 强制 + approvalPoints + 基础 budget 兜底。Phase 4 补完整护栏(throttle/hardStop/stagnation/kill switch)后才真正可无人看(决策 2026-07)
 12. **Phase 5 边界确认** —— Phase 5 交付完整 5a:cron、`triggers[]`、跨 loop 协调、持久队列、同分支节流、`maxConcurrent`、worktree 隔离;再交付安全 cleanup 子集。readiness scoring/gates 和用户自定义 pattern 仍排除,只保留占位(决策更新 2026-07-06)
