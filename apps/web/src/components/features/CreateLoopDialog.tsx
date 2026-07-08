@@ -67,7 +67,7 @@ const TOOL_PROFILE_OPTIONS: ToolProfileOption[] = [
   {
     id: "loop_goal_action",
     label: "Goal action",
-    description: "Create and run scoped Goals with configured done conditions and reviewer checks.",
+    description: "Create and run scoped Goals from a natural-language objective and acceptance criteria, with Reviewer verification checks.",
   },
 ];
 
