@@ -54,7 +54,7 @@ bun run test         # Run tests
 
 ### Projects and Web UI
 
-ArchCode is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, Goal state, project memory, durable approvals, and current Goal artifacts. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
+ArchCode is multi-project: the server keeps a project registry, each project maps to a workspace root, and each workspace gets its own root Orchestrator agent, Goal state, project memory, durable approvals, and current Goal state and evidence. The Web UI talks to project-scoped routes such as `/api/projects/:slug/sessions/...`.
 
 Use the Web UI **Add Project** flow to register an existing workspace directory. The server validates that the path is an absolute existing directory, stores it in the registry, assigns a stable slug, and then opens project-specific sessions against that workspace.
 
@@ -62,13 +62,13 @@ Use the Web UI **Add Project** flow to register an existing workspace directory.
 
 Phase 2 makes Goal daily-usable without adding new `.archcode.json` budget or retry schema fields/defaults. Budget and retry settings are Goal-scoped create inputs and persisted Goal state (`retryPolicy`, `retryState`, `tokenBudget`).
 
-- `goal_evidence` is Reviewer-only; external Reviewer outcomes are exactly `DONE` or `NOT_DONE` via `goal_manage.finalize_review`.
-- Goal artifacts are current canonical Markdown files (`plan.md`, `build.md`, `review.md`, `spec-compliance.md`, `approvals.md`, `budget.md`, `retry-log.md`, `final-report.md`), not versioned artifact files.
+- Reviewer finalization is handled through `goal_manage.finalize_review`; external Reviewer outcomes are exactly `DONE` or `NOT_DONE`.
+- Goal evidence comes from ordinary session output, diffs, tool results, verification logs, approvals, budget state, retry metadata, and Reviewer summaries rather than separate Goal-specific artifact APIs.
 - Durable approvals are project-scoped. Web and Dashboard approval views render redacted `displayPayload` data, not raw payloads.
 - Goal budget accounting is token-only (`inputTokens`, `outputTokens`, `totalTokens`); runtime cost accounting is not implemented even though model configs may carry passive pricing metadata.
 - Goal memory is isolated from Project memory; there is no automatic promotion or transfer.
 - Retry/backoff persists scheduled retry metadata such as `nextRetryAt`; due retries can resume after runner/service recreation.
-- Legacy workflow runtime, tools, and routes were removed; Goal/HITL/artifact APIs are the supported Phase 2 path.
+- Legacy workflow runtime, tools, routes, and removed Goal-specific artifact APIs are retired; Goal, HITL, Loop, and session evidence are the supported Phase 2 path.
 
 ## Configuration (`.archcode.json`)
 
