@@ -24,6 +24,17 @@ interface RuntimeFixture {
   runtime: RouteRuntime;
 }
 
+const providedMainSessionId = "11111111-1111-4111-8111-111111111111";
+const providedChildSessionId = "22222222-2222-4222-8222-222222222222";
+const createdMainSessionId = "33333333-3333-4333-8333-333333333333";
+const retrySessionId = "44444444-4444-4444-8444-444444444444";
+const activeRetrySessionId = "55555555-5555-4555-8555-555555555555";
+const otherRetrySessionId = "66666666-6666-4666-8666-666666666666";
+const otherGoalSessionId = "77777777-7777-4777-8777-777777777777";
+const nonMainSessionId = "88888888-8888-4888-8888-888888888888";
+const missingSessionId = "99999999-9999-4999-8999-999999999999";
+const otherGoalId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
 class FakeGoalStateError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,15 +57,15 @@ class FakeGoalStateManager {
     return [...this.#goals.values()].filter((goal) => projectId === undefined || goal.projectId === projectId);
   }
 
-  async create(projectId: string, title: string, objective: string, acceptanceCriteria: string): Promise<GoalState> {
+  async create(input: { readonly projectId: string; readonly title: string; readonly objective: string; readonly acceptanceCriteria: string }): Promise<GoalState> {
     const goal: GoalState = {
       id: crypto.randomUUID(),
-      projectId,
-      title,
-      objective,
-      acceptanceCriteria,
+      projectId: input.projectId,
+      title: input.title,
+      objective: input.objective,
+      acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
-      attempt: 1,
+      attempt: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -79,15 +90,20 @@ class FakeGoalStateManager {
     return this.#update(goalId, { ...updates, updatedAt: this.#now });
   }
 
-  async start(goalId: string): Promise<GoalState> {
+  async start(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "draft" && goal.status !== "running") {
       throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
     }
-    return this.#update(goalId, { status: "running", startedAt: goal.startedAt ?? this.#now, updatedAt: this.#now });
+    return this.#update(goalId, {
+      status: "running",
+      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+      startedAt: goal.startedAt ?? this.#now,
+      updatedAt: this.#now,
+    });
   }
 
-  async retry(goalId: string): Promise<GoalState> {
+  async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "not_done" && goal.status !== "failed" && goal.status !== "running") {
       throw new FakeGoalStateError(`Invalid transition ${goal.status} → running`);
@@ -97,6 +113,7 @@ class FakeGoalStateManager {
       attempt: goal.status === "running" ? goal.attempt : goal.attempt + 1,
       review: undefined,
       lastError: undefined,
+      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
       startedAt: goal.startedAt ?? this.#now,
       updatedAt: this.#now,
     });
@@ -122,10 +139,13 @@ class FakeGoalStateManager {
     return this.#update(goalId, { childSessionIds, updatedAt: this.#now });
   }
 
-  async fail(goalId: string, error: { name: string; message: string; at?: string }): Promise<GoalState> {
+  async fail(goalId: string, error: Error | string): Promise<GoalState> {
+    const normalized = error instanceof Error
+      ? { name: error.name, message: error.message, at: this.#now }
+      : { name: "Error", message: error, at: this.#now };
     return this.#update(goalId, {
       status: "failed",
-      lastError: { name: error.name, message: error.message, at: error.at ?? this.#now },
+      lastError: normalized,
       updatedAt: this.#now,
     });
   }
@@ -166,7 +186,21 @@ function createRuntime(project: ProjectInfo, manager: FakeGoalStateManager): Rou
     contextResolver: {
       resolve: mock(async () => ({ goalState: manager })),
     },
-    createSession: mock(async () => ({ sessionId: "created-main-session", title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [] })),
+    createSession: mock(async () => ({ sessionId: createdMainSessionId, title: null, createdAt: Date.now(), messages: [], steps: [], todos: [], reminders: [], goalId: undefined, sessionRole: "main" })),
+    getSessionFile: mock(async (_workspaceRoot: string, sessionId: string) => {
+      if (sessionId === missingSessionId) throw new Error("Session not found");
+      return {
+        sessionId,
+        title: null,
+        createdAt: Date.now(),
+        messages: [],
+        steps: [],
+        todos: [],
+        reminders: [],
+        ...(sessionId === otherGoalSessionId ? { goalId: otherGoalId } : {}),
+        ...(sessionId === nonMainSessionId ? { sessionRole: "explore" as const } : { sessionRole: "main" as const }),
+      };
+    }),
     startSessionExecution: mock((input: { workspaceRoot: string; sessionId: string }) => ({
       sessionId: input.sessionId,
       workspaceRoot: input.workspaceRoot,
@@ -269,7 +303,7 @@ describe("goals routes", () => {
       objective: "Expose a natural-language Goal contract from the server.",
       acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
       status: "draft",
-      attempt: 1,
+      attempt: 0,
       pendingHitlIds: [],
       approvalRefs: [],
       childSessionIds: [],
@@ -355,22 +389,22 @@ describe("goals routes", () => {
 
     const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
       method: "POST",
-      body: JSON.stringify({ mainSessionId: "main-session", childSessionIds: ["child-session"] }),
+      body: JSON.stringify({ mainSessionId: providedMainSessionId, childSessionIds: [providedChildSessionId] }),
       headers: { "content-type": "application/json" },
     });
     const running = await runRes.json() as GoalState;
 
     expect(runRes.status).toBe(200);
-    expect(running).toMatchObject({ status: "running", mainSessionId: "main-session", childSessionIds: ["child-session"] });
+    expect(running).toMatchObject({ status: "running", mainSessionId: providedMainSessionId, childSessionIds: [providedChildSessionId] });
     expect(runtime.createSession).not.toHaveBeenCalled();
     expect(runtime.startSessionExecution).toHaveBeenCalledWith({
       slug: project.slug,
       workspaceRoot: project.workspaceRoot,
-      sessionId: "main-session",
+      sessionId: providedMainSessionId,
       userMessage: expect.stringContaining(`Goal ID: ${created.id}`),
     });
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
-    expect(await manager.read(created.id)).toMatchObject({ status: "running", mainSessionId: "main-session" });
+    expect(await manager.read(created.id)).toMatchObject({ status: "running", mainSessionId: providedMainSessionId });
   });
 
   test("POST run without body creates a main session", async () => {
@@ -381,7 +415,7 @@ describe("goals routes", () => {
     const running = await runRes.json() as GoalState;
 
     expect(runRes.status).toBe(200);
-    expect(running).toMatchObject({ status: "running", mainSessionId: "created-main-session" });
+    expect(running).toMatchObject({ status: "running", mainSessionId: createdMainSessionId });
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
       goalId: created.id,
       sessionRole: "main",
@@ -405,6 +439,50 @@ describe("goals routes", () => {
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
 
+  test("POST run and retry validate provided session IDs before reservation", async () => {
+    const { app, manager, project, runtime } = await createFixture("session-validation");
+    const created = await postGoal(app, project.slug);
+
+    const invalidUuidRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: "not-a-session-uuid" }),
+      headers: { "content-type": "application/json" },
+    });
+    const missingRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: missingSessionId }),
+      headers: { "content-type": "application/json" },
+    });
+    const otherGoalRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ childSessionIds: [otherGoalSessionId] }),
+      headers: { "content-type": "application/json" },
+    });
+    await manager.setReview(created.id);
+    const nonMainRetryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ mainSessionId: nonMainSessionId }),
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(invalidUuidRes.status).toBe(400);
+    expect(await invalidUuidRes.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
+    expect(missingRes.status).toBe(400);
+    expect(await missingRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: "mainSessionId must reference an existing session in this project" },
+    });
+    expect(otherGoalRes.status).toBe(409);
+    expect(await otherGoalRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Session ${otherGoalSessionId} belongs to a different goal` },
+    });
+    expect(nonMainRetryRes.status).toBe(409);
+    expect(await nonMainRetryRes.json()).toEqual({
+      error: { code: "BAD_REQUEST", message: `Session ${nonMainSessionId} is not a main goal session` },
+    });
+    expect(runtime.createSession).not.toHaveBeenCalled();
+    expect(runtime.startSessionExecution).not.toHaveBeenCalled();
+  });
+
   test("POST retry restarts not_done Goal and sends objective plus acceptanceCriteria only", async () => {
     const { app, manager, project, runtime } = await createFixture("retry-simplified");
     const created = await postGoal(app, project.slug, "Retry simplified Goal");
@@ -412,16 +490,16 @@ describe("goals routes", () => {
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
-      body: JSON.stringify({ mainSessionId: "retry-session" }),
+      body: JSON.stringify({ mainSessionId: retrySessionId }),
       headers: { "content-type": "application/json" },
     });
     const retried = await retryRes.json() as GoalState;
 
     expect(retryRes.status).toBe(200);
-    expect(retried).toMatchObject({ status: "running", attempt: 2, mainSessionId: "retry-session" });
+    expect(retried).toMatchObject({ status: "running", attempt: 1, mainSessionId: retrySessionId });
     expect(retried.review).toBeUndefined();
     expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
-      sessionId: "retry-session",
+      sessionId: retrySessionId,
       userMessage: expect.stringContaining("goal_manage with action:\"retry\""),
     }));
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
@@ -431,18 +509,18 @@ describe("goals routes", () => {
     const { app, manager, project, runtime } = await createFixture("retry-session-mismatch");
     const created = await postGoal(app, project.slug);
     await manager.setReview(created.id);
-    await manager.setMainSession(created.id, "active-retry-session");
-    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation((_workspaceRoot: string, sessionId: string) => sessionId === "active-retry-session");
+    await manager.setMainSession(created.id, activeRetrySessionId);
+    (runtime.isSessionExecutionRunning as ReturnType<typeof mock>).mockImplementation((_workspaceRoot: string, sessionId: string) => sessionId === activeRetrySessionId);
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {
       method: "POST",
-      body: JSON.stringify({ mainSessionId: "other-retry-session" }),
+      body: JSON.stringify({ mainSessionId: otherRetrySessionId }),
       headers: { "content-type": "application/json" },
     });
 
     expect(retryRes.status).toBe(409);
     expect(await retryRes.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: `Goal ${created.id} is already reserved for session active-retry-session` },
+      error: { code: "BAD_REQUEST", message: `Goal ${created.id} is already reserved for session ${activeRetrySessionId}` },
     });
     expect(runtime.startSessionExecution).not.toHaveBeenCalled();
   });
