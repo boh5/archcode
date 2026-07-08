@@ -77,6 +77,56 @@ describe("Session HITL resume", () => {
     expect(tool).toMatchObject({ state: "completed", output: "blue" });
   });
 
+  test("resume attaches the session event bridge until continuation completes", async () => {
+    const attachSessionEvents = mock(() => undefined);
+    const detachSessionEvents = mock(() => undefined);
+    const fixture = await createFixture({ attachSessionEvents, detachSessionEvents });
+    const registry = createRegistry([askUserTool]);
+    mockToolCallStream([{ toolCallId: "ask-bridge", toolName: "ask_user", input: {
+      questions: [{ header: "Bridge", question: "Continue?", options: [], custom: true }],
+    } }]);
+
+    await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask");
+    const pending = await singlePendingHitl(fixture);
+
+    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resolved");
+
+    expect(attachSessionEvents).toHaveBeenCalledTimes(1);
+    expect(attachSessionEvents).toHaveBeenCalledWith(fixture.workspaceRoot, fixture.sessionId, fixture.store);
+    expect(detachSessionEvents).toHaveBeenCalledTimes(1);
+    expect(detachSessionEvents).toHaveBeenCalledWith(fixture.workspaceRoot, fixture.sessionId);
+  });
+
+  test("resume detaches the session event bridge when continuation fails", async () => {
+    const attachSessionEvents = mock(() => undefined);
+    const detachSessionEvents = mock(() => undefined);
+    const fixture = await createFixture({
+      attachSessionEvents,
+      detachSessionEvents,
+      getAgent: ({ store }) => ({
+        store,
+        run: mock(async () => {
+          throw new Error("resume failed after attach");
+        }),
+        dispose: mock(() => undefined),
+      } as Agent),
+    });
+    const registry = createRegistry([askUserTool]);
+    mockToolCallStream([{ toolCallId: "ask-fail", toolName: "ask_user", input: {
+      questions: [{ header: "Bridge", question: "Continue?", options: [], custom: true }],
+    } }]);
+
+    await runQueryLoop(fixture.options(registry, ["ask_user"]), "ask");
+    const pending = await singlePendingHitl(fixture);
+
+    await fixture.coordinator.respond(pending.hitlId, { type: "question_answer", answers: ["yes"] });
+    await waitFor(async () => (await fixture.hitl.lookup(pending.hitlId)).status === "found" && ((await fixture.hitl.lookup(pending.hitlId)) as { record: HitlRecord }).record.status === "resume_failed");
+
+    expect(attachSessionEvents).toHaveBeenCalledTimes(1);
+    expect(detachSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
   test("permission response is durably claimed before restart resume executes the blocked tool once", async () => {
     const fixture = await createFixture();
     const execute = mock(async () => "mutated");
@@ -296,6 +346,8 @@ async function createFixture(options: {
     readonly store: ReturnType<SessionStoreManager["create"]>;
     readonly hitl: HitlService;
   }) => Agent;
+  readonly attachSessionEvents?: (workspaceRoot: string, sessionId: string, store: ReturnType<SessionStoreManager["create"]>) => void;
+  readonly detachSessionEvents?: (workspaceRoot: string, sessionId: string) => void;
 } = {}) {
   const workspaceRoot = await mkdtemp(join(TMP_ROOT, "workspace-"));
   const sessionId = crypto.randomUUID();
@@ -325,6 +377,8 @@ async function createFixture(options: {
     toolRegistry: registry,
     projectContextResolver: resolver,
     ...(options.getAgent === undefined ? {} : { getAgent: async () => options.getAgent!({ workspaceRoot, sessionId, store, hitl }) }),
+    ...(options.attachSessionEvents === undefined ? {} : { attachSessionEvents: options.attachSessionEvents }),
+    ...(options.detachSessionEvents === undefined ? {} : { detachSessionEvents: options.detachSessionEvents }),
   });
   let currentRegistry = createRegistry();
   const coordinator = new ResumeCoordinator({ hitl, adapters: { session: { resume: (record, response) => adapter(currentRegistry).resume(record, response) } } });

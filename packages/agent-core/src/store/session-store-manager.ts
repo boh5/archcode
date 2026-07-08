@@ -128,6 +128,7 @@ export class SessionStoreManager {
         || event.type === "tool-child-session-link"
         || event.type === "loop-error"
         || event.type === "hitl.request"
+        || event.type === "hitl.updated"
         || event.type === "hitl.resolved"
         || event.type === "compression.block_committed"
         || event.type === "compression.block_failed"
@@ -584,6 +585,7 @@ const STREAM_EVENT_TYPES = new Set<StreamEvent["type"]>([
   "goal.done_check",
   "goal.escalation",
   "hitl.request",
+  "hitl.updated",
   "hitl.resolved",
   "loop.state_change",
   "loop.run_appended",

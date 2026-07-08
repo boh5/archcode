@@ -772,6 +772,7 @@ export class LoopScheduler {
     const finishedState = finishedReport.status === "needs_user"
       ? await this.#stateManager.recordRunBlocked(loop.loopId, finishedReport)
       : await this.#stateManager.recordRunFinish(loop.loopId, finishedReport);
+    if (loopOwnedHitl !== undefined) await this.#hitl?.publishRequest(loopOwnedHitl);
     await this.#collisionLedger?.releaseRun(loop.loopId, runningReport.runId);
     await this.#collisionLedger?.cleanupStale();
 
@@ -818,7 +819,7 @@ export class LoopScheduler {
       },
     });
     const checkpoint = checkpointFromRecord(record, runningReport, { worktreePath: job.worktreePath, baseSha: job.baseSha, resolvedHeadSha: job.resolvedHeadSha }, "rerun_job");
-    return await this.finishRun(loop, runningReport, {
+    const blocked = await this.finishRun(loop, runningReport, {
       status: "needs_user",
       blockedReason: "needs_user",
       summary: `Loop ${loop.loopId} is waiting for explicit run approval.`,
@@ -826,6 +827,8 @@ export class LoopScheduler {
       attentionStatus: "waiting_for_human",
       resumeCheckpoint: checkpoint,
     });
+    await this.#hitl.publishRequest(record);
+    return blocked;
   }
 
   private async createLoopBlockerHitl(loop: LoopState, runningReport: LoopRunReport, result: LoopSchedulerFinishedRunResult): Promise<HitlRecord | undefined> {

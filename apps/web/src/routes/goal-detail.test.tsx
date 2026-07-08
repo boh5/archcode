@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
+import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
 import type { GoalArtifactFile, GoalArtifactName, GoalState, DoneCondition, DoneResult, HitlProjection } from "../api/types";
+import { hitlStore } from "../store/hitl-store";
 import { GoalDetailRoute } from "./goal-detail";
 
 // ─── Test helpers ───
@@ -152,6 +154,21 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
   };
 }
 
+function seedRealtimeHitl(...projections: HitlProjection[]): void {
+  for (const projection of projections) {
+    const event: GlobalSSEHitlRealtimeEvent = {
+      type: "hitl.event",
+      projectSlug: projection.project.slug,
+      owner: projection.owner,
+      hitlId: projection.hitlId,
+      createdAt: Date.now(),
+      payload: { type: "hitl.request", status: "pending" },
+      projection,
+    };
+    hitlStore.getState().applyRealtimeEvent(event);
+  }
+}
+
 function installGoalHitlFetchMock(opts: {
   goal: GoalState;
   hitl: HitlProjection[];
@@ -198,9 +215,11 @@ async function renderGoalDetailRoute(
 describe("GoalDetailRoute", () => {
   beforeEach(() => {
     mock.restore();
+    hitlStore.getState().resetProject("demo");
   });
 
   afterEach(() => {
+    hitlStore.getState().resetProject("demo");
     restoreGlobals();
     mock.restore();
   });
@@ -1113,7 +1132,8 @@ describe("GoalDetailRoute", () => {
       displayPayload: { title: "Approve budget?", summary: "Confirm spend", redacted: true },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
+    installGoalHitlFetchMock({ goal, hitl: [] });
+    seedRealtimeHitl(matchingItem);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1155,7 +1175,15 @@ describe("GoalDetailRoute", () => {
       displayPayload: { title: "Own approval", redacted: true },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [ownItem] });
+    installGoalHitlFetchMock({ goal, hitl: [] });
+    seedRealtimeHitl(
+      ownItem,
+      makeHitlItem({
+        hitlId: "hitl-other-goal",
+        source: { type: "goal_approval", goalId: "goal-other", approvalPoint: "after_plan" },
+        displayPayload: { title: "Other approval", redacted: true },
+      }),
+    );
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1236,7 +1264,8 @@ describe("GoalDetailRoute", () => {
       },
     });
 
-    installGoalHitlFetchMock({ goal, hitl: [redactedItem] });
+    installGoalHitlFetchMock({ goal, hitl: [] });
+    seedRealtimeHitl(redactedItem);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
@@ -1279,7 +1308,8 @@ describe("GoalDetailRoute", () => {
       displayPayload: { title: "Approve?", redacted: true },
     });
 
-    const fetchMock = installGoalHitlFetchMock({ goal, hitl: [matchingItem] });
+    const fetchMock = installGoalHitlFetchMock({ goal, hitl: [] });
+    seedRealtimeHitl(matchingItem);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },

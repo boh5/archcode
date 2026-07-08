@@ -60,11 +60,29 @@ const jsxDEV = mock((type: unknown, props: Record<string, unknown> | null, _key?
   key: undefined,
 }));
 
+let stateValues: unknown[] = [];
+let stateCursor = 0;
+
+function resetHookState(): void {
+  stateValues = [];
+  stateCursor = 0;
+}
+
+function prepareRerender(): void {
+  stateCursor = 0;
+}
+
 mock.module("react", () => ({
   default: {},
   useState: <T,>(initial: T): [T, (value: T | ((previous: T) => T)) => void] => {
-    const setState = mock((_value: T | ((previous: T) => T)) => {});
-    return [initial, setState];
+    const index = stateCursor;
+    stateCursor += 1;
+    if (stateValues.length <= index) stateValues[index] = initial;
+    const setState = (value: T | ((previous: T) => T)) => {
+      const previous = stateValues[index] as T;
+      stateValues[index] = typeof value === "function" ? (value as (previous: T) => T)(previous) : value;
+    };
+    return [stateValues[index] as T, setState];
   },
   useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
   useEffect: (_callback: () => void | (() => void), _deps?: unknown[]) => {},
@@ -155,6 +173,7 @@ describe("HitlCard", () => {
     cancelHitl.mockClear();
     respondIsPending = false;
     cancelIsPending = false;
+    resetHookState();
   });
 
   test("renders data-testid='hitl-card'", () => {
@@ -499,6 +518,104 @@ describe("HitlCard", () => {
     const result = HitlCard({ projection });
 
     expect(findByTestId(result, "hitl-approve-button")?.props?.disabled).toBe(true);
+  });
+
+  test("ask_user custom text enables Submit Answer without pressing Enter", () => {
+    const projection = makeProjection({
+      source: { type: "ask_user", sessionId: "session-1" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({
+        title: "Need input",
+        questions: [{ header: "Decision", question: "What should we do?", options: [], custom: true }],
+      }),
+    });
+
+    let result = HitlCard({ projection });
+    const input = findAll(result, (element) => element.type === "input" && element.props?.placeholder === "Type your own answer…")[0];
+    const onChange = input?.props?.onChange as ((event: { target: { value: string } }) => void) | undefined;
+    onChange?.({ target: { value: "Proceed" } });
+
+    prepareRerender();
+    result = HitlCard({ projection });
+
+    const submit = findByTestId(result, "hitl-approve-button");
+    expect(submit?.props?.disabled).toBe(false);
+    const onClick = submit?.props?.onClick as (() => void) | undefined;
+    onClick?.();
+    expect(respondHitl).toHaveBeenCalledTimes(1);
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { answers?: string[] } };
+    expect(callArg.body.answers).toEqual(["Proceed"]);
+  });
+
+  test("ask_user renders all structured questions and submits one answer per question", () => {
+    const projection = makeProjection({
+      source: { type: "ask_user", sessionId: "session-1" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({
+        title: "Need input",
+        questions: [
+          { header: "First", question: "Pick a path", options: [{ label: "A", description: "Alpha" }], custom: false },
+          { header: "Second", question: "Explain why", options: [], custom: true },
+        ],
+      }),
+    });
+
+    let result = HitlCard({ projection });
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("Pick a path");
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("Explain why");
+
+    const optionInput = findAll(result, (element) => element.type === "input" && element.props?.value === "A")[0];
+    const onOptionChange = optionInput?.props?.onChange as (() => void) | undefined;
+    onOptionChange?.();
+    const customInput = findAll(result, (element) => element.type === "input" && element.props?.placeholder === "Type your own answer…")[0];
+    const onCustomChange = customInput?.props?.onChange as ((event: { target: { value: string } }) => void) | undefined;
+    onCustomChange?.({ target: { value: "Because it is safe" } });
+
+    prepareRerender();
+    result = HitlCard({ projection });
+    const submit = findByTestId(result, "hitl-approve-button");
+    expect(submit?.props?.disabled).toBe(false);
+    const onClick = submit?.props?.onClick as (() => void) | undefined;
+    onClick?.();
+
+    const callArg = respondHitl.mock.calls[0]?.[0] as unknown as { body: { answers?: string[] } };
+    expect(callArg.body.answers).toEqual(["A", "Because it is safe"]);
+  });
+
+  test("goal_question and loop_question render answer UI", () => {
+    const goalQuestion = HitlCard({ projection: makeProjection({
+      source: { type: "goal_question", goalId: "goal-1", questionKey: "scope" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({ questions: [{ header: "Scope", question: "Clarify scope?", options: [], custom: true }] }),
+    }) });
+    resetHookState();
+    const loopQuestion = HitlCard({ projection: makeProjection({
+      source: { type: "loop_question", loopId: "loop-1", questionKey: "retry" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({ questions: [{ header: "Retry", question: "Retry loop?", options: [], custom: true }] }),
+    }) });
+
+    expect(findByTestId(goalQuestion, "hitl-approve-button")).toBeDefined();
+    expect(findByTestId(loopQuestion, "hitl-approve-button")).toBeDefined();
+  });
+
+  test("question payload does not repeat question text in summary or fields", () => {
+    const projection = makeProjection({
+      source: { type: "ask_user", sessionId: "session-1" },
+      allowedActions: ["answer", "cancel"],
+      displayPayload: makeDisplayPayload({
+        title: "Question",
+        summary: "What now?",
+        fields: [{ label: "Q", value: "What now?" }],
+        questions: [{ header: "Q", question: "What now?", options: [], custom: true }],
+      }),
+    });
+
+    const result = HitlCard({ projection });
+
+    expect(findByTestId(result, "hitl-display-summary")).toBeUndefined();
+    expect(findByTestId(result, "hitl-display-fields")).toBeUndefined();
+    expect(textContent(findByTestId(result, "hitl-question-pane"))).toContain("What now?");
   });
 
   test("renders display title for approval source", () => {

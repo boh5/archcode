@@ -4,15 +4,17 @@ import type {
   GoalState,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
-  GlobalSSEHitlChangedEvent,
+  GlobalSSEHitlRealtimeEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   GlobalSSELaggedEvent,
   GlobalSSEShutdownEvent,
+  HitlRecord,
   LoopState,
   McpServerStatus,
 } from "@archcode/protocol";
 import type { WebSessionStoreState } from "../store/session-store";
+import { hitlStore } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { parseSSEEvent, handleSSEEvent } from "./global-sse";
 import type { SSEEventHandlerDeps } from "./global-sse";
@@ -130,18 +132,21 @@ describe("parseSSEEvent", () => {
     expect(parsed.createdAt).toBe(1700000000000);
   });
 
-  test("parses hitl.changed event", () => {
-    const event: GlobalSSEHitlChangedEvent = {
-      type: "hitl.changed",
+  test("parses hitl.event with full projection", () => {
+    const event = hitlRealtimeEvent({
       projectSlug: "proj",
-      ownerType: "session",
-      ownerId: "session-1",
       hitlId: "hitl-1",
-      sessionId: "session-1",
-      createdAt: 1700000000000,
-    };
+    });
 
-    const result = parseSSEEvent("hitl.changed", JSON.stringify(event));
+    const result = parseSSEEvent("hitl.event", JSON.stringify(event));
+
+    expect(result).toEqual(event);
+  });
+
+  test("parses authoritative hitl.snapshot reset events", () => {
+    const event = { type: "hitl.snapshot" as const, projectSlugs: ["proj"], createdAt: 1700000000000 };
+
+    const result = parseSSEEvent("hitl.snapshot", JSON.stringify(event));
 
     expect(result).toEqual(event);
   });
@@ -174,6 +179,7 @@ describe("handleSSEEvent", () => {
     mockOnShutdown.mockClear();
     mockOnHeartbeat.mockClear();
     mockRefreshMcpStatus.mockClear();
+    hitlStore.setState({ projections: {} });
     useMcpStatusStore.getState().clear();
     deps = createDeps();
   });
@@ -311,7 +317,7 @@ describe("handleSSEEvent", () => {
     });
   });
 
-  test("invalidates HITL queues and session query on HITL resolved", () => {
+  test("session-local HITL events only invalidate the owning session query", () => {
     const envelope: GlobalSessionEventEnvelope = {
       type: "event",
       slug: "proj",
@@ -331,55 +337,63 @@ describe("handleSSEEvent", () => {
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
     expect(mockApplyRemoteEnvelope).toHaveBeenCalledWith(envelope);
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({
       queryKey: ["projects", "proj", "sessions", "session-1"],
     });
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
   });
 
-  test("invalidates scoped HITL and hinted session query on hitl.changed", () => {
-    const event: GlobalSSEHitlChangedEvent = {
-      type: "hitl.changed",
+  test("stores full hitl.event projection and invalidates related session query", () => {
+    const event = hitlRealtimeEvent({
       projectSlug: "proj",
-      ownerType: "session",
-      ownerId: "session-1",
-      sessionId: "session-1",
       hitlId: "hitl-1",
-      createdAt: Date.now(),
-    };
+    });
 
-    handleSSEEvent({ event: "hitl.changed", data: JSON.stringify(event) }, deps);
+    handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
+    expect(hitlStore.getState().projections["hitl-1"]).toEqual(event.projection);
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(4);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(1);
   });
 
-  test("invalidates scoped HITL and hinted goal/loop queries on hitl.changed", () => {
-    const event: GlobalSSEHitlChangedEvent = {
-      type: "hitl.changed",
+  test("applies authoritative hitl.snapshot resets before later hitl.event upserts", () => {
+    const stale = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "stale" });
+    hitlStore.getState().applyRealtimeEvent(stale);
+
+    handleSSEEvent({
+      event: "hitl.snapshot",
+      data: JSON.stringify({ type: "hitl.snapshot", projectSlugs: ["proj"], createdAt: 1700000000001 }),
+    }, deps);
+
+    expect(hitlStore.getState().projections["stale"]).toBeUndefined();
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj"], exact: false });
+
+    const fresh = hitlRealtimeEvent({ projectSlug: "proj", hitlId: "fresh" });
+    handleSSEEvent({ event: "hitl.event", data: JSON.stringify(fresh) }, deps);
+
+    expect(hitlStore.getState().projections["fresh"]).toEqual(fresh.projection);
+  });
+
+  test("removes terminal hitl.event projection and invalidates related goal/loop queries", () => {
+    const event = hitlRealtimeEvent({
       projectSlug: "proj",
-      ownerType: "loop",
-      ownerId: "loop-1",
       hitlId: "hitl-1",
-      goalId: "goal-1",
-      loopId: "loop-1",
-      createdAt: Date.now(),
-    };
+      owner: { projectSlug: "proj", ownerType: "loop", ownerId: "loop-1" },
+      source: { type: "loop_blocker", loopId: "loop-1", runId: "run-1", reason: "needs_user" },
+      ancestry: { goalId: "goal-1", loopId: "loop-1", projectionPath: ["loop", "loop-1"] },
+      status: "resolved",
+      payloadType: "hitl.resolved",
+    });
+    hitlStore.setState({ projections: { "hitl-1": { ...event.projection, status: "pending" } } });
 
-    handleSSEEvent({ event: "hitl.changed", data: JSON.stringify(event) }, deps);
+    handleSSEEvent({ event: "hitl.event", data: JSON.stringify(event) }, deps);
 
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
+    expect(hitlStore.getState().projections["hitl-1"]).toBeUndefined();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "goals", "goal-1"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1", "runs"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(12);
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(9);
   });
 
   test("invalidates loop queries on loop.state_change", () => {
@@ -478,10 +492,7 @@ describe("handleSSEEvent", () => {
 
     handleSSEEvent({ event: "event", data: JSON.stringify(envelope) }, deps);
 
-    // HITL invalidation: hitl, projectHitl, scoped HITL prefix, session = 4 calls
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["hitl", "pending"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"] });
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "hitl"], exact: false });
+    // Session-local HITL events are not the display source; only session and loop-related queries update.
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "sessions", "session-1"] });
     // Loop guardrail invalidation: 9 calls
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "loop-1"] });
@@ -492,8 +503,8 @@ describe("handleSSEEvent", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["loops", "active"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["projects", "proj", "loops", "kill-state"] });
-    // Total: 4 HITL + 9 loop = 13
-    expect(mockInvalidateQueries).toHaveBeenCalledTimes(13);
+    // Total: 1 session + 9 loop = 10
+    expect(mockInvalidateQueries).toHaveBeenCalledTimes(10);
   });
 
   test("invalidates session query on reset event", () => {
@@ -661,5 +672,56 @@ function createLoopState(loopId: string, status: LoopState["status"]): LoopState
     updatedAt: 2_000,
     runCount: 0,
     stateVersion: 1,
+  };
+}
+
+function hitlRealtimeEvent(input: {
+  projectSlug: string;
+  hitlId: string;
+  owner?: GlobalSSEHitlRealtimeEvent["owner"];
+  source?: GlobalSSEHitlRealtimeEvent["projection"]["source"];
+  ancestry?: GlobalSSEHitlRealtimeEvent["projection"]["ancestry"];
+  status?: GlobalSSEHitlRealtimeEvent["projection"]["status"];
+  payloadType?: "hitl.request" | "hitl.resolved";
+}): GlobalSSEHitlRealtimeEvent {
+  const owner = input.owner ?? { projectSlug: input.projectSlug, ownerType: "session", ownerId: "session-1" };
+  const source = input.source ?? { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" };
+  const status = input.status ?? "pending";
+  const record: HitlRecord = {
+    hitlId: input.hitlId,
+    owner,
+    blockingKey: `${owner.ownerType}:${owner.ownerId}:hitl:${input.hitlId}`,
+    source,
+    status,
+    displayPayload: {
+      title: "Need input",
+      questions: [{ header: "Q1", question: "Continue?", options: [], custom: true }],
+      redacted: true,
+    },
+    createdAt: "2026-07-08T00:00:00.000Z",
+    updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+  const projection: GlobalSSEHitlRealtimeEvent["projection"] = {
+    hitlId: record.hitlId,
+    project: { slug: input.projectSlug },
+    owner: record.owner,
+    ...(input.ancestry === undefined ? {} : { ancestry: input.ancestry }),
+    source: record.source,
+    status,
+    displayPayload: record.displayPayload,
+    allowedActions: status === "pending" ? ["answer", "cancel"] : [],
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+  return {
+    type: "hitl.event",
+    projectSlug: input.projectSlug,
+    owner,
+    hitlId: input.hitlId,
+    createdAt: 1700000000000,
+    payload: input.payloadType === "hitl.resolved"
+      ? { type: "hitl.resolved", status: "resolved" }
+      : { type: "hitl.request", status: "pending" },
+    projection,
   };
 }

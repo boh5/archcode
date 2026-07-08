@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, cr
 import { useQueryClient } from "@tanstack/react-query";
 import { connectSSE } from "../lib/sse-client";
 import { createWebSessionStore, findWebSessionStore } from "../store/session-store";
+import { hitlStore } from "../store/hitl-store";
 import { useMcpStatusStore } from "../store/mcp-status-store";
 import { getMcpStatus } from "../api/mcp";
 import { queryKeys } from "../api/queries";
@@ -9,7 +10,8 @@ import type {
   GlobalSSEEvent,
   GlobalSessionEventEnvelope,
   GlobalSSEHeartbeatEvent,
-  GlobalSSEHitlChangedEvent,
+  GlobalSSEHitlRealtimeEvent,
+  GlobalSSEHitlSnapshotEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
   SessionEventPayload,
@@ -35,7 +37,8 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "lagged":
       case "shutdown":
       case "mcp_status":
-      case "hitl.changed":
+      case "hitl.snapshot":
+      case "hitl.event":
         return parsed;
       default:
         return null;
@@ -95,9 +98,6 @@ export function handleSSEEvent(
       }
 
       if (isHitlPayload(envelope.payload)) {
-        deps.invalidateQueries({ queryKey: queryKeys.hitl });
-        deps.invalidateQueries({ queryKey: queryKeys.projectHitl(envelope.slug) });
-        deps.invalidateQueries({ queryKey: ["projects", envelope.slug, "hitl"], exact: false });
         deps.invalidateQueries({
           queryKey: queryKeys.session(envelope.slug, envelope.sessionId),
         });
@@ -142,26 +142,50 @@ export function handleSSEEvent(
       useMcpStatusStore.getState().updateServer(mcpEvent.serverName, mcpEvent.status);
       break;
     }
-    case "hitl.changed": {
-      invalidateHitlChangedQueries(deps, parsed as GlobalSSEHitlChangedEvent);
+    case "hitl.snapshot": {
+      const snapshot = parsed as GlobalSSEHitlSnapshotEvent;
+      hitlStore.getState().applySnapshotReset(snapshot.projectSlugs);
+      for (const projectSlug of snapshot.projectSlugs) {
+        deps.invalidateQueries({ queryKey: ["projects", projectSlug], exact: false });
+      }
+      break;
+    }
+    case "hitl.event": {
+      const hitlEvent = parsed as GlobalSSEHitlRealtimeEvent;
+      hitlStore.getState().applyRealtimeEvent(hitlEvent);
+      invalidateHitlRelatedQueries(deps, hitlEvent);
       break;
     }
   }
 }
 
-function invalidateHitlChangedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlChangedEvent): void {
-  deps.invalidateQueries({ queryKey: queryKeys.hitl });
-  deps.invalidateQueries({ queryKey: queryKeys.projectHitl(event.projectSlug) });
-  deps.invalidateQueries({ queryKey: ["projects", event.projectSlug, "hitl"], exact: false });
-
-  const sessionId = event.sessionId ?? (event.ownerType === "session" ? event.ownerId : undefined);
+function invalidateHitlRelatedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlRealtimeEvent): void {
+  const sessionId = event.owner.ownerType === "session" ? event.owner.ownerId : sessionIdFromHitlEvent(event);
   if (sessionId) deps.invalidateQueries({ queryKey: queryKeys.session(event.projectSlug, sessionId) });
 
-  const goalId = event.goalId ?? (event.ownerType === "goal" ? event.ownerId : undefined);
+  const goalId = event.owner.ownerType === "goal" ? event.owner.ownerId : goalIdFromHitlEvent(event);
   if (goalId) deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, goalId) });
 
-  const loopId = event.loopId ?? (event.ownerType === "loop" ? event.ownerId : undefined);
+  const loopId = event.owner.ownerType === "loop" ? event.owner.ownerId : loopIdFromHitlEvent(event);
   if (loopId) invalidateLoopQueries(deps, event.projectSlug, loopId);
+}
+
+function sessionIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
+  const source = event.projection.source;
+  if (source.type === "ask_user" || source.type === "tool_permission") return source.sessionId;
+  return event.projection.ancestry?.rootSessionId;
+}
+
+function goalIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
+  const source = event.projection.source;
+  if (source.type === "goal_approval" || source.type === "goal_review" || source.type === "goal_budget" || source.type === "goal_question") return source.goalId;
+  return event.projection.ancestry?.goalId;
+}
+
+function loopIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefined {
+  const source = event.projection.source;
+  if (source.type === "loop_approval" || source.type === "loop_blocker" || source.type === "loop_retry" || source.type === "loop_question") return source.loopId;
+  return event.projection.ancestry?.loopId;
 }
 
 function isGoalPayload(
@@ -172,8 +196,8 @@ function isGoalPayload(
 
 function isHitlPayload(
   payload: SessionEventPayload,
-): payload is Extract<SessionEventPayload, { type: "hitl.request" | "hitl.resolved" }> {
-  return payload.type === "hitl.request" || payload.type === "hitl.resolved";
+): payload is Extract<SessionEventPayload, { type: "hitl.request" | "hitl.updated" | "hitl.resolved" }> {
+  return payload.type === "hitl.request" || payload.type === "hitl.updated" || payload.type === "hitl.resolved";
 }
 
 function isLoopPayload(

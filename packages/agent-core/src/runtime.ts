@@ -27,6 +27,8 @@ import { SkillService } from "./skills";
 import type { SessionFile, SessionSummary } from "./store/helpers";
 import type { CompressionOriginalRangeResult } from "./compression";
 import type {
+  GlobalSSEEvent,
+  GlobalSSEHitlRealtimeEvent,
   McpServerStatus,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -98,6 +100,8 @@ export interface AgentRuntime {
   readonly contextResolver: ProjectContextResolver;
   readonly hitl: HitlService;
   recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
+  listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
+  subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
@@ -203,11 +207,15 @@ export async function createRuntime(
     await resolveWorkspaceRoot(options);
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
     const sessionStoreManager = new SessionStoreManager({ logger });
-    const hitl = new HitlService({ sessions: sessionStoreManager });
+    const hitlListeners = new Set<(event: GlobalSSEHitlRealtimeEvent) => void>();
+    const publishHitlEvent = (event: GlobalSSEHitlRealtimeEvent): void => {
+      for (const listener of hitlListeners) listener(event);
+    };
+    const hitl = new HitlService({ sessions: sessionStoreManager, realtimePublisher: publishHitlEvent });
     let contextResolver!: ProjectContextResolver;
     contextResolver = new ProjectContextResolver({
       projectInfoFactory: (workspaceRoot) => projectRegistry.getByWorkspace(workspaceRoot),
-      hitlFactory: (workspaceRoot) => new HitlService({ workspaceRoot }),
+      hitlFactory: (workspaceRoot) => new HitlService({ workspaceRoot, realtimePublisher: publishHitlEvent }),
       sessionStoreManager,
       resumeCoordinatorFactory: ({ workspaceRoot, hitl, goalState, goalArtifacts, loopState }) => new ResumeCoordinator({
         hitl,
@@ -223,6 +231,8 @@ export async function createRuntime(
             cancelChildSession: (childWorkspaceRoot, parentSessionId, childSessionId) => executionManager.cancelChildSession(childWorkspaceRoot, parentSessionId, childSessionId),
             resumeChildSession: (childWorkspaceRoot, request) => executionManager.resumeChildExecution(childWorkspaceRoot, request),
             abortSessionExecutionAndWait: (childWorkspaceRoot, sessionId) => executionManager.abortAndWait(childWorkspaceRoot, sessionId),
+            attachSessionEvents: (eventWorkspaceRoot, sessionId, store) => executionManager.attachSessionEvents(eventWorkspaceRoot, sessionId, store),
+            detachSessionEvents: (eventWorkspaceRoot, sessionId) => executionManager.detachSessionEvents(eventWorkspaceRoot, sessionId),
           }),
           loop: new LoopHitlResumeAdapter({
             workspaceRoot,
@@ -552,6 +562,35 @@ export async function createRuntime(
       contextResolver,
       hitl,
       recoverHitlResumes: async (workspaceRoot) => (await contextResolver.resolve(workspaceRoot)).hitlResumeCoordinator?.recover(),
+      listPendingHitlEvents: async () => {
+        const projects = await projectRegistry.list();
+        const events: GlobalSSEEvent[] = [{
+          type: "hitl.snapshot",
+          projectSlugs: projects.map((project) => project.slug),
+          createdAt: Date.now(),
+        }];
+        for (const project of projects) {
+          const context = await contextResolver.resolve(project.workspaceRoot);
+          for (const projection of await context.hitl.list({ scope: "project", status: "active" })) {
+            events.push({
+              type: "hitl.event",
+              projectSlug: projection.project.slug,
+              owner: projection.owner,
+              hitlId: projection.hitlId,
+              createdAt: Date.now(),
+              payload: { type: "hitl.snapshot", status: projection.status },
+              projection,
+            });
+          }
+        }
+        return events;
+      },
+      subscribeHitlEvents: (listener) => {
+        hitlListeners.add(listener);
+        return () => {
+          hitlListeners.delete(listener);
+        };
+      },
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),

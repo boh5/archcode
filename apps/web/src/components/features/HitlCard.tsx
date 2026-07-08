@@ -19,6 +19,7 @@ import type {
   HitlOwnerKey,
   HitlProjection,
   HitlProjectionContext,
+  HitlQuestionDisplayItem,
   HitlSource,
 } from "../../api/types";
 
@@ -92,14 +93,30 @@ interface QuestionData {
 }
 
 function extractQuestions(display: HitlDisplayPayload): QuestionData[] {
-  if (!display.fields || display.fields.length === 0) {
-    return [{ question: display.title, header: "Q1", options: [], custom: true }];
-  }
-  const questionField = display.fields.find((f) => f.label === "question");
-  if (questionField) {
-    return [{ question: questionField.value, header: "Q1", options: [], custom: true }];
-  }
-  return [{ question: display.title, header: "Q1", options: [], custom: true }];
+  if (display.questions && display.questions.length > 0) return display.questions.map(normalizeQuestion);
+  return [{ question: display.summary ?? display.title, header: "Q1", options: [], custom: true }];
+}
+
+function normalizeQuestion(question: HitlQuestionDisplayItem): QuestionData {
+  return {
+    question: question.question,
+    header: question.header,
+    options: question.options ?? [],
+    ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
+    custom: question.custom,
+  };
+}
+
+function isQuestionSource(sourceType: SourceType): boolean {
+  return sourceType === "ask_user" || sourceType === "goal_question" || sourceType === "loop_question";
+}
+
+function answerForQuestion(question: QuestionData, selectedAnswers: readonly string[], customText: string | undefined): string {
+  const trimmedCustom = customText?.trim() ?? "";
+  const answers = [...selectedAnswers];
+  if (trimmedCustom.length > 0 && !answers.includes(trimmedCustom)) answers.push(trimmedCustom);
+  if (answers.length > 0) return question.multiple ? answers.join(", ") : answers[answers.length - 1] ?? "";
+  return "";
 }
 
 export interface HitlCardProps {
@@ -131,10 +148,12 @@ export function HitlCard({ projection }: HitlCardProps) {
   const ancestry = projection.ancestry;
   const ancestryText = ancestryLabel(ancestry);
 
-  const isAskUser = sourceType === "ask_user";
-  const questions = useMemo(() => (isAskUser ? extractQuestions(display) : []), [isAskUser, display]);
+  const isQuestion = isQuestionSource(sourceType);
+  const questions = useMemo(() => (isQuestion ? extractQuestions(display) : []), [isQuestion, display]);
+  const resolvedAnswers = useMemo(() => questions.map((question, index) => answerForQuestion(question, answers[index] ?? [], customTexts[index])), [questions, answers, customTexts]);
+  const showSummary = display.summary !== undefined && (!isQuestion || !questions.some((question) => question.question === display.summary));
 
-  const allAnswered = isAskUser ? questions.every((_, index) => (answers[index]?.length ?? 0) > 0) : true;
+  const allAnswered = isQuestion ? resolvedAnswers.every((answer) => answer.length > 0) : true;
 
   const handleApprove = useCallback(() => {
     if (respondPending) return;
@@ -165,9 +184,8 @@ export function HitlCard({ projection }: HitlCardProps) {
 
   const handleAnswer = useCallback(() => {
     if (respondPending || !allAnswered) return;
-    const flatAnswers = answers.flat();
-    respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { answers: flatAnswers, comment: comment || undefined } });
-  }, [respond, respondPending, allAnswered, answers, projectSlug, projection.hitlId, comment]);
+    respond.mutate({ projectSlug, hitlId: projection.hitlId, body: { answers: resolvedAnswers, comment: comment || undefined } });
+  }, [respond, respondPending, allAnswered, resolvedAnswers, projectSlug, projection.hitlId, comment]);
 
   const handleRetryResume = useCallback(() => {
     if (respondPending) return;
@@ -191,6 +209,12 @@ export function HitlCard({ projection }: HitlCardProps) {
       } else {
         current.length = 0;
         current.push(label);
+        setCustomTexts((texts) => {
+          const nextTexts = [...texts];
+          while (nextTexts.length <= qIndex) nextTexts.push("");
+          nextTexts[qIndex] = "";
+          return nextTexts;
+        });
       }
       next[qIndex] = current;
       return next;
@@ -244,13 +268,13 @@ export function HitlCard({ projection }: HitlCardProps) {
         {display.title}
       </div>
 
-      {display.summary && (
+      {showSummary && (
         <div className="text-[12px] text-text-secondary leading-[1.5] mb-2" data-testid="hitl-display-summary">
           {display.summary}
         </div>
       )}
 
-      {display.fields && display.fields.length > 0 && (
+      {display.fields && display.fields.length > 0 && !isQuestion && (
         <div className="flex flex-col gap-0.5 mb-2 max-h-[100px] overflow-y-auto" data-testid="hitl-display-fields">
           {display.fields.map((field, idx) => (
             <div key={`${field.label}-${idx}`} className="font-mono text-[11px] text-text-muted py-0.5 border-b border-border-subtle last:border-b-0">
@@ -260,10 +284,11 @@ export function HitlCard({ projection }: HitlCardProps) {
         </div>
       )}
 
-      {isAskUser && questions.length > 0 && (
+      {isQuestion && questions.length > 0 && (
         <div className="flex flex-col gap-2 mb-2" data-testid="hitl-question-pane">
           {questions.map((q, qIndex) => (
             <div key={qIndex}>
+              <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">{q.header}</div>
               <div className="text-[12.5px] text-text-primary leading-[1.55] mb-1.5">{q.question}</div>
               {q.options.length > 0 && (
                 <div className="flex flex-col gap-1.5 mb-1.5">
@@ -311,6 +336,7 @@ export function HitlCard({ projection }: HitlCardProps) {
                     }
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
+                        e.preventDefault();
                         const text = (customTexts[qIndex] ?? "").trim();
                         if (text) toggleOption(qIndex, text, q.multiple);
                       }
@@ -336,7 +362,7 @@ export function HitlCard({ projection }: HitlCardProps) {
       />
 
       <div className="flex flex-wrap gap-1.5">
-        {canAnswer && isAskUser && (
+        {canAnswer && isQuestion && (
           <button
             data-testid="hitl-approve-button"
             className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-accent text-white cursor-pointer transition-colors duration-150 hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
@@ -368,7 +394,7 @@ export function HitlCard({ projection }: HitlCardProps) {
           </>
         )}
 
-        {canApprove && sourceType !== "tool_permission" && sourceType !== "goal_review" && !isAskUser && (
+        {canApprove && sourceType !== "tool_permission" && sourceType !== "goal_review" && !isQuestion && (
           <button
             data-testid="hitl-approve-button"
             className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-success-muted text-success cursor-pointer transition-colors duration-150 hover:opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -401,7 +427,7 @@ export function HitlCard({ projection }: HitlCardProps) {
           </button>
         )}
 
-        {canDeny && sourceType !== "goal_review" && !isAskUser && (
+        {canDeny && sourceType !== "goal_review" && !isQuestion && (
           <button
             data-testid="hitl-deny-button"
             className="px-3.5 py-[5px] rounded-sm text-[12px] font-medium bg-error-muted text-error cursor-pointer transition-colors duration-150 hover:opacity-90 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"

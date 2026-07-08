@@ -142,6 +142,20 @@ describe("global SSE wire protocol types", () => {
       { type: "reset", slug: "proj-a", sessionId: "s1", reason: "store_unavailable" },
       { type: "lagged", dropped: 5, reason: "client_backpressure" },
       { type: "shutdown" },
+      {
+        type: "hitl.snapshot",
+        projectSlugs: ["proj-a"],
+        createdAt: 3,
+      },
+      {
+        type: "hitl.event",
+        projectSlug: "proj-a",
+        owner: { projectSlug: "proj-a", ownerType: "session", ownerId: "s1" },
+        hitlId: "hitl-1",
+        createdAt: 4,
+        payload: { type: "hitl.request", status: "pending" },
+        projection: {} as HitlProjection,
+      },
     ];
 
     expect(events.map((event) => event.type)).toEqual([
@@ -150,6 +164,8 @@ describe("global SSE wire protocol types", () => {
       "reset",
       "lagged",
       "shutdown",
+      "hitl.snapshot",
+      "hitl.event",
     ]);
   });
 
@@ -687,7 +703,13 @@ describe("Goal/HITL stream events", () => {
       response: { type: "question_answer", answers: ["Yes"] },
     };
 
+    const hitlUpdatedEvent: HitlStreamEvent = {
+      type: "hitl.updated",
+      record: { ...hitlRequestEvent.request, status: "resume_claimed" },
+    };
+
     expect(serializeRoundTrip(hitlRequestEvent)).toEqual(hitlRequestEvent);
+    expect(serializeRoundTrip(hitlUpdatedEvent)).toEqual(hitlUpdatedEvent);
     expect(serializeRoundTrip(hitlResolvedEvent)).toEqual(hitlResolvedEvent);
   });
 
@@ -697,12 +719,13 @@ describe("Goal/HITL stream events", () => {
       { type: "goal.done_check", goalId: "g-1", results: [] },
       { type: "goal.escalation", goalId: "g-1", reason: "fail" },
       { type: "hitl.request", request: {} as HitlRecord },
+      { type: "hitl.updated", record: {} as HitlRecord },
       { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
     ];
 
-    expect(events).toHaveLength(5);
+    expect(events).toHaveLength(6);
     expect(events[0]!.type).toBe("goal.state_change");
-    expect(events[4]!.type).toBe("hitl.resolved");
+    expect(events[5]!.type).toBe("hitl.resolved");
   });
 
   test("SessionEventPayload union accepts Goal/HITL events", () => {
@@ -711,15 +734,17 @@ describe("Goal/HITL stream events", () => {
       { type: "goal.done_check", goalId: "g-1", results: [] },
       { type: "goal.escalation", goalId: "g-1", reason: "fail" },
       { type: "hitl.request", request: {} as HitlRecord },
+      { type: "hitl.updated", record: {} as HitlRecord },
       { type: "hitl.resolved", hitlId: "h-1", status: "resolved" },
     ];
 
-    expect(payloads).toHaveLength(5);
+    expect(payloads).toHaveLength(6);
     expect(payloads.map((p) => p.type)).toEqual([
       "goal.state_change",
       "goal.done_check",
       "goal.escalation",
       "hitl.request",
+      "hitl.updated",
       "hitl.resolved",
     ]);
   });

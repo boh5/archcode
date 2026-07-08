@@ -474,16 +474,26 @@ export interface GlobalSSEMcpStatusEvent {
   createdAt: number;
 }
 
-export interface GlobalSSEHitlChangedEvent {
-  type: "hitl.changed";
-  projectSlug: string;
-  ownerType: HitlOwnerType;
-  ownerId: string;
-  hitlId: string;
-  goalId?: string;
-  loopId?: string;
-  sessionId?: string;
+export interface GlobalSSEHitlSnapshotEvent {
+  type: "hitl.snapshot";
+  projectSlugs: string[];
   createdAt: number;
+}
+
+export type GlobalSSEHitlEventPayload =
+  | { type: "hitl.request"; status: Extract<HitlStatus, "pending"> }
+  | { type: "hitl.updated"; status: HitlStatus }
+  | { type: "hitl.snapshot"; status: HitlStatus }
+  | { type: "hitl.resolved"; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed"> };
+
+export interface GlobalSSEHitlRealtimeEvent {
+  type: "hitl.event";
+  projectSlug: string;
+  owner: HitlOwnerKey;
+  hitlId: string;
+  createdAt: number;
+  payload: GlobalSSEHitlEventPayload;
+  projection: HitlProjection;
 }
 
 export type GlobalSSEEvent =
@@ -493,7 +503,8 @@ export type GlobalSSEEvent =
   | GlobalSSELaggedEvent
   | GlobalSSEShutdownEvent
   | GlobalSSEMcpStatusEvent
-  | GlobalSSEHitlChangedEvent;
+  | GlobalSSEHitlSnapshotEvent
+  | GlobalSSEHitlRealtimeEvent;
 
 export interface ShutdownEvent {
   type: "shutdown";
@@ -1069,10 +1080,24 @@ export type HitlSource =
   | { type: "loop_retry"; loopId: string; runId: string; attempt: number }
   | { type: "loop_question"; loopId: string; questionKey: string };
 
+export interface HitlQuestionDisplayOption {
+  label: string;
+  description: string;
+}
+
+export interface HitlQuestionDisplayItem {
+  question: string;
+  header: string;
+  options?: HitlQuestionDisplayOption[];
+  multiple?: boolean;
+  custom: boolean;
+}
+
 export interface HitlDisplayPayload {
   title: string;
   summary?: string;
   fields?: Array<{ label: string; value: string }>;
+  questions?: HitlQuestionDisplayItem[];
   redacted: true;
 }
 
@@ -1122,6 +1147,7 @@ export type HitlAllowedAction = "answer" | "approve" | "deny" | "cancel" | "retr
 export interface HitlProjectionContext {
   rootSessionId?: string;
   parentSessionId?: string;
+  ancestorSessionIds?: string[];
   goalId?: string;
   loopId?: string;
   projectionPath?: string[];
@@ -1145,6 +1171,7 @@ export interface HitlProjection {
 
 export type HitlStreamEvent =
   | { type: "hitl.request"; request: HitlRecord }
+  | { type: "hitl.updated"; record: HitlRecord }
   | { type: "hitl.resolved"; hitlId: string; status: Extract<HitlStatus, "resolved" | "cancelled" | "resume_failed">; response?: HitlResponse };
 
 // ─── Loop Types ───

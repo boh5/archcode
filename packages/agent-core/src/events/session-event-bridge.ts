@@ -7,6 +7,7 @@ export interface SubscribeSessionEventsInput {
   readonly slug: string;
   readonly workspaceRoot: string;
   readonly sessionId: string;
+  readonly startEventId?: number;
   readonly onEvent: (event: GlobalSSEEvent) => void;
 }
 
@@ -32,7 +33,7 @@ export class SessionEventBridge {
     const key = scopedKey(input.workspaceRoot, input.sessionId);
     const registration: SubscriptionRegistration = {
       ...input,
-      lastForwardedNextEventId: 0,
+      lastForwardedNextEventId: input.startEventId ?? 0,
     };
     const registrations = this.#subscriptions.get(key) ?? new Set<SubscriptionRegistration>();
     registrations.add(registration);

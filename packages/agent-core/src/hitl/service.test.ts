@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { HitlOwnerKey } from "@archcode/protocol";
+import type { GlobalSSEHitlRealtimeEvent, HitlOwnerKey } from "@archcode/protocol";
 
 import { GoalStateManager } from "../goals/state";
 import { silentLogger } from "../logger";
@@ -94,6 +94,50 @@ describe("HitlService owner-local storage", () => {
       status: "found",
       record: { status: "cancelled", response: { type: "cancel", reason: "owner_deleted" } },
     });
+  });
+
+  test("publishes projection-safe realtime request and status updates only after explicit publish", async () => {
+    const events: GlobalSSEHitlRealtimeEvent[] = [];
+    const { service, sessions, workspaceRoot } = await createLoadedService();
+    const unsubscribe = service.subscribeRealtimeEvents((event) => events.push(event));
+    const sessionId = crypto.randomUUID();
+    sessions.create(sessionId, workspaceRoot);
+    await waitForSession(workspaceRoot, sessionId);
+    const owner: HitlOwnerKey = { projectSlug: "archcode", ownerType: "session", ownerId: sessionId };
+
+    const record = await service.create(input(owner, "realtime-block"));
+    expect(events).toHaveLength(0);
+
+    await service.publishRequest(record);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "hitl.event",
+      projectSlug: "archcode",
+      hitlId: record.hitlId,
+      payload: { type: "hitl.request", status: "pending" },
+      projection: {
+        hitlId: record.hitlId,
+        project: { slug: "archcode", name: "ArchCode" },
+        owner,
+        status: "pending",
+        allowedActions: ["answer", "cancel"],
+        ancestry: { rootSessionId: sessionId },
+      },
+    });
+
+    const claimed = await service.claim(record.hitlId, { type: "question_answer", answers: ["yes"] });
+    expect(claimed?.status).toBe("resume_claimed");
+    expect(events.at(-1)).toMatchObject({
+      payload: { type: "hitl.updated", status: "resume_claimed" },
+      projection: { status: "resume_claimed", allowedActions: [] },
+    });
+
+    await service.finishResume(record.hitlId, "resolved", { type: "question_answer", answers: ["yes"] });
+    expect(events.at(-1)).toMatchObject({
+      payload: { type: "hitl.resolved", status: "resolved" },
+      projection: { status: "resolved", allowedActions: [] },
+    });
+    unsubscribe();
   });
 });
 

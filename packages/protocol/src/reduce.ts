@@ -664,6 +664,19 @@ export function reduceStreamEvent(
       return { hitlRequests };
     }
 
+    case "hitl.updated": {
+      const hitlRequests = [...(state.hitlRequests ?? [])];
+      const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.record.hitlId);
+
+      if (existingIndex !== -1) {
+        hitlRequests[existingIndex] = event.record;
+      } else {
+        hitlRequests.push(event.record);
+      }
+
+      return { hitlRequests };
+    }
+
     case "hitl.resolved": {
       const hitlRequests = state.hitlRequests?.slice() ?? [];
       const existingIndex = hitlRequests.findIndex((r) => r.hitlId === event.hitlId);

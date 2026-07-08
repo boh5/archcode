@@ -91,13 +91,13 @@ export class ResumeCoordinator {
           if (current === undefined) return undefined;
           if (current.record.status === "resume_claimed") return this.#scheduleDispatch(current.record);
           if (current.record.status === "resume_failed" && current.record.response !== undefined) {
-            const claimed = await (await this.#hitl.ownerStore(current.owner)).claim(current.record.hitlId, current.record.response, {
+            const claimed = await this.#hitl.claim(current.record.hitlId, current.record.response, {
               claimId: crypto.randomUUID(),
               claimedAt: new Date().toISOString(),
               intent: current.record.resume?.intent ?? (current.record.response.type === "cancel" ? "cancel" : "respond"),
               attempt: (current.record.resume?.attempt ?? current.record.resume?.attempts ?? 0) + 1,
             });
-            return this.#scheduleDispatch(claimed);
+            return claimed === undefined ? false : this.#scheduleDispatch(claimed);
           }
           return undefined;
         });
@@ -125,12 +125,13 @@ export class ResumeCoordinator {
         return { status: "active", scheduled: false, record: current };
       }
 
-      const claimed = await (await this.#hitl.ownerStore(found.owner)).claim(hitlId, response, {
+      const claimed = await this.#hitl.claim(hitlId, response, {
         claimId: crypto.randomUUID(),
         claimedAt: new Date().toISOString(),
         intent,
         attempt: (current.resume?.attempt ?? current.resume?.attempts ?? 0) + 1,
       });
+      if (claimed === undefined) return { status: "missing", scheduled: false };
       const scheduled = this.#scheduleDispatch(claimed);
       return { status: "claimed", scheduled, record: claimed };
     });

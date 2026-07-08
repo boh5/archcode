@@ -1,6 +1,6 @@
 import { CheckCircle2, XCircle, Circle, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
-import { useScopedHitl } from "../../api/queries";
 import { HitlInbox } from "./HitlCard";
+import { useRealtimeHitl } from "../../store/hitl-store";
 import type { DoneCondition, DoneResult, GoalState } from "../../api/types";
 
 interface GoalOverviewProps {
@@ -20,19 +20,17 @@ export function GoalOverview({ goal, slug }: GoalOverviewProps) {
 }
 
 function ApprovalQueueSection({ slug, goalId }: { slug: string; goalId: string }) {
-  const { data: hitl, isLoading } = useScopedHitl({
+  const hitl = useRealtimeHitl({
     slug,
     scope: "goal",
     ownerId: goalId,
     includeChildren: true,
-    status: "pending",
   });
 
   return (
     <div data-testid="goal-approval-queue">
       <HitlInbox
-        projections={hitl ?? []}
-        isLoading={isLoading}
+        projections={hitl}
         emptyMessage="No pending approvals for this goal"
       />
     </div>

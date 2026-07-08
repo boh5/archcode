@@ -142,6 +142,7 @@ async function requestBudgetApproval(
     reason: "Budget warning approval is pending",
   });
   await pauseGoal(projectContext, goal, budget, "Budget warning approval is pending");
+  await projectContext.hitl.publishRequest(record);
   throw new GoalBudgetEnforcementStopError(goal.id, "Goal paused: budget warning approval is pending");
 }
 

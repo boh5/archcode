@@ -4,9 +4,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
+import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
 import type { HitlProjection, LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
 import { LoopDetailRoute } from "./loop-detail";
 import { EditLoopForm } from "../components/features/CreateLoopDialog";
+import { hitlStore } from "../store/hitl-store";
 
 const DOM_GLOBAL_NAMES = [
   "window",
@@ -274,6 +276,21 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
   };
 }
 
+function seedRealtimeHitl(...projections: HitlProjection[]): void {
+  for (const projection of projections) {
+    const event: GlobalSSEHitlRealtimeEvent = {
+      type: "hitl.event",
+      projectSlug: projection.project.slug,
+      owner: projection.owner,
+      hitlId: projection.hitlId,
+      createdAt: Date.now(),
+      payload: { type: "hitl.request", status: "pending" },
+      projection,
+    };
+    hitlStore.getState().applyRealtimeEvent(event);
+  }
+}
+
 function setupLoopDetailFetch(input: {
   loop?: LoopState;
   runs?: LoopRunReport[];
@@ -489,9 +506,11 @@ function toPath(input: Parameters<typeof fetch>[0]): string {
 describe("LoopDetailRoute", () => {
   beforeEach(() => {
     mock.restore();
+    hitlStore.getState().resetProject("demo");
   });
 
   afterEach(() => {
+    hitlStore.getState().resetProject("demo");
     restoreGlobals();
     mock.restore();
   });
@@ -1126,16 +1145,8 @@ describe("LoopDetailRoute", () => {
       },
     ];
 
-    const baseSetup = setupLoopDetailFetch({ killState: { globalKillActive: false } });
-
-    const hitlFetchMock = mock(async (inputValue: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      const path = toPath(inputValue);
-      if (path.includes("/api/projects/demo/hitl") && path.includes("scope=loop")) {
-        return Response.json({ hitl: loopHitl });
-      }
-      return baseSetup.fetchMock(inputValue, init);
-    });
-    Object.defineProperty(globalThis, "fetch", { value: hitlFetchMock, configurable: true });
+    setupLoopDetailFetch({ killState: { globalKillActive: false } });
+    seedRealtimeHitl(...loopHitl);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },

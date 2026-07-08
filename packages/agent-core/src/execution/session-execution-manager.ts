@@ -387,6 +387,14 @@ export class SessionExecutionManager {
     return this.#eventBridge.subscribe(input);
   }
 
+  attachSessionEvents(workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>): void {
+    this.#eventBridge.attachSession(workspaceRoot, sessionId, store);
+  }
+
+  detachSessionEvents(workspaceRoot: string, sessionId: string): void {
+    this.#eventBridge.detachSession(workspaceRoot, sessionId);
+  }
+
   async deleteSession(workspaceRoot: string, sessionId: string): Promise<void> {
     const rootSessionId = await this.#config.resolveRootSessionId(sessionId, workspaceRoot);
     const tree = await this.#config.buildSessionTree(workspaceRoot, rootSessionId);

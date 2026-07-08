@@ -27,6 +27,13 @@ const HitlDisplayPayloadSchema: z.ZodType<HitlDisplayPayload> = z.strictObject({
   title: z.string().trim().min(1),
   summary: z.string().optional(),
   fields: z.array(z.strictObject({ label: z.string(), value: z.string() })).optional(),
+  questions: z.array(z.strictObject({
+    question: z.string(),
+    header: z.string(),
+    options: z.array(z.strictObject({ label: z.string(), description: z.string() })).optional(),
+    multiple: z.boolean().optional(),
+    custom: z.boolean(),
+  })).optional(),
   redacted: z.literal(true),
 });
 

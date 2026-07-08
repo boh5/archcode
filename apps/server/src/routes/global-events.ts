@@ -13,6 +13,7 @@ export interface GlobalEventsRoutesOptions {
   heartbeatIntervalMs?: number;
   maxQueuedEvents?: number;
   onBeforeWrite?: (event: GlobalSSEEvent) => Promise<void> | void;
+  initialEvents?: () => Promise<readonly GlobalSSEEvent[]> | readonly GlobalSSEEvent[];
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;
@@ -34,6 +35,8 @@ export function createGlobalEventsRoutes(
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let writeQueue = Promise.resolve();
       let queuedEvents: QueuedGlobalEvent[] = [];
+      let bufferedInitialLiveEvents: QueuedGlobalEvent[] = [];
+      let bufferingInitialEvents = true;
       let writing = false;
       let resolveDone: (() => void) | undefined;
       const done = new Promise<void>((resolve) => {
@@ -81,27 +84,26 @@ export function createGlobalEventsRoutes(
 
       const enqueueGlobalEvent = (event: GlobalSSEEvent): void => {
         if (closed) return;
-        queuedEvents.push(event);
-
-        const overflow = queuedEvents.length - maxQueuedEvents;
-        if (overflow > 0) {
-          let dropped = 0;
-          const retained: QueuedGlobalEvent[] = [];
-          for (const queued of queuedEvents) {
-            if (dropped < overflow && queued.type === "event") {
-              dropped += 1;
-              continue;
-            }
-            retained.push(queued);
-          }
-          queuedEvents = dropped > 0 ? [createLaggedEvent(dropped), ...retained] : retained.slice(-maxQueuedEvents);
-        }
-
+        queuedEvents = appendBounded(queuedEvents, event, maxQueuedEvents);
         enqueueFlush();
       };
 
+      const enqueueBusEvent = (event: GlobalSSEEvent): void => {
+        if (closed) return;
+        if (bufferingInitialEvents) {
+          bufferedInitialLiveEvents = appendBounded(bufferedInitialLiveEvents, event, maxQueuedEvents);
+          return;
+        }
+        enqueueGlobalEvent(event);
+      };
+
       try {
-        unsubscribe = bus.subscribe(enqueueGlobalEvent);
+        unsubscribe = bus.subscribe(enqueueBusEvent);
+        const initialEvents = await options?.initialEvents?.();
+        for (const event of initialEvents ?? []) enqueueGlobalEvent(event);
+        bufferingInitialEvents = false;
+        for (const event of bufferedInitialLiveEvents) enqueueGlobalEvent(event);
+        bufferedInitialLiveEvents = [];
         heartbeat = setInterval(() => {
           enqueueGlobalEvent(createHeartbeatEvent());
         }, heartbeatIntervalMs);
@@ -123,6 +125,23 @@ function createHeartbeatEvent(): GlobalSSEHeartbeatEvent {
 
 function createLaggedEvent(dropped: number): GlobalSSELaggedEvent {
   return { type: "lagged", dropped, reason: "client_backpressure" };
+}
+
+function appendBounded(events: QueuedGlobalEvent[], event: GlobalSSEEvent, maxQueuedEvents: number): QueuedGlobalEvent[] {
+  const next = [...events, event];
+  const overflow = next.length - maxQueuedEvents;
+  if (overflow <= 0) return next;
+
+  let dropped = 0;
+  const retained: QueuedGlobalEvent[] = [];
+  for (const queued of next) {
+    if (dropped < overflow && queued.type === "event") {
+      dropped += 1;
+      continue;
+    }
+    retained.push(queued);
+  }
+  return dropped > 0 ? [createLaggedEvent(dropped), ...retained] : retained.slice(-maxQueuedEvents);
 }
 
 function toSSEMessage(event: GlobalSSEEvent): { event: string; data: string; id?: string } {

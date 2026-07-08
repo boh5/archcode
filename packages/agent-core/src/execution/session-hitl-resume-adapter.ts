@@ -33,6 +33,8 @@ export interface SessionHitlResumeAdapterOptions {
   readonly cancelChildSession?: (workspaceRoot: string, parentSessionId: string, childSessionId: string) => boolean;
   readonly resumeChildSession?: (workspaceRoot: string, request: ResumeChildRequest) => Promise<ChildExecutionHandle>;
   readonly abortSessionExecutionAndWait?: (workspaceRoot: string, sessionId: string) => Promise<void>;
+  readonly attachSessionEvents?: (workspaceRoot: string, sessionId: string, store: StoreApi<SessionStoreState>) => void;
+  readonly detachSessionEvents?: (workspaceRoot: string, sessionId: string) => void;
 }
 
 export class SessionHitlResumeAdapter implements ResumeAdapterContract {
@@ -46,41 +48,46 @@ export class SessionHitlResumeAdapter implements ResumeAdapterContract {
     if (!isResponseForSessionCheckpoint(checkpoint, response)) throw new Error(`Invalid response type ${response.type} for Session HITL ${record.hitlId}`);
 
     const store = await this.options.storeManager.getOrLoad(sessionId, this.options.workspaceRoot);
-    const projectContext = await this.options.projectContextResolver.resolve(this.options.workspaceRoot);
-    const completed = [...checkpoint.completedToolResults];
-    restoreAssistantPointer(store, checkpoint);
-    const pending = pendingFromCheckpoint(checkpoint);
-    if (pending instanceof Error) {
-      appendToolResult(store, blockedToolCall(checkpoint), createToolErrorResult({
-        kind: "execution",
-        message: pending.message,
-        code: "SESSION_HITL_CHECKPOINT_INVALID",
-      }));
-      for (const call of checkpoint.pendingToolCalls.filter((call) => call.toolCallId !== checkpoint.toolCallId)) {
-        appendToolResult(store, call, createToolErrorResult({
+    this.options.attachSessionEvents?.(this.options.workspaceRoot, sessionId, store);
+    try {
+      const projectContext = await this.options.projectContextResolver.resolve(this.options.workspaceRoot);
+      const completed = [...checkpoint.completedToolResults];
+      restoreAssistantPointer(store, checkpoint);
+      const pending = pendingFromCheckpoint(checkpoint);
+      if (pending instanceof Error) {
+        appendToolResult(store, blockedToolCall(checkpoint), createToolErrorResult({
           kind: "execution",
-          message: `Skipped ${call.toolName} because Session HITL checkpoint ${checkpoint.hitlId} is invalid`,
+          message: pending.message,
           code: "SESSION_HITL_CHECKPOINT_INVALID",
         }));
+        for (const call of checkpoint.pendingToolCalls.filter((call) => call.toolCallId !== checkpoint.toolCallId)) {
+          appendToolResult(store, call, createToolErrorResult({
+            kind: "execution",
+            message: `Skipped ${call.toolName} because Session HITL checkpoint ${checkpoint.hitlId} is invalid`,
+            code: "SESSION_HITL_CHECKPOINT_INVALID",
+          }));
+        }
+        await this.continueAgent(checkpoint, sessionId);
+        clearBlockerForHitlId(store, record.hitlId);
+        await deleteSessionHitlCheckpoint(this.options.workspaceRoot, sessionId, record.hitlId);
+        return;
       }
+
+      for (let index = 0; index < pending.length; index += 1) {
+        const call = pending[index]!;
+        const result = index === 0
+          ? await this.resumeBlockedTool(checkpoint, response, store, completed)
+          : await this.executeTool(call, checkpoint, store, completed, pending.slice(index), projectContext);
+        appendToolResult(store, call, result);
+        completed.push({ toolCallId: call.toolCallId, toolName: call.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
+      }
+
       await this.continueAgent(checkpoint, sessionId);
       clearBlockerForHitlId(store, record.hitlId);
       await deleteSessionHitlCheckpoint(this.options.workspaceRoot, sessionId, record.hitlId);
-      return;
+    } finally {
+      this.options.detachSessionEvents?.(this.options.workspaceRoot, sessionId);
     }
-
-    for (let index = 0; index < pending.length; index += 1) {
-      const call = pending[index]!;
-      const result = index === 0
-        ? await this.resumeBlockedTool(checkpoint, response, store, completed)
-        : await this.executeTool(call, checkpoint, store, completed, pending.slice(index), projectContext);
-      appendToolResult(store, call, result);
-      completed.push({ toolCallId: call.toolCallId, toolName: call.toolName, output: result.output, isError: result.isError, ...(result.meta === undefined ? {} : { meta: result.meta }) });
-    }
-
-    await this.continueAgent(checkpoint, sessionId);
-    clearBlockerForHitlId(store, record.hitlId);
-    await deleteSessionHitlCheckpoint(this.options.workspaceRoot, sessionId, record.hitlId);
   }
 
   private async continueAgent(checkpoint: SessionHitlCheckpointRecord, sessionId: string): Promise<void> {

@@ -1499,6 +1499,37 @@ describe("HITL stream event reducers", () => {
     expect(result.hitlRequests![0]!.displayPayload.title).toBe("Updated prompt");
   });
 
+  test("hitl.updated upserts the full HITL record", () => {
+    const existing = makeHitlRequest({ hitlId: "hitl-1", status: "pending" });
+    const state = createProjection({ hitlRequests: [existing] });
+    const updated = makeHitlRequest({
+      hitlId: "hitl-1",
+      status: "resume_claimed",
+      response: { type: "question_answer", answers: ["Yes"] },
+      resume: { claimId: "claim-1", intent: "respond" },
+    });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.updated",
+      record: updated,
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests).toHaveLength(1);
+    expect(result.hitlRequests![0]).toEqual(updated);
+  });
+
+  test("hitl.updated appends unknown HITL records", () => {
+    const state = createProjection();
+    const updated = makeHitlRequest({ hitlId: "hitl-new", status: "resume_claimed" });
+
+    const result = reduceStreamEvent(state, {
+      type: "hitl.updated",
+      record: updated,
+    }, createDeterministicContext());
+
+    expect(result.hitlRequests).toEqual([updated]);
+  });
+
   test("hitl.resolved updates status and response", () => {
     const request = makeHitlRequest();
     const state = createProjection({ hitlRequests: [request] });
@@ -1572,6 +1603,7 @@ describe("HITL stream event reducers", () => {
     const request = makeHitlRequest();
     const events: StreamEvent[] = [
       { type: "hitl.request", request },
+      { type: "hitl.updated", record: { ...request, status: "resume_claimed" } },
       {
         type: "hitl.resolved",
         hitlId: "hitl-1",

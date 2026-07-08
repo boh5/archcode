@@ -2,10 +2,11 @@ import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { useLoop, useLoopBudget, useLoopCollisions, useLoopIntegrations, useLoopKillState, useLoopRuns, useLoopState, useScopedHitl } from "../api/queries";
+import { useLoop, useLoopBudget, useLoopCollisions, useLoopIntegrations, useLoopKillState, useLoopRuns, useLoopState } from "../api/queries";
 import { useActivateLoopGlobalKill, useCancelLoopCurrentRun, useClearLoopGlobalKill, usePauseLoop, useResumeLoop, useTriggerLoop } from "../api/mutations";
 import { EditLoopDialog } from "../components/features/CreateLoopDialog";
 import { HitlInbox } from "../components/features/HitlCard";
+import { useRealtimeHitl } from "../store/hitl-store";
 import type {
   LoopBudgetSnapshot,
   LoopCollisionSnapshot,
@@ -38,12 +39,11 @@ export function LoopDetailRoute() {
   const { data: collisions, isLoading: collisionsLoading } = useLoopCollisions(slug, loopId);
   const { data: integrations, isLoading: integrationsLoading } = useLoopIntegrations(slug, loopId);
   const { data: killState } = useLoopKillState(slug);
-  const { data: loopHitl, isLoading: loopHitlLoading } = useScopedHitl({
+  const loopHitl = useRealtimeHitl({
     slug,
     scope: "loop",
     ownerId: loopId,
     includeChildren: true,
-    status: "pending",
   });
   const triggerLoop = useTriggerLoop();
   const pauseLoop = usePauseLoop();
@@ -213,8 +213,7 @@ export function LoopDetailRoute() {
             clearKillPending={clearGlobalKill.isPending}
           />
           <LoopHitlSection
-            projections={loopHitl ?? []}
-            isLoading={loopHitlLoading}
+            projections={loopHitl}
           />
           <RunHistorySection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
           <StateSection
@@ -850,16 +849,13 @@ function isHardBudgetBlocked(snapshot: LoopBudgetSnapshot | null | undefined, lo
 
 function LoopHitlSection({
   projections,
-  isLoading,
 }: {
   projections: import("../api/types").HitlProjection[];
-  isLoading: boolean;
 }) {
   return (
     <DetailSection title="HITL" testId="loop-hitl-section">
       <HitlInbox
         projections={projections}
-        isLoading={isLoading}
         emptyMessage="No pending HITL for this loop"
         title="Loop HITL"
       />

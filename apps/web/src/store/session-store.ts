@@ -153,6 +153,7 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
     case "goal.done_check":
     case "goal.escalation":
     case "hitl.request":
+    case "hitl.updated":
     case "hitl.resolved":
       return true;
     default:

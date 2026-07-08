@@ -300,12 +300,21 @@ function task18Spec(ac002Status: "satisfied" | "failed"): string {
 async function waitForPendingApproval(hitl: HitlService, goalId: string, approvalPoint: string) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const pending = (await hitl.list({ scope: "goal", ownerId: goalId })).find((request) => {
-      return "approvalPoint" in request.source && request.source.approvalPoint === approvalPoint;
+      return request.status === "pending" && "approvalPoint" in request.source && request.source.approvalPoint === approvalPoint;
     });
     if (pending) return pending;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error(`Timed out waiting for ${approvalPoint} approval`);
+}
+
+async function waitForTerminalHitl(hitl: HitlService, goalId: string, hitlId: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const projection = (await hitl.list({ scope: "goal", ownerId: goalId, status: "all" })).find((request) => request.hitlId === hitlId);
+    if (projection?.status === "resolved" || projection?.status === "cancelled" || projection?.status === "resume_failed") return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Timed out waiting for HITL ${hitlId} to resolve`);
 }
 
 async function approvePending(coordinator: ResumeCoordinator, hitl: HitlService, goalId: string, approvalPoint: string, comment: string): Promise<void> {
@@ -316,6 +325,7 @@ async function approvePending(coordinator: ResumeCoordinator, hitl: HitlService,
   expect(serialized).not.toContain("sk-test-secret");
   const result = await coordinator.respond(pending.hitlId, { type: "approval_decision", decision: "approved", comment });
   expect(result.scheduled).toBe(true);
+  await waitForTerminalHitl(hitl, goalId, pending.hitlId);
   await waitForGoal(goalId, (goal) => goal.resumeCheckpoint === undefined);
 }
 
@@ -339,6 +349,7 @@ async function requestBudgetApprovalThroughHook(coordinator: ResumeCoordinator, 
   expect(serialized).not.toContain("sk-test-secret");
   const response = await coordinator.respond(pending.hitlId, { type: "approval_decision", decision: "approved", comment: "Budget approved" });
   expect(response.scheduled).toBe(true);
+  await waitForTerminalHitl(hitl, goal.id, pending.hitlId);
   await waitForGoal(goal.id, (state) => state.resumeCheckpoint === undefined);
 
   const paused = await manager.read(goal.id);

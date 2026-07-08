@@ -122,6 +122,7 @@ async function createRecordAndCheckpoint(input: {
   };
   await writeSessionHitlCheckpoint(checkpoint, ctx.workspaceRoot, sessionId);
   ctx.store.getState().append({ type: "hitl.request", request: record });
+  await ctx.projectContext.hitl.publishRequest(record);
   return record;
 }
 
@@ -146,7 +147,16 @@ function askUserDisplayPayload(input: AskUserInput): HitlDisplayPayload {
   return {
     title: safeDisplay(first?.header ?? "Question"),
     summary: safeDisplay(first?.question ?? "User input required"),
-    fields: input.questions.map((question) => ({ label: safeDisplay(question.header), value: safeDisplay(question.question) })),
+    questions: input.questions.map((question) => ({
+      question: safeDisplay(question.question),
+      header: safeDisplay(question.header),
+      options: question.options.map((option) => ({
+        label: safeDisplay(option.label),
+        description: safeDisplay(option.description),
+      })),
+      ...(question.multiple === undefined ? {} : { multiple: question.multiple }),
+      custom: question.custom,
+    })),
     redacted: true,
   };
 }

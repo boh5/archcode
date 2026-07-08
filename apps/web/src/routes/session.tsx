@@ -4,7 +4,8 @@ import { ChatMessages } from "../components/composite/ChatMessages";
 import { HitlInbox } from "../components/features/HitlCard";
 import { ChatHeader } from "../components/features/ChatHeader";
 import { ChatInput } from "../components/features/ChatInput";
-import { useFocusedSession, useScopedHitl, useSession } from "../api/queries";
+import { useFocusedSession, useSession } from "../api/queries";
+import { useRealtimeHitl } from "../store/hitl-store";
 import { getWebSessionStore, markSessionForeground, useSessionStore } from "../store/session-store";
 
 export function SessionRoute() {
@@ -18,19 +19,17 @@ export function SessionRoute() {
   const { data: session } = useSession(slug, sessionId);
   const focusSessionId = useSessionStore(sessionId, (s) => s.focusSessionId, slug);
   const { data: focusedSession, isLoading: isFocusedLoading, error: focusedError } = useFocusedSession(slug, focusSessionId);
-  const { data: sessionHitl, isLoading: sessionHitlLoading } = useScopedHitl({
+  const sessionHitl = useRealtimeHitl({
     slug,
     scope: "session",
     ownerId: sessionId,
     includeChildren: true,
-    status: "pending",
   });
-  const { data: focusedHitl, isLoading: focusedHitlLoading } = useScopedHitl({
+  const focusedHitl = useRealtimeHitl({
     slug,
     scope: "session",
     ownerId: focusSessionId ?? undefined,
     includeChildren: true,
-    status: "pending",
   });
 
   // Initialize child session store from focused session snapshot
@@ -188,8 +187,7 @@ export function SessionRoute() {
           <>
             <ChatMessages slug={slug} sessionId={focusSessionId} />
             <HitlInbox
-              projections={focusedHitl ?? []}
-              isLoading={focusedHitlLoading}
+              projections={focusedHitl}
               emptyMessage="No pending approvals for this session"
             />
           </>
@@ -208,8 +206,7 @@ export function SessionRoute() {
       />
       <ChatMessages slug={slug} sessionId={sessionId} />
       <HitlInbox
-        projections={sessionHitl ?? []}
-        isLoading={sessionHitlLoading}
+        projections={sessionHitl}
         emptyMessage="No pending approvals for this session"
       />
       <ChatInput slug={slug} sessionId={sessionId} />

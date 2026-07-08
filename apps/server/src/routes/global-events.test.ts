@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { CompressionBlockCommittedEvent, GlobalSSEEvent, GoalState } from "@archcode/protocol";
+import type { CompressionBlockCommittedEvent, GlobalSSEEvent, GoalState, HitlProjection } from "@archcode/protocol";
 import { Hono } from "hono";
 import { createServerApp, createServerEventRuntime } from "../app";
 import { errorHandler } from "../error-handler";
@@ -72,6 +72,37 @@ function sessionEvent(input: { slug: string; sessionId: string; eventId: number;
   };
 }
 
+function hitlSnapshotEvent(hitlId: string): Extract<GlobalSSEEvent, { type: "hitl.event" }> {
+  const projection: HitlProjection = {
+    hitlId,
+    project: { slug: "proj" },
+    owner: { projectSlug: "proj", ownerType: "session", ownerId: "session-1" },
+    source: { type: "ask_user", sessionId: "session-1", toolCallId: "call-1" },
+    status: "pending",
+    displayPayload: {
+      title: "Need input",
+      questions: [{ header: "Q1", question: "Continue?", options: [], custom: true }],
+      redacted: true,
+    },
+    allowedActions: ["answer", "cancel"],
+    createdAt: "2026-07-08T00:00:00.000Z",
+    updatedAt: "2026-07-08T00:00:00.000Z",
+  };
+  return {
+    type: "hitl.event",
+    projectSlug: projection.project.slug,
+    owner: projection.owner,
+    hitlId,
+    createdAt: 1,
+    payload: { type: "hitl.snapshot", status: projection.status },
+    projection,
+  };
+}
+
+function hitlSnapshotReset(projectSlugs: string[] = ["proj"]): Extract<GlobalSSEEvent, { type: "hitl.snapshot" }> {
+  return { type: "hitl.snapshot", projectSlugs, createdAt: 0 };
+}
+
 describe("global events route", () => {
   test("inherits /api auth middleware when mounted in the server app", async () => {
     const { app } = createServerApp({} as AgentRuntime, { dev: true, password: "secret" });
@@ -104,6 +135,50 @@ describe("global events route", () => {
     expect(text).toContain("event: event");
     expect(text).toContain("id: alpha:s1:7");
     expect(text).toContain('data: {"type":"event","slug":"alpha","sessionId":"s1","eventId":7');
+  });
+
+  test("writes initial pending HITL snapshot events when a client connects", async () => {
+    const bus = new GlobalEventBus();
+    const response = await createApp(bus, { initialEvents: async () => [hitlSnapshotReset(), hitlSnapshotEvent("hitl-refresh")] }).request("/api/events");
+
+    const text = await readUntil(response, (chunk) => chunk.includes("hitl-refresh"));
+
+    expect(text).toContain("event: hitl.snapshot");
+    expect(text).toContain("event: hitl.event");
+    expect(text).toContain('\"payload\":{\"type\":\"hitl.snapshot\",\"status\":\"pending\"');
+    expect(text).toContain('\"hitlId\":\"hitl-refresh\"');
+  });
+
+  test("continues streaming live events after initial HITL snapshots", async () => {
+    const bus = new GlobalEventBus();
+    const response = await createApp(bus, { initialEvents: () => [hitlSnapshotReset(), hitlSnapshotEvent("hitl-initial")] }).request("/api/events");
+
+    bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 9, message: "after-initial" }));
+
+    const text = await readUntil(response, (chunk) => chunk.includes("after-initial"));
+    expect(text.indexOf("hitl-initial")).toBeLessThan(text.indexOf("after-initial"));
+    expect(text).toContain("id: alpha:s1:9");
+  });
+
+  test("buffers live events until delayed initial HITL snapshots are written", async () => {
+    const bus = new GlobalEventBus();
+    const initialStarted = Promise.withResolvers<void>();
+    const releaseInitial = Promise.withResolvers<void>();
+    const response = await createApp(bus, {
+      initialEvents: async () => {
+        initialStarted.resolve();
+        await releaseInitial.promise;
+        return [hitlSnapshotReset(), hitlSnapshotEvent("hitl-buffered-initial")];
+      },
+    }).request("/api/events");
+
+    const textPromise = readUntil(response, (chunk) => chunk.includes("after-buffered-initial"));
+    await initialStarted.promise;
+    bus.emit(sessionEvent({ slug: "alpha", sessionId: "s1", eventId: 10, message: "after-buffered-initial" }));
+    releaseInitial.resolve();
+
+    const text = await textPromise;
+    expect(text.indexOf("hitl-buffered-initial")).toBeLessThan(text.indexOf("after-buffered-initial"));
   });
 
   test("multiplexes events from two sessions on one connection", async () => {

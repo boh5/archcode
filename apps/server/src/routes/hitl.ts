@@ -7,12 +7,13 @@ import type {
   HitlResponse,
   HitlSource,
   HitlStatus,
+  GlobalSSEEvent,
 } from "@archcode/protocol";
 import type { AgentRuntime, ProjectContext, ResumeCoordinatorResult } from "@archcode/agent-core";
 import { z } from "zod/v4";
-import { globalEventBus } from "../events/global-event-bus";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
+import { globalEventBus } from "../events/global-event-bus";
 
 type HitlRouteScope = "project" | "session" | "goal" | "loop";
 type HitlRouteStatus = "pending" | "recent" | "all";
@@ -85,10 +86,17 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     const preflight = nonPendingPreflight(lookup.record, response);
     if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
 
+    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, lookup.owner, hitlId);
     const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
-    const result = await coordinator.respond(hitlId, response);
+    let result: ResumeCoordinatorResult;
+    try {
+      result = await coordinator.respond(hitlId, response);
+    } catch (error) {
+      releaseSessionForwarder();
+      throw error;
+    }
+    if (!result.scheduled) releaseSessionForwarder();
     const record = recordFromCoordinatorResult(result, hitlId);
-    if (lookup.record.status === "pending" && result.status === "claimed") emitHitlChanged(record);
     const statusCode = isConflictingMutation(record, response) ? 409 : 200;
     return c.json(toMutationResponse(project, record), statusCode);
   });
@@ -112,15 +120,81 @@ export function createHitlRoutes(runtime: AgentRuntime): Hono {
     if (preflight !== undefined) return c.json(toMutationResponse(project, preflight.record), preflight.statusCode);
     validateCancelAction(lookup.record);
 
+    const releaseSessionForwarder = await forwardSessionResumeEvents(runtime, project.workspaceRoot, project.slug, lookup.owner, hitlId);
     const coordinator = requiredResumeCoordinator(context.hitlResumeCoordinator);
-    const result = await coordinator.cancel(hitlId, response.reason, response.cancelledBy);
+    let result: ResumeCoordinatorResult;
+    try {
+      result = await coordinator.cancel(hitlId, response.reason, response.cancelledBy);
+    } catch (error) {
+      releaseSessionForwarder();
+      throw error;
+    }
+    if (!result.scheduled) releaseSessionForwarder();
     const record = recordFromCoordinatorResult(result, hitlId);
-    if (lookup.record.status === "pending" && result.status === "claimed") emitHitlChanged(record);
     const statusCode = isConflictingMutation(record, response) ? 409 : 200;
     return c.json(toMutationResponse(project, record), statusCode);
   });
 
   return app;
+}
+
+async function forwardSessionResumeEvents(
+  runtime: AgentRuntime,
+  workspaceRoot: string,
+  slug: string,
+  owner: HitlRecord["owner"],
+  hitlId: string,
+): Promise<() => void> {
+  if (owner.ownerType !== "session") return () => undefined;
+
+  const sessionId = owner.ownerId;
+  const eventCursor = await runtime.getSessionFile(workspaceRoot, sessionId)
+    .then((session) => session.eventCursor ?? -1)
+    .catch(() => -1);
+  let released = false;
+  let unsubscribe: (() => void) | undefined;
+  let unsubscribeHitl: (() => void) | undefined;
+  const timeout = setTimeout(() => release(), 5 * 60 * 1000);
+
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    clearTimeout(timeout);
+    unsubscribe?.();
+    unsubscribeHitl?.();
+  };
+
+  unsubscribe = runtime.subscribeSessionEvents({
+    slug,
+    workspaceRoot,
+    sessionId,
+    startEventId: eventCursor + 1,
+    onEvent(event) {
+      if (!isHitlSessionEvent(event)) globalEventBus.emit(event);
+      if (isExecutionEndAfter(event, sessionId, eventCursor)) release();
+    },
+  });
+
+  unsubscribeHitl = runtime.subscribeHitlEvents((event) => {
+    if (event.hitlId === hitlId && event.owner.ownerType === "session" && event.owner.ownerId === sessionId && event.payload.type === "hitl.resolved") release();
+  });
+
+  return release;
+}
+
+function isHitlSessionEvent(event: GlobalSSEEvent): boolean {
+  return event.type === "event" && (
+    event.payload.type === "hitl.request"
+    || event.payload.type === "hitl.updated"
+    || event.payload.type === "hitl.resolved"
+  );
+}
+
+function isExecutionEndAfter(event: GlobalSSEEvent, sessionId: string, eventCursor: number): boolean {
+  return event.type === "event"
+    && event.sessionId === sessionId
+    && event.payload.type === "execution-end"
+    && event.eventId > eventCursor;
 }
 
 function parseListQuery(query: Record<string, string | undefined>): {
@@ -320,36 +394,6 @@ function toProjection(project: { slug: string; name?: string }, record: HitlReco
 
 function withResumeStatus(projection: HitlProjection): HitlApiProjection {
   return { ...projection, resumeStatus: resumeStatusFor(projection.status) };
-}
-
-function emitHitlChanged(record: HitlRecord): void {
-  globalEventBus.emit({
-    type: "hitl.changed",
-    projectSlug: record.owner.projectSlug,
-    ownerType: record.owner.ownerType,
-    ownerId: record.owner.ownerId,
-    hitlId: record.hitlId,
-    ...hitlIdentifierHints(record.source),
-    createdAt: Date.now(),
-  });
-}
-
-function hitlIdentifierHints(source: HitlSource): { goalId?: string; loopId?: string; sessionId?: string } {
-  switch (source.type) {
-    case "ask_user":
-    case "tool_permission":
-      return { sessionId: source.sessionId };
-    case "goal_approval":
-    case "goal_review":
-    case "goal_budget":
-    case "goal_question":
-      return { goalId: source.goalId };
-    case "loop_approval":
-    case "loop_blocker":
-    case "loop_retry":
-    case "loop_question":
-      return { loopId: source.loopId };
-  }
 }
 
 function resumeStatusFor(status: HitlStatus): ResumeStatus {

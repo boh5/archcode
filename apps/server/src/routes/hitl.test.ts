@@ -67,6 +67,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry): Omit<TestFixture, 
     skillService: undefined,
     hitl: undefined,
     recoverHitlResumes: mock(async () => undefined),
+    subscribeHitlEvents: mock(() => () => undefined),
     subscribeMcpStatusChanges: mock(() => () => undefined),
     getMcpServerStatuses: mock(() => new Map()),
     createSession: mock(async (workspaceRoot: string) => sessionStoreManager.createSessionFile(workspaceRoot)),
@@ -223,7 +224,7 @@ describe("hitl routes", () => {
     expect(legacyPermission.status).toBe(404);
   });
 
-  test("scoped SSE HITL invalidation forwards lightweight changed hints only", async () => {
+  test("session HITL store events are not forwarded as display events", async () => {
     const runtime = createRuntimeWithManualSubscriptions();
     const serverRuntime = createServerEventRuntime(runtime);
     const observed: GlobalSSEEvent[] = [];
@@ -240,18 +241,7 @@ describe("hitl routes", () => {
     await execution.promise;
     unsubscribeBus();
 
-    expect(observed).toHaveLength(1);
-    expect(observed[0]).toEqual({
-      type: "hitl.changed",
-      projectSlug: "scoped-sse-project",
-      ownerType: "session",
-      ownerId: "session-1",
-      sessionId: "session-1",
-      hitlId: "hitl-sse-1",
-      createdAt: 42,
-    });
-    expect(JSON.stringify(observed[0])).not.toContain("displayPayload");
-    expect(JSON.stringify(observed[0])).not.toContain("checkpoint");
+    expect(observed).toHaveLength(0);
   });
 
   test("duplicate canonical respond/cancel is idempotent and conflicting terminal mutation returns current state", async () => {
@@ -287,6 +277,8 @@ describe("hitl routes", () => {
     expect(fixture.sessionResumeCalls()).toBe(1);
 
     const invalid = await createPermissionHitl(context.hitl, project.slug, sessionId, "call-invalid");
+    const invalidBefore = await context.hitl.lookup(invalid.hitlId);
+    expect(invalidBefore.status).toBe("found");
     const invalidRes = await fixture.app.request(`/api/projects/${project.slug}/hitl/${invalid.hitlId}/respond`, {
       method: "POST",
       body: JSON.stringify({ decision: "approved" }),
@@ -402,6 +394,7 @@ function redactedPayload(title: string): HitlDisplayPayload {
 
 function createRuntimeWithManualSubscriptions() {
   const subscriptions = new Map<string, (event: GlobalSSEEvent) => void>();
+  const hitlSubscriptions = new Set<(event: Extract<GlobalSSEEvent, { type: "hitl.event" }>) => void>();
   let resolveExecution!: () => void;
   const promise = new Promise<void>((resolve) => {
     resolveExecution = resolve;
@@ -412,13 +405,19 @@ function createRuntimeWithManualSubscriptions() {
       subscriptions.set(input.sessionId, input.onEvent);
       return () => subscriptions.delete(input.sessionId);
     }),
+    subscribeHitlEvents: mock((listener: (event: Extract<GlobalSSEEvent, { type: "hitl.event" }>) => void) => {
+      hitlSubscriptions.add(listener);
+      return () => hitlSubscriptions.delete(listener);
+    }),
     startSessionExecution: mock(() => ({ promise })),
     emitSession: (sessionId: string, event: GlobalSSEEvent) => subscriptions.get(sessionId)?.(event),
+    emitHitl: (event: Extract<GlobalSSEEvent, { type: "hitl.event" }>) => hitlSubscriptions.forEach((listener) => listener(event)),
     resolveExecution: () => resolveExecution(),
   };
 
   return runtime as unknown as AgentRuntime & {
     emitSession: (sessionId: string, event: GlobalSSEEvent) => void;
+    emitHitl: (event: Extract<GlobalSSEEvent, { type: "hitl.event" }>) => void;
     resolveExecution: () => void;
   };
 }

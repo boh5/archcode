@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { AgentRuntime } from "@archcode/agent-core";
-import type { GlobalSSEEvent, GlobalSessionEventEnvelope, HitlSource, HitlStreamEvent, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
+import type { GlobalSSEEvent, GlobalSessionEventEnvelope, HitlStreamEvent, ToolChildSessionLinkEvent, ToolChildSessionLinkStatus } from "@archcode/protocol";
 import { errorHandler } from "./error-handler";
 import { UnauthorizedError } from "./errors";
 import { requestLogger } from "./logger";
@@ -80,7 +80,11 @@ export function createServerApp(
   const loops = createLoopsRoutes(serverRuntime);
   const sessions = createSessionsRoutes(serverRuntime);
   const messages = createMessagesRoutes(serverRuntime);
-  const globalEvents = createGlobalEventsRoutes(globalEventBus);
+  const globalEvents = createGlobalEventsRoutes(globalEventBus, {
+    initialEvents: () => typeof serverRuntime.listPendingHitlEvents === "function"
+      ? serverRuntime.listPendingHitlEvents()
+      : [],
+  });
   const commands = createCommandsRoutes(serverRuntime);
   const compression = createCompressionRoutes(serverRuntime);
   const agents = new Hono();
@@ -110,6 +114,7 @@ export function createServerApp(
     app.use("/*", createEmbeddedAssetHandler());
   }
 
+  wireHitlRealtimeBridge(serverRuntime, globalEventBus);
   wireMcpStatusBridge(serverRuntime, globalEventBus);
 
   return { app };
@@ -147,7 +152,7 @@ export function createServerEventRuntime(runtime: AgentRuntime): AgentRuntime {
           workspaceRoot: input.workspaceRoot,
           sessionId,
           onEvent: (event) => {
-            globalEventBus.emit(toGlobalEventHint(event));
+            if (!isHitlSessionEvent(event)) globalEventBus.emit(event);
             if (!isChildSessionLinkEvent(event)) return;
 
             const childSessionId = event.payload.link.childSessionId;
@@ -202,52 +207,17 @@ function isTerminalChildLinkStatus(status: ToolChildSessionLinkStatus): boolean 
   return TERMINAL_CHILD_LINK_STATUSES.has(status);
 }
 
-function toGlobalEventHint(event: GlobalSSEEvent): GlobalSSEEvent {
-  if (event.type !== "event" || !isHitlStreamEvent(event.payload)) return event;
-  if (event.payload.type === "hitl.request") {
-    const request = event.payload.request;
-    return {
-      type: "hitl.changed",
-      projectSlug: request.owner.projectSlug,
-      ownerType: request.owner.ownerType,
-      ownerId: request.owner.ownerId,
-      hitlId: request.hitlId,
-      ...hitlIdentifierHints(request.source),
-      createdAt: event.createdAt,
-    };
-  }
-
-  return {
-    type: "hitl.changed",
-    projectSlug: event.slug,
-    ownerType: "session",
-    ownerId: event.sessionId,
-    sessionId: event.sessionId,
-    hitlId: event.payload.hitlId,
-    createdAt: event.createdAt,
-  };
+function isHitlSessionEvent(event: GlobalSSEEvent): event is GlobalSessionEventEnvelope<HitlStreamEvent> {
+  return event.type === "event" && (
+    event.payload.type === "hitl.request"
+    || event.payload.type === "hitl.updated"
+    || event.payload.type === "hitl.resolved"
+  );
 }
 
-function isHitlStreamEvent(payload: GlobalSessionEventEnvelope["payload"]): payload is HitlStreamEvent {
-  return payload.type === "hitl.request" || payload.type === "hitl.resolved";
-}
-
-function hitlIdentifierHints(source: HitlSource): { goalId?: string; loopId?: string; sessionId?: string } {
-  switch (source.type) {
-    case "ask_user":
-    case "tool_permission":
-      return { sessionId: source.sessionId };
-    case "goal_approval":
-    case "goal_review":
-    case "goal_budget":
-    case "goal_question":
-      return { goalId: source.goalId };
-    case "loop_approval":
-    case "loop_blocker":
-    case "loop_retry":
-    case "loop_question":
-      return { loopId: source.loopId };
-  }
+function wireHitlRealtimeBridge(runtime: AgentRuntime, bus: typeof globalEventBus): void {
+  if (typeof runtime.subscribeHitlEvents !== "function") return;
+  runtime.subscribeHitlEvents((event) => bus.emit(event));
 }
 
 /**

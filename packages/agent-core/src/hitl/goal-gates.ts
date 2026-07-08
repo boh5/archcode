@@ -23,6 +23,7 @@ export type ReviewOutcome = {
 
 export type GoalHitlGateway = {
   create(input: CreateHitlRecordInput): Promise<HitlRecord>;
+  publishRequest?(record: HitlRecord): Promise<void>;
 };
 
 export interface GoalApprovalGateOptions {
@@ -73,6 +74,7 @@ export class GoalApprovalGate {
     });
     await this.#goalStateManager.blockOnHitl(goalId, approvalCheckpoint(record.hitlId, approvalPoint));
     await this.#goalStateManager.updateLastError(goalId, `Waiting for ${approvalPoint} approval`);
+    await this.#hitlService.publishRequest?.(record);
     return record;
   }
 
@@ -103,6 +105,7 @@ export class GoalApprovalGate {
     await this.#goalStateManager.updateLastError(goalId, "Waiting for reviewer HITL outcome");
     const current = await this.#goalStateManager.read(goalId);
     if (current.status !== "paused") await this.#goalStateManager.transitionStatus(goalId, "paused");
+    await this.#hitlService.publishRequest?.(record);
     return record;
   }
 

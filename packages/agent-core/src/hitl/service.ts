@@ -1,9 +1,13 @@
 import {
   type HitlDisplayPayload,
+  type GlobalSSEHitlEventPayload,
+  type GlobalSSEHitlRealtimeEvent,
   type HitlOwnerKey,
   type HitlProjection,
+  type HitlProjectionContext,
   type HitlRecord,
   type HitlResponse as ProtocolHitlResponse,
+  type HitlResumeMetadata,
   type HitlSource,
 } from "@archcode/protocol";
 
@@ -16,6 +20,8 @@ import { HitlOwnerStore } from "./owner-store";
 import { resolveHitlOwnerPath } from "./owner-paths";
 import { aggregateHitlProjections, collectKnownHitlOwners, type HitlAggregationQuery } from "./aggregation";
 
+export type HitlRealtimeListener = (event: GlobalSSEHitlRealtimeEvent) => void;
+
 export interface HitlServiceManagers {
   readonly sessions?: SessionStoreManager;
   readonly goalState?: GoalStateManager;
@@ -25,6 +31,7 @@ export interface HitlServiceManagers {
 export interface HitlServiceOptions extends HitlServiceManagers {
   readonly workspaceRoot?: string;
   readonly project?: Pick<ProjectInfo, "slug" | "name">;
+  readonly realtimePublisher?: HitlRealtimeListener;
 }
 
 export interface CreateHitlRecordInput {
@@ -47,7 +54,9 @@ export class HitlService {
   #sessions: SessionStoreManager | undefined;
   #goalState: GoalStateManager | undefined;
   #loopState: LoopStateManager | undefined;
+  #realtimePublisher: HitlRealtimeListener | undefined;
   readonly #localOwners = new Map<string, HitlOwnerKey>();
+  readonly #realtimeListeners = new Set<HitlRealtimeListener>();
 
   constructor(options: HitlServiceOptions = {}) {
     this.#workspaceRoot = options.workspaceRoot;
@@ -55,6 +64,7 @@ export class HitlService {
     this.#sessions = options.sessions;
     this.#goalState = options.goalState;
     this.#loopState = options.loopState;
+    this.#realtimePublisher = options.realtimePublisher;
   }
 
   async load(workspaceRoot: string): Promise<void> {
@@ -69,6 +79,7 @@ export class HitlService {
     this.#sessions = options.sessions ?? this.#sessions;
     this.#goalState = options.goalState ?? this.#goalState;
     this.#loopState = options.loopState ?? this.#loopState;
+    this.#realtimePublisher = options.realtimePublisher ?? this.#realtimePublisher;
   }
 
   async flush(): Promise<void> {
@@ -92,6 +103,17 @@ export class HitlService {
     return result.record;
   }
 
+  subscribeRealtimeEvents(listener: HitlRealtimeListener): () => void {
+    this.#realtimeListeners.add(listener);
+    return () => {
+      this.#realtimeListeners.delete(listener);
+    };
+  }
+
+  async publishRequest(record: HitlRecord): Promise<void> {
+    await this.#publish({ type: "hitl.request", status: "pending" }, record);
+  }
+
   async lookup(hitlId: string): Promise<HitlLookupResult> {
     const matches: Array<{ record: HitlRecord; owner: HitlOwnerKey }> = [];
     for (const owner of await this.#knownOwners()) {
@@ -103,16 +125,20 @@ export class HitlService {
     return { status: "found", record: matches[0]!.record, owner: matches[0]!.owner };
   }
 
-  async claim(hitlId: string, response: ProtocolHitlResponse): Promise<HitlRecord | undefined> {
+  async claim(hitlId: string, response: ProtocolHitlResponse, resume: HitlResumeMetadata = {}): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
-    return await (await this.#storeFor(found.owner)).claim(hitlId, response);
+    const record = await (await this.#storeFor(found.owner)).claim(hitlId, response, resume);
+    await this.#publish({ type: "hitl.updated", status: record.status }, record);
+    return record;
   }
 
   async markResumeFailed(hitlId: string, reason: string): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
-    return await (await this.#storeFor(found.owner)).markResumeFailed(hitlId, reason);
+    const record = await (await this.#storeFor(found.owner)).markResumeFailed(hitlId, reason);
+    await this.#publishResolved(record);
+    return record;
   }
 
   async finishResume(
@@ -122,23 +148,31 @@ export class HitlService {
   ): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
-    return await (await this.#storeFor(found.owner)).complete(hitlId, status, response);
+    const record = await (await this.#storeFor(found.owner)).complete(hitlId, status, response);
+    await this.#publishResolved(record);
+    return record;
   }
 
   async complete(hitlId: string, response?: ProtocolHitlResponse): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
-    return await (await this.#storeFor(found.owner)).complete(hitlId, "resolved", response);
+    const record = await (await this.#storeFor(found.owner)).complete(hitlId, "resolved", response);
+    await this.#publishResolved(record);
+    return record;
   }
 
   async cancelRecord(hitlId: string, reason = "Cancelled", cancelledBy?: string): Promise<HitlRecord | undefined> {
     const found = await this.lookup(hitlId);
     if (found.status !== "found") return undefined;
-    return await (await this.#storeFor(found.owner)).complete(hitlId, "cancelled", { type: "cancel", reason, cancelledBy });
+    const record = await (await this.#storeFor(found.owner)).complete(hitlId, "cancelled", { type: "cancel", reason, cancelledBy });
+    await this.#publishResolved(record);
+    return record;
   }
 
   async cancelOwner(owner: HitlOwnerKey, reason = "owner_deleted"): Promise<HitlRecord[]> {
-    return await (await this.#storeFor(owner)).cancelActive(reason);
+    const records = await (await this.#storeFor(owner)).cancelActive(reason);
+    for (const record of records) await this.#publishResolved(record);
+    return records;
   }
 
   async ownerStore(owner: HitlOwnerKey): Promise<HitlOwnerStore> {
@@ -156,6 +190,107 @@ export class HitlService {
 
   shutdown(): void {
     // Owner-local writes are committed per operation; no in-memory waiters remain.
+    this.#realtimeListeners.clear();
+  }
+
+  async #publishResolved(record: HitlRecord): Promise<void> {
+    if (record.status !== "resolved" && record.status !== "cancelled" && record.status !== "resume_failed") return;
+    await this.#publish({
+      type: "hitl.resolved",
+      status: record.status,
+    }, record);
+  }
+
+  async #publish(payload: GlobalSSEHitlEventPayload, record: HitlRecord): Promise<void> {
+    if (this.#realtimeListeners.size === 0 && this.#realtimePublisher === undefined) return;
+    const event: GlobalSSEHitlRealtimeEvent = {
+      type: "hitl.event",
+      projectSlug: record.owner.projectSlug,
+      owner: record.owner,
+      hitlId: record.hitlId,
+      createdAt: Date.now(),
+      payload,
+      projection: await this.#projectionFor(record),
+    };
+    this.#realtimePublisher?.(event);
+    for (const listener of this.#realtimeListeners) listener(event);
+  }
+
+  async #projectionFor(record: HitlRecord): Promise<HitlProjection> {
+    const projectSlug = this.#project?.slug ?? record.owner.projectSlug;
+    const projectName = this.#project?.name;
+    const ancestry = await this.#ancestryFor(record);
+    return {
+      hitlId: record.hitlId,
+      project: { slug: projectSlug, ...(projectName === undefined ? {} : { name: projectName }) },
+      owner: record.owner,
+      ...(ancestry === undefined ? {} : { ancestry }),
+      source: record.source,
+      status: record.status,
+      displayPayload: record.displayPayload,
+      allowedActions: allowedActionsFor(record),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      ...(record.resolvedAt === undefined ? {} : { resolvedAt: record.resolvedAt }),
+    };
+  }
+
+  async #ancestryFor(record: HitlRecord): Promise<HitlProjectionContext | undefined> {
+    const source = record.source;
+    if (record.owner.ownerType === "session") return await this.#sessionAncestry(record.owner.ownerId);
+    if (record.owner.ownerType === "goal") return await this.#goalAncestry(record.owner.ownerId, source);
+    if (record.owner.ownerType === "loop") return { loopId: record.owner.ownerId, projectionPath: ["loop", record.owner.ownerId] };
+    return undefined;
+  }
+
+  async #sessionAncestry(sessionId: string): Promise<HitlProjectionContext | undefined> {
+    const sessions = this.#sessions;
+    if (sessions === undefined) return { projectionPath: ["session", sessionId, sessionId] };
+    try {
+      const file = await sessions.getSessionFile(this.#requiredWorkspaceRoot(), sessionId);
+      const ancestorSessionIds = await this.#ancestorSessionIds(file.parentSessionId, sessionId);
+      return withoutUndefined({
+        rootSessionId: file.rootSessionId,
+        parentSessionId: file.parentSessionId,
+        ancestorSessionIds,
+        goalId: file.goalId,
+        loopId: file.loopId,
+        projectionPath: ["session", file.rootSessionId, sessionId],
+      });
+    } catch {
+      return { projectionPath: ["session", sessionId, sessionId] };
+    }
+  }
+
+  async #ancestorSessionIds(parentSessionId: string | undefined, sessionId: string): Promise<string[] | undefined> {
+    const sessions = this.#sessions;
+    if (sessions === undefined || parentSessionId === undefined) return undefined;
+    const ancestors: string[] = [];
+    let current: string | undefined = parentSessionId;
+    const visited = [sessionId];
+    while (current !== undefined && !visited.includes(current)) {
+      ancestors.push(current);
+      visited.push(current);
+      try {
+        const file = await sessions.getSessionFile(this.#requiredWorkspaceRoot(), current);
+        current = file.parentSessionId;
+      } catch {
+        break;
+      }
+    }
+    return ancestors.length === 0 ? undefined : ancestors;
+  }
+
+  async #goalAncestry(goalId: string, source: HitlSource): Promise<HitlProjectionContext> {
+    let loopId = "loopId" in source ? source.loopId : undefined;
+    if (loopId === undefined && this.#goalState !== undefined) {
+      try {
+        loopId = (await this.#goalState.read(goalId)).loopId;
+      } catch {
+        loopId = undefined;
+      }
+    }
+    return withoutUndefined({ goalId, loopId, projectionPath: loopId === undefined ? ["goal", goalId] : ["loop", loopId, "goal", goalId] });
   }
 
   async #storeFor(owner: HitlOwnerKey): Promise<HitlOwnerStore> {
@@ -196,4 +331,30 @@ export class HitlService {
 
 function ownerKey(owner: HitlOwnerKey): string {
   return `${owner.projectSlug}:${owner.ownerType}:${owner.ownerId}`;
+}
+
+function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+}
+
+function allowedActionsFor(record: HitlRecord): HitlProjection["allowedActions"] {
+  if (record.status === "resume_failed") return ["retry_resume", "cancel"];
+  if (record.status !== "pending") return [];
+  switch (record.source.type) {
+    case "ask_user":
+    case "goal_question":
+    case "loop_question":
+      return ["answer", "cancel"];
+    case "tool_permission":
+      return ["approve", "deny", "cancel"];
+    case "goal_approval":
+    case "goal_budget":
+    case "loop_approval":
+      return ["approve", "deny", "cancel"];
+    case "goal_review":
+      return ["approve", "deny", "cancel"];
+    case "loop_blocker":
+    case "loop_retry":
+      return ["approve", "cancel"];
+  }
 }

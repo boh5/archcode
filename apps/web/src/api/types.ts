@@ -23,6 +23,7 @@ export type {
   HitlRecord,
   HitlResponse,
   HitlDisplayPayload,
+  HitlQuestionDisplayItem,
   HitlSource,
   HitlProjection,
   HitlProjectionContext,
