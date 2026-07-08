@@ -1,55 +1,57 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { ArrowLeft, Lock, Play } from "lucide-react";
+import { ArrowLeft, Play, RotateCcw, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useGoal } from "../api/queries";
-import { useLockGoal, useRunGoal } from "../api/mutations";
+import { useRunGoal, useRetryGoal, useCancelGoal } from "../api/mutations";
 import type { GoalStatus } from "../api/types";
 import { GoalOverview } from "../components/features/GoalOverview";
 import { GoalSessions } from "../components/features/GoalSessions";
 import { GoalChat } from "../components/features/GoalChat";
-import { GoalArtifacts } from "../components/features/GoalArtifacts";
 
-type Tab = "overview" | "chat" | "sessions" | "artifacts";
+type Tab = "overview" | "chat" | "sessions";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
-  locked: "bg-info-muted text-info",
   running: "bg-success-muted text-success",
-  verifying: "bg-warning-muted text-warning",
-  reviewed: "bg-accent-muted text-accent",
-  completed: "bg-accent-muted text-accent",
+  blocked: "bg-warning-muted text-warning",
+  reviewing: "bg-info-muted text-info",
+  done: "bg-accent-muted text-accent",
+  not_done: "bg-error-muted text-error",
   failed: "bg-error-muted text-error",
-  escalated: "bg-error-muted text-error",
-  paused: "bg-warning-muted text-warning",
+  cancelled: "bg-bg-active text-text-muted",
 };
 
 const TABS: { id: Tab; label: string; testId: string }[] = [
   { id: "overview", label: "Overview", testId: "goal-overview-tab" },
   { id: "chat", label: "Chat", testId: "goal-chat-tab" },
   { id: "sessions", label: "Sessions", testId: "goal-sessions-tab" },
-  { id: "artifacts", label: "Artifacts", testId: "goal-artifacts-tab" },
 ];
 
 export function GoalDetailRoute() {
   const { slug = "", goalId = "" } = useParams<{ slug: string; goalId: string }>();
   const navigate = useNavigate();
   const { data: goal, isLoading, error } = useGoal(slug, goalId);
-  const lockGoal = useLockGoal();
   const runGoal = useRunGoal();
+  const retryGoal = useRetryGoal();
+  const cancelGoal = useCancelGoal();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
-  const mutationError = lockGoal.error ?? runGoal.error;
+  const mutationError = runGoal.error ?? retryGoal.error ?? cancelGoal.error;
 
   const handleBack = () => {
     navigate(`/projects/${slug}/goals`);
   };
 
-  const handleLock = () => {
-    lockGoal.mutate({ slug, goalId, lockedBy: getGoalActorId() });
-  };
-
   const handleRun = () => {
     runGoal.mutate({ slug, goalId });
+  };
+
+  const handleRetry = () => {
+    retryGoal.mutate({ slug, goalId });
+  };
+
+  const handleCancel = () => {
+    cancelGoal.mutate({ slug, goalId });
   };
 
   if (isLoading) {
@@ -73,6 +75,10 @@ export function GoalDetailRoute() {
     );
   }
 
+  const canRun = goal.status === "draft";
+  const canRetry = goal.status === "not_done" || goal.status === "failed";
+  const canCancel = goal.status === "draft" || goal.status === "running" || goal.status === "blocked" || goal.status === "reviewing" || goal.status === "not_done" || goal.status === "failed";
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 px-4 h-12 border-b border-border-subtle shrink-0 bg-bg-surface">
@@ -86,18 +92,7 @@ export function GoalDetailRoute() {
         <span className="text-text-muted">/</span>
         <span className="font-semibold text-sm text-text-primary truncate">{goal.title}</span>
         <div className="flex items-center gap-2 ml-auto">
-          {goal.status === "draft" && (
-            <button
-              type="button"
-              onClick={handleLock}
-              disabled={lockGoal.isPending}
-              className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Lock size={13} />
-              {lockGoal.isPending ? "Locking…" : "Lock Goal"}
-            </button>
-          )}
-          {(goal.status === "locked" || goal.status === "paused") && (
+          {canRun && (
             <button
               type="button"
               onClick={handleRun}
@@ -105,7 +100,29 @@ export function GoalDetailRoute() {
               className="inline-flex items-center gap-1.5 rounded-sm bg-accent px-3 py-1.5 text-[12.5px] font-medium text-bg-base transition-colors duration-150 hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play size={13} />
-              {runGoal.isPending ? (goal.status === "paused" ? "Resuming…" : "Starting…") : (goal.status === "paused" ? "Resume Goal" : "Run Goal")}
+              {runGoal.isPending ? "Starting…" : "Run Goal"}
+            </button>
+          )}
+          {canRetry && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={retryGoal.isPending}
+              className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RotateCcw size={13} />
+              {retryGoal.isPending ? "Retrying…" : "Retry Goal"}
+            </button>
+          )}
+          {canCancel && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={cancelGoal.isPending}
+              className="inline-flex items-center gap-1.5 rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <XCircle size={13} />
+              {cancelGoal.isPending ? "Cancelling…" : "Cancel Goal"}
             </button>
           )}
           <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[goal.status]}`}>
@@ -147,24 +164,10 @@ export function GoalDetailRoute() {
           {activeTab === "overview" && <GoalOverview goal={goal} slug={slug} />}
           {activeTab === "chat" && <GoalChat slug={slug} goal={goal} />}
           {activeTab === "sessions" && <GoalSessions slug={slug} goal={goal} />}
-          {activeTab === "artifacts" && <GoalArtifacts slug={slug} goalId={goal.id} />}
         </section>
       </div>
     </div>
   );
-}
-
-function getGoalActorId(): string {
-  const key = "archcode.goal.actorId";
-  const fallback = "architect";
-  if (typeof window === "undefined") return fallback;
-
-  const existing = window.localStorage.getItem(key);
-  if (existing && existing.trim().length > 0) return existing;
-
-  const actorId = `web-${crypto.randomUUID()}`;
-  window.localStorage.setItem(key, actorId);
-  return actorId;
 }
 
 function BackBar({ onBack }: { onBack: () => void }) {

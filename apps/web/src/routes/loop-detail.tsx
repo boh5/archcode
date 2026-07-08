@@ -741,11 +741,7 @@ function formatGoalTemplate(config: LoopConfig): string {
   const template = config.goalTemplate;
   if (!template) return "none";
 
-  const approvalPoints = template.approvalPoints.length > 0
-    ? template.approvalPoints.join(", ")
-    : "none";
-
-  return `${template.title} by ${template.author}; reviewer ${template.reviewerAgent}; ${template.doneConditions.length} done conditions; approval points ${approvalPoints}`;
+  return `${template.title}; objective: ${template.objective}; acceptance: ${template.acceptanceCriteria}`;
 }
 
 function formatRunSummary(run: LoopRunReport | undefined): string {

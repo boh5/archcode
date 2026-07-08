@@ -7,8 +7,6 @@ import {
 } from "../ui/Dialog";
 import { useCreateLoop, useUpdateLoop } from "../../api/mutations";
 import type {
-  ApprovalPoint,
-  DoneCondition,
   LoopApprovalPolicy,
   LoopBudgetConfig,
   LoopConfig,
@@ -18,7 +16,6 @@ import type {
   LoopState,
   LoopToolProfileId,
   LoopTriggerSpec,
-  RetryPolicy,
 } from "../../api/types";
 
 interface PresetQuickStart {
@@ -194,14 +191,6 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
   },
 ];
 
-const APPROVAL_POINTS: ApprovalPoint[] = ["after_plan", "before_complete"];
-
-const DEFAULT_RETRY_POLICY: RetryPolicy = {
-  maxRetries: 2,
-  backoffMs: 1000,
-  escalateOnFailure: true,
-};
-
 // Minimum interval/trigger guards; server validation remains the source of truth.
 const MIN_INTERVAL_MS = 1000;
 const MIN_TRIGGER_CADENCE_MS = 30000;
@@ -252,133 +241,6 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
-type ConditionKind = DoneCondition["kind"];
-
-const CONDITION_KINDS: { kind: ConditionKind; label: string }[] = [
-  { kind: "file_exists", label: "File exists" },
-  { kind: "grep_contains", label: "Grep contains" },
-  { kind: "grep_empty", label: "Grep empty" },
-  { kind: "command_succeeds", label: "Command succeeds" },
-  { kind: "tests_pass", label: "Tests pass" },
-  { kind: "typecheck_pass", label: "Typecheck passes" },
-  { kind: "lsp_clean", label: "LSP clean" },
-  { kind: "user_confirmed", label: "User confirmed" },
-];
-
-function makeCondition(kind: ConditionKind): DoneCondition {
-  const id = crypto.randomUUID();
-  switch (kind) {
-    case "file_exists":
-      return { id, kind, params: { path: "" }, required: true };
-    case "grep_contains":
-      return { id, kind, params: { pattern: "", path: "", minMatches: 1 }, required: true };
-    case "grep_empty":
-      return { id, kind, params: { pattern: "", path: "" }, required: true };
-    case "command_succeeds":
-      return { id, kind, params: { command: "", timeoutMs: 60000 }, required: true };
-    case "tests_pass":
-      return { id, kind, params: { command: "bun test" }, required: true };
-    case "typecheck_pass":
-      return { id, kind, params: { command: "bun run typecheck" }, required: true };
-    case "lsp_clean":
-      return { id, kind, params: { paths: [], severity: "error" }, required: true };
-    case "user_confirmed":
-      return { id, kind, params: { prompt: "" }, required: true };
-    case "spec_compliance":
-      return { id, kind, params: { specPath: "", focusAreas: [] }, required: true };
-    default: {
-      const exhaustive: never = kind;
-      throw new Error(`Unhandled condition kind: ${exhaustive as string}`);
-    }
-  }
-}
-
-function validateCondition(condition: DoneCondition): string[] {
-  const errors: string[] = [];
-  switch (condition.kind) {
-    case "file_exists":
-      if (!isNonEmpty(condition.params.path)) errors.push("path is required");
-      break;
-    case "grep_contains":
-      if (!isNonEmpty(condition.params.pattern)) errors.push("pattern is required");
-      break;
-    case "grep_empty":
-      if (!isNonEmpty(condition.params.pattern)) errors.push("pattern is required");
-      break;
-    case "command_succeeds":
-      if (!isNonEmpty(condition.params.command)) errors.push("command is required");
-      break;
-    case "user_confirmed":
-      if (!isNonEmpty(condition.params.prompt)) errors.push("prompt is required");
-      break;
-    case "spec_compliance":
-      if (!isNonEmpty(condition.params.specPath)) errors.push("specPath is required");
-      break;
-    case "tests_pass":
-    case "typecheck_pass":
-    case "lsp_clean":
-      break;
-  }
-  return errors;
-}
-
-function sanitizeCondition(condition: DoneCondition): DoneCondition {
-  switch (condition.kind) {
-    case "file_exists":
-      return { ...condition, params: { path: condition.params.path.trim() } };
-    case "grep_contains":
-      return {
-        ...condition,
-        params: {
-          pattern: condition.params.pattern.trim(),
-          ...(isNonEmpty(condition.params.path) ? { path: condition.params.path.trim() } : {}),
-          ...(isPositiveInt(condition.params.minMatches) ? { minMatches: condition.params.minMatches } : {}),
-        },
-      };
-    case "grep_empty":
-      return {
-        ...condition,
-        params: {
-          pattern: condition.params.pattern.trim(),
-          ...(isNonEmpty(condition.params.path) ? { path: condition.params.path.trim() } : {}),
-        },
-      };
-    case "command_succeeds":
-      return {
-        ...condition,
-        params: {
-          command: condition.params.command.trim(),
-          ...(isPositiveInt(condition.params.timeoutMs) ? { timeoutMs: condition.params.timeoutMs } : {}),
-        },
-      };
-    case "tests_pass":
-      return { ...condition, params: isNonEmpty(condition.params.command) ? { command: condition.params.command.trim() } : {} };
-    case "typecheck_pass":
-      return { ...condition, params: isNonEmpty(condition.params.command) ? { command: condition.params.command.trim() } : {} };
-    case "lsp_clean":
-      return { ...condition, params: condition.params.severity === "error" || condition.params.severity === "warning" ? { severity: condition.params.severity } : {} };
-    case "user_confirmed":
-      return { ...condition, params: { prompt: condition.params.prompt.trim() } };
-    case "spec_compliance":
-      return {
-        ...condition,
-        params: {
-          specPath: condition.params.specPath.trim(),
-          ...(condition.params.focusAreas && condition.params.focusAreas.length > 0 ? { focusAreas: condition.params.focusAreas } : {}),
-        },
-      };
-  }
-}
-
-function updateConditionParamValue(condition: DoneCondition, key: string, value: string | number | string[]): DoneCondition {
-  const params = condition.params as Record<string, unknown>;
-  return { ...condition, params: { ...params, [key]: value } } as unknown as DoneCondition;
-}
-
-function conditionParamValue(condition: DoneCondition, key: string): unknown {
-  return (condition.params as Record<string, unknown>)[key];
-}
-
 export interface LoopFormState {
   title: string;
   description: string;
@@ -402,14 +264,8 @@ export interface LoopFormState {
   instructions: string;
   author: string;
   goalTitle: string;
-  goalAuthor: string;
-  goalPrompt: string;
-  goalInstructions: string;
-  goalConditions: DoneCondition[];
-  goalMaxRetries: number;
-  goalEscalateOnFailure: boolean;
-  goalApprovalPoints: ApprovalPoint[];
-  goalReviewerAgent: string;
+  goalObjective: string;
+  goalAcceptanceCriteria: string;
 }
 
 function buildBudgetConfig(state: LoopFormState): LoopBudgetConfig {
@@ -459,17 +315,8 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
   if (state.runKind === "goal") {
     config.goalTemplate = {
       title: state.goalTitle.trim(),
-      author: state.goalAuthor.trim() || "architect",
-      doneConditions: state.goalConditions.map(sanitizeCondition),
-      retryPolicy: {
-        maxRetries: state.goalMaxRetries,
-        backoffMs: DEFAULT_RETRY_POLICY.backoffMs,
-        escalateOnFailure: state.goalEscalateOnFailure,
-      },
-      approvalPoints: state.goalApprovalPoints,
-      reviewerAgent: state.goalReviewerAgent.trim() || "reviewer",
-      ...(isNonEmpty(state.goalPrompt) ? { prompt: state.goalPrompt.trim() } : {}),
-      ...(isNonEmpty(state.goalInstructions) ? { instructions: state.goalInstructions.trim() } : {}),
+      objective: state.goalObjective.trim(),
+      acceptanceCriteria: state.goalAcceptanceCriteria.trim(),
     };
   }
 
@@ -510,14 +357,8 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
     taskPrompt: config.taskPrompt ?? "",
     instructions: config.instructions ?? "",
     goalTitle: goalTemplate?.title ?? "",
-    goalAuthor: goalTemplate?.author ?? "architect",
-    goalPrompt: goalTemplate?.prompt ?? "",
-    goalInstructions: goalTemplate?.instructions ?? "",
-    goalConditions: goalTemplate?.doneConditions ?? [],
-    goalMaxRetries: goalTemplate?.retryPolicy.maxRetries ?? 2,
-    goalEscalateOnFailure: goalTemplate?.retryPolicy.escalateOnFailure ?? true,
-    goalApprovalPoints: goalTemplate?.approvalPoints ?? ["after_plan", "before_complete"],
-    goalReviewerAgent: goalTemplate?.reviewerAgent ?? "reviewer",
+    goalObjective: goalTemplate?.objective ?? "",
+    goalAcceptanceCriteria: goalTemplate?.acceptanceCriteria ?? "",
   };
 }
 
@@ -540,8 +381,8 @@ function applyPresetState(
     setTaskPrompt: (value: string) => void;
     setInstructions: (value: string) => void;
     setGoalTitle: (value: string) => void;
-    setGoalPrompt: (value: string) => void;
-    setGoalConditions: (value: DoneCondition[]) => void;
+    setGoalObjective: (value: string) => void;
+    setGoalAcceptanceCriteria: (value: string) => void;
   },
 ): void {
   const template = preset.template;
@@ -561,8 +402,8 @@ function applyPresetState(
   setters.setTaskPrompt(template.taskPrompt ?? "");
   setters.setInstructions(template.instructions ?? "");
   setters.setGoalTitle(template.goalTitle ?? "");
-  setters.setGoalPrompt(template.goalPrompt ?? "");
-  setters.setGoalConditions(template.goalConditions ?? []);
+  setters.setGoalObjective(template.goalObjective ?? "");
+  setters.setGoalAcceptanceCriteria(template.goalAcceptanceCriteria ?? "");
 }
 
 export function CreateLoopForm({ slug, onCreated, onClose, initialState }: CreateLoopFormProps) {
@@ -603,7 +444,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
   );
 }
 
-function LoopForm({
+export function LoopForm({
   title: formTitle,
   description: formDescription,
   submitLabel,
@@ -640,16 +481,8 @@ function LoopForm({
   const [author, setAuthor] = useState(initialState?.author ?? "architect");
 
   const [goalTitle, setGoalTitle] = useState(initialState?.goalTitle ?? "");
-  const [goalAuthor, setGoalAuthor] = useState(initialState?.goalAuthor ?? "architect");
-  const [goalPrompt, setGoalPrompt] = useState(initialState?.goalPrompt ?? "");
-  const [goalInstructions, setGoalInstructions] = useState(initialState?.goalInstructions ?? "");
-  const [goalConditions, setGoalConditions] = useState<DoneCondition[]>(initialState?.goalConditions ?? []);
-  const [goalMaxRetries, setGoalMaxRetries] = useState(initialState?.goalMaxRetries ?? 2);
-  const [goalEscalateOnFailure, setGoalEscalateOnFailure] = useState(initialState?.goalEscalateOnFailure ?? true);
-  const [goalApprovalPoints, setGoalApprovalPoints] = useState<ApprovalPoint[]>(
-    initialState?.goalApprovalPoints ?? ["after_plan", "before_complete"],
-  );
-  const [goalReviewerAgent, setGoalReviewerAgent] = useState(initialState?.goalReviewerAgent ?? "reviewer");
+  const [goalObjective, setGoalObjective] = useState(initialState?.goalObjective ?? "");
+  const [goalAcceptanceCriteria, setGoalAcceptanceCriteria] = useState(initialState?.goalAcceptanceCriteria ?? "");
 
   const trimmedTitle = title.trim();
   const intervalValid = scheduleKind !== "interval" || (Number.isInteger(everyMs) && everyMs >= MIN_INTERVAL_MS);
@@ -665,10 +498,9 @@ function LoopForm({
     hardThresholdRatio >= softThresholdRatio &&
     hardThresholdRatio <= 1;
   const sessionValid = runKind !== "session" || isNonEmpty(taskPrompt);
-  const goalConditionsValid =
-    runKind !== "goal" ||
-    (goalConditions.length > 0 && goalConditions.every((c) => validateCondition(c).length === 0));
   const goalTitleValid = runKind !== "goal" || isNonEmpty(goalTitle);
+  const goalObjectiveValid = runKind !== "goal" || isNonEmpty(goalObjective);
+  const goalAcceptanceValid = runKind !== "goal" || isNonEmpty(goalAcceptanceCriteria);
   const canSubmit =
     isNonEmpty(trimmedTitle) &&
     intervalValid &&
@@ -676,32 +508,10 @@ function LoopForm({
     triggerCadenceValid &&
     budgetValid &&
     sessionValid &&
-    goalConditionsValid &&
     goalTitleValid &&
+    goalObjectiveValid &&
+    goalAcceptanceValid &&
     !pending;
-
-  const addCondition = useCallback((kind: ConditionKind) => {
-    setGoalConditions((prev) => [...prev, makeCondition(kind)]);
-  }, []);
-
-  const removeCondition = useCallback((id: string) => {
-    setGoalConditions((prev) => prev.filter((c) => c.id !== id));
-  }, []);
-
-  const updateConditionParam = useCallback(
-    (id: string, key: string, value: string | number | string[]) => {
-      setGoalConditions((prev) =>
-        prev.map((c) => (c.id === id ? updateConditionParamValue(c, key, value) : c)),
-      );
-    },
-    [],
-  );
-
-  const toggleApprovalPoint = useCallback((point: ApprovalPoint) => {
-    setGoalApprovalPoints((prev) =>
-      prev.includes(point) ? prev.filter((p) => p !== point) : [...prev, point],
-    );
-  }, []);
 
   const buildConfig = useCallback((): LoopConfig => {
     return buildLoopConfig({
@@ -727,14 +537,8 @@ function LoopForm({
       instructions,
       author,
       goalTitle,
-      goalAuthor,
-      goalPrompt,
-      goalInstructions,
-      goalConditions,
-      goalMaxRetries,
-      goalEscalateOnFailure,
-      goalApprovalPoints,
-      goalReviewerAgent,
+      goalObjective,
+      goalAcceptanceCriteria,
     });
   }, [
     title,
@@ -759,14 +563,8 @@ function LoopForm({
     instructions,
     author,
     goalTitle,
-    goalAuthor,
-    goalPrompt,
-    goalInstructions,
-    goalConditions,
-    goalMaxRetries,
-    goalEscalateOnFailure,
-    goalApprovalPoints,
-    goalReviewerAgent,
+    goalObjective,
+    goalAcceptanceCriteria,
   ]);
 
   const handleSubmit = useCallback(
@@ -800,8 +598,8 @@ function LoopForm({
         setTaskPrompt,
         setInstructions,
         setGoalTitle,
-        setGoalPrompt,
-        setGoalConditions,
+        setGoalObjective,
+        setGoalAcceptanceCriteria,
       });
     },
     [pending],
@@ -1314,7 +1112,7 @@ function LoopForm({
                   Goal Template (inline)
                 </div>
                 <p className="text-[11px] text-text-muted">
-                  Each run creates a fresh draft Goal from these inline fields. No existing Goal selector.
+                  Each run creates a fresh Goal from these natural-language fields. The Reviewer judges completion against the acceptance criteria.
                 </p>
 
                 <div>
@@ -1338,181 +1136,46 @@ function LoopForm({
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label
-                      htmlFor="new-loop-goal-author"
-                      className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-                    >
-                      Goal Author
-                    </label>
-                    <input
-                      id="new-loop-goal-author"
-                      type="text"
-                      value={goalAuthor}
-                      onChange={(e) => setGoalAuthor(e.target.value)}
-                      disabled={pending}
-                      className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="new-loop-goal-reviewer"
-                      className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-                    >
-                      Reviewer agent
-                    </label>
-                    <input
-                      id="new-loop-goal-reviewer"
-                      type="text"
-                      value={goalReviewerAgent}
-                      onChange={(e) => setGoalReviewerAgent(e.target.value)}
-                      disabled={pending}
-                      className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
-                    />
-                  </div>
-                </div>
-
                 <div>
                   <label
-                    htmlFor="new-loop-goal-prompt"
+                    htmlFor="new-loop-goal-objective"
                     className="mb-1.5 block text-[13px] font-medium text-text-secondary"
                   >
-                    Goal Prompt <span className="text-text-muted">(optional)</span>
+                    Goal Objective
                   </label>
                   <textarea
-                    id="new-loop-goal-prompt"
-                    value={goalPrompt}
-                    onChange={(e) => setGoalPrompt(e.target.value)}
-                    placeholder="Bootstrap prompt for each Goal run"
-                    rows={2}
+                    id="new-loop-goal-objective"
+                    value={goalObjective}
+                    onChange={(e) => setGoalObjective(e.target.value)}
+                    placeholder="Describe the task objective in natural language."
+                    rows={3}
                     disabled={pending}
-                    className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
+                    className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150 resize-y"
                   />
+                  {!goalObjectiveValid && (
+                    <p className="mt-1 text-[11px] text-error">Goal loops need a Goal objective before submit.</p>
+                  )}
                 </div>
 
                 <div>
                   <label
-                    htmlFor="new-loop-goal-instructions"
+                    htmlFor="new-loop-goal-acceptance-criteria"
                     className="mb-1.5 block text-[13px] font-medium text-text-secondary"
                   >
-                    Goal Instructions <span className="text-text-muted">(optional)</span>
+                    Goal Acceptance Criteria
                   </label>
-                  <input
-                    id="new-loop-goal-instructions"
-                    type="text"
-                    value={goalInstructions}
-                    onChange={(e) => setGoalInstructions(e.target.value)}
+                  <textarea
+                    id="new-loop-goal-acceptance-criteria"
+                    value={goalAcceptanceCriteria}
+                    onChange={(e) => setGoalAcceptanceCriteria(e.target.value)}
+                    placeholder="Describe what done looks like in natural language. The Reviewer will judge completion against this."
+                    rows={3}
                     disabled={pending}
-                    className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
+                    className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150 resize-y"
                   />
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[13px] font-medium text-text-secondary">
-                      Done Conditions
-                    </span>
-                    <span className="text-[11px] text-text-muted">
-                      {goalConditions.length} added
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {CONDITION_KINDS.map(({ kind, label }) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        onClick={() => addCondition(kind)}
-                        disabled={pending}
-                        className="inline-flex items-center gap-1 rounded-sm border border-border-subtle bg-bg-base px-2 py-1 text-[11.5px] text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {goalConditions.length === 0 ? (
-                    <div className="rounded-sm border border-dashed border-border-subtle px-3 py-6 text-center text-[12px] text-text-muted">
-                      Add at least one done condition to define when the Goal is complete.
-                    </div>
-                  ) : (
-                    <ul className="space-y-2">
-                      {goalConditions.map((condition) => {
-                        const errors = validateCondition(condition);
-                        return (
-                          <GoalConditionRow
-                            key={condition.id}
-                            condition={condition}
-                            errors={errors}
-                            disabled={pending}
-                            onRemove={() => removeCondition(condition.id)}
-                            onParamChange={(key, value) =>
-                              updateConditionParam(condition.id, key, value)
-                            }
-                          />
-                        );
-                      })}
-                    </ul>
+                  {!goalAcceptanceValid && (
+                    <p className="mt-1 text-[11px] text-error">Goal loops need acceptance criteria before submit.</p>
                   )}
-                  {!goalConditionsValid && (
-                    <p className="mt-2 text-[11px] text-error">
-                      Goal loops need at least one valid done condition before submit.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <span className="mb-2 block text-[13px] font-medium text-text-secondary">
-                    Retry Policy
-                  </span>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 text-[12.5px] text-text-secondary">
-                      <span>maxRetries</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        value={goalMaxRetries}
-                        onChange={(e) => setGoalMaxRetries(Number(e.target.value) || 0)}
-                        disabled={pending}
-                        className="w-20 rounded-sm border border-border-default bg-bg-base px-2 py-1 text-[12.5px] text-text-primary focus:border-accent focus:outline-none"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 text-[12.5px] text-text-secondary">
-                      <input
-                        type="checkbox"
-                        checked={goalEscalateOnFailure}
-                        onChange={(e) => setGoalEscalateOnFailure(e.target.checked)}
-                        disabled={pending}
-                        className="accent-accent"
-                      />
-                      <span>escalate on failure</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="mb-2 block text-[13px] font-medium text-text-secondary">
-                    Approval Points
-                  </span>
-                  <div className="flex items-center gap-4">
-                    {APPROVAL_POINTS.map((point) => (
-                      <label
-                        key={point}
-                        className="flex items-center gap-2 text-[12.5px] text-text-secondary"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={goalApprovalPoints.includes(point)}
-                          onChange={() => toggleApprovalPoint(point)}
-                          disabled={pending}
-                          className="accent-accent"
-                        />
-                        <span className="font-mono">{point}</span>
-                      </label>
-                    ))}
-                  </div>
                 </div>
               </section>
             )}
@@ -1634,99 +1297,5 @@ export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: Loop
       onSubmitConfig={handleSubmitConfig}
       initialState={initialState}
     />
-  );
-}
-
-interface GoalConditionRowProps {
-  condition: DoneCondition;
-  errors: string[];
-  disabled: boolean;
-  onRemove: () => void;
-  onParamChange: (key: string, value: string | number | string[]) => void;
-}
-
-const GOAL_PARAM_FIELDS: Partial<Record<ConditionKind, { key: string; label: string; type: "text" | "number" }[]>> = {
-  file_exists: [{ key: "path", label: "path", type: "text" }],
-  grep_contains: [
-    { key: "pattern", label: "pattern", type: "text" },
-    { key: "path", label: "path", type: "text" },
-    { key: "minMatches", label: "minMatches", type: "number" },
-  ],
-  grep_empty: [
-    { key: "pattern", label: "pattern", type: "text" },
-    { key: "path", label: "path", type: "text" },
-  ],
-  command_succeeds: [
-    { key: "command", label: "command", type: "text" },
-    { key: "timeoutMs", label: "timeoutMs", type: "number" },
-  ],
-  tests_pass: [{ key: "command", label: "command", type: "text" }],
-  typecheck_pass: [{ key: "command", label: "command", type: "text" }],
-  user_confirmed: [{ key: "prompt", label: "prompt", type: "text" }],
-  spec_compliance: [{ key: "specPath", label: "specPath", type: "text" }],
-};
-
-function GoalConditionRow({
-  condition,
-  errors,
-  disabled,
-  onRemove,
-  onParamChange,
-}: GoalConditionRowProps) {
-  const fields = GOAL_PARAM_FIELDS[condition.kind] ?? [];
-
-  return (
-    <li className="rounded-sm border border-border-subtle bg-bg-base px-3 py-2.5">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[12.5px] font-mono font-medium text-text-primary">
-          {condition.kind}
-        </span>
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={disabled}
-          aria-label="Remove condition"
-          className="flex h-5 w-5 items-center justify-center rounded-sm text-text-muted transition-colors duration-150 hover:bg-bg-hover hover:text-error disabled:opacity-40"
-        >
-          x
-        </button>
-      </div>
-      {fields.length > 0 && (
-        <div className="grid grid-cols-2 gap-2">
-          {fields.map((field) => (
-            <label key={field.key} className="flex flex-col gap-1">
-              <span className="text-[11px] text-text-muted font-mono">{field.label}</span>
-              <input
-                type={field.type}
-                value={
-                  field.type === "number"
-                    ? typeof conditionParamValue(condition, field.key) === "number"
-                      ? Number(conditionParamValue(condition, field.key))
-                      : ""
-                    : typeof conditionParamValue(condition, field.key) === "string"
-                      ? (conditionParamValue(condition, field.key) as string)
-                      : ""
-                }
-                onChange={(e) =>
-                  onParamChange(
-                    field.key,
-                    field.type === "number" ? Number(e.target.value) || 0 : e.target.value,
-                  )
-                }
-                disabled={disabled}
-                className="rounded-sm border border-border-subtle bg-bg-base px-2 py-1.5 text-[12px] text-text-primary focus:border-accent focus:outline-none"
-              />
-            </label>
-          ))}
-        </div>
-      )}
-      {errors.length > 0 && (
-        <ul className="mt-2 space-y-0.5">
-          {errors.map((err) => (
-            <li key={err} className="text-[11px] text-error">{err}</li>
-          ))}
-        </ul>
-      )}
-    </li>
   );
 }

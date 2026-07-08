@@ -1,7 +1,8 @@
-import { CheckCircle2, XCircle, Circle, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
+import { Link } from "react-router-dom";
 import { HitlInbox } from "./HitlCard";
 import { useRealtimeHitl } from "../../store/hitl-store";
-import type { DoneCondition, GoalDoneResult, GoalState } from "../../api/types";
+import type { GoalEvidenceRef, GoalState } from "../../api/types";
 
 interface GoalOverviewProps {
   goal: GoalState;
@@ -12,8 +13,12 @@ export function GoalOverview({ goal, slug }: GoalOverviewProps) {
   return (
     <div data-testid="goal-overview" className="flex flex-col gap-6 p-5 max-w-3xl mx-auto w-full">
       <GoalMetaSection goal={goal} />
-      <DoneConditionsSection goal={goal} />
-      <RetryChainSection goal={goal} />
+      <ObjectiveSection goal={goal} />
+      <AcceptanceCriteriaSection goal={goal} />
+      <BlockerSection goal={goal} />
+      <BudgetSection goal={goal} />
+      <ReviewReceiptSection goal={goal} />
+      <FinalSummarySection goal={goal} />
       <ApprovalQueueSection slug={slug} goalId={goal.id} />
     </div>
   );
@@ -42,14 +47,18 @@ function GoalMetaSection({ goal }: { goal: GoalState }) {
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3 flex-wrap">
         <MetaItem label="Status" value={goal.status} />
-        <MetaItem label="Phase" value={goal.phase} />
-        <MetaItem label="Reviewer" value={goal.reviewerAgent} />
-        <MetaItem label="Author" value={goal.author} />
+        <MetaItem label="Attempt" value={String(goal.attempt)} />
       </div>
       {goal.lastError && (
         <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-error-muted border border-error/20 text-[12.5px] text-error">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span className="break-words">{goal.lastError}</span>
+          <span className="break-words">{goal.lastError.name}: {goal.lastError.message}</span>
+        </div>
+      )}
+      {goal.lastFailureSummary && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-warning-muted border border-warning/20 text-[12.5px] text-warning">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span className="break-words">{goal.lastFailureSummary}</span>
         </div>
       )}
     </div>
@@ -65,118 +74,187 @@ function MetaItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DoneConditionsSection({ goal }: { goal: GoalState }) {
-  if (goal.doneConditions.length === 0) {
-    return (
-      <div>
-        <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
-          Done Conditions
-        </h3>
-        <p className="text-sm text-text-tertiary">No done conditions defined</p>
-      </div>
-    );
-  }
+function ObjectiveSection({ goal }: { goal: GoalState }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Objective
+      </h3>
+      <p className="text-[13px] text-text-primary whitespace-pre-wrap break-words">{goal.objective}</p>
+    </div>
+  );
+}
+
+function AcceptanceCriteriaSection({ goal }: { goal: GoalState }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Acceptance Criteria
+      </h3>
+      <p className="text-[13px] text-text-primary whitespace-pre-wrap break-words">{goal.acceptanceCriteria}</p>
+    </div>
+  );
+}
+
+function BlockerSection({ goal }: { goal: GoalState }) {
+  if (!goal.blocker) return null;
 
   return (
     <div>
       <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
-        Done Conditions
+        Blocker
       </h3>
-      <div className="flex flex-col gap-2">
-        {goal.doneConditions.map((condition) => (
-          <DoneConditionRow
-            key={condition.id}
-            condition={condition}
-            result={goal.doneResults[condition.id]}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DoneConditionRow({ condition, result }: { condition: DoneCondition; result?: GoalDoneResult }) {
-  const passed = result?.passed;
-  const hasResult = result !== undefined;
-
-  return (
-    <div className="flex flex-col gap-1.5 px-3 py-2.5 rounded-md bg-bg-elevated border border-border-subtle">
-      <div className="flex items-center gap-2">
-        {hasResult ? (
-          passed ? (
-            <CheckCircle2 size={14} className="text-success shrink-0" />
-          ) : (
-            <XCircle size={14} className="text-error shrink-0" />
-          )
-        ) : (
-          <Circle size={14} className="text-text-muted shrink-0" />
-        )}
-        <span className="text-[12.5px] font-medium text-text-primary">{condition.kind}</span>
-        {condition.required === false && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-active text-text-muted">optional</span>
-        )}
-        <span className="text-[11px] text-text-muted font-mono ml-auto">{condition.id.slice(0, 8)}</span>
-      </div>
-      <div className="pl-5.5 flex flex-col gap-1">
-        <ConditionParams condition={condition} />
-        {result && (
-          <div className="text-[11.5px] text-text-tertiary break-words">
-            <span className={passed ? "text-success" : "text-error"}>Evidence: </span>
-            {result.evidence}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ConditionParams({ condition }: { condition: DoneCondition }) {
-  const params = condition.params as Record<string, unknown>;
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined);
-
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="text-[11.5px] text-text-muted font-mono break-all">
-      {entries.map(([key, value]) => (
-        <span key={key} className="mr-3">
-          <span className="text-text-tertiary">{key}:</span> {String(value)}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function RetryChainSection({ goal }: { goal: GoalState }) {
-  const hasRetries = goal.retryCount > 0;
-  const hasError = Boolean(goal.lastError);
-
-  if (!hasRetries && !hasError) return null;
-
-  return (
-    <div>
-      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
-        Retry Chain
-      </h3>
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-bg-elevated border border-border-subtle">
-          <RotateCcw size={14} className="text-warning shrink-0" />
-          <span className="text-[12.5px] text-text-secondary">
-            Retry {goal.retryCount} / {goal.retryPolicy.maxRetries}
-          </span>
-          {goal.retryPolicy.escalateOnFailure && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-error-muted text-error ml-auto">
-              escalates on exhaustion
+      <div className="flex flex-col gap-1 px-3 py-2.5 rounded-md bg-bg-elevated border border-border-subtle">
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={14} className="text-warning shrink-0" />
+          <span className="text-[12.5px] font-medium text-text-primary">{goal.blocker.kind}</span>
+          {goal.blocker.resumeStatus && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-active text-text-muted">
+              resumes to {goal.blocker.resumeStatus}
             </span>
           )}
         </div>
-        {hasError && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-error-muted border border-error/20 text-[12px] text-error">
-            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-            <span className="break-words">{goal.lastError}</span>
-          </div>
+        <p className="text-[11.5px] text-text-tertiary break-words">{goal.blocker.summary}</p>
+      </div>
+    </div>
+  );
+}
+
+function BudgetSection({ goal }: { goal: GoalState }) {
+  if (!goal.budget) return null;
+
+  const statusColor =
+    goal.budget.status === "ok"
+      ? "text-success"
+      : goal.budget.status === "warning"
+        ? "text-warning"
+        : "text-error";
+
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Budget
+      </h3>
+      <div className="flex flex-col gap-1 px-3 py-2.5 rounded-md bg-bg-elevated border border-border-subtle">
+        <div className="flex items-center gap-2">
+          <span className={`text-[12.5px] font-medium ${statusColor}`}>{goal.budget.status}</span>
+          {goal.budget.usedTokens !== undefined && goal.budget.maxTokens !== undefined && (
+            <span className="text-[11px] text-text-muted font-mono">
+              {goal.budget.usedTokens.toLocaleString()} / {goal.budget.maxTokens.toLocaleString()} tokens
+            </span>
+          )}
+        </div>
+        {goal.budget.reason && (
+          <p className="text-[11.5px] text-text-tertiary break-words">{goal.budget.reason}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function ReviewReceiptSection({ goal }: { goal: GoalState }) {
+  if (!goal.review) return null;
+
+  const verdict = goal.review.verdict;
+  const isDone = verdict === "DONE";
+
+  return (
+    <div data-testid="goal-review-receipt">
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Review Receipt
+      </h3>
+      <div className="flex flex-col gap-2 px-3 py-2.5 rounded-md bg-bg-elevated border border-border-subtle">
+        <div className="flex items-center gap-2">
+          {isDone ? (
+            <CheckCircle2 size={14} className="text-success shrink-0" />
+          ) : (
+            <XCircle size={14} className="text-error shrink-0" />
+          )}
+          <span className={`text-[12.5px] font-medium ${isDone ? "text-success" : "text-error"}`}>
+            {verdict}
+          </span>
+          <span className="text-[11px] text-text-muted ml-auto">
+            decided {new Date(goal.review.decidedAt).toLocaleString()}
+          </span>
+        </div>
+        <p className="text-[12px] text-text-secondary whitespace-pre-wrap break-words">{goal.review.summary}</p>
+
+        {goal.review.evidenceRefs.length > 0 && (
+          <div className="flex flex-col gap-1.5 mt-1">
+            <span className="text-[11px] text-text-muted uppercase tracking-wider">Evidence Refs</span>
+            <ul className="flex flex-col gap-1">
+              {goal.review.evidenceRefs.map((ref, index) => (
+                <EvidenceRefRow key={`${ref.kind}-${ref.ref}-${index}`} ref={ref} projectId={goal.projectId} />
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {goal.review.unresolvedItems && goal.review.unresolvedItems.length > 0 && (
+          <div className="flex flex-col gap-1 mt-1">
+            <span className="text-[11px] text-text-muted uppercase tracking-wider">Unresolved Items</span>
+            <ul className="flex flex-col gap-0.5">
+              {goal.review.unresolvedItems.map((item, index) => (
+                <li key={index} className="text-[11.5px] text-warning break-words">{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="text-[11px] text-text-muted mt-1">
+          Reviewer session: <span className="font-mono">{goal.review.reviewerSessionId}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceRefRow({ ref, projectId }: { ref: GoalEvidenceRef; projectId: string }) {
+  const sessionLink = ref.sessionId ? `/projects/${projectId}/sessions/${ref.sessionId}` : null;
+
+  return (
+    <li data-testid="goal-evidence-ref" className="flex flex-col gap-0.5 px-2 py-1.5 rounded-sm bg-bg-base border border-border-subtle">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-bg-active text-text-muted font-mono">{ref.kind}</span>
+        <span className="text-[11.5px] text-text-secondary break-words flex-1">{ref.summary}</span>
+        {sessionLink && (
+          <Link
+            to={sessionLink}
+            className="inline-flex items-center gap-0.5 text-[11px] text-accent hover:text-accent-hover shrink-0"
+          >
+            session <ExternalLink size={10} />
+          </Link>
+        )}
+        {ref.url && (
+          <a
+            href={ref.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-[11px] text-accent hover:text-accent-hover shrink-0"
+          >
+            url <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+      <div className="text-[10.5px] text-text-muted font-mono break-all">
+        {ref.toolCallId && <span>toolCall: {ref.toolCallId} </span>}
+        {ref.messageId && <span>message: {ref.messageId} </span>}
+        {ref.path && <span>path: {ref.path} </span>}
+        {ref.ref && <span>ref: {ref.ref}</span>}
+      </div>
+    </li>
+  );
+}
+
+function FinalSummarySection({ goal }: { goal: GoalState }) {
+  if (!goal.finalSummary) return null;
+
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-2">
+        Final Summary
+      </h3>
+      <p className="text-[13px] text-text-primary whitespace-pre-wrap break-words">{goal.finalSummary}</p>
     </div>
   );
 }

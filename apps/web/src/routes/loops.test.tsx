@@ -7,7 +7,6 @@ import { JSDOM } from "jsdom";
 import type { LoopState } from "../api/types";
 import { LoopsRoute } from "./loops";
 import { CreateLoopForm } from "../components/features/CreateLoopDialog";
-import type { DoneCondition } from "../api/types";
 
 // ─── Test helpers ───
 
@@ -168,10 +167,6 @@ async function renderCreateLoopForm(
       </QueryClientProvider>,
     );
   });
-}
-
-function makeTestsPassCondition(): DoneCondition {
-  return { id: crypto.randomUUID(), kind: "tests_pass", params: { command: "bun test" }, required: true };
 }
 
 function submitCreateLoopForm(container: Element): void {
@@ -803,7 +798,6 @@ describe("LoopsRoute", () => {
     const reactRoot = createRoot(container);
 
     try {
-      const condition = makeTestsPassCondition();
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         title: "Goal Loop",
         scheduleKind: "manual",
@@ -818,12 +812,8 @@ describe("LoopsRoute", () => {
         hardThresholdRatio: 1,
         toolProfileId: "loop_goal_action",
         goalTitle: "Inline Goal Title",
-        goalAuthor: "architect",
-        goalConditions: [condition],
-        goalMaxRetries: 2,
-        goalEscalateOnFailure: true,
-        goalApprovalPoints: ["after_plan", "before_complete"],
-        goalReviewerAgent: "reviewer",
+        goalObjective: "Investigate failing tests and propose fixes.",
+        goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
@@ -857,15 +847,13 @@ describe("LoopsRoute", () => {
       expect(config.goalTemplate).toBeDefined();
       const gt = config.goalTemplate as Record<string, unknown>;
       expect(gt.title).toBe("Inline Goal Title");
-      expect(gt.doneConditions).toBeDefined();
-      expect(Array.isArray(gt.doneConditions)).toBe(true);
-      expect(gt.doneConditions).toHaveLength(1);
-      expect((gt.doneConditions as Array<Record<string, unknown>>)[0].kind).toBe("tests_pass");
-      expect(gt.retryPolicy).toBeDefined();
-      expect((gt.retryPolicy as Record<string, unknown>).maxRetries).toBe(2);
-      expect(gt.approvalPoints).toEqual(["after_plan", "before_complete"]);
-      expect(gt.reviewerAgent).toBe("reviewer");
-      expect(gt.author).toBe("architect");
+      expect(gt.objective).toBe("Investigate failing tests and propose fixes.");
+      expect(gt.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
+      expect("doneConditions" in gt).toBe(false);
+      expect("retryPolicy" in gt).toBe(false);
+      expect("approvalPoints" in gt).toBe(false);
+      expect("reviewerAgent" in gt).toBe(false);
+      expect("author" in gt).toBe(false);
       expect("goalTemplateId" in config).toBe(false);
     } finally {
       await act(async () => {

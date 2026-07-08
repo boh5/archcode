@@ -78,14 +78,13 @@ function SessionStatusDot({ status }: { status: "running" | "completed" | "pause
 
 const GOAL_STATUS_DOT_COLORS: Record<GoalStatus, string> = {
   draft: "bg-text-muted",
-  locked: "bg-info",
   running: "bg-success shadow-[0_0_6px_var(--success)] animate-pulse",
-  verifying: "bg-warning",
-  reviewed: "bg-accent",
-  completed: "bg-accent",
+  blocked: "bg-warning",
+  reviewing: "bg-info",
+  done: "bg-accent",
+  not_done: "bg-error",
   failed: "bg-error",
-  escalated: "bg-error",
-  paused: "bg-warning",
+  cancelled: "bg-text-muted",
 };
 
 function GoalStatusDot({ status }: { status: GoalStatus }) {
@@ -178,9 +177,9 @@ function GoalItem({
         </div>
         <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
           <span className="capitalize">{goal.status}</span>
-          {goal.retryCount > 0 && (
+          {goal.attempt > 1 && (
             <span className="text-warning">
-              retry {goal.retryCount}/{goal.retryPolicy.maxRetries}
+              attempt {goal.attempt}
             </span>
           )}
         </div>
@@ -506,8 +505,7 @@ export function Sidebar() {
       const title = toSearchable(g.title).toLowerCase();
       const id = toSearchable(g.id).toLowerCase();
       const status = toSearchable(g.status).toLowerCase();
-      const phase = toSearchable(g.phase).toLowerCase();
-      return title.includes(q) || id.includes(q) || status.includes(q) || phase.includes(q);
+      return title.includes(q) || id.includes(q) || status.includes(q);
     });
   }, [goals, goalsSearch]);
 

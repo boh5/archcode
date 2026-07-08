@@ -150,8 +150,6 @@ function isReducibleStreamEvent(event: SessionEventPayload): event is StreamEven
     case "compression.block_failed":
     case "compression.ref_map_updated":
     case "goal.state_change":
-    case "goal.done_check":
-    case "goal.escalation":
     case "hitl.request":
     case "hitl.updated":
     case "hitl.resolved":

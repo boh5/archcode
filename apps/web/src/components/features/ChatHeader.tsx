@@ -6,14 +6,13 @@ import type { GoalStatus } from "../../api/types";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
-  locked: "bg-info-muted text-info",
   running: "bg-success-muted text-success",
-  verifying: "bg-warning-muted text-warning",
-  reviewed: "bg-accent-muted text-accent",
-  completed: "bg-accent-muted text-accent",
+  blocked: "bg-warning-muted text-warning",
+  reviewing: "bg-info-muted text-info",
+  done: "bg-accent-muted text-accent",
+  not_done: "bg-error-muted text-error",
   failed: "bg-error-muted text-error",
-  escalated: "bg-error-muted text-error",
-  paused: "bg-warning-muted text-warning",
+  cancelled: "bg-bg-active text-text-muted",
 };
 
 interface ChatHeaderProps {
@@ -41,13 +40,12 @@ export function ChatHeader({ slug, sessionId, goalId, onToggleDetail }: ChatHead
         <span className="font-semibold text-sm text-text-primary truncate">{title ?? "Untitled"}</span>
         {goal && (
           <span
-            data-testid="goal-phase"
-            className="text-[11px] px-2 py-0.5 rounded-sm font-medium whitespace-nowrap flex items-center gap-1.5"
+            data-testid="goal-status-badge"
+            className="text-[11px] px-2 py-0.5 rounded-sm font-medium whitespace-nowrap"
           >
             <span className={`px-1.5 py-0.5 rounded-sm ${STATUS_BADGE_CLASS[goal.status]}`}>
               {goal.status}
             </span>
-            <span className="text-text-tertiary uppercase tracking-wider">{goal.phase}</span>
           </span>
         )}
         {hasStats && (

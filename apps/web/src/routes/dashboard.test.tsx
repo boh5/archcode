@@ -151,15 +151,12 @@ function makeGoal(overrides: Partial<DashboardGoal> = {}): DashboardGoal {
     id: "goal-1",
     projectId: "demo",
     title: "Test Goal",
+    objective: "Simplify the Goal experience",
+    acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     status: "running",
-    phase: "build",
-    doneConditions: [],
-    doneResults: {},
-    reviewerAgent: "reviewer",
-    retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true },
-    retryCount: 0,
-    approvalPoints: [],
-    author: "user",
+    attempt: 1,
+    pendingHitlIds: [],
+    approvalRefs: [],
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
@@ -304,8 +301,8 @@ describe("Dashboard", () => {
   });
 
   test("renders active goals from two projects", async () => {
-    const goal1 = makeGoal({ id: "goal-a", title: "Alpha Goal", projectSlug: "alpha", projectName: "Alpha Project", status: "running", phase: "build" });
-    const goal2 = makeGoal({ id: "goal-b", title: "Beta Goal", projectSlug: "beta", projectName: "Beta Project", status: "verifying", phase: "review" });
+    const goal1 = makeGoal({ id: "goal-a", title: "Alpha Goal", projectSlug: "alpha", projectName: "Alpha Project", status: "running" });
+    const goal2 = makeGoal({ id: "goal-b", title: "Beta Goal", projectSlug: "beta", projectName: "Beta Project", status: "reviewing" });
     const ctx = await setupDashboard(createDashboardHandler({ goals: [goal1, goal2] }));
 
     try {
@@ -317,11 +314,9 @@ describe("Dashboard", () => {
         expect(text).toContain("Alpha Goal");
         expect(text).toContain("Alpha Project");
         expect(text).toContain("running");
-        expect(text).toContain("Build");
         expect(text).toContain("Beta Goal");
         expect(text).toContain("Beta Project");
-        expect(text).toContain("verifying");
-        expect(text).toContain("Review");
+        expect(text).toContain("reviewing");
       });
     } finally {
       await cleanupDashboard(ctx);
@@ -444,8 +439,8 @@ describe("Dashboard", () => {
     }
   });
 
-  test("renders goal status and phase badges", async () => {
-    const goal = makeGoal({ status: "paused", phase: "plan" });
+  test("renders goal status badge", async () => {
+    const goal = makeGoal({ status: "blocked" });
     const ctx = await setupDashboard(createDashboardHandler({ goals: [goal] }));
 
     try {
@@ -454,16 +449,15 @@ describe("Dashboard", () => {
       await waitFor(() => {
         const goalsSection = ctx.container.querySelector('[data-testid="dashboard-active-goals"]');
         const text = goalsSection?.textContent ?? "";
-        expect(text).toContain("paused");
-        expect(text).toContain("Plan");
+        expect(text).toContain("blocked");
       });
     } finally {
       await cleanupDashboard(ctx);
     }
   });
 
-  test("renders goal retry count when > 0", async () => {
-    const goal = makeGoal({ retryCount: 2 });
+  test("renders goal attempt count when > 1", async () => {
+    const goal = makeGoal({ attempt: 3 });
     const ctx = await setupDashboard(createDashboardHandler({ goals: [goal] }));
 
     try {
@@ -472,8 +466,8 @@ describe("Dashboard", () => {
       await waitFor(() => {
         const goalsSection = ctx.container.querySelector('[data-testid="dashboard-active-goals"]');
         const text = goalsSection?.textContent ?? "";
-        expect(text).toContain("retry");
-        expect(text).toContain("2");
+        expect(text).toContain("attempt");
+        expect(text).toContain("3");
       });
     } finally {
       await cleanupDashboard(ctx);

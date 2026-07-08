@@ -190,8 +190,8 @@ function loopIdFromHitlEvent(event: GlobalSSEHitlRealtimeEvent): string | undefi
 
 function isGoalPayload(
   payload: SessionEventPayload,
-): payload is Extract<SessionEventPayload, { type: "goal.state_change" | "goal.done_check" | "goal.escalation" }> {
-  return payload.type === "goal.state_change" || payload.type === "goal.done_check" || payload.type === "goal.escalation";
+): payload is Extract<SessionEventPayload, { type: "goal.state_change" }> {
+  return payload.type === "goal.state_change";
 }
 
 function isHitlPayload(

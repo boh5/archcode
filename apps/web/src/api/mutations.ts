@@ -2,17 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "./client";
 import { queryKeys } from "./queries";
 import type {
-  ApprovalPoint,
   CancelCurrentRunResponse,
   ApiCommandResult,
-  DoneCondition,
   GoalState,
   LoopConfig,
   LoopKillState,
   LoopRunReport,
   LoopState,
   Project,
-  RetryPolicy,
   Session,
 } from "./types";
 
@@ -143,40 +140,18 @@ export function useCreateGoal() {
     mutationFn: async ({
       slug,
       title,
-      doneConditions,
-      retryPolicy,
-      approvalPoints,
-      reviewerAgent,
-      author,
+      objective,
+      acceptanceCriteria,
     }: {
       slug: string;
       title: string;
-      doneConditions: DoneCondition[];
-      retryPolicy: RetryPolicy;
-      approvalPoints: ApprovalPoint[];
-      reviewerAgent: string;
-      author: string;
+      objective: string;
+      acceptanceCriteria: string;
     }) => apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals`, {
       method: "POST",
-      body: { title, doneConditions, retryPolicy, approvalPoints, reviewerAgent, author },
+      body: { title, objective, acceptanceCriteria },
     }),
     onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
-  });
-}
-
-export function useLockGoal() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ slug, goalId, lockedBy }: { slug: string; goalId: string; lockedBy: string }) =>
-      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/lock`, {
-        method: "POST",
-        body: { lockedBy },
-      }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
     },
   });
@@ -206,21 +181,6 @@ export function useRetryGoal() {
       apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/retry`, {
         method: "POST",
         body: {},
-      }),
-    onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
-    },
-  });
-}
-
-export function useEscalateGoal() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ slug, goalId }: { slug: string; goalId: string }) =>
-      apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/escalate`, {
-        method: "POST",
       }),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.goal(variables.slug, variables.goalId) });

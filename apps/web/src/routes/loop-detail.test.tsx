@@ -186,13 +186,8 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       taskPrompt: "Review failing tests and summarize concrete next steps.",
       goalTemplate: {
         title: "Triage Follow-up Goal",
-        author: "architect",
-        doneConditions: [
-          { id: "cond-1", kind: "tests_pass", params: { command: "bun test" }, required: true },
-        ],
-        retryPolicy: { maxRetries: 2, backoffMs: 1000, escalateOnFailure: true },
-        approvalPoints: ["after_plan"],
-        reviewerAgent: "reviewer",
+        objective: "Investigate failing tests and propose fixes.",
+        acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
       },
     },
     status: "active",
@@ -546,7 +541,7 @@ describe("LoopDetailRoute", () => {
       expect(pageText).toContain("6");
       expect(pageText).toContain("tokens 1000");
       expect(pageText).toContain("Review failing tests and summarize concrete next steps.");
-      expect(pageText).toContain("Triage Follow-up Goal by architect");
+      expect(pageText).toContain("Triage Follow-up Goal; objective:");
       expect(pageText).toContain("run-current running manual reason completed");
       expect(pageText).toContain("run-last succeeded interval reason completed");
       expect(pageText).toContain("run-history-1");
@@ -989,8 +984,9 @@ describe("LoopDetailRoute", () => {
       expect(config.budget).toEqual(config.limits);
       const goalTemplate = config.goalTemplate as Record<string, unknown>;
       expect(goalTemplate.title).toBe("Triage Follow-up Goal");
-      expect(Array.isArray(goalTemplate.doneConditions)).toBe(true);
-      expect(goalTemplate.doneConditions).toHaveLength(1);
+      expect(goalTemplate.objective).toBe("Investigate failing tests and propose fixes.");
+      expect(goalTemplate.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
+      expect("doneConditions" in goalTemplate).toBe(false);
       expect("goalTemplateId" in config).toBe(false);
     } finally {
       await act(async () => {

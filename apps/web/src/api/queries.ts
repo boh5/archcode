@@ -10,8 +10,6 @@ import type {
   DiffFile,
   DirectoryListResponse,
   DirectorySearchResponse,
-  GoalArtifactReadResponse,
-  GoalArtifactsListResponse,
   GoalState,
   HitlListResponse,
   HitlProjection,
@@ -34,9 +32,6 @@ export const queryKeys = {
   activeGoals: ["goals", "active"] as const,
   projectGoals: (slug: string) => ["projects", slug, "goals"] as const,
   goal: (slug: string, goalId: string) => ["projects", slug, "goals", goalId] as const,
-  goalArtifacts: (slug: string, goalId: string) => ["projects", slug, "goals", goalId, "artifacts"] as const,
-  goalArtifact: (slug: string, goalId: string, artifactName: string) =>
-    ["projects", slug, "goals", goalId, "artifacts", artifactName] as const,
   hitl: ["hitl", "pending"] as const,
   projectHitl: (slug: string) => ["projects", slug, "hitl"] as const,
   scopedHitl: (
@@ -139,32 +134,6 @@ export function goalQueryOptions(slug: string, goalId: string) {
       return response;
     },
     enabled: slug.length > 0 && goalId.length > 0,
-  });
-}
-
-export function goalArtifactsQueryOptions(slug: string, goalId: string) {
-  return queryOptions({
-    queryKey: queryKeys.goalArtifacts(slug, goalId),
-    queryFn: async () => {
-      const response = await apiFetch<GoalArtifactsListResponse>(
-        `/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/artifacts`,
-      );
-      return response.artifacts;
-    },
-    enabled: slug.length > 0 && goalId.length > 0,
-  });
-}
-
-export function goalArtifactQueryOptions(slug: string, goalId: string, artifactName: string) {
-  return queryOptions({
-    queryKey: queryKeys.goalArtifact(slug, goalId, artifactName),
-    queryFn: async () => {
-      const response = await apiFetch<GoalArtifactReadResponse>(
-        `/api/projects/${encodeURIComponent(slug)}/goals/${encodeURIComponent(goalId)}/artifacts/${encodeURIComponent(artifactName)}`,
-      );
-      return response;
-    },
-    enabled: slug.length > 0 && goalId.length > 0 && artifactName.length > 0,
   });
 }
 
@@ -278,14 +247,6 @@ export function useGoals(slug: string) {
 
 export function useGoal(slug: string, goalId: string) {
   return useQuery(goalQueryOptions(slug, goalId));
-}
-
-export function useGoalArtifacts(slug: string, goalId: string) {
-  return useQuery(goalArtifactsQueryOptions(slug, goalId));
-}
-
-export function useGoalArtifact(slug: string, goalId: string, artifactName: string) {
-  return useQuery(goalArtifactQueryOptions(slug, goalId, artifactName));
 }
 
 export function useScopedHitl(options: UseHitlOptions) {

@@ -15,11 +15,13 @@ export type {
   SessionTodo,
   GoalState,
   GoalStatus,
-  GoalPhase,
-  DoneCondition,
-  GoalDoneResult,
-  RetryPolicy,
-  ApprovalPoint,
+  GoalBlockerKind,
+  GoalEvidenceRefKind,
+  GoalEvidenceRef,
+  GoalReviewReceipt,
+  GoalReviewVerdict,
+  GoalBlocker,
+  GoalBudgetSummary,
   HitlRecord,
   HitlResponse,
   HitlDisplayPayload,
@@ -36,8 +38,6 @@ export type {
   DiffHunk,
   DiffFile,
   ApiCommandResult,
-  GoalArtifactName,
-  GoalArtifactFile,
   LoopConfig,
   LoopState,
   LoopStatus,
@@ -66,7 +66,7 @@ export type {
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalArtifactFile, GoalState, HitlProjection, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+import type { GoalState, HitlProjection, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
 
 // ─── Unified HITL API types ───
 
@@ -86,20 +86,6 @@ export type DashboardGoal = GoalState & {
   projectSlug: string;
   projectName: string;
 };
-
-// ─── Goal artifact API response types ───
-// Match the read-only project-scoped artifact routes.
-
-/** Response of GET /api/projects/:slug/goals/:goalId/artifacts. */
-export interface GoalArtifactsListResponse {
-  artifacts: GoalArtifactFile[];
-}
-
-/** Response of GET /api/projects/:slug/goals/:goalId/artifacts/:artifactName. */
-export interface GoalArtifactReadResponse {
-  artifact?: GoalArtifactFile;
-  content: string;
-}
 
 // ─── Loop API response types ───
 

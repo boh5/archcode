@@ -100,15 +100,12 @@ function makeGoal(overrides: Partial<GoalState> = {}): GoalState {
     id: "goal-1",
     projectId: "demo",
     title: "Test Goal",
+    objective: "Simplify the Goal experience",
+    acceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     status: "running",
-    phase: "build",
-    doneConditions: [],
-    doneResults: {},
-    reviewerAgent: "reviewer",
-    retryPolicy: { maxRetries: 3, backoffMs: 1000, escalateOnFailure: true },
-    retryCount: 0,
-    approvalPoints: [],
-    author: "orchestrator",
+    attempt: 1,
+    pendingHitlIds: [],
+    approvalRefs: [],
     childSessionIds: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -147,14 +144,14 @@ describe("GoalsRoute", () => {
     mock.restore();
   });
 
-  test("renders goal list with title, status, and phase", async () => {
+  test("renders goal list with title and status", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
 
     const goals: GoalState[] = [
-      makeGoal({ id: "goal-1", title: "Implement auth", status: "running", phase: "build" }),
-      makeGoal({ id: "goal-2", title: "Add tests", status: "completed", phase: "review" }),
+      makeGoal({ id: "goal-1", title: "Implement auth", status: "running" }),
+      makeGoal({ id: "goal-2", title: "Add tests", status: "done" }),
     ];
 
     const fetchMock = mock(async (input: Parameters<typeof fetch>[0]) => {
@@ -180,9 +177,7 @@ describe("GoalsRoute", () => {
       });
 
       expect(container.textContent).toContain("running");
-      expect(container.textContent).toContain("build");
-      expect(container.textContent).toContain("completed");
-      expect(container.textContent).toContain("review");
+      expect(container.textContent).toContain("done");
     } finally {
       await act(async () => {
         reactRoot.unmount();

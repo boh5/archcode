@@ -7,14 +7,13 @@ import type { GoalState, GoalStatus } from "../api/types";
 
 const STATUS_BADGE_CLASS: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-muted",
-  locked: "bg-info-muted text-info",
   running: "bg-success-muted text-success",
-  verifying: "bg-warning-muted text-warning",
-  reviewed: "bg-accent-muted text-accent",
-  completed: "bg-accent-muted text-accent",
+  blocked: "bg-warning-muted text-warning",
+  reviewing: "bg-info-muted text-info",
+  done: "bg-accent-muted text-accent",
+  not_done: "bg-error-muted text-error",
   failed: "bg-error-muted text-error",
-  escalated: "bg-error-muted text-error",
-  paused: "bg-warning-muted text-warning",
+  cancelled: "bg-bg-active text-text-muted",
 };
 
 export function GoalsRoute() {
@@ -153,13 +152,12 @@ function GoalListItem({ goal, onClick }: { goal: GoalState; onClick: () => void 
         </div>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
           <span className="font-mono">{goal.id.slice(0, 8)}</span>
-          {goal.retryCount > 0 && (
-            <span className="text-warning">retry {goal.retryCount}/{goal.retryPolicy.maxRetries}</span>
+          {goal.attempt > 1 && (
+            <span className="text-warning">attempt {goal.attempt}</span>
           )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-[11px] text-text-tertiary capitalize">{goal.phase}</span>
         <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[goal.status]}`}>
           {goal.status}
         </span>

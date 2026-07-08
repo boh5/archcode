@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("web goal mutation API calls", () => {
-  test("createGoal calls POST /api/projects/:slug/goals", async () => {
+  test("createGoal calls POST /api/projects/:slug/goals with title/objective/acceptanceCriteria", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals`);
@@ -29,28 +29,10 @@ describe("web goal mutation API calls", () => {
 
     const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals`, {
       method: "POST",
-      body: { title: "New Goal", doneConditions: [], retryPolicy: { maxRetries: 3, backoffMs: 5000, escalateOnFailure: true }, approvalPoints: [], reviewerAgent: "reviewer", author: "user" },
+      body: { title: "New Goal", objective: "Simplify Goal", acceptanceCriteria: "Reviewer can decide DONE from logs and diff." },
     });
 
     expect(result).toMatchObject({ id: "goal-new" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("lockGoal calls POST /api/projects/:slug/goals/:goalId/lock", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/lock`);
-      expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-1", status: "locked" });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/lock`, {
-      method: "POST",
-      body: { lockedBy: "user" },
-    });
-
-    expect(result).toMatchObject({ id: "goal-1" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -82,26 +64,12 @@ describe("web goal mutation API calls", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("escalateGoal calls POST /api/projects/:slug/goals/:goalId/escalate", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/escalate`);
-      expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-1", status: "escalated" });
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/escalate`, { method: "POST" });
-    expect(result).toMatchObject({ id: "goal-1" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   test("cancelGoal calls POST /api/projects/:slug/goals/:goalId/cancel", async () => {
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/goals/goal-1/cancel`);
       expect(init?.method).toBe("POST");
-      return jsonResponse({ id: "goal-1", status: "paused" });
+      return jsonResponse({ id: "goal-1", status: "cancelled" });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 

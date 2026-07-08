@@ -1,24 +1,17 @@
 import { Target, Loader2, CircleDot, RotateCcw } from "lucide-react";
 import { useActiveGoals, useActiveLoops, useDashboardHitl } from "../api/queries";
 import { HitlInbox } from "../components/features/HitlCard";
-import type { DashboardGoal, DashboardLoop, GoalPhase, GoalStatus, LoopRunReport, LoopStatus } from "../api/types";
+import type { DashboardGoal, DashboardLoop, GoalStatus, LoopRunReport, LoopStatus } from "../api/types";
 
 const STATUS_BADGE: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-secondary",
-  locked: "bg-warning-muted text-warning",
   running: "bg-success-muted text-success",
-  verifying: "bg-info-muted text-info",
-  reviewed: "bg-accent-muted text-accent",
-  completed: "bg-success-muted text-success",
+  blocked: "bg-warning-muted text-warning",
+  reviewing: "bg-info-muted text-info",
+  done: "bg-accent-muted text-accent",
+  not_done: "bg-error-muted text-error",
   failed: "bg-error-muted text-error",
-  escalated: "bg-error-muted text-error",
-  paused: "bg-bg-active text-text-tertiary",
-};
-
-const PHASE_LABEL: Record<GoalPhase, string> = {
-  plan: "Plan",
-  build: "Build",
-  review: "Review",
+  cancelled: "bg-bg-active text-text-tertiary",
 };
 
 const LOOP_STATUS_BADGE: Record<LoopStatus, string> = {
@@ -167,10 +160,9 @@ function GoalRow({ goal }: { goal: DashboardGoal }) {
           <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${STATUS_BADGE[goal.status] ?? "bg-bg-active text-text-secondary"}`}>
             {goal.status}
           </span>
-          <span className="text-[10.5px] text-text-tertiary">{PHASE_LABEL[goal.phase] ?? goal.phase}</span>
-          {goal.retryCount > 0 && (
+          {goal.attempt > 1 && (
             <span className="flex items-center gap-0.5 text-[10.5px] text-text-tertiary">
-              <RotateCcw size={10} aria-hidden="true" /> retry {goal.retryCount}
+              <RotateCcw size={10} aria-hidden="true" /> attempt {goal.attempt}
             </span>
           )}
         </div>
