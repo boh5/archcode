@@ -288,23 +288,6 @@ describe("Loop schemas", () => {
       createdAt: 1_000,
       updatedAt: 2_000,
       lastRun: report,
-      currentJob: {
-        jobId: "job-1",
-        loopId: VALID_LOOP_ID,
-        status: "blocked",
-        triggerKind: "on_pr",
-        subjectKey: "pr:arch/code#42",
-        dedupeKey: "loop:on_pr:pr:arch/code#42",
-        queuedAt: 900,
-        startedAt: 1_000,
-        attempts: 1,
-        blockedReason: "canonical checkout is dirty",
-        blockedByHitlIds: ["hitl-1"],
-        attentionStatus: "waiting_for_human",
-        cleanupState: "preserved",
-        observedArtifacts: report.observedArtifacts,
-      },
-      queuedJobs: [],
       triggerHealth: [{ triggerKind: "on_ci_fail", status: "healthy", cadenceMs: 60_000, lastCheckedAt: 1_500 }],
       cleanupState: "preserved",
       runCount: 1,
@@ -314,9 +297,6 @@ describe("Loop schemas", () => {
     expect(report.trigger).toBe("on_pr");
     expect(report.observedArtifacts?.[0]?.path).toBe("report.md");
     expect(state.config.triggers?.[0]?.kind).toBe("on_ci_fail");
-    expect(state.currentJob?.status).toBe("blocked");
-    expect(state.currentJob?.blockedByHitlIds).toEqual(["hitl-1"]);
-    expect(state.currentJob?.attentionStatus).toBe("waiting_for_human");
     expect(state.triggerHealth?.[0]?.status).toBe("healthy");
   });
 });

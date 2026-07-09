@@ -11,7 +11,7 @@ import {
   type LoopConfig,
   type LoopRunReport,
 } from "@archcode/agent-core";
-import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopJobSummary, LoopState } from "@archcode/protocol";
+import type { LoopBudgetSnapshot, LoopCollisionSnapshot, LoopIntegrationSnapshot, LoopState } from "@archcode/protocol";
 import { createServerApp } from "../app";
 
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "loops-routes");
@@ -40,7 +40,6 @@ const TEST_GITHUB_OWNER = "test-owner";
 const TEST_GITHUB_REPO = "test-repo";
 const TEST_GITHUB_TARGET_KEY = `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:pr:42`;
 const TEST_GITHUB_PR_SUBJECT_KEY = `pr:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}#42`;
-const TEST_GITHUB_CI_SUBJECT_KEY = `ci:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:ci:deadbeef`;
 
 const goalLoopConfig: LoopConfig = {
   templateId: "goal_runner",
@@ -513,7 +512,7 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(persisted.find((run) => run.runId === "run-unsafe-worktree")?.worktreePath).toBe(seeded.unsafeWorktreePath);
   });
 
-  test("read list and state routes expose trigger queue and cleanup metadata safely", async () => {
+  test("read list and state routes expose trigger health and cleanup metadata safely", async () => {
     const { app, project, runtime, workspaceRoot } = await createTestApp("trigger-job-state-metadata");
     const loop = await createLoop(app, project.slug, prTriggerSessionLoopConfig);
     const seeded = await runtime.seedPrTriggerLoopState(workspaceRoot, loop.loopId);
@@ -524,39 +523,26 @@ test("creates and reads a manual session loop without readiness score", async ()
     expect(listBody.loops[0]).toMatchObject({
       loopId: loop.loopId,
       cleanupState: "cleanup_candidate",
-      currentJob: {
-        jobId: "job-current",
-        status: "blocked",
-        triggerKind: "on_pr",
-        worktreePath: seeded.safeWorktreePath,
-        cleanupState: "preserved",
-        observedArtifacts: [{ path: "evidence/current.md", status: "modified" }],
-      },
-      queuedJobs: [{
-        jobId: "job-queued",
-        status: "queued",
-        triggerKind: "on_ci_fail",
-        cleanupState: "expired_needs_review",
-      }],
       triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000 }],
     });
-    expect(listBody.loops[0]?.queuedJobs?.[0]?.worktreePath).toBeUndefined();
+    expect(listBody.loops[0]).not.toHaveProperty("currentJob");
+    expect(listBody.loops[0]).not.toHaveProperty("queuedJobs");
     expect(JSON.stringify(listBody)).not.toContain(seeded.unsafeWorktreePath);
     expect(JSON.stringify(listBody)).not.toContain("ghp_secret_route_token");
     expect(JSON.stringify(listBody)).not.toContain("ghr_trigger_health_secret");
-    expect(JSON.stringify(listBody)).not.toContain("github_pat_job_blocked_secret");
     expect(listBody.loops[0]?.triggerHealth?.[0]?.lastError).toContain("[REDACTED:SECRET]");
 
     const readRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`);
     const readBody = await readRes.json() as { loop: LoopState };
     expect(readRes.status).toBe(200);
-    expect(readBody.loop.currentJob?.worktreePath).toBe(seeded.safeWorktreePath);
-    expect(readBody.loop.queuedJobs?.[0]?.worktreePath).toBeUndefined();
+    expect(readBody.loop).not.toHaveProperty("currentJob");
+    expect(readBody.loop).not.toHaveProperty("queuedJobs");
 
     const stateRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/state`);
     const stateBody = await stateRes.json() as { markdown: string; state: LoopState };
     expect(stateRes.status).toBe(200);
-    expect(stateBody.state.currentJob?.worktreePath).toBe(seeded.safeWorktreePath);
+    expect(stateBody.state).not.toHaveProperty("currentJob");
+    expect(stateBody.state).not.toHaveProperty("queuedJobs");
     expect(stateBody.state.cleanupState).toBe("cleanup_candidate");
     expect(JSON.stringify(stateBody)).not.toContain(seeded.unsafeWorktreePath);
   });
@@ -733,7 +719,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
   seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
   seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
   seedPrTriggerRunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
-  seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+  seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ unsafeWorktreePath: string }>;
 } {
   const contextResolver = new ProjectContextResolver({ logger: silentLogger });
   let now = options.now ?? 1_000;
@@ -988,49 +974,12 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     },
     async seedPrTriggerLoopState(workspaceRoot: string, loopId: string) {
       const context = await contextResolver.resolve(workspaceRoot);
-      const { safeWorktreePath, unsafeWorktreePath } = triggerWorktreePaths(workspaceRoot);
-      const currentJob: LoopJobSummary = {
-        jobId: "job-current",
-        loopId,
-        status: "blocked",
-        triggerKind: "on_pr",
-        subjectKey: TEST_GITHUB_PR_SUBJECT_KEY,
-        dedupeKey: `${loopId}:on_pr:${TEST_GITHUB_PR_SUBJECT_KEY}`,
-        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:main`,
-        queuedAt: now,
-        startedAt: now + 1,
-        attempts: 1,
-        blockedReason: "needs_user token=ghp_secret_route_token github_pat_job_blocked_secret",
-        worktreePath: safeWorktreePath,
-        baseSha: "a".repeat(40),
-        resolvedHeadSha: "b".repeat(40),
-        cleanupState: "preserved",
-        observedArtifacts: [{ path: "evidence/current.md", status: "modified" }],
-      };
-      const queuedJob: LoopJobSummary = {
-        jobId: "job-queued",
-        loopId,
-        status: "queued",
-        triggerKind: "on_ci_fail",
-        subjectKey: TEST_GITHUB_CI_SUBJECT_KEY,
-        dedupeKey: `${loopId}:on_ci_fail:${TEST_GITHUB_CI_SUBJECT_KEY}`,
-        branchKey: `github:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:feature/leaky`,
-        queuedAt: now + 2,
-        attempts: 0,
-        worktreePath: unsafeWorktreePath,
-        cleanupState: "expired_needs_review",
-      };
+      const { unsafeWorktreePath } = triggerWorktreePaths(workspaceRoot);
       await context.loopState.update(loopId, {
         cleanupState: "cleanup_candidate",
         triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000, lastCheckedAt: now + 3, lastError: "token=ghp_secret_route_token ghr_trigger_health_secret", missedCount: 1 }],
       });
-      const state = await context.loopState.read(loopId);
-      await Bun.write(resolve(workspaceRoot, ".archcode", "loops", loopId, "state.json"), `${JSON.stringify({
-        ...state,
-        currentJob,
-        queuedJobs: [queuedJob],
-      }, null, 2)}\n`);
-      return { safeWorktreePath, unsafeWorktreePath };
+      return { unsafeWorktreePath };
     },
   } as unknown as AgentRuntime & {
     setNow(value: number): void;
@@ -1040,7 +989,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
     seedLoopSnapshots(workspaceRoot: string, loopId: string): Promise<void>;
     seedCollisionRunHistory(workspaceRoot: string, loopId: string): Promise<void>;
     seedPrTriggerRunHistory(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
-    seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ safeWorktreePath: string; unsafeWorktreePath: string }>;
+    seedPrTriggerLoopState(workspaceRoot: string, loopId: string): Promise<{ unsafeWorktreePath: string }>;
   };
 
   return runtime;

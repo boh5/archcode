@@ -465,7 +465,7 @@ describe("LoopDetailRoute", () => {
     mock.restore();
   });
 
-  test("primary view shows status, current activity, next run, last result, attention, recent results, settings; hides diagnostics", async () => {
+  test("primary view shows canonical status (badge + activity), next run, last result, attention, recent results, settings; hides diagnostics", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -488,8 +488,8 @@ describe("LoopDetailRoute", () => {
 
       const statusSection = container.querySelector('[data-testid="loop-status-section"]')!;
       expect(statusSection.textContent).toContain("Running");
+      expect(statusSection.textContent).toContain("Running manual run (session session-current)");
       expect(statusSection.textContent).toContain("run count");
-      expect(statusSection.textContent).toContain("current activity");
       expect(statusSection.textContent).toContain("next run");
       expect(statusSection.textContent).toContain("last result");
 
@@ -762,7 +762,7 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("Advanced Debug exposes queue, trigger health, worktree, and cleanup diagnostics after expansion", async () => {
+  test("Advanced Debug exposes trigger health, worktree, and cleanup diagnostics after expansion", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -778,35 +778,6 @@ describe("LoopDetailRoute", () => {
       lastEnqueuedAt: 1700000020000,
       missedCount: 2,
       cleanupState: "auto_paused",
-      currentJob: {
-        jobId: "job-current",
-        loopId: "loop-1",
-        status: "blocked",
-        triggerKind: "on_pr",
-        subjectKey: "github:test-owner/test-repo:pr:42",
-        dedupeKey: "loop-1:on_pr:42",
-        branchKey: "test-owner/test-repo:feature-loop",
-        queuedAt: 1700000020000,
-        startedAt: 1700000030000,
-        attempts: 1,
-        blockedReason: "needs-review",
-        worktreePath: "/safe/worktrees/loop-1",
-        cleanupState: "cleanup_candidate",
-        observedArtifacts: [{ path: "src/file.ts", status: "modified", sizeBytes: 42 }],
-      },
-      queuedJobs: [
-        {
-          jobId: "job-queued",
-          loopId: "loop-1",
-          status: "queued",
-          triggerKind: "cron",
-          subjectKey: "cron:*/15",
-          dedupeKey: "loop-1:cron:1700000910000",
-          queuedAt: 1700000910000,
-          attempts: 0,
-          cleanupState: "expired_needs_review",
-        },
-      ],
       triggerHealth: [
         { triggerKind: "on_pr", status: "degraded", cadenceMs: 60000, lastCheckedAt: 1700000040000, lastError: "rate limited", missedCount: 2 },
       ],
@@ -859,9 +830,7 @@ describe("LoopDetailRoute", () => {
         expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).not.toBeNull();
       });
 
-      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("job-current blocked");
-      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("worktree /safe/worktrees/loop-1");
-      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("job-queued queued");
+      expect(container.querySelector('[data-testid="loop-queue-card"]')).toBeNull();
       expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("degraded");
       expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("rate limited");
       expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("path /safe/worktrees/loop-1");
@@ -873,8 +842,6 @@ describe("LoopDetailRoute", () => {
       expect(rawConfig).toContain("cleanup policy");
       expect(rawConfig).toContain("delete unchanged worktrees");
       expect(rawConfig).toContain("auto_paused");
-      const queueCard = container.querySelector('[data-testid="loop-queue-card"]')?.textContent ?? "";
-      expect(queueCard).toContain("expired_needs_review");
     } finally {
       await act(async () => {
         reactRoot.unmount();

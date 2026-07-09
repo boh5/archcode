@@ -18,7 +18,6 @@ import type {
   LoopApprovalPolicy,
   LoopGoalTemplate,
   LoopIntegrationSnapshot,
-  LoopJobSummary,
   LoopLimits,
   LoopScheduleSpec,
   LoopTemplateId,
@@ -26,6 +25,7 @@ import type {
 } from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
+import { redactPublicString } from "../redact";
 import { resolveProject } from "../resolve";
 
 const LoopTextSchema = z.string().trim().min(1).max(10_000);
@@ -428,8 +428,6 @@ function sanitizeLoopState(loop: LoopState, workspaceRoot: string): LoopState {
     ...(loop.lastRun === undefined ? {} : { lastRun: sanitizeRunReport(loop.lastRun, workspaceRoot) }),
     ...(loop.currentRun === undefined ? {} : { currentRun: sanitizeRunReport(loop.currentRun, workspaceRoot) }),
     ...(loop.latestIntegrations === undefined ? {} : { latestIntegrations: sanitizeIntegrationSnapshot(loop.latestIntegrations) }),
-    ...(loop.currentJob === undefined ? {} : { currentJob: sanitizeJobSummary(loop.currentJob, workspaceRoot) }),
-    ...(loop.queuedJobs === undefined ? {} : { queuedJobs: loop.queuedJobs.map((job) => sanitizeJobSummary(job, workspaceRoot)) }),
     ...(loop.triggerHealth === undefined ? {} : { triggerHealth: loop.triggerHealth.map((health) => ({
       ...health,
       ...(health.lastError === undefined ? {} : { lastError: redactPublicString(health.lastError) }),
@@ -452,15 +450,6 @@ function sanitizeRunReport(report: LoopRunReport, workspaceRoot: string): LoopRu
     ...(report.skippedReason === undefined ? {} : { skippedReason: redactPublicString(report.skippedReason) }),
     ...(report.summary === undefined ? {} : { summary: redactPublicString(report.summary) }),
     ...(report.blockedReason === undefined ? {} : { blockedReason: redactPublicString(report.blockedReason) }),
-  };
-}
-
-function sanitizeJobSummary(job: LoopJobSummary, workspaceRoot: string): LoopJobSummary {
-  const worktreePath = safeWorktreePath(job.worktreePath, workspaceRoot);
-  return {
-    ...job,
-    ...(worktreePath === undefined ? { worktreePath: undefined } : { worktreePath }),
-    ...(job.blockedReason === undefined ? {} : { blockedReason: redactPublicString(job.blockedReason) }),
   };
 }
 
@@ -493,17 +482,6 @@ function safeWorktreePath(worktreePath: string | undefined, workspaceRoot: strin
   const relativePath = relative(managedRoot, normalizedPath);
   if (relativePath.length === 0 || relativePath.startsWith("..") || isAbsolute(relativePath)) return undefined;
   return normalizedPath;
-}
-
-function redactPublicString(value: string): string {
-  return value
-    .replace(/\b(?:gh[opsur]_|github_pat_)[A-Za-z0-9_]{8,}\b/g, "[REDACTED:SECRET]")
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED:SECRET]")
-    .replace(/\b[A-Za-z0-9_-]*(?:api[_-]?key|auth|authorization|bearer|client[_-]?secret|credential|pass(?:word)?|secret|token)[A-Za-z0-9_-]*\s*[=:]\s*[^\s&;,]+/gi, (match) => {
-      const separatorIndex = Math.max(match.lastIndexOf("="), match.lastIndexOf(":"));
-      if (separatorIndex < 0) return "[REDACTED:SECRET]";
-      return `${match.slice(0, separatorIndex + 1)}[REDACTED:SECRET]`;
-    });
 }
 
 function requiredParam(value: string | undefined, name: string): string {

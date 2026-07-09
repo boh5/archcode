@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
 import type { GoalState, GoalStatus, LoopRunReport, LoopStatus, LoopTemplateId } from "@archcode/protocol";
 import { BadRequestError } from "../errors";
+import { redactPublicString } from "../redact";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
   "draft",
@@ -46,15 +47,17 @@ type DashboardProjectError = {
   message: string;
 };
 
-type DashboardLoopRunSummary = Pick<LoopRunReport,
-  | "runId"
-  | "status"
-  | "startedAt"
-  | "endedAt"
-  | "reason"
-  | "summary"
-  | "error"
->;
+type DashboardLoopRunSummary = {
+  runId: string;
+  status: LoopRunReport["status"];
+  trigger: LoopRunReport["trigger"];
+  startedAt: number;
+  endedAt?: number;
+  sessionId?: string;
+  reason?: string;
+  summary?: string;
+  error?: string;
+};
 
 type DashboardLoop = {
   loopId: string;
@@ -173,11 +176,13 @@ function toDashboardLoopRunSummary(run: LoopRunReport): DashboardLoopRunSummary 
   return {
     runId: run.runId,
     status: run.status,
+    trigger: run.trigger,
     startedAt: run.startedAt,
+    ...(run.sessionId === undefined ? {} : { sessionId: run.sessionId }),
     ...(run.endedAt === undefined ? {} : { endedAt: run.endedAt }),
-    ...(run.reason === undefined ? {} : { reason: run.reason }),
-    ...(run.summary === undefined ? {} : { summary: run.summary }),
-    ...(run.error === undefined ? {} : { error: run.error }),
+    ...(run.reason === undefined ? {} : { reason: redactPublicString(run.reason) }),
+    ...(run.summary === undefined ? {} : { summary: redactPublicString(run.summary) }),
+    ...(run.error === undefined ? {} : { error: redactPublicString(run.error) }),
   };
 }
 

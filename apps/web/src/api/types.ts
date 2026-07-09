@@ -50,7 +50,6 @@ export type {
   LoopScheduleSpec,
   LoopTriggerSpec,
   LoopTriggerHealth,
-  LoopJobSummary,
   LoopCleanupState,
   LoopWorktreeArtifact,
   LoopRunReportStatus,
@@ -72,6 +71,8 @@ import type {
   LoopBudgetConfig,
   LoopGoalTemplate,
   LoopRunReport,
+  LoopRunReportStatus,
+  LoopRunTrigger,
   LoopScheduleSpec,
   LoopState,
   LoopStatus,
@@ -101,12 +102,24 @@ export type DashboardGoal = GoalState & {
 // ─── Loop API response types ───
 
 /** Dashboard loop summary with minimal list fields. */
+export interface DashboardLoopRunSummary {
+  runId: string;
+  status: LoopRunReportStatus;
+  trigger: LoopRunTrigger;
+  startedAt: number;
+  endedAt?: number;
+  sessionId?: string;
+  reason?: string;
+  summary?: string;
+  error?: string;
+}
+
 export interface DashboardLoop {
   loopId: string;
   title: string | null;
   status: LoopStatus;
-  currentRun?: LoopRunReport;
-  lastRun?: LoopRunReport;
+  currentRun?: DashboardLoopRunSummary;
+  lastRun?: DashboardLoopRunSummary;
   nextRunAt?: number;
   templateId: LoopTemplateId;
   projectSlug: string;

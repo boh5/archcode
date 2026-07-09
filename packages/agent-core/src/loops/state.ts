@@ -20,7 +20,6 @@ import type {
   LoopIntegrationError as ProtocolLoopIntegrationError,
   LoopIntegrationSnapshot as ProtocolLoopIntegrationSnapshot,
   LoopJobStatus as ProtocolLoopJobStatus,
-  LoopJobSummary as ProtocolLoopJobSummary,
   LoopCollisionSnapshot as ProtocolLoopCollisionSnapshot,
   LoopLimits as ProtocolLoopLimits,
   LoopProjectConfig as ProtocolLoopProjectConfig,
@@ -280,31 +279,6 @@ export const LoopJobStatusSchema = z.enum([
   "expired",
 ]) satisfies z.ZodType<ProtocolLoopJobStatus>;
 
-export const LoopJobSummarySchema = z.strictObject({
-  jobId: LoopIdentifierSchema,
-  loopId: LoopIdentifierSchema,
-  status: LoopJobStatusSchema,
-  triggerKind: z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]),
-  subjectKey: LoopIdentifierSchema,
-  dedupeKey: LoopIdentifierSchema,
-  branchKey: LoopIdentifierSchema.optional(),
-  queuedAt: TimestampMsSchema,
-  startedAt: TimestampMsSchema.optional(),
-  endedAt: TimestampMsSchema.optional(),
-  attempts: z.number().int().nonnegative(),
-  rerunAfterCurrent: z.boolean().optional(),
-  blockedReason: LoopTextSchema.optional(),
-  blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
-  attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
-  resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
-  worktreePath: LoopTextSchema.optional(),
-  baseSha: ShaSchema.optional(),
-  resolvedHeadSha: ShaSchema.optional(),
-  missedCount: z.number().int().nonnegative().optional(),
-  cleanupState: LoopCleanupStateSchema.optional(),
-  observedArtifacts: z.array(LoopWorktreeArtifactSchema).max(100).optional(),
-}) satisfies z.ZodType<ProtocolLoopJobSummary>;
-
 export const LoopTriggerHealthSchema = z.strictObject({
   triggerKind: z.enum(["manual", "interval", "cron", "on_commit", "on_pr", "on_ci_fail"]),
   status: z.enum(["healthy", "degraded", "blocked", "disabled"]),
@@ -385,8 +359,6 @@ export const LoopStateSchema = z.strictObject({
   latestBudget: LoopBudgetSnapshotSchema.optional(),
   latestCollisions: LoopCollisionSnapshotSchema.optional(),
   latestIntegrations: LoopIntegrationSnapshotSchema.optional(),
-  currentJob: LoopJobSummarySchema.optional(),
-  queuedJobs: z.array(LoopJobSummarySchema).max(100).optional(),
   blockedByHitlIds: z.array(LoopIdentifierSchema).optional(),
   attentionStatus: z.enum(["clear", "waiting_for_human"]).optional(),
   resumeCheckpoint: LoopHitlCheckpointSchema.optional(),
@@ -419,7 +391,6 @@ export type LoopConfig = ProtocolLoopConfig;
 export type LoopRunReportStatus = ProtocolLoopRunReportStatus;
 export type LoopRunTrigger = ProtocolLoopRunTrigger;
 export type LoopJobStatus = ProtocolLoopJobStatus;
-export type LoopJobSummary = ProtocolLoopJobSummary;
 export type LoopTriggerHealth = ProtocolLoopTriggerHealth;
 export type LoopWorktreeArtifact = ProtocolLoopWorktreeArtifact;
 export type LoopCleanupState = ProtocolLoopCleanupState;
@@ -674,16 +645,6 @@ export class LoopStateManager {
         blockedByHitlIds: report.blockedByHitlIds,
         attentionStatus: "waiting_for_human",
         resumeCheckpoint: report.resumeCheckpoint,
-        currentJob: report.jobId !== undefined && state.currentJob?.jobId === report.jobId
-          ? {
-              ...state.currentJob,
-              status: "needs_user",
-              blockedReason: report.blockedReason,
-              blockedByHitlIds: report.blockedByHitlIds,
-              attentionStatus: "waiting_for_human",
-              resumeCheckpoint: report.resumeCheckpoint,
-            }
-          : state.currentJob,
       }, blockedAt);
 
       await this.appendRunReport(loopId, report);
@@ -699,13 +660,9 @@ export class LoopStateManager {
       const currentRun = state.currentRun?.resumeCheckpoint?.hitlId === hitlId
         ? undefined
         : clearReportHitlId(state.currentRun, hitlId);
-      const currentJob = state.currentJob?.resumeCheckpoint?.hitlId === hitlId
-        ? undefined
-        : clearJobHitlId(state.currentJob, hitlId);
       const updated = this.nextState({
         ...state,
         currentRun,
-        currentJob,
         blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
         attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : state.attentionStatus,
         resumeCheckpoint: state.resumeCheckpoint?.hitlId === hitlId ? undefined : state.resumeCheckpoint,
@@ -1008,16 +965,6 @@ function clearReportHitlId(report: LoopRunReport | undefined, hitlId: string): L
     ...report,
     blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
     attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : report.attentionStatus,
-  });
-}
-
-function clearJobHitlId(job: LoopJobSummary | undefined, hitlId: string): LoopJobSummary | undefined {
-  if (job === undefined) return undefined;
-  const blockedByHitlIds = job.blockedByHitlIds?.filter((id) => id !== hitlId);
-  return LoopJobSummarySchema.parse({
-    ...job,
-    blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
-    attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : job.attentionStatus,
   });
 }
 

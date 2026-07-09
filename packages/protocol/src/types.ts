@@ -1276,31 +1276,6 @@ export interface LoopWorktreeArtifact {
   sha?: string;
 }
 
-export interface LoopJobSummary {
-  jobId: string;
-  loopId: string;
-  status: LoopJobStatus;
-  triggerKind: LoopRunTrigger;
-  subjectKey: string;
-  dedupeKey: string;
-  branchKey?: string;
-  queuedAt: number;
-  startedAt?: number;
-  endedAt?: number;
-  attempts: number;
-  rerunAfterCurrent?: boolean;
-  blockedReason?: string;
-  blockedByHitlIds?: string[];
-  attentionStatus?: HitlAttentionStatus;
-  resumeCheckpoint?: LoopHitlCheckpoint;
-  worktreePath?: string;
-  baseSha?: string;
-  resolvedHeadSha?: string;
-  missedCount?: number;
-  cleanupState?: LoopCleanupState;
-  observedArtifacts?: LoopWorktreeArtifact[];
-}
-
 export interface LoopTriggerHealth {
   triggerKind: LoopRunTrigger;
   status: "healthy" | "degraded" | "blocked" | "disabled";
@@ -1366,8 +1341,6 @@ export interface LoopState {
   latestBudget?: LoopBudgetSnapshot;
   latestCollisions?: LoopCollisionSnapshot;
   latestIntegrations?: LoopIntegrationSnapshot;
-  currentJob?: LoopJobSummary;
-  queuedJobs?: LoopJobSummary[];
   blockedByHitlIds?: string[];
   attentionStatus?: HitlAttentionStatus;
   resumeCheckpoint?: LoopHitlCheckpoint;

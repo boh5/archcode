@@ -211,32 +211,6 @@ describe("LoopsRoute", () => {
           endedAt: 1700000010000,
         },
         nextRunAt: 1700000060000,
-        currentJob: {
-          jobId: "job-1",
-          loopId: "loop-1",
-          status: "blocked",
-          triggerKind: "on_pr",
-          subjectKey: "github:test-owner/test-repo:pr:42",
-          dedupeKey: "loop-1:on_pr:42",
-          branchKey: "test-owner/test-repo:feature-loop",
-          queuedAt: 1700000020000,
-          attempts: 1,
-          blockedReason: "needs-review",
-          worktreePath: "/safe/worktrees/loop-1",
-          cleanupState: "cleanup_candidate",
-        },
-        queuedJobs: [
-          {
-            jobId: "job-2",
-            loopId: "loop-1",
-            status: "queued",
-            triggerKind: "cron",
-            subjectKey: "cron:*/15",
-            dedupeKey: "loop-1:cron:1700000060000",
-            queuedAt: 1700000060000,
-            attempts: 0,
-          },
-        ],
         triggerHealth: [
           { triggerKind: "on_pr", status: "healthy", cadenceMs: 60000, lastCheckedAt: 1700000030000 },
         ],
@@ -252,6 +226,13 @@ describe("LoopsRoute", () => {
           limits: { maxIterationsPerRun: 4 },
         },
         status: "paused",
+        currentRun: {
+          runId: "run-2",
+          loopId: "loop-2",
+          status: "needs_user",
+          trigger: "manual",
+          startedAt: 1700000020000,
+        },
       }),
     ];
 

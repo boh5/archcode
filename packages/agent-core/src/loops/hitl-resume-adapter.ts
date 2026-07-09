@@ -40,7 +40,7 @@ export class LoopHitlResumeAdapter implements ResumeAdapterContract {
 
   async #checkpoint(record: HitlRecord): Promise<LoopHitlCheckpoint> {
     const state = await this.#stateManager.read(record.owner.ownerId);
-    const checkpoint = state.resumeCheckpoint ?? state.currentRun?.resumeCheckpoint ?? state.currentJob?.resumeCheckpoint;
+    const checkpoint = state.resumeCheckpoint ?? state.currentRun?.resumeCheckpoint;
     if (checkpoint === undefined) throw new Error(`Missing Loop HITL checkpoint for ${record.hitlId}`);
     if (checkpoint.loopId !== record.owner.ownerId) throw new Error(`Loop HITL checkpoint ${record.hitlId} belongs to ${checkpoint.loopId}`);
     return checkpoint;

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { JSDOM } from "jsdom";
-import type { DashboardGoal, DashboardLoop, HitlProjection, LoopRunReport } from "../api/types";
+import type { DashboardGoal, DashboardLoop, DashboardLoopRunSummary, HitlProjection } from "../api/types";
 import { Dashboard } from "./dashboard";
 
 // ─── Test helpers ───
@@ -181,10 +181,9 @@ function makeHitlItem(overrides: Partial<HitlProjection> = {}): HitlProjection {
   };
 }
 
-function makeLoopRun(overrides: Partial<LoopRunReport> = {}): LoopRunReport {
+function makeLoopRun(overrides: Partial<DashboardLoopRunSummary> = {}): DashboardLoopRunSummary {
   return {
     runId: "run-1",
-    loopId: "loop-1",
     status: "running",
     trigger: "manual",
     startedAt: 1700000000000,
@@ -328,8 +327,8 @@ describe("Dashboard", () => {
       title: "Nightly Loop Sweep",
       projectSlug: "alpha",
       projectName: "Alpha Project",
-      currentRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-current-alpha", status: "running" }),
-      lastRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-last-alpha", status: "succeeded", endedAt: 1700000100000 }),
+      currentRun: makeLoopRun({ runId: "run-current-alpha", status: "running" }),
+      lastRun: makeLoopRun({ runId: "run-last-alpha", status: "succeeded", endedAt: 1700000100000 }),
       nextRunAt: 1700000900000,
       templateId: "goal_runner",
     });

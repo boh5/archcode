@@ -7,75 +7,20 @@ import { useActivateLoopGlobalKill, useCancelLoopCurrentRun, useClearLoopGlobalK
 import { EditLoopDialog } from "../components/features/CreateLoopDialog";
 import { HitlInbox } from "../components/features/HitlCard";
 import { useRealtimeHitl } from "../store/hitl-store";
+import { deriveLoopStatus, formatRunHistoryBadgeClass, formatRunHistoryLabel } from "../lib/loop-status";
 import type {
   LoopBudgetSnapshot,
   LoopCollisionSnapshot,
   LoopConfig,
   LoopIntegrationError,
   LoopIntegrationStatusSnapshot,
-  LoopJobSummary,
   LoopKillState,
   LoopRunReport,
-  LoopRunReportStatus,
   LoopScheduleSpec,
   LoopState,
   LoopTriggerHealth,
   LoopWorktreeArtifact,
 } from "../api/types";
-
-// Four primary user-facing states for Loop primary surfaces (matches list/dashboard).
-type PrimaryLoopState = "Running" | "Awaiting Input" | "Completed" | "Failed";
-
-const PRIMARY_STATE_BADGE_CLASS: Record<PrimaryLoopState, string> = {
-  "Running": "bg-success-muted text-success",
-  "Awaiting Input": "bg-warning-muted text-warning",
-  "Completed": "bg-accent-muted text-accent",
-  "Failed": "bg-error-muted text-error",
-};
-
-function mapRunStatusToPrimary(status: LoopRunReportStatus): PrimaryLoopState {
-  switch (status) {
-    case "running":
-      return "Running";
-    case "succeeded":
-      return "Completed";
-    case "failed":
-    case "budget_exceeded":
-      return "Failed";
-    case "needs_user":
-      return "Awaiting Input";
-    default:
-      // skipped, cancelled -> finished without failure
-      return "Completed";
-  }
-}
-
-function mapToPrimaryState(loop: LoopState): PrimaryLoopState {
-  const currentJob = loop.currentJob;
-  const currentRun = loop.currentRun;
-
-  if (
-    currentJob?.status === "blocked" ||
-    currentJob?.status === "needs_user" ||
-    currentRun?.status === "needs_user"
-  ) {
-    return "Awaiting Input";
-  }
-
-  if (currentRun?.status === "running" || currentJob?.status === "running") {
-    return "Running";
-  }
-
-  if (loop.status === "error" || loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") {
-    return "Failed";
-  }
-
-  if (loop.lastRun?.status === "succeeded") {
-    return "Completed";
-  }
-
-  return loop.status === "active" ? "Running" : "Completed";
-}
 
 export function LoopDetailRoute() {
   const { slug = "", loopId = "" } = useParams<{ slug: string; loopId: string }>();
@@ -290,24 +235,23 @@ function BackBar({ slug }: { slug: string }) {
 }
 
 function PrimarySummarySection({ slug, loop }: { slug: string; loop: LoopState }) {
-  const primaryState = mapToPrimaryState(loop);
-  const currentActivity = formatCurrentActivity(loop);
+  const status = deriveLoopStatus(loop);
   const nextRun = formatNextRun(loop.nextRunAt);
   const lastResult = formatLastResult(loop.lastRun);
 
   return (
-    <DetailSection title="Status" testId="loop-status-section">
+    <DetailSection title="Current State" testId="loop-status-section">
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="flex items-center gap-2">
           <span
             data-testid="loop-primary-state"
-            className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${PRIMARY_STATE_BADGE_CLASS[primaryState]}`}
+            className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${status.badgeClass}`}
           >
-            {primaryState}
+            {status.label}
           </span>
+          <span className="text-[12.5px] text-text-secondary">{status.activity}</span>
         </div>
         <FieldRow label="run count" value={String(loop.runCount)} />
-        <FieldRow label="current activity" value={currentActivity} wide />
         <FieldRow label="next run" value={nextRun} />
         <FieldRow label="last result" value={lastResult} wide />
       </div>
@@ -342,11 +286,8 @@ function AttentionSection({
   if (globalKillActive) {
     attentionItems.push(`Global kill is active${killState?.reason ? `: ${killState.reason}` : ""}. Scheduled and manual Loop execution stays blocked until cleared.`);
   }
-  if (loop.currentRun?.status === "needs_user" || loop.currentJob?.status === "needs_user") {
+  if (loop.currentRun?.status === "needs_user") {
     attentionItems.push("Current run is waiting for user input.");
-  }
-  if (loop.currentJob?.status === "blocked" && loop.currentJob.blockedReason) {
-    attentionItems.push(`Current job is blocked: ${loop.currentJob.blockedReason}`);
   }
   if (loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") {
     attentionItems.push(`Last run failed${loop.lastRun.error ? `: ${loop.lastRun.error}` : ""}.`);
@@ -437,8 +378,8 @@ function RecentResultsSection({
               className="rounded-md border border-border-subtle bg-bg-base px-3 py-2"
             >
               <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-                <span className={`text-[11px] px-1.5 py-[1px] rounded font-medium ${PRIMARY_STATE_BADGE_CLASS[mapRunStatusToPrimary(run.status)]}`}>
-                  {mapRunStatusToPrimary(run.status)}
+                <span className={`text-[11px] px-1.5 py-[1px] rounded font-medium ${formatRunHistoryBadgeClass(run.status)}`}>
+                  {formatRunHistoryLabel(run.status)}
                 </span>
                 <span className="text-text-tertiary">trigger: {run.trigger}</span>
                 <span className="text-text-tertiary">started: {formatDateTime(run.startedAt)}</span>
@@ -536,7 +477,6 @@ function AdvancedDebugSection({
           <DebugKillStateCard loop={loop} />
           <DebugCollisionLogCard collisions={collisions} collisionsLoading={collisionsLoading} />
           <DebugIntegrationStatusCard integrations={integrations} integrationsLoading={integrationsLoading} />
-          <DebugQueueCard loop={loop} />
           <DebugTriggerHealthCard health={loop.triggerHealth} />
           <DebugRunHistorySection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
           <DebugStateSection
@@ -638,18 +578,6 @@ function DebugIntegrationStatusCard({ integrations, integrationsLoading }: { int
       ) : (
         <div className="text-[12.5px] text-text-tertiary">Integration status unavailable</div>
       )}
-    </div>
-  );
-}
-
-function DebugQueueCard({ loop }: { loop: LoopState }) {
-  return (
-    <div data-testid="loop-queue-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
-      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Queue / Worktree</h3>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <FieldRow label="current job" value={formatJobSummary(loop.currentJob)} />
-        <FieldRow label="queued jobs" value={loop.queuedJobs?.length ? loop.queuedJobs.map(formatJobSummary).join("; ") : "none"} />
-      </div>
     </div>
   );
 }
@@ -891,27 +819,6 @@ function LinkedRunResources({
   );
 }
 
-function formatCurrentActivity(loop: LoopState): string {
-  const run = loop.currentRun;
-  const job = loop.currentJob;
-  if (run?.status === "running") {
-    return `Running ${run.trigger} run${run.sessionId ? ` (session ${run.sessionId})` : ""}`;
-  }
-  if (run?.status === "needs_user" || job?.status === "needs_user") {
-    return "Waiting for user input";
-  }
-  if (job?.status === "blocked") {
-    return `Blocked${job.blockedReason ? `: ${job.blockedReason}` : ""}`;
-  }
-  if (loop.status === "paused") {
-    return "Paused";
-  }
-  if (loop.status === "disabled") {
-    return "Disabled";
-  }
-  return "Idle";
-}
-
 function formatNextRun(value: number | undefined): string {
   if (value === undefined || value === null) return "none";
   return new Date(value).toLocaleString();
@@ -919,9 +826,9 @@ function formatNextRun(value: number | undefined): string {
 
 function formatLastResult(run: LoopRunReport | undefined): string {
   if (!run) return "none";
-  const state = mapRunStatusToPrimary(run.status);
+  const label = formatRunHistoryLabel(run.status);
   const time = new Date(run.startedAt).toLocaleString();
-  return `${state} ${time}${run.summary ? ` — ${run.summary}` : ""}`;
+  return `${label} ${time}${run.summary ? ` — ${run.summary}` : ""}`;
 }
 
 function formatSchedule(schedule: LoopScheduleSpec): string {
@@ -951,19 +858,6 @@ function formatCleanupPolicy(policy: LoopConfig["cleanupPolicy"]): string {
     policy.noFindingRuns !== undefined ? `no-finding runs ${policy.noFindingRuns}` : undefined,
     policy.quietDays !== undefined ? `quiet days ${policy.quietDays}` : undefined,
     policy.requiresNoPendingQueue ? "requires no pending queue" : undefined,
-  ].filter(Boolean).join("; ");
-}
-
-function formatJobSummary(job: LoopJobSummary | undefined): string {
-  if (!job) return "none";
-  return [
-    `${job.jobId} ${job.status}`,
-    `trigger ${job.triggerKind}`,
-    `subject ${job.subjectKey}`,
-    job.branchKey ? `branch ${job.branchKey}` : undefined,
-    job.worktreePath ? `worktree ${job.worktreePath}` : undefined,
-    job.blockedReason ? `blocked ${job.blockedReason}` : undefined,
-    job.cleanupState ? `cleanup ${job.cleanupState}` : undefined,
   ].filter(Boolean).join("; ");
 }
 

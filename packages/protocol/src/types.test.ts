@@ -26,7 +26,6 @@ import type {
   SessionEventPayload,
   LoopConfig,
   LoopCleanupPolicy,
-  LoopJobSummary,
   LoopProjectConfig,
   LoopStatus,
   LoopScheduleSpec,
@@ -695,7 +694,7 @@ describe("Loop types", () => {
     expect(projectConfig.coordinator.maxConcurrent).toBe(2);
   });
 
-  test("Loop cleanup and job metadata types serialize", () => {
+  test("Loop cleanup and trigger metadata types serialize", () => {
     const cleanupPolicy: LoopCleanupPolicy = {
       deleteUnchangedWorktrees: true,
       preserveChangedArtifacts: true,
@@ -707,23 +706,6 @@ describe("Loop types", () => {
       sizeBytes: 120,
       sha: "abc123",
     };
-    const job: LoopJobSummary = {
-      jobId: "job-1",
-      loopId: "loop-1",
-      status: "blocked",
-      triggerKind: "on_pr",
-      subjectKey: "pr:test-owner/test-repo#42",
-      dedupeKey: "loop-1:on_pr:pr:test-owner/test-repo#42",
-      branchKey: "test-owner/test-repo:feature",
-      queuedAt: 1000,
-      attempts: 1,
-      blockedReason: "needs_user",
-      worktreePath: "/tmp/worktree",
-      baseSha: "base",
-      resolvedHeadSha: "head",
-      cleanupState: "preserved",
-      observedArtifacts: [artifact],
-    };
     const health: LoopTriggerHealth = {
       triggerKind: "on_ci_fail",
       status: "healthy",
@@ -733,7 +715,7 @@ describe("Loop types", () => {
     };
 
     expect(serializeRoundTrip(cleanupPolicy)).toEqual(cleanupPolicy);
-    expect(serializeRoundTrip(job).observedArtifacts).toEqual([artifact]);
+    expect(serializeRoundTrip(artifact)).toEqual(artifact);
     expect(serializeRoundTrip(health)).toEqual(health);
   });
 
@@ -926,18 +908,6 @@ describe("Loop types", () => {
       runCount: 1,
       stateVersion: 2,
       generatedStateSummary: "Loop has run 1 time(s). Last run: succeeded.",
-      currentJob: {
-        jobId: "job-2",
-        loopId: "loop-1",
-        status: "running",
-        triggerKind: "interval",
-        subjectKey: "interval:4000",
-        dedupeKey: "loop-1:interval:interval:4000",
-        queuedAt: 3500,
-        startedAt: 4000,
-        attempts: 1,
-      },
-      queuedJobs: [],
       triggerHealth: [{ triggerKind: "on_pr", status: "healthy", cadenceMs: 60000 }],
       cleanupState: "not_started",
     };
@@ -949,7 +919,6 @@ describe("Loop types", () => {
     expect(parsed.nextRunAt).toBe(10000);
     expect(parsed.runCount).toBe(1);
     expect(parsed.generatedStateSummary).toContain("succeeded");
-    expect(parsed.currentJob?.jobId).toBe("job-2");
     expect(parsed.triggerHealth?.[0]?.triggerKind).toBe("on_pr");
   });
 

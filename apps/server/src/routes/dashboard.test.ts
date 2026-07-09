@@ -231,29 +231,6 @@ describe("dashboard routes", () => {
         dedupeKey: "loop:cron:main",
         cleanupState: "cleaned",
       },
-      currentJob: {
-        jobId: "job-current",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "blocked",
-        triggerKind: "on_pr",
-        subjectKey: "pr:owner/repo#42",
-        dedupeKey: "loop:on_pr:pr:owner/repo#42",
-        branchKey: "github:owner/repo:main",
-        queuedAt: 1_000,
-        attempts: 1,
-        cleanupState: "preserved",
-      },
-      queuedJobs: [{
-        jobId: "job-queued",
-        loopId: "00000000-0000-4000-8000-000000000001",
-        status: "queued",
-        triggerKind: "on_ci_fail",
-        subjectKey: "ci:owner/repo:deadbeef",
-        dedupeKey: "loop:on_ci_fail:ci:owner/repo:deadbeef",
-        queuedAt: 1_100,
-        attempts: 0,
-        cleanupState: "expired_needs_review",
-      }],
       triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000, lastCheckedAt: 1_200 }],
       cleanupState: "cleanup_candidate",
     };
@@ -272,8 +249,8 @@ describe("dashboard routes", () => {
       projectSlug: projects[0].slug,
       projectName: projects[0].name,
     }));
-    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", startedAt: 1_000 });
-    expect(body.loops[0]?.lastRun).toEqual({ runId: "run-last", status: "succeeded", startedAt: 500, endedAt: 750, summary: "Loop completed." });
+    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", trigger: "on_pr", startedAt: 1_000 });
+    expect(body.loops[0]?.lastRun).toEqual({ runId: "run-last", status: "succeeded", trigger: "cron", startedAt: 500, endedAt: 750, summary: "Loop completed." });
     expect(body.loops[0]).not.toHaveProperty("config");
     expect(body.loops[0]).not.toHaveProperty("currentJob");
     expect(body.loops[0]).not.toHaveProperty("queuedJobs");
@@ -285,11 +262,78 @@ describe("dashboard routes", () => {
     expect(serialized).not.toContain("queuedJobs");
     expect(serialized).not.toContain("triggerHealth");
     expect(serialized).not.toContain("cleanupState");
-    expect(serialized).not.toContain("job-current");
-    expect(serialized).not.toContain("job-queued");
     expect(serialized).not.toContain("subjectKey");
     expect(serialized).not.toContain("dedupeKey");
     expect(serialized).not.toContain("branchKey");
     expect(serialized).not.toContain("pr:owner/repo#42");
+  });
+
+  test("GET /api/loops redacts run summary and error secrets", async () => {
+    const { app, projects, runtime } = await createFixture("loop-redaction");
+    const fakeGithubToken = `github_pat_${"1".repeat(16)}`;
+    const fakeApiSecretValue = "plain-secret";
+    const fakeOpenAiToken = `sk-${"1".repeat(16)}`;
+    const loop: LoopState = {
+      loopId: crypto.randomUUID(),
+      projectId: projects[0].slug,
+      config: {
+        templateId: "watch_report",
+        title: "Secret loop",
+        schedule: { kind: "manual" },
+        approvalPolicy: "interactive",
+        limits: { maxIterationsPerRun: 1 },
+      },
+      status: "active",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      runCount: 1,
+      stateVersion: 1,
+      currentRun: {
+        runId: "run-current",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "running",
+        trigger: "manual",
+        startedAt: 1_000,
+        reason: "execution_failed",
+        summary: `uses ${fakeGithubToken} and api_key=${fakeApiSecretValue}`,
+      },
+      lastRun: {
+        runId: "run-last",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "failed",
+        trigger: "cron",
+        startedAt: 500,
+        endedAt: 750,
+        reason: "execution_failed",
+        error: `provider rejected ${fakeOpenAiToken}`,
+      },
+    };
+    (runtime.listLoops as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => workspaceRoot === projects[0].workspaceRoot ? [loop] : []);
+
+    const res = await app.request("/api/loops?status=active");
+    const body = await res.json() as { loops: Array<Record<string, unknown>> };
+    const serialized = JSON.stringify(body);
+
+    expect(res.status).toBe(200);
+    expect(body.loops[0]?.currentRun).toEqual({
+      runId: "run-current",
+      status: "running",
+      trigger: "manual",
+      startedAt: 1_000,
+      reason: "execution_failed",
+      summary: "uses [REDACTED:SECRET] and api_key=[REDACTED:SECRET]",
+    });
+    expect(body.loops[0]?.lastRun).toEqual({
+      runId: "run-last",
+      status: "failed",
+      trigger: "cron",
+      startedAt: 500,
+      endedAt: 750,
+      reason: "execution_failed",
+      error: "provider rejected [REDACTED:SECRET]",
+    });
+    expect(serialized).not.toContain(fakeGithubToken);
+    expect(serialized).not.toContain(fakeApiSecretValue);
+    expect(serialized).not.toContain(fakeOpenAiToken);
   });
 });
