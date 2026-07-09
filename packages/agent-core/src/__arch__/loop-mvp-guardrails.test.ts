@@ -115,6 +115,7 @@ const loopContractFiles = [
   webDashboardRouteFile,
 ].filter((file) => existsSync(file));
 
+const loopRuntimeSelectorFiles = [loopRunnerFile, loopSchedulerFile, configuredAgentFile, toolRegistryFile].filter((file) => existsSync(file));
 const loopRunnerBoundaryFiles = [loopRunnerFile, loopSchedulerFile].filter((file) => existsSync(file));
 const connectorDescriptorFiles = [
   ...findTsFiles(toolSourceRoot),
@@ -384,11 +385,10 @@ describe("Loop simplified target-model architecture guardrails", () => {
 
   test("Loop config, templates, protocol, and runtime expose no mode-like selector", () => {
     expectNoViolations(findTextViolations(loopContractFiles, fieldOrStringPatterns(forbiddenSelectorNames)));
-    expectNoViolations(findTextViolations([loopRunnerFile, loopSchedulerFile, configuredAgentFile, toolRegistryFile].filter((file) => existsSync(file)), [
+    expectNoViolations(findTextViolations(loopRuntimeSelectorFiles, fieldOrStringPatterns(forbiddenSelectorNames)));
+    expectNoViolations(findTextViolations(loopRuntimeSelectorFiles, [
       /origin\.mode\b/,
       /origin\?\.mode\b/,
-      /\.mode\b/,
-      /["']mode["']/,
       /\bLoopMode\b/,
     ]));
   });
