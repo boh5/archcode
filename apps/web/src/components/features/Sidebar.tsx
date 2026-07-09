@@ -419,6 +419,10 @@ export function Sidebar() {
   const { data: goals } = useGoals(slug);
   const { data: loops } = useLoops(slug);
 
+  // Root Dashboard ("/") has no route :slug; fall back to first project so Loop
+  // create never POSTs to `/api/projects//loops` (404).
+  const loopCreateSlug = slug || projects?.[0]?.slug || "";
+
   const routeTab: SidebarTab = deriveTabFromPath(location.pathname);
   const activeTab = selectedTab;
   const projectDashboardPath = `/projects/${slug}`;
@@ -798,6 +802,7 @@ export function Sidebar() {
                 onClick={() => setCreateLoopOpen(true)}
                 title="New loop"
                 label="New loop"
+                disabled={!loopCreateSlug}
               />
             </div>
           </div>
@@ -857,10 +862,10 @@ export function Sidebar() {
       <CreateLoopDialog
         open={createLoopOpen}
         onClose={() => setCreateLoopOpen(false)}
-        slug={slug}
+        slug={loopCreateSlug}
         onCreated={(newLoopId) => {
           setCreateLoopOpen(false);
-          navigate(`/projects/${slug}/loops/${newLoopId}`);
+          navigate(`/projects/${loopCreateSlug}/loops/${newLoopId}`);
         }}
       />
     </div>

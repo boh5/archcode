@@ -792,6 +792,45 @@ describe("Sidebar", () => {
     expect(dialogs[0]?.props?.slug).toBe("archcode");
   });
 
+  test("root Dashboard with no route slug falls back to first project slug for Loop create", () => {
+    projects = [project];
+    loops = [];
+    // Root Dashboard ("/") has no :slug route param.
+    useParams.mockImplementation(() => ({ slug: "", sessionId: "", goalId: "", loopId: "" }));
+    currentPathname = "/";
+
+    const tree = render();
+    const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
+    const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
+    expect(loopCreateButton).toBeDefined();
+    // Button stays enabled because a fallback project slug is available.
+    expect(loopCreateButton?.props?.disabled).toBeFalsy();
+
+    const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
+    expect(dialogs).toHaveLength(1);
+    // CreateLoopDialog must receive a non-empty fallback slug, never "".
+    expect(dialogs[0]?.props?.slug).toBe("archcode");
+  });
+
+  test("root Dashboard with no route slug and no projects disables New loop button", () => {
+    projects = [];
+    loops = [];
+    useParams.mockImplementation(() => ({ slug: "", sessionId: "", goalId: "", loopId: "" }));
+    currentPathname = "/";
+
+    const tree = render();
+    const createButtons = findAll(tree, (element) => typeName(element) === "CreateButton");
+    const loopCreateButton = createButtons.find((b) => b.props?.title === "New loop");
+    expect(loopCreateButton).toBeDefined();
+    // No fallback slug available -> button disabled so the broken dialog never opens.
+    expect(loopCreateButton?.props?.disabled).toBe(true);
+
+    const dialogs = findAll(tree, (element) => typeName(element) === "CreateLoopDialog");
+    expect(dialogs).toHaveLength(1);
+    // Dialog still renders but receives an empty slug; the disabled button prevents opening it.
+    expect(dialogs[0]?.props?.slug).toBe("");
+  });
+
   test("loop item receives loop with empty title and uses placeholder inside component", () => {
     projects = [project];
     loops = [
