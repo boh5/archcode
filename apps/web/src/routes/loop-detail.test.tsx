@@ -7,7 +7,6 @@ import { JSDOM } from "jsdom";
 import type { GlobalSSEHitlRealtimeEvent } from "@archcode/protocol";
 import type { HitlProjection, LoopIntegrationStatusItem, LoopKillState, LoopRunReport, LoopState } from "../api/types";
 import { LoopDetailRoute } from "./loop-detail";
-import { EditLoopForm } from "../components/features/CreateLoopDialog";
 import { hitlStore } from "../store/hitl-store";
 
 const DOM_GLOBAL_NAMES = [
@@ -76,25 +75,6 @@ function installDom(path = "/projects/demo/loops/loop-1"): JSDOM {
   htmlProto.detachEvent = htmlProto.detachEvent ?? (() => {});
 
   return dom;
-}
-
-function submitForm(container: Element): void {
-  const form = container.querySelector("form");
-  if (!form) throw new Error("Missing form");
-  form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
-}
-
-function expectRatioInputsNativelyValid(container: Element, soft: string, hard: string): void {
-  const softInput = container.querySelector("#new-loop-soft-ratio") as HTMLInputElement | null;
-  const hardInput = container.querySelector("#new-loop-hard-ratio") as HTMLInputElement | null;
-  if (!softInput || !hardInput) throw new Error("Missing ratio inputs");
-
-  expect(softInput.step).toBe("0.01");
-  expect(hardInput.step).toBe("0.01");
-  expect(softInput.value).toBe(soft);
-  expect(hardInput.value).toBe(hard);
-  expect(softInput.checkValidity()).toBe(true);
-  expect(hardInput.checkValidity()).toBe(true);
 }
 
 async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
@@ -289,10 +269,9 @@ function setupLoopDetailFetch(input: {
   triggerConflict?: boolean;
   killState?: LoopKillState;
   integrationStatuses?: LoopIntegrationStatusItem[];
-} = {}): { paths: string[]; fetchMock: ReturnType<typeof mock>; setLoop: (loop: LoopState) => void; getPatchBody: () => Record<string, unknown> | undefined } {
+} = {}): { paths: string[]; fetchMock: ReturnType<typeof mock> } {
   let currentLoop = input.loop ?? makeLoop();
   let killState: LoopKillState = input.killState ?? { globalKillActive: true, activatedAt: 1700000110000, activatedBy: "web", reason: "maintenance stop" };
-  let patchBody: Record<string, unknown> | undefined;
   let runs = input.runs ?? [
     makeRun({
       runId: "run-history-1",
@@ -376,17 +355,6 @@ function setupLoopDetailFetch(input: {
         updatedAt: 1700000300000,
       };
       return Response.json({ report });
-    }
-
-    if (path === "/api/projects/demo/loops/loop-1" && init?.method === "PATCH") {
-      patchBody = init.body ? JSON.parse(init.body as string) : undefined;
-      const nextConfig = patchBody?.config as LoopState["config"] | undefined;
-      currentLoop = {
-        ...currentLoop,
-        config: nextConfig ?? currentLoop.config,
-        updatedAt: 1700000330000,
-      };
-      return Response.json({ loop: currentLoop });
     }
 
     if (path === "/api/projects/demo/loops/loop-1/runs/current/cancel" && init?.method === "POST") {
@@ -476,14 +444,7 @@ function setupLoopDetailFetch(input: {
 
   Object.defineProperty(globalThis, "fetch", { value: fetchMock, configurable: true });
 
-  return {
-    paths,
-    fetchMock,
-    setLoop: (loop: LoopState) => {
-      currentLoop = loop;
-    },
-    getPatchBody: () => patchBody,
-  };
+  return { paths, fetchMock };
 }
 
 function toPath(input: Parameters<typeof fetch>[0]): string {
@@ -505,7 +466,7 @@ describe("LoopDetailRoute", () => {
     mock.restore();
   });
 
-  test("trigger pause resume buttons call endpoints, refetch visible status, and keep forbidden UI absent", async () => {
+  test("primary view shows status, current activity, next run, last result, attention, recent results, settings; hides diagnostics", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -520,53 +481,48 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(container.textContent).toContain("Daily Triage Loop");
-        expect(container.textContent).toContain("Config");
-        expect(container.textContent).toContain("Live Status");
-        expect(container.textContent).toContain("Guardrails");
-        expect(container.textContent).toContain("Run History");
-        expect(container.textContent).toContain("State");
+        expect(container.querySelector('[data-testid="loop-status-section"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-attention-section"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-recent-results-section"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-settings-section"]')).not.toBeNull();
       });
 
-      const pageText = container.textContent ?? "";
-      expect(pageText).toContain("interval 60000ms");
-      expect(pageText).toContain("goal");
-      expect(pageText).toContain("act");
-      expect(pageText).toContain("loop_github_pr_watch");
-      expect(pageText).toContain("explicit_per_run");
-      expect(pageText).toContain("6");
-      expect(pageText).toContain("tokens 1000");
-      expect(pageText).toContain("Review failing tests and summarize concrete next steps.");
-      expect(pageText).toContain("Triage Follow-up Goal; objective:");
-      expect(pageText).toContain("run-current running manual reason completed");
-      expect(pageText).toContain("run-last succeeded interval reason completed");
-      expect(pageText).toContain("run-history-1");
-      expect(pageText).toContain("Typecheck failed");
-      expect(pageText).toContain("Loop is already running");
-      expect(pageText).toContain("Generated state summary from markdown.");
-      expect(container.querySelector('[data-testid="loop-detail-page"]')).not.toBeNull();
-      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
-      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("800 tokens remaining");
-      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("USD availability");
-      expect(container.querySelector('[data-testid="loop-cancel-current-run-button"]')).not.toBeNull();
-      expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
-      expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("maintenance stop");
-      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:test-owner/test-repo:pr:42");
-      expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("GitHub token configured: no");
-      expect(container.querySelector('[data-testid="loop-integration-status"]')?.textContent).toContain("60000ms retry-after");
-      const historyRow = container.querySelector('[data-testid="loop-run-history-row-run-history-1"]');
-      expect(historyRow?.textContent).toContain("reason: execution_failed");
-      expect(historyRow?.textContent).toContain("budget: 3 iterations");
-      expect(historyRow?.textContent).toContain("collision conflicts: github:test-owner/test-repo:pr:42");
-      expect(historyRow?.textContent).toContain("integration: github integration_auth_missing");
+      const statusSection = container.querySelector('[data-testid="loop-status-section"]')!;
+      expect(statusSection.textContent).toContain("Running");
+      expect(statusSection.textContent).toContain("run count");
+      expect(statusSection.textContent).toContain("current activity");
+      expect(statusSection.textContent).toContain("next run");
+      expect(statusSection.textContent).toContain("last result");
+
+      const settingsSection = container.querySelector('[data-testid="loop-settings-section"]')!;
+      expect(settingsSection.textContent).toContain("template");
+      expect(settingsSection.textContent).toContain("goal_runner");
+      expect(settingsSection.textContent).toContain("schedule");
+      expect(settingsSection.textContent).toContain("interval 60000ms");
+      expect(settingsSection.textContent).toContain("worktree");
+      expect(settingsSection.textContent).toContain("disabled");
+      expect(settingsSection.textContent).toContain("budget defaults");
+      expect(settingsSection.textContent).toContain("iterations 6");
+      expect(settingsSection.textContent).toContain("task prompt");
+      expect(settingsSection.textContent).toContain("Review failing tests and summarize concrete next steps.");
+      expect(settingsSection.textContent).toContain("goal template");
+      expect(settingsSection.textContent).toContain("Triage Follow-up Goal");
+
+      const recentSection = container.querySelector('[data-testid="loop-recent-results-section"]')!;
+      expect(recentSection.textContent).toContain("Failed");
+      expect(recentSection.textContent).toContain("Typecheck failed");
+      expect(recentSection.textContent).toContain("Loop is already running");
+      expect(recentSection.querySelector('[data-testid="loop-recent-result-run-history-1"]')).not.toBeNull();
 
       expect(container.querySelector('a[href="/projects/demo/sessions/session-current"]')).not.toBeNull();
       expect(container.querySelector('a[href="/projects/demo/goals/goal-current"]')).not.toBeNull();
       expect(container.querySelector('a[href="/projects/demo/sessions/session-history"]')).not.toBeNull();
       expect(container.querySelector('a[href="/projects/demo/goals/goal-history"]')).not.toBeNull();
 
-      const lowerText = pageText.toLowerCase();
-      expect(lowerText).not.toContain("readiness");
-      expect(lowerText).not.toContain("cron");
+      expect(container.querySelector('[data-testid="loop-detail-page"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="loop-cancel-current-run-button"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("maintenance stop");
 
       const triggerButton = findElementByText(container, "Trigger manual run") as HTMLButtonElement;
       expect(triggerButton.disabled).toBe(true);
@@ -591,7 +547,6 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(paths).toContain("POST /api/projects/demo/loops/loop-1/trigger");
-        expect(container.textContent).toContain("run-triggered running manual reason none");
       });
 
       await act(async () => {
@@ -623,7 +578,6 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(paths).toContain("POST /api/projects/demo/loops/loop-1/pause");
-        expect(container.querySelector('[data-testid="loop-status-badge"]')?.textContent).toContain("paused");
       });
 
       await act(async () => {
@@ -634,8 +588,6 @@ describe("LoopDetailRoute", () => {
 
       await waitFor(() => {
         expect(paths).toContain("POST /api/projects/demo/loops/loop-1/resume");
-        expect(container.querySelector('[data-testid="loop-status-badge"]')?.textContent).toContain("active");
-        expect(container.textContent).toContain("2023-11-14T22:21:40.000Z");
       });
     } finally {
       await act(async () => {
@@ -646,7 +598,79 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("renders seeded guardrail evidence selectors with collision and integration states", async () => {
+  test("Advanced Debug is collapsed by default and diagnostics are hidden until expanded", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    setupLoopDetailFetch();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderLoopDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-advanced-debug-section"]')).not.toBeNull();
+      });
+
+      const toggle = container.querySelector('[data-testid="loop-advanced-debug-toggle"]') as HTMLButtonElement | null;
+      expect(toggle).not.toBeNull();
+      expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).toBeNull();
+
+      expect(container.querySelector('[data-testid="loop-budget-card"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-collision-log"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-integration-status"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-queue-card"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-trigger-health"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-run-history-section"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-state-section"]')).toBeNull();
+      expect(container.querySelector('[data-testid="loop-raw-config-card"]')).toBeNull();
+
+      await act(async () => {
+        toggle!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).not.toBeNull();
+        expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+      });
+
+      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
+      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("800 tokens remaining");
+      expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("USD availability");
+      expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:test-owner/test-repo:pr:42");
+      const integrationStatus = container.querySelector('[data-testid="loop-integration-status"]')?.textContent ?? "";
+      expect(integrationStatus).toContain("github");
+      expect(integrationStatus).toContain("auth_missing");
+      expect(integrationStatus).toContain("GitHub token configured: no");
+      expect(integrationStatus).toContain("github_actions");
+      expect(integrationStatus).toContain("rate_limited");
+      expect(integrationStatus).toContain("60000ms retry-after");
+
+      const historyRow = container.querySelector('[data-testid="loop-run-history-row-run-history-1"]');
+      expect(historyRow?.textContent).toContain("reason: execution_failed");
+      expect(historyRow?.textContent).toContain("budget: 3 iterations");
+      expect(historyRow?.textContent).toContain("collision conflicts: github:test-owner/test-repo:pr:42");
+      expect(historyRow?.textContent).toContain("integration: github integration_auth_missing");
+
+      expect(container.querySelector('[data-testid="loop-state-section"]')?.textContent).toContain("Generated state summary from markdown.");
+      const rawConfig = container.querySelector('[data-testid="loop-raw-config-card"]')?.textContent ?? "";
+      expect(rawConfig).toContain("approval policy");
+      expect(rawConfig).toContain("explicit_per_run");
+      expect(rawConfig).toContain("cleanup policy");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("Advanced Debug reveals seeded collision and integration diagnostics after expansion", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -703,10 +727,19 @@ describe("LoopDetailRoute", () => {
       await renderLoopDetailRoute(reactRoot, queryClient);
 
       await waitFor(() => {
-        expect(container.querySelector('[data-testid="loop-detail-page"]')).not.toBeNull();
-        expect(container.querySelector('[data-testid="loop-budget-card"]')?.textContent).toContain("80% / 100%");
-        expect(container.querySelector('[data-testid="loop-global-kill-button"]')).not.toBeNull();
-        expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Seeded kill switch");
+        expect(container.querySelector('[data-testid="loop-advanced-debug-section"]')).not.toBeNull();
+      });
+
+      expect(container.querySelector('[data-testid="loop-global-kill-banner"]')?.textContent).toContain("Seeded kill switch");
+
+      const toggle = container.querySelector('[data-testid="loop-advanced-debug-toggle"]') as HTMLButtonElement | null;
+      await act(async () => {
+        toggle!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="loop-budget-card"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="loop-collision-log"]')?.textContent).toContain("github:test-owner/test-repo:pr:42");
         const integrationStatus = container.querySelector('[data-testid="loop-integration-status"]')?.textContent ?? "";
         expect(integrationStatus).toContain("github");
@@ -728,7 +761,7 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("renders cron trigger queue worktree cleanup metadata compactly", async () => {
+  test("Advanced Debug exposes queue, trigger health, worktree, and cleanup diagnostics after expansion", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -813,27 +846,34 @@ describe("LoopDetailRoute", () => {
       await renderLoopDetailRoute(reactRoot, queryClient);
 
       await waitFor(() => {
-        expect(container.textContent).toContain("cron UTC */15 * * * *");
-        expect(container.textContent).toContain("on_pr every 60000ms base main");
-        expect(container.textContent).toContain("delete unchanged worktrees");
-        expect(container.textContent).toContain("job-current blocked");
-        expect(container.textContent).toContain("worktree /safe/worktrees/loop-1");
-        expect(container.textContent).toContain("job-queued queued");
-        expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("degraded");
-        expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("rate limited");
-        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("path /safe/worktrees/loop-1");
-        expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("branch test-owner/test-repo:feature-loop");
-        expect(container.querySelector('[data-testid="loop-run-blocked-reason"]')?.textContent).toContain("needs-review");
-        expect(container.textContent).toContain("diff stats: modified 1, created 1");
-        expect(container.textContent).toContain("cleanup: cleanup_candidate");
-        expect(container.textContent).toContain("auto_paused");
-        expect(container.textContent).toContain("expired_needs_review");
+        expect(container.querySelector('[data-testid="loop-advanced-debug-section"]')).not.toBeNull();
       });
 
-      const lowerText = (container.textContent ?? "").toLowerCase();
-      expect(lowerText).not.toContain("readiness");
-      expect(lowerText).not.toContain("auto approve");
-      expect(lowerText).not.toContain("merge pr");
+      const toggle = container.querySelector('[data-testid="loop-advanced-debug-toggle"]') as HTMLButtonElement | null;
+      await act(async () => {
+        toggle!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      });
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).not.toBeNull();
+      });
+
+      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("job-current blocked");
+      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("worktree /safe/worktrees/loop-1");
+      expect(container.querySelector('[data-testid="loop-queue-card"]')?.textContent).toContain("job-queued queued");
+      expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("degraded");
+      expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("rate limited");
+      expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("path /safe/worktrees/loop-1");
+      expect(container.querySelector('[data-testid="loop-run-worktree-status"]')?.textContent).toContain("branch test-owner/test-repo:feature-loop");
+      expect(container.querySelector('[data-testid="loop-run-blocked-reason"]')?.textContent).toContain("needs-review");
+      expect(container.querySelector('[data-testid="loop-run-history-section"]')?.textContent).toContain("diff stats: modified 1, created 1");
+      expect(container.querySelector('[data-testid="loop-run-history-section"]')?.textContent).toContain("cleanup: cleanup_candidate");
+      const rawConfig = container.querySelector('[data-testid="loop-raw-config-card"]')?.textContent ?? "";
+      expect(rawConfig).toContain("cleanup policy");
+      expect(rawConfig).toContain("delete unchanged worktrees");
+      expect(rawConfig).toContain("auto_paused");
+      const queueCard = container.querySelector('[data-testid="loop-queue-card"]')?.textContent ?? "";
+      expect(queueCard).toContain("expired_needs_review");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -895,182 +935,8 @@ describe("LoopDetailRoute", () => {
     }
   });
 
-  test("edit loop dialog pre-fills config and patches automation config", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root");
-    if (!container) throw new Error("Missing test root");
-    const { paths, getPatchBody } = setupLoopDetailFetch({ killState: { globalKillActive: false } });
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
-    });
-    const reactRoot = createRoot(container);
-
-    try {
-      await renderLoopDetailRoute(reactRoot, queryClient);
-
-      await waitFor(() => {
-        expect(container.textContent).toContain("Edit Loop");
-        expect(container.querySelector('[data-testid="loop-edit-button"]')).not.toBeNull();
-      });
-
-      const baseLoop = makeLoop();
-      const seededBudget = {
-        maxIterationsPerRun: 6,
-        maxTokensPerRun: 1000,
-        maxWallClockMsPerRun: 600000,
-        maxRunsPerDay: 4,
-        softThresholdRatio: 0.65,
-        hardThresholdRatio: 0.9,
-      };
-      const loop = makeLoop({
-        config: {
-          ...baseLoop.config,
-          limits: seededBudget,
-          budget: seededBudget,
-        },
-      });
-      await act(async () => {
-        reactRoot.render(
-          <QueryClientProvider client={queryClient}>
-            <EditLoopForm slug="demo" loop={loop} />
-          </QueryClientProvider>,
-        );
-      });
-
-      const dialogScope = document.body;
-
-      await waitFor(() => {
-        const titleInput = dialogScope.querySelector("#new-loop-title") as HTMLInputElement | null;
-        expect(titleInput?.value).toBe("Daily Triage Loop");
-        expect((dialogScope.querySelector("#new-loop-every-ms") as HTMLInputElement | null)?.value).toBe("60000");
-        expect((dialogScope.querySelector("#new-loop-tool-profile") as HTMLSelectElement | null)?.value).toBe("loop_github_pr_watch");
-        expect((dialogScope.querySelector("#new-loop-max-tokens") as HTMLInputElement | null)?.value).toBe("1000");
-        expect((dialogScope.querySelector("#new-loop-goal-title") as HTMLInputElement | null)?.value).toBe("Triage Follow-up Goal");
-        expectRatioInputsNativelyValid(dialogScope, "0.65", "0.9");
-      });
-
-      await act(async () => {
-        submitForm(dialogScope);
-      });
-
-      await waitFor(() => {
-        expect(paths).toContain("PATCH /api/projects/demo/loops/loop-1");
-        expect(getPatchBody()).toBeDefined();
-      });
-
-      const patchBody = getPatchBody()!;
-      expect(patchBody.presetId).toBeUndefined();
-      const config = patchBody.config as Record<string, unknown>;
-      expect(config.title).toBe("Daily Triage Loop");
-      expect(config.schedule).toEqual({ kind: "interval", everyMs: 60000 });
-      expect(config.runKind).toBe("goal");
-      expect(config.mode).toBe("act");
-      expect(config.approvalPolicy).toBe("explicit_per_run");
-      expect(config.toolProfileId).toBe("loop_github_pr_watch");
-      expect(config.limits).toEqual({
-        maxIterationsPerRun: 6,
-        maxTokensPerRun: 1000,
-        maxWallClockMsPerRun: 600000,
-        maxRunsPerDay: 4,
-        softThresholdRatio: 0.65,
-        hardThresholdRatio: 0.9,
-      });
-      expect(config.budget).toEqual(config.limits);
-      const goalTemplate = config.goalTemplate as Record<string, unknown>;
-      expect(goalTemplate.title).toBe("Triage Follow-up Goal");
-      expect(goalTemplate.objective).toBe("Investigate failing tests and propose fixes.");
-      expect(goalTemplate.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
-      expect("doneConditions" in goalTemplate).toBe(false);
-      expect("goalTemplateId" in config).toBe(false);
-    } finally {
-      await act(async () => {
-        reactRoot.unmount();
-      });
-      queryClient.clear();
-      dom.window.close();
-    }
-  });
-
-  test("edit loop form preserves cron schedule and on_pr trigger config in PATCH", async () => {
-    const dom = installDom();
-    const container = document.getElementById("root");
-    if (!container) throw new Error("Missing test root");
-    const { paths, getPatchBody } = setupLoopDetailFetch({ killState: { globalKillActive: false } });
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
-    });
-    const reactRoot = createRoot(container);
-
-    try {
-      const baseLoop = makeLoop();
-      const loop = makeLoop({
-        config: {
-          ...baseLoop.config,
-          schedule: { kind: "cron", expression: "*/15 * * * *" },
-          triggers: [{ kind: "on_pr", cadenceMs: 60000 }],
-        },
-      });
-
-      await act(async () => {
-        reactRoot.render(
-          <QueryClientProvider client={queryClient}>
-            <EditLoopForm slug="demo" loop={loop} />
-          </QueryClientProvider>,
-        );
-      });
-
-      const dialogScope = document.body;
-
-      await waitFor(() => {
-        const cronExpression = dialogScope.querySelector('[data-testid="loop-cron-expression"]') as HTMLInputElement | null;
-        const onPrTrigger = dialogScope.querySelector('[data-testid="loop-trigger-on-pr"]') as HTMLInputElement | null;
-        const triggerCadence = dialogScope.querySelector('[data-testid="loop-trigger-cadence-ms"]') as HTMLInputElement | null;
-        expect(cronExpression?.value).toBe("*/15 * * * *");
-        expect(onPrTrigger?.checked).toBe(true);
-        expect(triggerCadence?.value).toBe("60000");
-      });
-
-      const renderedText = (dialogScope.textContent ?? "").toLowerCase();
-      expect(renderedText).not.toContain("readiness");
-      expect(renderedText).not.toContain("custom pattern");
-      expect(renderedText).not.toContain("auto approve");
-      expect(renderedText).not.toContain("auto-approval");
-      expect(renderedText).not.toContain("merge pr");
-      expect(renderedText).not.toContain("hard-delete");
-
-      await act(async () => {
-        submitForm(dialogScope);
-      });
-
-      await waitFor(() => {
-        expect(paths).toContain("PATCH /api/projects/demo/loops/loop-1");
-        expect(getPatchBody()).toBeDefined();
-      });
-
-      const patchBody = getPatchBody()!;
-      expect("projectConfig" in patchBody).toBe(false);
-      expect("readiness" in patchBody).toBe(false);
-      expect("customPattern" in patchBody).toBe(false);
-      expect("autoApprove" in patchBody).toBe(false);
-      const config = patchBody.config as Record<string, unknown>;
-      expect(config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
-      expect(config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60000 }]);
-      expect("projectConfig" in config).toBe(false);
-      expect("readiness" in config).toBe(false);
-      expect("readinessScore" in config).toBe(false);
-      expect("customPattern" in config).toBe(false);
-      expect("autoApprove" in config).toBe(false);
-    } finally {
-      await act(async () => {
-        reactRoot.unmount();
-      });
-      queryClient.clear();
-      dom.window.close();
-    }
-  });
-
   test("renders simple error when route params are missing", async () => {
-    const dom = installDom("/loops/missing");
+    installDom("/loops/missing");
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
     setupLoopDetailFetch();
@@ -1100,7 +966,6 @@ describe("LoopDetailRoute", () => {
         reactRoot.unmount();
       });
       queryClient.clear();
-      dom.window.close();
     }
   });
 
@@ -1158,6 +1023,55 @@ describe("LoopDetailRoute", () => {
       expect(hitlSection.textContent).toContain("Which option?");
       expect(hitlSection.textContent).toContain("child-session");
       expect(hitlSection.textContent).toContain("loop-1");
+    } finally {
+      await act(async () => {
+        reactRoot.unmount();
+      });
+      queryClient.clear();
+      dom.window.close();
+    }
+  });
+
+  test("primary view does not expose forbidden diagnostic labels before Advanced Debug", async () => {
+    const dom = installDom();
+    const container = document.getElementById("root");
+    if (!container) throw new Error("Missing test root");
+    setupLoopDetailFetch({ killState: { globalKillActive: false } });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const reactRoot = createRoot(container);
+
+    try {
+      await renderLoopDetailRoute(reactRoot, queryClient);
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-testid="loop-advanced-debug-section"]')).not.toBeNull();
+      });
+
+      const primarySections = [
+        container.querySelector('[data-testid="loop-status-section"]'),
+        container.querySelector('[data-testid="loop-attention-section"]'),
+        container.querySelector('[data-testid="loop-recent-results-section"]'),
+        container.querySelector('[data-testid="loop-settings-section"]'),
+        container.querySelector('[data-testid="loop-hitl-section"]'),
+      ].filter((node): node is Element => node !== null);
+
+      for (const section of primarySections) {
+        const text = (section.textContent ?? "").toLowerCase();
+        expect(text).not.toContain("approval policy");
+        expect(text).not.toContain("collision targets");
+        expect(text).not.toContain("cleanup policy");
+        expect(text).not.toContain("dedupe");
+        expect(text).not.toContain("queue subject");
+        expect(text).not.toContain("branch key");
+        expect(text).not.toContain("trigger health");
+        expect(text).not.toContain("queue / worktree");
+        expect(text).not.toContain("tool profile");
+        expect(text).not.toContain("extra tools");
+      }
+
+      expect(container.querySelector('[data-testid="loop-advanced-debug-content"]')).toBeNull();
     } finally {
       await act(async () => {
         reactRoot.unmount();

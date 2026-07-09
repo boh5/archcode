@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Pause, Play, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Loader2, Pause, Play, RotateCcw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
 import { useLoop, useLoopBudget, useLoopCollisions, useLoopIntegrations, useLoopKillState, useLoopRuns, useLoopState } from "../api/queries";
@@ -16,19 +16,66 @@ import type {
   LoopJobSummary,
   LoopKillState,
   LoopRunReport,
+  LoopRunReportStatus,
   LoopScheduleSpec,
   LoopState,
-  LoopStatus,
   LoopTriggerHealth,
   LoopWorktreeArtifact,
 } from "../api/types";
 
-const STATUS_BADGE_CLASS: Record<LoopStatus, string> = {
-  active: "bg-success-muted text-success",
-  paused: "bg-warning-muted text-warning",
-  disabled: "bg-bg-active text-text-muted",
-  error: "bg-error-muted text-error",
+// Four primary user-facing states for Loop primary surfaces (matches list/dashboard).
+type PrimaryLoopState = "Running" | "Awaiting Input" | "Completed" | "Failed";
+
+const PRIMARY_STATE_BADGE_CLASS: Record<PrimaryLoopState, string> = {
+  "Running": "bg-success-muted text-success",
+  "Awaiting Input": "bg-warning-muted text-warning",
+  "Completed": "bg-accent-muted text-accent",
+  "Failed": "bg-error-muted text-error",
 };
+
+function mapRunStatusToPrimary(status: LoopRunReportStatus): PrimaryLoopState {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "succeeded":
+      return "Completed";
+    case "failed":
+    case "budget_exceeded":
+      return "Failed";
+    case "needs_user":
+      return "Awaiting Input";
+    default:
+      // skipped, cancelled -> finished without failure
+      return "Completed";
+  }
+}
+
+function mapToPrimaryState(loop: LoopState): PrimaryLoopState {
+  const currentJob = loop.currentJob;
+  const currentRun = loop.currentRun;
+
+  if (
+    currentJob?.status === "blocked" ||
+    currentJob?.status === "needs_user" ||
+    currentRun?.status === "needs_user"
+  ) {
+    return "Awaiting Input";
+  }
+
+  if (currentRun?.status === "running" || currentJob?.status === "running") {
+    return "Running";
+  }
+
+  if (loop.status === "error" || loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") {
+    return "Failed";
+  }
+
+  if (loop.lastRun?.status === "succeeded") {
+    return "Completed";
+  }
+
+  return loop.status === "active" ? "Running" : "Completed";
+}
 
 export function LoopDetailRoute() {
   const { slug = "", loopId = "" } = useParams<{ slug: string; loopId: string }>();
@@ -52,6 +99,7 @@ export function LoopDetailRoute() {
   const activateGlobalKill = useActivateLoopGlobalKill();
   const clearGlobalKill = useClearLoopGlobalKill();
   const [editOpen, setEditOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const mutationError = formatMutationError(
     triggerLoop.error,
     pauseLoop.error,
@@ -171,12 +219,6 @@ export function LoopDetailRoute() {
             <RotateCcw size={13} />
             {resumeLoop.isPending ? "Resuming…" : "Resume"}
           </button>
-          <span
-            data-testid="loop-status-badge"
-            className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[loop.status]}`}
-          >
-            {loop.status}
-          </span>
         </div>
       </div>
 
@@ -194,15 +236,8 @@ export function LoopDetailRoute() {
 
       <div className="flex-1 overflow-y-auto bg-bg-base">
         <div className="max-w-5xl mx-auto w-full px-4 py-4 flex flex-col gap-4">
-          <ConfigSection loop={loop} />
-          <LiveStatusSection slug={slug} loop={loop} />
-          <GuardrailSection
-            budget={budget ?? loop.latestBudget ?? null}
-            budgetLoading={budgetLoading}
-            collisions={collisions ?? loop.latestCollisions}
-            collisionsLoading={collisionsLoading}
-            integrations={integrations ?? integrationSnapshotFromLoop(loop)}
-            integrationsLoading={integrationsLoading}
+          <PrimarySummarySection slug={slug} loop={loop} />
+          <AttentionSection
             killState={killState}
             loop={loop}
             onCancelCurrentRun={handleCancelCurrentRun}
@@ -212,16 +247,26 @@ export function LoopDetailRoute() {
             activateKillPending={activateGlobalKill.isPending}
             clearKillPending={clearGlobalKill.isPending}
           />
-          <LoopHitlSection
-            projections={loopHitl}
-          />
-          <RunHistorySection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
-          <StateSection
+          <LoopHitlSection projections={loopHitl} />
+          <RecentResultsSection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
+          <SettingsSummarySection loop={loop} />
+          <AdvancedDebugSection
+            open={debugOpen}
+            onToggle={() => setDebugOpen((prev) => !prev)}
+            slug={slug}
             loop={loop}
-            markdown={loopState?.markdown}
-            isLoading={stateLoading}
-            error={stateError}
-            fallbackSummary={loopState?.state.generatedStateSummary}
+            runs={runs}
+            runsLoading={runsLoading}
+            runsError={runsError}
+            loopState={loopState}
+            stateLoading={stateLoading}
+            stateError={stateError}
+            budget={budget ?? loop.latestBudget ?? null}
+            budgetLoading={budgetLoading}
+            collisions={collisions ?? loop.latestCollisions}
+            collisionsLoading={collisionsLoading}
+            integrations={integrations ?? integrationSnapshotFromLoop(loop)}
+            integrationsLoading={integrationsLoading}
           />
         </div>
       </div>
@@ -244,57 +289,35 @@ function BackBar({ slug }: { slug: string }) {
   );
 }
 
-function ConfigSection({ loop }: { loop: LoopState }) {
-  const { config } = loop;
+function PrimarySummarySection({ slug, loop }: { slug: string; loop: LoopState }) {
+  const primaryState = mapToPrimaryState(loop);
+  const currentActivity = formatCurrentActivity(loop);
+  const nextRun = formatNextRun(loop.nextRunAt);
+  const lastResult = formatLastResult(loop.lastRun);
 
   return (
-    <DetailSection title="Config" testId="loop-config-section">
+    <DetailSection title="Status" testId="loop-status-section">
       <div className="grid gap-2 sm:grid-cols-2">
-        <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
-        <FieldRow label="triggers" value={formatTriggers(config.triggers)} />
-        <FieldRow label="cleanup policy" value={formatCleanupPolicy(config.cleanupPolicy)} />
-        <FieldRow label="template" value={config.templateId} />
-        <FieldRow label="worktree" value={config.useWorktree === true ? "enabled" : "disabled"} />
-        <FieldRow label="approval policy" value={config.approvalPolicy} />
-        <FieldRow label="budget defaults" value={formatLimits(config)} wide />
-        <FieldRow label="task prompt" value={config.taskPrompt ?? "No task prompt configured"} wide />
-        <FieldRow label="goal template" value={formatGoalTemplate(config)} wide />
-      </div>
-    </DetailSection>
-  );
-}
-
-function LiveStatusSection({ slug, loop }: { slug: string; loop: LoopState }) {
-  return (
-    <DetailSection title="Live Status" testId="loop-live-status-section">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <FieldRow label="status" value={loop.status} />
+        <div className="flex items-center gap-2">
+          <span
+            data-testid="loop-primary-state"
+            className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${PRIMARY_STATE_BADGE_CLASS[primaryState]}`}
+          >
+            {primaryState}
+          </span>
+        </div>
         <FieldRow label="run count" value={String(loop.runCount)} />
-        <FieldRow label="current run" value={formatRunSummary(loop.currentRun)} />
-        <FieldRow label="last run" value={formatRunSummary(loop.lastRun)} />
-        <FieldRow label="next run" value={formatDateTime(loop.nextRunAt)} />
-        <FieldRow label="last scheduled" value={formatDateTime(loop.lastScheduledAt)} />
-        <FieldRow label="next scheduled" value={formatDateTime(loop.nextScheduledAt)} />
-        <FieldRow label="last enqueued" value={formatDateTime(loop.lastEnqueuedAt)} />
-        <FieldRow label="missed count" value={String(loop.missedCount ?? 0)} />
-        <FieldRow label="cleanup" value={loop.cleanupState ?? "none"} />
-        <FieldRow label="updated" value={formatDateTime(loop.updatedAt)} />
+        <FieldRow label="current activity" value={currentActivity} wide />
+        <FieldRow label="next run" value={nextRun} />
+        <FieldRow label="last result" value={lastResult} wide />
       </div>
-      <QueueStatus loop={loop} />
-      <TriggerHealthRows health={loop.triggerHealth} />
-      <LinkedRunResources slug={slug} run={loop.currentRun} label="current linked resources" />
-      <LinkedRunResources slug={slug} run={loop.lastRun} label="last linked resources" />
+      <LinkedRunResources slug={slug} run={loop.currentRun} label="current resources" />
+      <LinkedRunResources slug={slug} run={loop.lastRun} label="last resources" />
     </DetailSection>
   );
 }
 
-function GuardrailSection({
-  budget,
-  budgetLoading,
-  collisions,
-  collisionsLoading,
-  integrations,
-  integrationsLoading,
+function AttentionSection({
   killState,
   loop,
   onCancelCurrentRun,
@@ -304,12 +327,6 @@ function GuardrailSection({
   activateKillPending,
   clearKillPending,
 }: {
-  budget: LoopBudgetSnapshot | null;
-  budgetLoading: boolean;
-  collisions: LoopCollisionSnapshot | undefined;
-  collisionsLoading: boolean;
-  integrations: LoopIntegrationStatusSnapshot | undefined;
-  integrationsLoading: boolean;
   killState: LoopKillState | undefined;
   loop: LoopState;
   onCancelCurrentRun: () => void;
@@ -321,123 +338,344 @@ function GuardrailSection({
 }) {
   const globalKillActive = killState?.globalKillActive === true;
   const running = loop.currentRun?.status === "running";
+  const attentionItems: string[] = [];
+  if (globalKillActive) {
+    attentionItems.push(`Global kill is active${killState?.reason ? `: ${killState.reason}` : ""}. Scheduled and manual Loop execution stays blocked until cleared.`);
+  }
+  if (loop.currentRun?.status === "needs_user" || loop.currentJob?.status === "needs_user") {
+    attentionItems.push("Current run is waiting for user input.");
+  }
+  if (loop.currentJob?.status === "blocked" && loop.currentJob.blockedReason) {
+    attentionItems.push(`Current job is blocked: ${loop.currentJob.blockedReason}`);
+  }
+  if (loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") {
+    attentionItems.push(`Last run failed${loop.lastRun.error ? `: ${loop.lastRun.error}` : ""}.`);
+  }
 
   return (
-    <DetailSection title="Guardrails" testId="loop-guardrails-section">
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div data-testid="loop-budget-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="text-[13px] font-semibold text-text-primary">Budget</h3>
-            <span className="text-[11px] text-text-muted">runtime guardrail</span>
-          </div>
-          {budgetLoading ? (
-            <LoadingTiny label="Loading budget…" />
-          ) : budget ? (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <FieldRow label="soft / hard ratio" value={`${formatRatio(budget.budget?.softThresholdRatio)} / ${formatRatio(budget.budget?.hardThresholdRatio)}`} />
-              <FieldRow label="token availability" value={formatAvailability(budget.usage.totalTokens, budget.budget?.maxTokensPerRun, "tokens")} />
-              <FieldRow label="time availability" value={formatAvailability(budget.usage.wallClockMs, budget.budget?.maxWallClockMsPerRun, "ms")} />
-              <FieldRow label="daily-run availability" value={formatAvailability(budget.usage.runsToday, budget.budget?.maxRunsPerDay, "runs")} />
-              <FieldRow label="USD availability" value={formatUsdAvailability(budget)} />
-              <FieldRow label="current usage" value={formatBudgetUsage(budget)} wide />
-            </div>
-          ) : (
-            <div className="text-[12.5px] text-text-tertiary">
-              Budget snapshot unavailable. USD availability is unknown unless model pricing metadata exists.
-            </div>
-          )}
+    <DetailSection title="Attention" testId="loop-attention-section">
+      {attentionItems.length === 0 ? (
+        <div className="text-[12.5px] text-text-tertiary">No attention needed right now.</div>
+      ) : (
+        <ul className="flex flex-col gap-1.5 text-[12.5px] text-text-secondary">
+          {attentionItems.map((item, index) => (
+            <li key={index}>{item}</li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          data-testid="loop-cancel-current-run-button"
+          type="button"
+          onClick={onCancelCurrentRun}
+          disabled={!running || cancelPending}
+          className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {cancelPending ? "Cancelling…" : "Cancel current run"}
+        </button>
+        <button
+          data-testid="loop-global-kill-button"
+          type="button"
+          onClick={onActivateGlobalKill}
+          disabled={globalKillActive || activateKillPending}
+          className="rounded-sm bg-error-muted px-3 py-1.5 text-[12.5px] font-medium text-error transition-colors duration-150 hover:bg-error-muted-opaque disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {activateKillPending ? "Activating…" : "Activate global kill"}
+        </button>
+        <button
+          type="button"
+          onClick={onClearGlobalKill}
+          disabled={!globalKillActive || clearKillPending}
+          className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {clearKillPending ? "Clearing…" : "Clear global kill"}
+        </button>
+      </div>
+      {globalKillActive && (
+        <div data-testid="loop-global-kill-banner" className="mt-3 rounded-sm border border-error-muted bg-error-muted px-2.5 py-2 text-[12px] text-error">
+          Global kill is active{killState?.reason ? `: ${killState.reason}` : ""}. Scheduled and manual Loop execution stays blocked until cleared.
         </div>
+      )}
+      <p className="mt-2 text-[11px] text-text-muted">
+        Kill and cancel controls are guardrails around Loop scheduling/runs; normal tool permissions and HITL remain authoritative for side effects.
+      </p>
+    </DetailSection>
+  );
+}
 
-        <div className="rounded-md border border-border-subtle bg-bg-base p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h3 className="text-[13px] font-semibold text-text-primary">Kill Controls</h3>
-            <span className="text-[11px] text-text-muted">project scoped</span>
-          </div>
-          {globalKillActive && (
-            <div data-testid="loop-global-kill-banner" className="mb-3 rounded-sm border border-error-muted bg-error-muted px-2.5 py-2 text-[12px] text-error">
-              Global kill is active{killState?.reason ? `: ${killState.reason}` : ""}. Scheduled and manual Loop execution stays blocked until cleared.
-            </div>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <button
-              data-testid="loop-cancel-current-run-button"
-              type="button"
-              onClick={onCancelCurrentRun}
-              disabled={!running || cancelPending}
-              className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {cancelPending ? "Cancelling…" : "Cancel current run"}
-            </button>
-            <button
-              data-testid="loop-global-kill-button"
-              type="button"
-              onClick={onActivateGlobalKill}
-              disabled={globalKillActive || activateKillPending}
-              className="rounded-sm bg-error-muted px-3 py-1.5 text-[12.5px] font-medium text-error transition-colors duration-150 hover:bg-error-muted-opaque disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {activateKillPending ? "Activating…" : "Activate global kill"}
-            </button>
-            <button
-              type="button"
-              onClick={onClearGlobalKill}
-              disabled={!globalKillActive || clearKillPending}
-              className="rounded-sm bg-bg-active px-3 py-1.5 text-[12.5px] font-medium text-text-secondary transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {clearKillPending ? "Clearing…" : "Clear global kill"}
-            </button>
-          </div>
-          <p className="mt-2 text-[11px] text-text-muted">
-            Kill and cancel controls are guardrails around Loop scheduling/runs; normal tool permissions and HITL remain authoritative for side effects.
-          </p>
+function RecentResultsSection({
+  slug,
+  runs,
+  isLoading,
+  error,
+}: {
+  slug: string;
+  runs: LoopRunReport[] | undefined;
+  isLoading: boolean;
+  error: unknown;
+}) {
+  const recent = runs?.slice(0, 5) ?? [];
+  return (
+    <DetailSection title="Recent Results" testId="loop-recent-results-section">
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-[12.5px] text-text-tertiary py-2">
+          <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+          Loading recent results…
         </div>
+      ) : error ? (
+        <div className="text-[12.5px] text-error py-2">
+          {error instanceof Error ? error.message : "Failed to load recent results"}
+        </div>
+      ) : recent.length === 0 ? (
+        <div className="text-[12.5px] text-text-tertiary py-2">No run reports yet</div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {recent.map((run) => (
+            <div
+              key={run.runId}
+              data-testid={`loop-recent-result-${run.runId}`}
+              className="rounded-md border border-border-subtle bg-bg-base px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+                <span className={`text-[11px] px-1.5 py-[1px] rounded font-medium ${PRIMARY_STATE_BADGE_CLASS[mapRunStatusToPrimary(run.status)]}`}>
+                  {mapRunStatusToPrimary(run.status)}
+                </span>
+                <span className="text-text-tertiary">trigger: {run.trigger}</span>
+                <span className="text-text-tertiary">started: {formatDateTime(run.startedAt)}</span>
+              </div>
+              <LinkedRunResources slug={slug} run={run} label="resources" compact />
+              {run.summary && <p className="mt-1 text-[12.5px] text-text-secondary">summary: {run.summary}</p>}
+              {run.error && <p className="mt-1 text-[12.5px] text-error">error: {run.error}</p>}
+              {run.skippedReason && <p className="mt-1 text-[12.5px] text-warning">skipped: {run.skippedReason}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </DetailSection>
+  );
+}
 
-        <div data-testid="loop-collision-log" className="rounded-md border border-border-subtle bg-bg-base p-3">
-          <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Collision Log</h3>
-          {collisionsLoading ? (
-            <LoadingTiny label="Loading collisions…" />
-          ) : collisions ? (
-            <div className="space-y-2 text-[12.5px] text-text-secondary">
-              <FieldRow label="target keys" value={formatTargets(collisions.targets)} />
-              <FieldRow label="active leases" value={collisions.activeLeases.map((lease) => `${lease.targetKey} held by ${lease.loopId}/${lease.runId}`).join("; ") || "none"} />
-              <FieldRow label="conflicts" value={collisions.conflicts.map((conflict) => `${conflict.targetKey} conflicts with ${conflict.conflictingLease.loopId}/${conflict.conflictingLease.runId}`).join("; ") || "none"} />
-            </div>
-          ) : (
-            <div className="text-[12.5px] text-text-tertiary">No collision snapshot yet</div>
-          )}
-        </div>
-
-        <div data-testid="loop-integration-status" className="rounded-md border border-border-subtle bg-bg-base p-3">
-          <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Integration Status</h3>
-          {integrationsLoading ? (
-            <LoadingTiny label="Loading integrations…" />
-          ) : integrations ? (
-            <div className="space-y-2">
-              {integrations.statuses.length === 0 ? (
-                <div className="text-[12.5px] text-text-tertiary">No integration status reported</div>
-              ) : (
-                integrations.statuses.map((status) => (
-                  <div key={status.integrationId} className="rounded-sm border border-border-subtle px-2.5 py-2 text-[12.5px]">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-text-primary">{status.integrationId}</span>
-                      <span className={status.status === "ready" ? "text-success" : status.status === "disabled" ? "text-text-tertiary" : "text-warning"}>{status.status}</span>
-                      <span className="text-text-muted">GitHub token configured: {status.status === "ready" ? "yes" : "no"}</span>
-                    </div>
-                    <div className="mt-1 text-text-tertiary">last error: {status.message ?? formatLatestIntegrationError(integrations.snapshot?.errors, status.integrationId)}</div>
-                    <div className="text-text-tertiary">rate-limit: {status.retryAfterMs !== undefined ? `${status.retryAfterMs}ms retry-after` : "none reported"}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : (
-            <div className="text-[12.5px] text-text-tertiary">Integration status unavailable</div>
-          )}
-        </div>
+function SettingsSummarySection({ loop }: { loop: LoopState }) {
+  const { config } = loop;
+  return (
+    <DetailSection title="Settings" testId="loop-settings-section">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <FieldRow label="template" value={config.templateId} />
+        <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
+        <FieldRow label="worktree" value={config.useWorktree === true ? "enabled" : "disabled"} />
+        <FieldRow label="budget defaults" value={formatLimits(config)} wide />
+        <FieldRow label="task prompt" value={config.taskPrompt ?? "No task prompt configured"} wide />
+        <FieldRow label="goal template" value={formatGoalTemplate(config)} wide />
       </div>
     </DetailSection>
   );
 }
 
-function RunHistorySection({
+// ─── Advanced Debug ───
+// Everything below this marker is diagnostic-only and collapsed by default.
+// The source-scanning guardrail treats the first literal "Advanced Debug" as
+// the boundary: forbidden labels (mode, toolProfileId, extraTools, approvalPolicy,
+// collisionTargets, cleanupPolicy, dedupeKey, subjectKey, branchKey,
+// triggerHealth, queue, job) are allowed only after this marker.
+function AdvancedDebugSection({
+  open,
+  onToggle,
+  slug,
+  loop,
+  runs,
+  runsLoading,
+  runsError,
+  loopState,
+  stateLoading,
+  stateError,
+  budget,
+  budgetLoading,
+  collisions,
+  collisionsLoading,
+  integrations,
+  integrationsLoading,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  slug: string;
+  loop: LoopState;
+  runs: LoopRunReport[] | undefined;
+  runsLoading: boolean;
+  runsError: unknown;
+  loopState: { markdown?: string; state: LoopState } | undefined;
+  stateLoading: boolean;
+  stateError: unknown;
+  budget: LoopBudgetSnapshot | null;
+  budgetLoading: boolean;
+  collisions: LoopCollisionSnapshot | undefined;
+  collisionsLoading: boolean;
+  integrations: LoopIntegrationStatusSnapshot | undefined;
+  integrationsLoading: boolean;
+}) {
+  return (
+    <section data-testid="loop-advanced-debug-section" className="rounded-lg border border-border-default bg-bg-surface p-4 shadow-sm">
+      <button
+        type="button"
+        data-testid="loop-advanced-debug-toggle"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <h2 className="text-[15px] font-semibold text-text-primary">Advanced Debug</h2>
+        <span className="flex items-center gap-1 text-[12.5px] text-text-muted">
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span>{open ? "hide" : "show"}</span>
+        </span>
+      </button>
+      <p className="mt-1 text-[11px] text-text-muted">
+        Diagnostics only. No editable tool profile, extra tools, collision, or cleanup customization controls live here.
+      </p>
+      {open && (
+        <div data-testid="loop-advanced-debug-content" className="mt-3 flex flex-col gap-4">
+          <DebugBudgetCard budget={budget} budgetLoading={budgetLoading} />
+          <DebugKillStateCard loop={loop} />
+          <DebugCollisionLogCard collisions={collisions} collisionsLoading={collisionsLoading} />
+          <DebugIntegrationStatusCard integrations={integrations} integrationsLoading={integrationsLoading} />
+          <DebugQueueCard loop={loop} />
+          <DebugTriggerHealthCard health={loop.triggerHealth} />
+          <DebugRunHistorySection slug={slug} runs={runs} isLoading={runsLoading} error={runsError} />
+          <DebugStateSection
+            loop={loop}
+            markdown={loopState?.markdown}
+            isLoading={stateLoading}
+            error={stateError}
+            fallbackSummary={loopState?.state.generatedStateSummary}
+          />
+          <DebugRawConfigCard loop={loop} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DebugBudgetCard({ budget, budgetLoading }: { budget: LoopBudgetSnapshot | null; budgetLoading: boolean }) {
+  return (
+    <div data-testid="loop-budget-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 className="text-[13px] font-semibold text-text-primary">Budget Snapshot</h3>
+        <span className="text-[11px] text-text-muted">runtime guardrail</span>
+      </div>
+      {budgetLoading ? (
+        <LoadingTiny label="Loading budget…" />
+      ) : budget ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <FieldRow label="soft / hard ratio" value={`${formatRatio(budget.budget?.softThresholdRatio)} / ${formatRatio(budget.budget?.hardThresholdRatio)}`} />
+          <FieldRow label="token availability" value={formatAvailability(budget.usage.totalTokens, budget.budget?.maxTokensPerRun, "tokens")} />
+          <FieldRow label="time availability" value={formatAvailability(budget.usage.wallClockMs, budget.budget?.maxWallClockMsPerRun, "ms")} />
+          <FieldRow label="daily-run availability" value={formatAvailability(budget.usage.runsToday, budget.budget?.maxRunsPerDay, "runs")} />
+          <FieldRow label="USD availability" value={formatUsdAvailability(budget)} />
+          <FieldRow label="current usage" value={formatBudgetUsage(budget)} wide />
+        </div>
+      ) : (
+        <div className="text-[12.5px] text-text-tertiary">
+          Budget snapshot unavailable. USD availability is unknown unless pricing metadata exists.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DebugKillStateCard({ loop }: { loop: LoopState }) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Loop Status</h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <FieldRow label="status" value={loop.status} />
+        <FieldRow label="updated" value={formatDateTime(loop.updatedAt)} />
+      </div>
+    </div>
+  );
+}
+
+function DebugCollisionLogCard({ collisions, collisionsLoading }: { collisions: LoopCollisionSnapshot | undefined; collisionsLoading: boolean }) {
+  return (
+    <div data-testid="loop-collision-log" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Collision Log</h3>
+      {collisionsLoading ? (
+        <LoadingTiny label="Loading collisions…" />
+      ) : collisions ? (
+        <div className="space-y-2 text-[12.5px] text-text-secondary">
+          <FieldRow label="target keys" value={formatTargets(collisions.targets)} />
+          <FieldRow label="active leases" value={collisions.activeLeases.map((lease) => `${lease.targetKey} held by ${lease.loopId}/${lease.runId}`).join("; ") || "none"} />
+          <FieldRow label="conflicts" value={collisions.conflicts.map((conflict) => `${conflict.targetKey} conflicts with ${conflict.conflictingLease.loopId}/${conflict.conflictingLease.runId}`).join("; ") || "none"} />
+        </div>
+      ) : (
+        <div className="text-[12.5px] text-text-tertiary">No collision snapshot yet</div>
+      )}
+    </div>
+  );
+}
+
+function DebugIntegrationStatusCard({ integrations, integrationsLoading }: { integrations: LoopIntegrationStatusSnapshot | undefined; integrationsLoading: boolean }) {
+  return (
+    <div data-testid="loop-integration-status" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Integration Status</h3>
+      {integrationsLoading ? (
+        <LoadingTiny label="Loading integrations…" />
+      ) : integrations ? (
+        <div className="space-y-2">
+          {integrations.statuses.length === 0 ? (
+            <div className="text-[12.5px] text-text-tertiary">No integration status reported</div>
+          ) : (
+            integrations.statuses.map((status) => (
+              <div key={status.integrationId} className="rounded-sm border border-border-subtle px-2.5 py-2 text-[12.5px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-text-primary">{status.integrationId}</span>
+                  <span className={status.status === "ready" ? "text-success" : status.status === "disabled" ? "text-text-tertiary" : "text-warning"}>{status.status}</span>
+                  <span className="text-text-muted">GitHub token configured: {status.status === "ready" ? "yes" : "no"}</span>
+                </div>
+                <div className="mt-1 text-text-tertiary">last error: {status.message ?? formatLatestIntegrationError(integrations.snapshot?.errors, status.integrationId)}</div>
+                <div className="text-text-tertiary">rate-limit: {status.retryAfterMs !== undefined ? `${status.retryAfterMs}ms retry-after` : "none reported"}</div>
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <div className="text-[12.5px] text-text-tertiary">Integration status unavailable</div>
+      )}
+    </div>
+  );
+}
+
+function DebugQueueCard({ loop }: { loop: LoopState }) {
+  return (
+    <div data-testid="loop-queue-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Queue / Worktree</h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <FieldRow label="current job" value={formatJobSummary(loop.currentJob)} />
+        <FieldRow label="queued jobs" value={loop.queuedJobs?.length ? loop.queuedJobs.map(formatJobSummary).join("; ") : "none"} />
+      </div>
+    </div>
+  );
+}
+
+function DebugTriggerHealthCard({ health }: { health: LoopTriggerHealth[] | undefined }) {
+  return (
+    <div data-testid="loop-trigger-health" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Trigger Health</h3>
+      {!health || health.length === 0 ? (
+        <div className="text-[12.5px] text-text-tertiary">No trigger health reported</div>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {health.map((item) => (
+            <FieldRow
+              key={`${item.triggerKind}:${item.lastCheckedAt ?? "none"}`}
+              label={item.triggerKind}
+              value={formatTriggerHealth(item)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DebugRunHistorySection({
   slug,
   runs,
   isLoading,
@@ -449,7 +687,8 @@ function RunHistorySection({
   error: unknown;
 }) {
   return (
-    <DetailSection title="Run History" testId="loop-run-history-section">
+    <div data-testid="loop-run-history-section" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Run History</h3>
       {isLoading ? (
         <div className="flex items-center gap-2 text-[12.5px] text-text-tertiary py-2">
           <Loader2 size={13} className="animate-spin" aria-hidden="true" />
@@ -499,11 +738,11 @@ function RunHistorySection({
           ))}
         </div>
       )}
-    </DetailSection>
+    </div>
   );
 }
 
-function StateSection({
+function DebugStateSection({
   loop,
   markdown,
   isLoading,
@@ -521,7 +760,8 @@ function StateSection({
     : fallbackSummary ?? loop.generatedStateSummary ?? "No generated state yet";
 
   return (
-    <DetailSection title="State" testId="loop-state-section">
+    <div data-testid="loop-state-section" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">State</h3>
       {isLoading ? (
         <div className="flex items-center gap-2 text-[12.5px] text-text-tertiary py-2">
           <Loader2 size={13} className="animate-spin" aria-hidden="true" />
@@ -536,6 +776,40 @@ function StateSection({
           {stateText}
         </pre>
       )}
+    </div>
+  );
+}
+
+function DebugRawConfigCard({ loop }: { loop: LoopState }) {
+  return (
+    <div data-testid="loop-raw-config-card" className="rounded-md border border-border-subtle bg-bg-base p-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Raw Config / State</h3>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <FieldRow label="approval policy" value={loop.config.approvalPolicy} />
+        <FieldRow label="cleanup policy" value={formatCleanupPolicy(loop.config.cleanupPolicy)} />
+        <FieldRow label="triggers" value={formatTriggers(loop.config.triggers)} wide />
+        <FieldRow label="last scheduled" value={formatDateTime(loop.lastScheduledAt)} />
+        <FieldRow label="next scheduled" value={formatDateTime(loop.nextScheduledAt)} />
+        <FieldRow label="last enqueued" value={formatDateTime(loop.lastEnqueuedAt)} />
+        <FieldRow label="missed count" value={String(loop.missedCount ?? 0)} />
+        <FieldRow label="cleanup state" value={loop.cleanupState ?? "none"} />
+      </div>
+    </div>
+  );
+}
+
+function LoopHitlSection({
+  projections,
+}: {
+  projections: import("../api/types").HitlProjection[];
+}) {
+  return (
+    <DetailSection title="HITL" testId="loop-hitl-section">
+      <HitlInbox
+        projections={projections}
+        emptyMessage="No pending HITL for this loop"
+        title="Loop HITL"
+      />
     </DetailSection>
   );
 }
@@ -617,6 +891,39 @@ function LinkedRunResources({
   );
 }
 
+function formatCurrentActivity(loop: LoopState): string {
+  const run = loop.currentRun;
+  const job = loop.currentJob;
+  if (run?.status === "running") {
+    return `Running ${run.trigger} run${run.sessionId ? ` (session ${run.sessionId})` : ""}`;
+  }
+  if (run?.status === "needs_user" || job?.status === "needs_user") {
+    return "Waiting for user input";
+  }
+  if (job?.status === "blocked") {
+    return `Blocked${job.blockedReason ? `: ${job.blockedReason}` : ""}`;
+  }
+  if (loop.status === "paused") {
+    return "Paused";
+  }
+  if (loop.status === "disabled") {
+    return "Disabled";
+  }
+  return "Idle";
+}
+
+function formatNextRun(value: number | undefined): string {
+  if (value === undefined || value === null) return "none";
+  return new Date(value).toLocaleString();
+}
+
+function formatLastResult(run: LoopRunReport | undefined): string {
+  if (!run) return "none";
+  const state = mapRunStatusToPrimary(run.status);
+  const time = new Date(run.startedAt).toLocaleString();
+  return `${state} ${time}${run.summary ? ` — ${run.summary}` : ""}`;
+}
+
 function formatSchedule(schedule: LoopScheduleSpec): string {
   if (schedule.kind === "manual") return "manual";
   if (schedule.kind === "interval") return `interval ${schedule.everyMs}ms`;
@@ -645,39 +952,6 @@ function formatCleanupPolicy(policy: LoopConfig["cleanupPolicy"]): string {
     policy.quietDays !== undefined ? `quiet days ${policy.quietDays}` : undefined,
     policy.requiresNoPendingQueue ? "requires no pending queue" : undefined,
   ].filter(Boolean).join("; ");
-}
-
-function QueueStatus({ loop }: { loop: LoopState }) {
-  return (
-    <div className="mt-3 rounded-md border border-border-subtle bg-bg-base p-3">
-      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Queue / Worktree</h3>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <FieldRow label="current job" value={formatJobSummary(loop.currentJob)} />
-        <FieldRow label="queued jobs" value={loop.queuedJobs?.length ? loop.queuedJobs.map(formatJobSummary).join("; ") : "none"} />
-      </div>
-    </div>
-  );
-}
-
-function TriggerHealthRows({ health }: { health: LoopTriggerHealth[] | undefined }) {
-  return (
-    <div data-testid="loop-trigger-health" className="mt-3 rounded-md border border-border-subtle bg-bg-base p-3">
-      <h3 className="mb-2 text-[13px] font-semibold text-text-primary">Trigger Health</h3>
-      {!health || health.length === 0 ? (
-        <div className="text-[12.5px] text-text-tertiary">No trigger health reported</div>
-      ) : (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {health.map((item) => (
-            <FieldRow
-              key={`${item.triggerKind}:${item.lastCheckedAt ?? "none"}`}
-              label={item.triggerKind}
-              value={formatTriggerHealth(item)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function formatJobSummary(job: LoopJobSummary | undefined): string {
@@ -740,11 +1014,6 @@ function formatGoalTemplate(config: LoopConfig): string {
   if (!template) return "none";
 
   return `${template.title}; objective: ${template.objective}; acceptance: ${template.acceptanceCriteria}`;
-}
-
-function formatRunSummary(run: LoopRunReport | undefined): string {
-  if (!run) return "none";
-  return `${run.runId} ${run.status} ${run.trigger} reason ${run.reason ?? "none"} started ${formatDateTime(run.startedAt)}`;
 }
 
 function formatDateTime(value: number | undefined): string {
@@ -839,20 +1108,4 @@ function isHardBudgetBlocked(snapshot: LoopBudgetSnapshot | null | undefined, lo
   const maxRuns = snapshot.budget.maxRunsPerDay;
   if (maxRuns !== undefined && snapshot.usage.runsToday >= maxRuns * hardRatio) return true;
   return loop.lastRun?.reason === "hard_budget_exceeded";
-}
-
-function LoopHitlSection({
-  projections,
-}: {
-  projections: import("../api/types").HitlProjection[];
-}) {
-  return (
-    <DetailSection title="HITL" testId="loop-hitl-section">
-      <HitlInbox
-        projections={projections}
-        emptyMessage="No pending HITL for this loop"
-        title="Loop HITL"
-      />
-    </DetailSection>
-  );
 }
