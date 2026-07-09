@@ -1,15 +1,15 @@
 import type { CollisionTarget } from "./state";
 import { normalizeCollisionTarget } from "./collision-ledger";
 import {
-  LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL,
-  LOOP_GITHUB_GET_PULL_REQUEST_CHECKS_TOOL,
-  LOOP_GITHUB_GET_PULL_REQUEST_TOOL,
-  LOOP_GITHUB_GET_WORKFLOW_RUN_TOOL,
-  LOOP_GITHUB_LIST_ISSUE_COMMENTS_TOOL,
-  LOOP_GITHUB_LIST_PULL_REQUESTS_TOOL,
-  LOOP_GITHUB_LIST_WORKFLOW_RUNS_TOOL,
-  LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL,
-} from "./tool-profiles";
+  TOOL_GITHUB_CREATE_ISSUE_COMMENT,
+  TOOL_GITHUB_GET_PULL_REQUEST,
+  TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
+  TOOL_GITHUB_GET_WORKFLOW_RUN,
+  TOOL_GITHUB_LIST_ISSUE_COMMENTS,
+  TOOL_GITHUB_LIST_PULL_REQUESTS,
+  TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+  TOOL_GITHUB_RERUN_WORKFLOW_RUN,
+} from "@archcode/protocol";
 import { TOOL_FILE_EDIT, TOOL_FILE_WRITE } from "../tools/names";
 
 export interface ToolTargetExtractorContext {
@@ -35,14 +35,14 @@ export function createDefaultToolTargetExtractorRegistry(): ToolTargetExtractorR
   registry.register(TOOL_FILE_WRITE, extractFileToolTargets);
   registry.register(TOOL_FILE_EDIT, extractFileToolTargets);
 
-  registry.register(LOOP_GITHUB_GET_PULL_REQUEST_TOOL, extractPullRequestTarget);
-  registry.register(LOOP_GITHUB_GET_PULL_REQUEST_CHECKS_TOOL, extractPullRequestTarget);
-  registry.register(LOOP_GITHUB_CREATE_ISSUE_COMMENT_TOOL, extractIssueTarget);
-  registry.register(LOOP_GITHUB_LIST_ISSUE_COMMENTS_TOOL, extractIssueTarget);
-  registry.register(LOOP_GITHUB_LIST_PULL_REQUESTS_TOOL, extractBranchTarget);
-  registry.register(LOOP_GITHUB_LIST_WORKFLOW_RUNS_TOOL, extractBranchTarget);
-  registry.register(LOOP_GITHUB_GET_WORKFLOW_RUN_TOOL, extractBranchTarget);
-  registry.register(LOOP_GITHUB_RERUN_WORKFLOW_RUN_TOOL, extractBranchTarget);
+  registry.register(TOOL_GITHUB_GET_PULL_REQUEST, extractPullRequestTarget);
+  registry.register(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS, extractPullRequestTarget);
+  registry.register(TOOL_GITHUB_CREATE_ISSUE_COMMENT, extractIssueTarget);
+  registry.register(TOOL_GITHUB_LIST_ISSUE_COMMENTS, extractIssueTarget);
+  registry.register(TOOL_GITHUB_LIST_PULL_REQUESTS, extractBranchTarget);
+  registry.register(TOOL_GITHUB_LIST_WORKFLOW_RUNS, extractBranchTarget);
+  registry.register(TOOL_GITHUB_GET_WORKFLOW_RUN, extractBranchTarget);
+  registry.register(TOOL_GITHUB_RERUN_WORKFLOW_RUN, extractBranchTarget);
   return registry;
 }
 

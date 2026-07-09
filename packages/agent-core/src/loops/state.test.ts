@@ -16,7 +16,6 @@ import {
   LoopScheduleSpecSchema,
   LoopStateManager,
   LoopStateSchema,
-  LoopToolProfileIdSchema,
   type LoopConfig,
   type LoopRunReport,
 } from "./state";
@@ -25,11 +24,10 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-state");
 const VALID_LOOP_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 const manualConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Daily triage",
   description: "Summarize project status",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8 },
   taskPrompt: "Summarize open tasks",
@@ -133,12 +131,7 @@ describe("Loop schemas", () => {
     expect(parsedConfig.limits).toEqual(parsedBudget);
   });
 
-  test("uses the plan-aligned local maintenance profile id", () => {
-    expect(LoopToolProfileIdSchema.parse("loop_local_maintenance")).toBe("loop_local_maintenance");
-    expect(() => LoopToolProfileIdSchema.parse("loop_local_action")).toThrow();
-  });
-
-  test("parses legacy loop state with minimal limits and keeps readiness score unsupported", () => {
+  test("parses template-oriented loop state with minimal limits and keeps readiness score unsupported", () => {
     const now = Date.now();
     const state = LoopStateSchema.parse({
       loopId: VALID_LOOP_ID,
@@ -182,7 +175,7 @@ describe("Loop schemas", () => {
     expect(() => LoopStateSchema.parse({ ...state, noiseRate: 0.1 })).toThrow();
   });
 
-  test("accepts guardrail budget, collision, integration, profile, and run reason fields", () => {
+  test("accepts guardrail budget, collision, integration, and run reason fields", () => {
     const budget = LoopBudgetConfigSchema.parse({
       maxIterationsPerRun: 8,
       maxTokensPerRun: 100_000,
@@ -241,12 +234,11 @@ describe("Loop schemas", () => {
         retryAfterMs: 60_000,
         occurredAt: 1_500,
       }],
-      toolProfileId: "loop_github_pr_watch",
     });
     const state = LoopStateSchema.parse({
       loopId: VALID_LOOP_ID,
       projectId: "project-a",
-      config: { ...manualConfig, budget, toolProfileId: "loop_github_pr_watch", collisionTargets: [collisionTarget] },
+      config: { ...manualConfig, budget, collisionTargets: [collisionTarget] },
       status: "active",
       createdAt: 1_000,
       updatedAt: 2_000,
@@ -262,7 +254,6 @@ describe("Loop schemas", () => {
     expect(report.reason).toBe("hard_budget_exceeded");
     expect(report.blockedByHitlIds).toEqual(["hitl-1"]);
     expect(report.attentionStatus).toBe("waiting_for_human");
-    expect(state.config.toolProfileId).toBe("loop_github_pr_watch");
     expect(state.latestCollisions?.activeLeases[0]?.targetKey).toBe("pr:arch/code#42");
   });
 

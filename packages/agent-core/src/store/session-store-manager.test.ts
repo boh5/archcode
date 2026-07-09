@@ -188,10 +188,9 @@ describe("SessionStoreManager", () => {
       loopId: "loop-1",
       projectId: "project-1",
       config: {
+        templateId: "goal_runner",
         title: "Loop",
         schedule: { kind: "manual" },
-        runKind: "goal",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 1 },
         goalTemplate: {

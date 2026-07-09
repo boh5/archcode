@@ -23,11 +23,10 @@ const HEAD_ONE = "1".repeat(40);
 const HEAD_TWO = "2".repeat(40);
 
 const loopHardeningConfig: LoopConfig = {
+  templateId: "maintain_fix",
   title: "PR loop hardening",
   description: "Exercise trigger polling, queue dispatch, worktree execution, and cleanup metadata.",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4 },
   taskPrompt: "Review the observed PR and write a concise artifact summary.",

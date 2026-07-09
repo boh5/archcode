@@ -127,8 +127,7 @@ function LoopRow({ loop }: { loop: DashboardLoop }) {
           <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${LOOP_STATUS_BADGE[loop.status] ?? "bg-bg-active text-text-secondary"}`}>
             {loop.status}
           </span>
-          <span className="text-[10.5px] text-text-tertiary">{loop.runKind}</span>
-          <span className="text-[10.5px] text-text-tertiary">{loop.mode}</span>
+          <span className="text-[10.5px] text-text-tertiary">{loop.templateId}</span>
           <span className="text-[10.5px] text-text-tertiary">current: {current}</span>
           <span className="text-[10.5px] text-text-tertiary">last: {last}</span>
           <span className="text-[10.5px] text-text-tertiary">next: {next}</span>

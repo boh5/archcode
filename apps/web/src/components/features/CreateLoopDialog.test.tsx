@@ -181,6 +181,7 @@ describe("CreateLoopDialog Goal template", () => {
 
   test("buildLoopConfig produces natural-language goalTemplate with title/objective/acceptanceCriteria only", () => {
     const config = buildLoopConfig({
+      templateId: "goal_runner",
       title: "Goal Loop",
       description: "",
       scheduleKind: "manual",
@@ -222,6 +223,7 @@ describe("CreateLoopDialog Goal template", () => {
 
   test("buildLoopConfig session runKind produces no goalTemplate", () => {
     const config = buildLoopConfig({
+      templateId: "watch_report",
       title: "Session Loop",
       description: "",
       scheduleKind: "manual",

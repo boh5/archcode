@@ -193,10 +193,9 @@ describe("dashboard routes", () => {
       loopId: crypto.randomUUID(),
       projectId: projects[0].slug,
       config: {
+        templateId: "watch_report",
         title: "Daily loop",
         schedule: { kind: "manual" },
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 1 },
       },
@@ -216,8 +215,7 @@ describe("dashboard routes", () => {
       loopId: loop.loopId,
       title: "Daily loop",
       status: "active",
-      runKind: "session",
-      mode: "report",
+      templateId: "watch_report",
       projectSlug: projects[0].slug,
       projectName: projects[0].name,
     }));

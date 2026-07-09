@@ -80,7 +80,7 @@ export class SessionAgentManager {
     this.#abortSessionExecutionAndWait = callback;
   }
 
-  async getOrCreate(workspaceRoot: string, sessionId: string): Promise<Agent> {
+  async getOrCreate(workspaceRoot: string, sessionId: string, agentName?: string): Promise<Agent> {
     const key = scopedKey(workspaceRoot, sessionId);
     if (this.#isTombstonedKey(key)) {
       throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
@@ -92,14 +92,14 @@ export class SessionAgentManager {
     const pending = this.#pendingAgents.get(key);
     if (pending) return pending;
 
-    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key);
+    const promise = this.#createAndRegisterAgent(workspaceRoot, sessionId, key, agentName);
     this.#pendingAgents.set(key, promise);
     return promise;
   }
 
-  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string): Promise<Agent> {
+  async #createAndRegisterAgent(workspaceRoot: string, sessionId: string, key: string, agentName?: string): Promise<Agent> {
     try {
-      const agent = await this.#createAgent(workspaceRoot, sessionId);
+      const agent = await this.#createAgent(workspaceRoot, sessionId, agentName);
       if (this.#isTombstonedKey(key)) {
         agent.dispose();
         throw new Error(`Session "${sessionId}" in workspace "${workspaceRoot}" has been deleted`);
@@ -112,7 +112,7 @@ export class SessionAgentManager {
     }
   }
 
-  async #createAgent(workspaceRoot: string, sessionId: string): Promise<Agent> {
+  async #createAgent(workspaceRoot: string, sessionId: string, requestedAgentName?: string): Promise<Agent> {
     const factory = this.getFactory(workspaceRoot);
     let store: StoreApi<SessionStoreState>;
     try {
@@ -120,7 +120,8 @@ export class SessionAgentManager {
     } catch {
       store = this.#storeManager.create(sessionId, workspaceRoot);
     }
-    return factory.createRootAgent("orchestrator", { store });
+    const agentName = requestedAgentName ?? store.getState().agentName ?? "orchestrator";
+    return factory.createRootAgent(agentName, { store });
   }
 
   createChildAgent(input: {

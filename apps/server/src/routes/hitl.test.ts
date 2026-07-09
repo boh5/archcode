@@ -26,10 +26,9 @@ interface TestFixture {
 }
 
 const LOOP_CONFIG: LoopConfig = {
+  templateId: "watch_report",
   title: "Route test loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: {
     maxIterationsPerRun: 1,

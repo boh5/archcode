@@ -496,14 +496,9 @@ function isEffectfulTool(descriptor: AnyToolDescriptor): boolean {
 }
 
 function shouldUseProjectApprovalForAsk(
-  descriptor: AnyToolDescriptor,
-  ctx: ToolExecutionContext,
+  _descriptor: AnyToolDescriptor,
+  _ctx: ToolExecutionContext,
 ): boolean {
-  const origin = ctx.origin;
-  if (origin?.kind === "loop" && origin.mode === "act" && isEffectfulTool(descriptor)) {
-    return false;
-  }
-
   return true;
 }
 

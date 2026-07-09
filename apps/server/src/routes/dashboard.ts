@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AgentRuntime, ProjectInfo } from "@archcode/agent-core";
-import type { GoalState, GoalStatus, LoopMode, LoopRunKind, LoopRunReport, LoopStatus } from "@archcode/protocol";
+import type { GoalState, GoalStatus, LoopRunReport, LoopStatus, LoopTemplateId } from "@archcode/protocol";
 import { BadRequestError } from "../errors";
 
 const GoalStatusSchemaValues = new Set<GoalStatus>([
@@ -53,8 +53,7 @@ type DashboardLoop = {
   currentRun?: LoopRunReport;
   lastRun?: LoopRunReport;
   nextRunAt?: number;
-  runKind: LoopRunKind;
-  mode: LoopMode;
+  templateId: LoopTemplateId;
   projectSlug: string;
   projectName: string;
 };
@@ -104,8 +103,7 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
               currentRun: loop.currentRun,
               lastRun: loop.lastRun,
               nextRunAt: loop.nextRunAt,
-              runKind: loop.config.runKind,
-              mode: loop.config.mode,
+              templateId: loop.config.templateId,
               projectSlug: project.slug,
               projectName: project.name,
             })),

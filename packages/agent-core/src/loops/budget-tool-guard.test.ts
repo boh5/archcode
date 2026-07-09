@@ -18,10 +18,9 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-budget-tool-guard");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 const config: LoopConfig = {
+  templateId: "watch_report",
   title: "Guarded loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
 };
@@ -124,7 +123,7 @@ async function createFixture() {
       projectContext,
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
-      origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", mode: "act", approvalPolicy: "interactive" },
+      origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", approvalPolicy: "interactive" },
       abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
     });
   }

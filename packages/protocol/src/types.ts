@@ -1088,7 +1088,7 @@ export interface LoopProjectConfig {
 
 export type LoopRunKind = "session" | "goal";
 
-export type LoopMode = "report" | "act";
+export type LoopTemplateId = "watch_report" | "maintain_fix" | "pr_babysitter" | "goal_runner";
 
 export type LoopApprovalPolicy = "interactive" | "explicit_per_run";
 
@@ -1131,13 +1131,6 @@ export type LoopRunReason =
   | "execution_failed"
   | "max_steps_reached"
   | "scheduler_overlap";
-
-export type LoopToolProfileId =
-  | "loop_local_report"
-  | "loop_local_maintenance"
-  | "loop_github_pr_watch"
-  | "loop_ci_watch"
-  | "loop_goal_action";
 
 export type CollisionTarget =
   | { type: "pr"; owner: string; repo: string; number: number }
@@ -1199,21 +1192,19 @@ export interface LoopGoalTemplate {
 }
 
 export interface LoopConfig {
+  templateId: LoopTemplateId;
   title: string;
   description?: string;
   schedule: LoopScheduleSpec;
-  runKind: LoopRunKind;
-  mode: LoopMode;
   approvalPolicy: LoopApprovalPolicy;
   limits: LoopLimits;
   budget?: LoopBudgetConfig;
-  toolProfileId?: LoopToolProfileId;
   collisionTargets?: CollisionTarget[];
   taskPrompt?: string;
   instructions?: string;
   goalTemplate?: LoopGoalTemplate;
-  sourcePreset?: string;
   triggers?: LoopTriggerSpec[];
+  useWorktree?: boolean;
   cleanupPolicy?: LoopCleanupPolicy;
 }
 
@@ -1325,7 +1316,6 @@ export interface LoopRunReport {
   collisionTargets?: CollisionTarget[];
   collisionConflicts?: CollisionConflict[];
   integrationErrors?: LoopIntegrationError[];
-  toolProfileId?: LoopToolProfileId;
   sessionId?: string;
   goalId?: string;
   summary?: string;

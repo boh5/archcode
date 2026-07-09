@@ -758,7 +758,6 @@ export class LoopScheduler {
       collisionTargets: result.collisionTargets ?? runningReport.collisionTargets,
       collisionConflicts: result.collisionConflicts,
       integrationErrors: result.integrationErrors,
-      toolProfileId: loop.config.toolProfileId,
       blockedReason: result.blockedReason,
       blockedByHitlIds,
       attentionStatus: blockedByHitlIds === undefined ? result.attentionStatus : "waiting_for_human",
@@ -880,7 +879,6 @@ export class LoopScheduler {
       ...jobReportFields(job),
       collisionTargets: [...targets],
       collisionConflicts: conflicts,
-      toolProfileId: loop.config.toolProfileId,
     };
     await this.#stateManager.appendRunReport(loop.loopId, report);
     return report;
@@ -916,7 +914,6 @@ export class LoopScheduler {
       status: "cancelled",
       endedAt: this.#clock.now(),
       reason,
-      toolProfileId: loop.config.toolProfileId,
     };
 
     const finishedState = await this.#stateManager.recordRunFinish(loopId, report);
@@ -979,7 +976,6 @@ export class LoopScheduler {
         endedAt: this.#clock.now(),
         reason: "cancelled_by_user",
         summary: "Recovered stale running loop state on scheduler startup.",
-        toolProfileId: loop.config.toolProfileId,
       };
       await this.#stateManager.recordRunFinish(loop.loopId, report);
       await this.#collisionLedger?.releaseRun(loop.loopId, current.runId);

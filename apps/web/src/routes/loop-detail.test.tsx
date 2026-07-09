@@ -160,11 +160,10 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
     loopId: "loop-1",
     projectId: "demo",
     config: {
+      templateId: "goal_runner",
       title: "Daily Triage Loop",
       description: "Checks local project health",
       schedule: { kind: "interval", everyMs: 60000 },
-      runKind: "goal",
-      mode: "act",
       approvalPolicy: "explicit_per_run",
       limits: {
         maxIterationsPerRun: 6,
@@ -182,7 +181,6 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
         softThresholdRatio: 0.8,
         hardThresholdRatio: 1,
       },
-      toolProfileId: "loop_github_pr_watch",
       taskPrompt: "Review failing tests and summarize concrete next steps.",
       goalTemplate: {
         title: "Triage Follow-up Goal",
@@ -256,7 +254,6 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       },
       collisionTargets: [{ type: "pr", owner: "test-owner", repo: "test-repo", number: 42 }],
       integrationErrors: [],
-      toolProfileId: "loop_github_pr_watch",
     }),
     currentRun: makeRun({
       runId: "run-current",
@@ -265,7 +262,6 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
       sessionId: "session-current",
       goalId: "goal-current",
       reason: "completed",
-      toolProfileId: "loop_github_pr_watch",
     }),
     ...overrides,
   };
@@ -342,7 +338,6 @@ function setupLoopDetailFetch(input: {
           occurredAt: 1700000010000,
         },
       ],
-      toolProfileId: "loop_github_pr_watch",
     }),
     makeRun({
       runId: "run-history-2",
@@ -681,7 +676,6 @@ describe("LoopDetailRoute", () => {
               detectedAt: 1700000010000,
             },
           ],
-          toolProfileId: "loop_github_pr_watch",
         }),
       ],
       integrationStatuses: [

@@ -15,10 +15,9 @@ import { __setSessionsDirForTest } from "./store/sessions-dir";
 const tmpRoots: string[] = [];
 
 const intervalLoopConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Runtime interval loop",
   schedule: { kind: "interval", everyMs: 100 },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4 },
   taskPrompt: "Summarize the project.",
@@ -31,10 +30,9 @@ const manualLoopConfig: LoopConfig = {
 };
 
 const goalLoopConfig: LoopConfig = {
+  templateId: "goal_runner",
   title: "Runtime goal loop",
   schedule: { kind: "manual" },
-  runKind: "goal",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {

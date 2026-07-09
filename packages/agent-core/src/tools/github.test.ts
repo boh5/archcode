@@ -40,10 +40,9 @@ interface PullRequestChecksOutput {
 }
 
 const LOOP_CONFIG: LoopConfig = {
+  templateId: "pr_babysitter",
   title: "GitHub guarded loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, maxTokensPerRun: 1_000, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
 };
@@ -200,9 +199,7 @@ describe("GitHub connector-backed tools", () => {
           loopId: contender.loopId,
           runId: "run-b",
           trigger: "manual",
-          mode: "act",
           approvalPolicy: "interactive",
-          toolProfileId: "loop_github_pr_watch",
         },
       }),
     );
@@ -247,9 +244,7 @@ describe("GitHub connector-backed tools", () => {
           loopId: loop.loopId,
           runId: "run-soft",
           trigger: "manual",
-          mode: "act",
           approvalPolicy: "interactive",
-          toolProfileId: "loop_github_pr_watch",
         },
       }),
     );

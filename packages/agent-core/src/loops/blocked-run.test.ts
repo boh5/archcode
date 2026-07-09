@@ -16,10 +16,9 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-blocked-run");
 const COMPLETED_EXECUTION: SessionExecutionRecord = { id: "run-1", startedAt: 100, status: "completed", endedAt: 150, durationMs: 50 };
 
 const sessionLoopConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Blocked loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 3 },
   taskPrompt: "Run safely unless user input is needed.",

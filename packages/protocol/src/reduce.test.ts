@@ -1541,10 +1541,9 @@ describe("Loop stream event reducers", () => {
       loopId: "loop-1",
       projectId: "p",
       config: {
+        templateId: "watch_report",
         title: "Test Loop",
         schedule: { kind: "manual" },
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 10 },
       },

@@ -32,9 +32,9 @@ export type { ResumeCoordinatorResult } from "./hitl/resume-coordinator";
 export * from "./integrations";
 
 export {
-  expandLoopPreset,
-  getUnsupportedLoopPresetReason,
-  isSupportedLoopPreset,
+  expandLoopTemplate,
+  getLoopTemplate,
+  isLoopTemplateId,
   LoopActiveConflictError,
   LoopConfigSchema,
   LoopNotFoundError,

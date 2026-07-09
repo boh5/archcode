@@ -9,6 +9,7 @@ export interface AgentRunOptions {
   askUser?: AskUserCallback;
   maxSteps?: number;
   origin?: ToolExecutionOrigin;
+  extraTools?: readonly string[];
 }
 
 export interface Agent {

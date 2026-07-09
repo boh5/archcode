@@ -13,10 +13,9 @@ import { FakeClock, FakeSessionExecutionManager } from "./test-utils";
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-budget-hooks");
 
 const config: LoopConfig = {
+  templateId: "watch_report",
   title: "Hooked loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8, maxTokensPerRun: 100, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
 };
@@ -53,7 +52,7 @@ describe("Loop budget query hooks", () => {
       logger: { child: () => ({}) } as never,
       projectContext,
     }, {
-      origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", mode: "act", approvalPolicy: "interactive" },
+      origin: { kind: "loop", loopId: loop.loopId, runId: "run-1", trigger: "manual", approvalPolicy: "interactive" },
       abortSessionExecutionAndWait: (workspaceRoot, sessionId) => executionManager.abortAndWait(workspaceRoot, sessionId),
     })).rejects.toBeInstanceOf(LoopBudgetHardStopError);
 

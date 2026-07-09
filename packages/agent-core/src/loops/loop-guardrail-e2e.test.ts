@@ -23,11 +23,10 @@ import { LoopJobQueue } from "./job-queue";
 import { createLoopCollisionToolPermission, createLoopCollisionToolReleaseHook } from "./collision-tool-guard";
 import { LoopKillStateManager } from "./kill-state";
 import { LoopBudgetLedger } from "./budget-ledger";
-import { expandLoopPreset } from "./presets";
 import { LoopScheduler } from "./scheduler";
 import { LoopBudgetConfigSchema, LoopStateManager, type LoopConfig } from "./state";
 import { FakeClock } from "./test-utils";
-import { resolveLoopToolProfile } from "./tool-profiles";
+import { expandLoopTemplate, PR_BABYSITTER_EXTRA_TOOLS } from "./templates";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-guardrail-e2e");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
@@ -51,10 +50,8 @@ describe("Loop end-to-end guardrail flows", () => {
     registry.globalPermissions.push(createLoopBudgetToolPermission());
     registry.globalPermissions.push(createLoopCollisionToolPermission({ leaseTtlMs: 60_000 }));
     registry.globalHooks.after.push(createLoopCollisionToolReleaseHook({ leaseTtlMs: 60_000 }));
-    const allowedTools = resolveLoopToolProfile({
-      agentAllowedTools: registry.getAll().map((descriptor) => descriptor.name),
-      toolProfileId: "loop_github_pr_watch",
-    }).tools;
+    const registeredTools = new Set(registry.getAll().map((descriptor) => descriptor.name));
+    const allowedTools = PR_BABYSITTER_EXTRA_TOOLS.filter((toolName) => registeredTools.has(toolName));
     const prBabysitter = await stateManager.create("project-a", prBabysitterConfig());
     const executedReadTools: string[] = [];
     const confirmPermission = mock(async () => "approve_once" as const);
@@ -65,8 +62,7 @@ describe("Loop end-to-end guardrail flows", () => {
       coordinator: new LoopJobCoordinator({ queue: jobQueue, clock }),
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       runner: async ({ loop, runId }) => {
-        expect(loop.config.sourcePreset).toBe("pr_babysitter");
-        expect(loop.config.toolProfileId).toBe("loop_github_pr_watch");
+        expect(loop.config.templateId).toBe("pr_babysitter");
         expect(allowedTools).toContain(TOOL_GITHUB_GET_PULL_REQUEST);
         expect(allowedTools).toContain(TOOL_GITHUB_GET_PULL_REQUEST_CHECKS);
         expect(allowedTools).toContain(TOOL_GITHUB_CREATE_ISSUE_COMMENT);
@@ -130,7 +126,6 @@ describe("Loop end-to-end guardrail flows", () => {
     expect(report).toMatchObject({
       status: "succeeded",
       reason: "soft_budget_blocked",
-      toolProfileId: "loop_github_pr_watch",
     });
     expect(executedReadTools).toEqual([TOOL_GITHUB_GET_PULL_REQUEST, TOOL_GITHUB_GET_PULL_REQUEST_CHECKS]);
     expect(connector.getPullRequest).toHaveBeenCalledTimes(2);
@@ -220,7 +215,7 @@ describe("Loop end-to-end guardrail flows", () => {
 });
 
 function prBabysitterConfig(): LoopConfig {
-  const preset = expandLoopPreset("pr_babysitter");
+  const preset = expandLoopTemplate("pr_babysitter");
   const budget = LoopBudgetConfigSchema.parse({
     ...preset.limits,
     maxTokensPerRun: 1_000,
@@ -250,7 +245,7 @@ function toolContext(
     projectContext: createTestProjectContext(TMP_DIR),
     agentSkills: [],
     skillService: new SkillService({ builtinSkills: {} }),
-    origin: { kind: "loop", loopId, runId, trigger: "manual", mode: "report", approvalPolicy: "interactive", toolProfileId: "loop_github_pr_watch" },
+    origin: { kind: "loop", loopId, runId, trigger: "manual", approvalPolicy: "interactive" },
     ...overrides,
   });
 }

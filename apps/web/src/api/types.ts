@@ -43,7 +43,7 @@ export type {
   LoopStatus,
   LoopRunReport,
   LoopRunKind,
-  LoopMode,
+  LoopTemplateId,
   LoopApprovalPolicy,
   LoopLimits,
   LoopGoalTemplate,
@@ -59,14 +59,13 @@ export type {
   LoopBudgetSnapshot,
   LoopCollisionSnapshot,
   LoopIntegrationError,
-  LoopToolProfileId,
 } from "@archcode/protocol";
 
 // ─── Dashboard aggregate types ───
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalState, HitlProjection, LoopRunReport, LoopRunKind, LoopMode, LoopState, LoopStatus } from "@archcode/protocol";
+import type { GoalState, HitlProjection, LoopRunReport, LoopState, LoopStatus, LoopTemplateId } from "@archcode/protocol";
 
 // ─── Unified HITL API types ───
 
@@ -97,8 +96,7 @@ export interface DashboardLoop {
   currentRun?: LoopRunReport;
   lastRun?: LoopRunReport;
   nextRunAt?: number;
-  runKind: LoopRunKind;
-  mode: LoopMode;
+  templateId: LoopTemplateId;
   projectSlug: string;
   projectName: string;
 }

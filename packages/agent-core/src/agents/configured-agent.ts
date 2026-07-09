@@ -22,7 +22,6 @@ import type { SessionStoreManager } from "../store/session-store-manager";
 import { BusyError } from "../store/types";
 import type { SessionStoreState } from "../store/types";
 import type { Logger } from "../logger";
-import { resolveLoopToolProfile } from "../loops/tool-profiles";
 import type { AskUserCallback, ToolConfirmationCallback, ToolRegistry } from "../tools/index";
 import { TOOL_OUTPUT_DIR, enforceQuota } from "../tools/index";
 import { AgentRunningError, MissingProjectContextError } from "./errors";
@@ -39,6 +38,13 @@ import {
 import type { QueryLoopHooks } from "./query/loop-hooks";
 import { runQueryLoop } from "./query/loop";
 import type { Agent, AgentResult, AgentRunOptions } from "./types";
+
+export class UnknownExtraToolError extends Error {
+  constructor(public readonly toolName: string) {
+    super(`Unknown extra tool "${toolName}". Register the tool before passing it through AgentRunOptions.extraTools.`);
+    this.name = "UnknownExtraToolError";
+  }
+}
 
 export interface ConfiguredAgentOptions {
   readonly definition: AgentDefinition;
@@ -178,7 +184,7 @@ export class ConfiguredAgent implements Agent {
       throw new Error("Agent has been disposed");
     }
 
-    const { abort, confirm, askUser, maxSteps, origin } = this.parseRunOptions(abortOrOptions, confirmPermission);
+    const { abort, confirm, askUser, maxSteps, origin, extraTools } = this.parseRunOptions(abortOrOptions, confirmPermission);
 
     if (this.running) {
       throw new AgentRunningError();
@@ -193,7 +199,7 @@ export class ConfiguredAgent implements Agent {
       await this.ensureAgentsMd();
 
       const definitionAllowedTools = [...this.resolveAllowedTools(this.definition, this.depth)];
-      const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, origin);
+      const allowedTools = this.resolveEffectiveTools(definitionAllowedTools, extraTools);
       const agentSkills = this.definition.skills;
       const projectContext: ProjectContext = await this.projectContextResolver.resolve(this.workspaceRoot);
       const availableSkills = await this.skillService.listForAgent(this.workspaceRoot, agentSkills);
@@ -323,6 +329,7 @@ export class ConfiguredAgent implements Agent {
     askUser: AskUserCallback | undefined;
     maxSteps: number | undefined;
     origin: AgentRunOptions["origin"];
+    extraTools: readonly string[] | undefined;
   } {
     if (abortOrOptions && typeof abortOrOptions === "object" && abortOrOptions instanceof AbortSignal) {
       return {
@@ -331,6 +338,7 @@ export class ConfiguredAgent implements Agent {
         askUser: this.askUserDefault,
         maxSteps: undefined,
         origin: undefined,
+        extraTools: undefined,
       };
     }
 
@@ -342,6 +350,7 @@ export class ConfiguredAgent implements Agent {
         askUser: opts.askUser ?? this.askUserDefault,
         maxSteps: opts.maxSteps,
         origin: opts.origin,
+        extraTools: opts.extraTools,
       };
     }
 
@@ -351,6 +360,7 @@ export class ConfiguredAgent implements Agent {
       askUser: this.askUserDefault,
       maxSteps: undefined,
       origin: undefined,
+      extraTools: undefined,
     };
   }
 
@@ -433,16 +443,27 @@ export class ConfiguredAgent implements Agent {
 
   private resolveEffectiveTools(
     definitionAllowedTools: readonly string[],
-    origin: AgentRunOptions["origin"],
+    extraTools: readonly string[] | undefined,
   ): string[] {
-    if (origin?.kind !== "loop") {
-      return [...definitionAllowedTools];
+    const seen = new Set<string>();
+    const merged: string[] = [];
+
+    for (const toolName of definitionAllowedTools) {
+      if (seen.has(toolName)) continue;
+      seen.add(toolName);
+      merged.push(toolName);
     }
 
-    return [...resolveLoopToolProfile({
-      agentAllowedTools: definitionAllowedTools,
-      toolProfileId: origin.toolProfileId,
-    }).tools];
+    for (const toolName of extraTools ?? []) {
+      if (this.toolRegistry.get(toolName) === undefined) {
+        throw new UnknownExtraToolError(toolName);
+      }
+      if (seen.has(toolName)) continue;
+      seen.add(toolName);
+      merged.push(toolName);
+    }
+
+    return merged;
   }
 
   private hasUnconsumedTodoContinuation(): boolean {

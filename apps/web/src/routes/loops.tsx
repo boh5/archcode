@@ -174,8 +174,7 @@ function LoopListItem({ loop }: { loop: LoopState }) {
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
           <span className="font-mono">{loop.loopId.slice(0, 8)}</span>
           <span>schedule: {formatSchedule(loop)}</span>
-          <span>runKind: {loop.config.runKind}</span>
-          <span>mode: {loop.config.mode}</span>
+          <span>template: {loop.config.templateId}</span>
         </div>
         <div className="flex items-center gap-2 mt-0.5 text-[11px] text-text-muted">
           <span>last run: {formatLastRun(loop)}</span>

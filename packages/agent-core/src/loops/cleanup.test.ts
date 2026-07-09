@@ -12,10 +12,9 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-cleanup");
 const START = Date.UTC(2026, 6, 6, 12, 0, 0, 0);
 
 const baseConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Cleanup loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 1 },
 };

@@ -140,13 +140,12 @@ describe("registerBuiltinTools", () => {
     ]);
   });
 
-  it("registers collision release before redaction, truncation, audit, and logger after hooks", () => {
+  it("registers redaction before truncation, audit, and logger after hooks", () => {
     const registry = new ToolRegistry();
 
     registerBuiltinTools(registry, silentLogger);
 
     expect(registry.globalHooks.after.map((hook) => hook.name)).toEqual([
-      "collisionReleaseAfterHook",
       "redactionAfterHook",
       "truncationAfterHook",
       "auditAfterHook",
@@ -159,7 +158,9 @@ describe("registerBuiltinTools", () => {
 
     registerBuiltinTools(registry, silentLogger);
 
-    expect(registry.globalPermissions).toHaveLength(2);
+    expect(registry.globalPermissions).toHaveLength(1);
+    expect(registry.globalPermissions.map((permission) => permission.name)).not.toContain("loopCollisionToolPermission");
+    expect(registry.globalHooks.after.map((hook) => hook.name)).not.toContain("collisionReleaseAfterHook");
   });
 
   it("registers GitHub connector-backed tools without adding them to builtin descriptor groups", () => {

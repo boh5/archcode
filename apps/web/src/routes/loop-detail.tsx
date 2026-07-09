@@ -253,9 +253,8 @@ function ConfigSection({ loop }: { loop: LoopState }) {
         <FieldRow label="schedule" value={formatSchedule(config.schedule)} />
         <FieldRow label="triggers" value={formatTriggers(config.triggers)} />
         <FieldRow label="cleanup policy" value={formatCleanupPolicy(config.cleanupPolicy)} />
-        <FieldRow label="run kind" value={config.runKind} />
-        <FieldRow label="mode" value={config.mode} />
-        <FieldRow label="tool profile" value={config.toolProfileId ?? "none"} />
+        <FieldRow label="template" value={config.templateId} />
+        <FieldRow label="worktree" value={config.useWorktree === true ? "enabled" : "disabled"} />
         <FieldRow label="approval policy" value={config.approvalPolicy} />
         <FieldRow label="budget defaults" value={formatLimits(config)} wide />
         <FieldRow label="task prompt" value={config.taskPrompt ?? "No task prompt configured"} wide />
@@ -475,7 +474,6 @@ function RunHistorySection({
                 <span className="text-text-primary font-medium">{run.status}</span>
                 <span className="text-text-tertiary">trigger: {run.trigger}</span>
                 <span className="text-text-tertiary">reason: {run.reason ?? "none"}</span>
-                <span className="text-text-tertiary">profile: {run.toolProfileId ?? "none"}</span>
                 <span className="text-text-tertiary">started: {formatDateTime(run.startedAt)}</span>
                 <span className="text-text-tertiary">ended: {formatDateTime(run.endedAt)}</span>
               </div>

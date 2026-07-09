@@ -807,11 +807,10 @@ describe("Loop types", () => {
 
   test("LoopConfig serializes minimal manual session report loop", () => {
     const config: LoopConfig = {
+      templateId: "watch_report",
       title: "Daily Triage",
       description: "Inspect git status and produce report",
       schedule: { kind: "manual" },
-      runKind: "session",
-      mode: "report",
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 10 },
       taskPrompt: "Inspect git status and report findings",
@@ -820,18 +819,16 @@ describe("Loop types", () => {
     const parsed = serializeRoundTrip(config);
     expect(parsed).toEqual(config);
     expect(parsed.schedule).toEqual({ kind: "manual" });
-    expect(parsed.runKind).toBe("session");
-    expect(parsed.mode).toBe("report");
+    expect(parsed.templateId).toBe("watch_report");
     expect(parsed.approvalPolicy).toBe("interactive");
     expect(parsed.limits.maxIterationsPerRun).toBe(10);
   });
 
   test("LoopConfig serializes interval goal loop with inline template", () => {
     const config: LoopConfig = {
+      templateId: "goal_runner",
       title: "Changelog Drafter",
       schedule: { kind: "interval", everyMs: 3600000 },
-      runKind: "goal",
-      mode: "report",
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 5 },
       goalTemplate: {
@@ -844,17 +841,16 @@ describe("Loop types", () => {
     const parsed = serializeRoundTrip(config);
     expect(parsed).toEqual(config);
     expect(parsed.schedule).toEqual({ kind: "interval", everyMs: 3600000 });
-    expect(parsed.runKind).toBe("goal");
+    expect(parsed.templateId).toBe("goal_runner");
     expect(parsed.goalTemplate).toBeDefined();
     expect(parsed.goalTemplate!.title).toBe("Draft changelog");
   });
 
   test("LoopConfig accepts cron, triggers, and cleanup policy", () => {
     const config: LoopConfig = {
+      templateId: "pr_babysitter",
       title: "PR watcher",
       schedule: { kind: "cron", expression: "*/15 * * * *" },
-      runKind: "session",
-      mode: "report",
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 1 },
       triggers: [{ kind: "on_pr", cadenceMs: 60000, baseBranch: "main" }],
@@ -867,7 +863,7 @@ describe("Loop types", () => {
 
   test("LoopConfig rejects goalTemplateId at type level", () => {
     // @ts-expect-error - goalTemplateId is not a valid LoopConfig field
-    const invalid: LoopConfig = { title: "t", schedule: { kind: "manual" }, runKind: "goal", mode: "report", approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 }, goalTemplateId: "goal-123" };
+    const invalid: LoopConfig = { templateId: "goal_runner", title: "t", schedule: { kind: "manual" }, approvalPolicy: "interactive", limits: { maxIterationsPerRun: 1 }, goalTemplateId: "goal-123" };
     expect(invalid).toBeDefined();
   });
 
@@ -876,10 +872,9 @@ describe("Loop types", () => {
       loopId: "loop-1",
       projectId: "my-project",
       config: {
+        templateId: "watch_report",
         title: "Daily Triage",
         schedule: { kind: "manual" },
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 10 },
       },
@@ -903,10 +898,9 @@ describe("Loop types", () => {
       loopId: "loop-1",
       projectId: "my-project",
       config: {
+        templateId: "watch_report",
         title: "Changelog",
         schedule: { kind: "interval", everyMs: 60000 },
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 5 },
       },
@@ -969,10 +963,9 @@ describe("Loop types", () => {
         loopId: "loop-1",
         projectId: "p",
         config: {
+          templateId: "watch_report",
           title: "t",
           schedule: { kind: "manual" },
-          runKind: "session",
-          mode: "report",
           approvalPolicy: "interactive",
           limits: { maxIterationsPerRun: 10 },
         },
@@ -1076,15 +1069,14 @@ describe("Loop types", () => {
     expect(parsed.loopId).toBeUndefined();
   });
 
-  test("readinessScore remains absent from legacy LoopState fixtures", () => {
+  test("readinessScore remains absent from LoopState fixtures", () => {
     const state: LoopState = {
       loopId: "loop-1",
       projectId: "p",
       config: {
+        templateId: "watch_report",
         title: "t",
         schedule: { kind: "manual" },
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         limits: { maxIterationsPerRun: 10 },
       },

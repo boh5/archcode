@@ -10,10 +10,9 @@ import { FakeClock } from "./test-utils";
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-budget-ledger");
 
 const config: LoopConfig = {
+  templateId: "watch_report",
   title: "Budgeted loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: {
     maxIterationsPerRun: 4,

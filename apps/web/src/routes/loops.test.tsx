@@ -102,10 +102,9 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
     loopId: "loop-1",
     projectId: "demo",
     config: {
+      templateId: "watch_report",
       title: "Test Loop",
       schedule: { kind: "manual" },
-      runKind: "session",
-      mode: "report",
       approvalPolicy: "interactive",
       limits: {
         maxIterationsPerRun: 8,
@@ -123,7 +122,6 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
         softThresholdRatio: 0.8,
         hardThresholdRatio: 1,
       },
-      toolProfileId: "loop_local_report",
       taskPrompt: "Run a local report.",
     },
     status: "active",
@@ -209,11 +207,10 @@ describe("LoopsRoute", () => {
       makeLoop({
         loopId: "loop-1",
         config: {
+          templateId: "watch_report",
           title: "Daily Triage Loop",
           schedule: { kind: "cron", expression: "*/15 * * * *" },
           triggers: [{ kind: "on_pr", cadenceMs: 60000 }],
-          runKind: "session",
-          mode: "report",
           approvalPolicy: "interactive",
           limits: { maxIterationsPerRun: 8 },
         },
@@ -261,10 +258,9 @@ describe("LoopsRoute", () => {
       makeLoop({
         loopId: "loop-2",
         config: {
+          templateId: "goal_runner",
           title: "Manual Goal Loop",
           schedule: { kind: "manual" },
-          runKind: "goal",
-          mode: "act",
           approvalPolicy: "explicit_per_run",
           limits: { maxIterationsPerRun: 4 },
         },
@@ -298,10 +294,8 @@ describe("LoopsRoute", () => {
       expect(container.textContent).toContain("paused");
       expect(container.textContent).toContain("cron UTC */15 * * * *");
       expect(container.textContent).toContain("manual");
-      expect(container.textContent).toContain("runKind: session");
-      expect(container.textContent).toContain("runKind: goal");
-      expect(container.textContent).toContain("mode: report");
-      expect(container.textContent).toContain("mode: act");
+      expect(container.textContent).toContain("template: watch_report");
+      expect(container.textContent).toContain("template: goal_runner");
       expect(container.textContent).toContain("succeeded");
       expect(container.textContent).toContain("next:");
       expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("on_pr healthy 60000ms");
@@ -380,6 +374,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "watch_report",
         title: "Manual Session",
         scheduleKind: "manual",
         runKind: "session",
@@ -408,25 +403,8 @@ describe("LoopsRoute", () => {
         expect(postedBody).toBeDefined();
       });
 
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.title).toBe("Manual Session");
-      expect(config.schedule).toEqual({ kind: "manual" });
-      expect(config.runKind).toBe("session");
-      expect(config.mode).toBe("report");
-      expect(config.approvalPolicy).toBe("interactive");
-      expect(config.limits).toEqual({
-        maxIterationsPerRun: 8,
-        maxTokensPerRun: 120000,
-        maxWallClockMsPerRun: 900000,
-        maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-      });
-      expect(config.budget).toEqual(config.limits);
-      expect(config.toolProfileId).toBe("loop_local_report");
-      expect(config.taskPrompt).toBe("Summarize local project health.");
-      expect(config.goalTemplate).toBeUndefined();
-      expect("goalTemplateId" in config).toBe(false);
+      expect(postedBody!.templateId).toBe("watch_report");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -460,6 +438,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "watch_report",
         title: "Interval Session",
         scheduleKind: "interval",
         everyMs: 60000,
@@ -489,24 +468,8 @@ describe("LoopsRoute", () => {
         expect(postedBody).toBeDefined();
       });
 
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.title).toBe("Interval Session");
-      expect(config.schedule).toEqual({ kind: "interval", everyMs: 60000 });
-      expect(config.runKind).toBe("session");
-      expect(config.mode).toBe("report");
-      expect(config.approvalPolicy).toBe("interactive");
-      expect(config.limits).toEqual({
-        maxIterationsPerRun: 8,
-        maxTokensPerRun: 120000,
-        maxWallClockMsPerRun: 900000,
-        maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-      });
-      expect(config.budget).toEqual(config.limits);
-      expect(config.toolProfileId).toBe("loop_local_report");
-      expect(config.goalTemplate).toBeUndefined();
-      expect("goalTemplateId" in config).toBe(false);
+      expect(postedBody!.templateId).toBe("watch_report");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -540,6 +503,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "watch_report",
         title: "Cron Session",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
@@ -570,10 +534,8 @@ describe("LoopsRoute", () => {
         expect(postedBody).toBeDefined();
       });
 
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
-      expect(config.triggers).toBeUndefined();
-      expect("projectConfig" in config).toBe(false);
+      expect(postedBody!.templateId).toBe("watch_report");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -593,6 +555,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "watch_report",
         title: "Invalid Cron",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * * *",
@@ -641,6 +604,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "pr_babysitter",
         title: "Manual PR Watch",
         scheduleKind: "manual",
         triggerOnPr: true,
@@ -668,10 +632,8 @@ describe("LoopsRoute", () => {
         expect(postedBody).toBeDefined();
       });
 
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.schedule).toEqual({ kind: "manual" });
-      expect(config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60000 }]);
-      expect("projectConfig" in config).toBe(false);
+      expect(postedBody!.templateId).toBe("pr_babysitter");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -691,6 +653,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "pr_babysitter",
         title: "Bad Cadence",
         scheduleKind: "manual",
         triggerOnPr: true,
@@ -730,6 +693,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "watch_report",
         title: "Selector Check",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
@@ -799,6 +763,7 @@ describe("LoopsRoute", () => {
 
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
+        templateId: "goal_runner",
         title: "Goal Loop",
         scheduleKind: "manual",
         runKind: "goal",
@@ -829,32 +794,8 @@ describe("LoopsRoute", () => {
         expect(postedBody).toBeDefined();
       });
 
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.title).toBe("Goal Loop");
-      expect(config.runKind).toBe("goal");
-      expect(config.mode).toBe("act");
-      expect(config.approvalPolicy).toBe("explicit_per_run");
-      expect(config.limits).toEqual({
-        maxIterationsPerRun: 4,
-        maxTokensPerRun: 160000,
-        maxWallClockMsPerRun: 1200000,
-        maxRunsPerDay: 3,
-        softThresholdRatio: 0.75,
-        hardThresholdRatio: 1,
-      });
-      expect(config.budget).toEqual(config.limits);
-      expect(config.toolProfileId).toBe("loop_goal_action");
-      expect(config.goalTemplate).toBeDefined();
-      const gt = config.goalTemplate as Record<string, unknown>;
-      expect(gt.title).toBe("Inline Goal Title");
-      expect(gt.objective).toBe("Investigate failing tests and propose fixes.");
-      expect(gt.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
-      expect("doneConditions" in gt).toBe(false);
-      expect("retryPolicy" in gt).toBe(false);
-      expect("approvalPoints" in gt).toBe(false);
-      expect("reviewerAgent" in gt).toBe(false);
-      expect("author" in gt).toBe(false);
-      expect("goalTemplateId" in config).toBe(false);
+      expect(postedBody!.templateId).toBe("goal_runner");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -945,18 +886,8 @@ describe("LoopsRoute", () => {
       });
 
       expect(postedBody!.presetId).toBeUndefined();
-      const config = postedBody!.config as Record<string, unknown>;
-      expect(config.title).toBe("PR Babysitter");
-      expect(config.runKind).toBe("session");
-      expect(config.mode).toBe("report");
-      expect(config.toolProfileId).toBe("loop_github_pr_watch");
-      expect(config.taskPrompt).toString();
-      expect(String(config.taskPrompt)).toContain("optional fix Goal");
-      const budget = config.budget as Record<string, unknown>;
-      expect(budget.maxIterationsPerRun).toBe(12);
-      expect(budget.maxTokensPerRun).toBe(160000);
-      expect(budget.softThresholdRatio).toBe(0.8);
-      expect(config.limits).toEqual(config.budget);
+      expect(postedBody!.templateId).toBe("pr_babysitter");
+      expect(postedBody!.config).toBeUndefined();
     } finally {
       await act(async () => {
         reactRoot.unmount();

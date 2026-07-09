@@ -329,21 +329,15 @@ export function invalidateLoopAfterPauseResume(
 export function useCreateLoop() {
   const queryClient = useQueryClient();
 
-  type CreateLoopVariables = { slug: string; author?: string } & (
-    | { config: LoopConfig; presetId?: never }
-    | { presetId: string; config?: never }
-  );
+  type CreateLoopVariables = { slug: string; templateId: LoopConfig["templateId"]; author?: string };
 
   return useMutation({
     mutationFn: async ({
       slug,
-      config,
-      presetId,
+      templateId,
       author,
     }: CreateLoopVariables) => {
-      const body = config
-        ? { config, ...(author ? { author } : {}) }
-        : { presetId, ...(author ? { author } : {}) };
+      const body = { templateId, ...(author ? { author } : {}) };
       return apiFetch<{ loop: LoopState }>(`/api/projects/${encodeURIComponent(slug)}/loops`, {
         method: "POST",
         body,

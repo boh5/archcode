@@ -19,10 +19,9 @@ import { LoopTriggerPoller, type LocalBranchHead, type LoopLocalGitReader } from
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-triggers");
 
 const baseConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Trigger loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8 },
   taskPrompt: "Investigate trigger event",

@@ -657,10 +657,9 @@ function createLoopState(loopId: string, status: LoopState["status"]): LoopState
     loopId,
     projectId: "proj",
     config: {
+      templateId: "watch_report",
       title: "Test Loop",
       schedule: { kind: "manual" as const },
-      runKind: "session" as const,
-      mode: "report" as const,
       approvalPolicy: "interactive" as const,
       limits: { maxIterationsPerRun: 10 },
     },

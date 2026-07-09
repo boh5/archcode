@@ -10,13 +10,15 @@ import type {
   LoopApprovalPolicy,
   LoopBudgetConfig,
   LoopConfig,
-  LoopMode,
-  LoopRunKind,
   LoopScheduleSpec,
   LoopState,
-  LoopToolProfileId,
+  LoopTemplateId,
   LoopTriggerSpec,
 } from "../../api/types";
+
+type LoopFormRunKind = "session" | "goal";
+type LoopFormMode = "report" | "act";
+type LoopFormToolProfileId = "loop_local_report" | "loop_local_maintenance" | "loop_github_pr_watch" | "loop_ci_watch" | "loop_goal_action";
 
 interface PresetQuickStart {
   id: string;
@@ -26,7 +28,7 @@ interface PresetQuickStart {
 }
 
 interface ToolProfileOption {
-  id: LoopToolProfileId;
+  id: LoopFormToolProfileId;
   label: string;
   description: string;
   externalRequirement?: string;
@@ -92,6 +94,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "Daily Triage",
       description: "Inspect local project health and summarize issues.",
+      templateId: "watch_report",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_local_report",
@@ -106,6 +109,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "Changelog Drafter",
       description: "Draft changelog text from local history and diffs.",
+      templateId: "watch_report",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_local_report",
@@ -120,6 +124,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "PR Babysitter",
       description: "Watch PR status, comments, and checks, then report useful next steps.",
+      templateId: "pr_babysitter",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_github_pr_watch",
@@ -134,6 +139,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "CI Sweeper",
       description: "Inspect workflow runs and summarize failure groups.",
+      templateId: "watch_report",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_ci_watch",
@@ -148,6 +154,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "Dependency Sweeper",
       description: "Create a scoped Goal for dependency maintenance.",
+      templateId: "goal_runner",
       runKind: "goal",
       mode: "act",
       approvalPolicy: "explicit_per_run",
@@ -165,6 +172,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "Post-Land Cleanup",
       description: "Summarize linked issues, comments, and follow-up cleanup status.",
+      templateId: "pr_babysitter",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_github_pr_watch",
@@ -179,6 +187,7 @@ const PRESET_QUICK_STARTS: PresetQuickStart[] = [
     template: {
       title: "Issue Triage",
       description: "Inspect open issues and suggest labels, owners, or next questions.",
+      templateId: "pr_babysitter",
       runKind: "session",
       mode: "report",
       toolProfileId: "loop_github_pr_watch",
@@ -239,6 +248,7 @@ function isPositiveInt(value: unknown): value is number {
 }
 
 export interface LoopFormState {
+  templateId: LoopTemplateId;
   title: string;
   description: string;
   scheduleKind: ScheduleKind;
@@ -246,8 +256,8 @@ export interface LoopFormState {
   cronExpression: string;
   triggerOnPr: boolean;
   triggerCadenceMs: number;
-  runKind: LoopRunKind;
-  mode: LoopMode;
+  runKind: LoopFormRunKind;
+  mode: LoopFormMode;
   approvalPolicy: LoopApprovalPolicy;
   maxIterationsPerRun: number;
   maxTokensPerRun: number;
@@ -256,7 +266,7 @@ export interface LoopFormState {
   maxEstimatedUsdPerRun?: number;
   softThresholdRatio: number;
   hardThresholdRatio: number;
-  toolProfileId: LoopToolProfileId;
+  toolProfileId: LoopFormToolProfileId;
   taskPrompt: string;
   instructions: string;
   author: string;
@@ -295,15 +305,13 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
   const budget = buildBudgetConfig(state);
 
   const config: LoopConfig = {
+    templateId: state.templateId,
     title: trimmedTitle,
     ...(isNonEmpty(state.description) ? { description: state.description.trim() } : {}),
     schedule,
-    runKind: state.runKind,
-    mode: state.mode,
     approvalPolicy: state.approvalPolicy,
     limits: budget,
     budget,
-    toolProfileId: state.toolProfileId,
     ...(triggers.length > 0 ? { triggers } : {}),
     ...(isNonEmpty(state.taskPrompt) ? { taskPrompt: state.taskPrompt.trim() } : {}),
     ...(isNonEmpty(state.instructions) ? { instructions: state.instructions.trim() } : {}),
@@ -340,8 +348,9 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
     cronExpression: config.schedule.kind === "cron" ? config.schedule.expression : "*/15 * * * *",
     triggerOnPr: onPrTrigger !== undefined,
     triggerCadenceMs: onPrTrigger?.cadenceMs ?? 60000,
-    runKind: config.runKind,
-    mode: config.mode,
+    templateId: config.templateId,
+    runKind: config.templateId === "goal_runner" || config.goalTemplate !== undefined ? "goal" : "session",
+    mode: config.approvalPolicy === "explicit_per_run" ? "act" : "report",
     approvalPolicy: config.approvalPolicy,
     maxIterationsPerRun: budget.maxIterationsPerRun,
     maxTokensPerRun: maxTokensPerRun ?? DEFAULT_BUDGET.maxTokensPerRun ?? 120000,
@@ -350,7 +359,7 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
     maxEstimatedUsdPerRun,
     softThresholdRatio,
     hardThresholdRatio,
-    toolProfileId: config.toolProfileId ?? "loop_local_report",
+    toolProfileId: config.templateId === "pr_babysitter" ? "loop_github_pr_watch" : config.templateId === "goal_runner" ? "loop_goal_action" : "loop_local_report",
     taskPrompt: config.taskPrompt ?? "",
     instructions: config.instructions ?? "",
     goalTitle: goalTemplate?.title ?? "",
@@ -364,8 +373,9 @@ function applyPresetState(
   setters: {
     setTitle: (value: string) => void;
     setDescription: (value: string) => void;
-    setRunKind: (value: LoopRunKind) => void;
-    setMode: (value: LoopMode) => void;
+    setTemplateId: (value: LoopTemplateId) => void;
+    setRunKind: (value: LoopFormRunKind) => void;
+    setMode: (value: LoopFormMode) => void;
     setApprovalPolicy: (value: LoopApprovalPolicy) => void;
     setMaxIterationsPerRun: (value: number) => void;
     setMaxTokensPerRun: (value: number) => void;
@@ -374,7 +384,7 @@ function applyPresetState(
     setMaxEstimatedUsdPerRun: (value: number | undefined) => void;
     setSoftThresholdRatio: (value: number) => void;
     setHardThresholdRatio: (value: number) => void;
-    setToolProfileId: (value: LoopToolProfileId) => void;
+    setToolProfileId: (value: LoopFormToolProfileId) => void;
     setTaskPrompt: (value: string) => void;
     setInstructions: (value: string) => void;
     setGoalTitle: (value: string) => void;
@@ -385,6 +395,7 @@ function applyPresetState(
   const template = preset.template;
   setters.setTitle(template.title ?? preset.label);
   setters.setDescription(template.description ?? "");
+  setters.setTemplateId(template.templateId ?? "watch_report");
   setters.setRunKind(template.runKind ?? "session");
   setters.setMode(template.mode ?? "report");
   setters.setApprovalPolicy(template.approvalPolicy ?? (template.mode === "act" ? "explicit_per_run" : "interactive"));
@@ -411,7 +422,7 @@ export function CreateLoopForm({ slug, onCreated, onClose, initialState }: Creat
       createLoop.mutate(
         {
           slug,
-          config,
+          templateId: config.templateId,
           ...(author ? { author } : {}),
         },
         {
@@ -457,13 +468,14 @@ export function LoopForm({
 
   const [title, setTitle] = useState(initialState?.title ?? "");
   const [description, setDescription] = useState(initialState?.description ?? "");
-  const [runKind, setRunKind] = useState<LoopRunKind>(initialState?.runKind ?? "session");
+  const [templateId, setTemplateId] = useState<LoopTemplateId>(initialState?.templateId ?? "watch_report");
+  const [runKind, setRunKind] = useState<LoopFormRunKind>(initialState?.runKind ?? "session");
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(initialState?.scheduleKind ?? "manual");
   const [everyMs, setEveryMs] = useState(initialState?.everyMs ?? 60000);
   const [cronExpression, setCronExpression] = useState(initialState?.cronExpression ?? "*/15 * * * *");
   const [triggerOnPr, setTriggerOnPr] = useState(initialState?.triggerOnPr ?? false);
   const [triggerCadenceMs, setTriggerCadenceMs] = useState(initialState?.triggerCadenceMs ?? 60000);
-  const [mode, setMode] = useState<LoopMode>(initialState?.mode ?? "report");
+  const [mode, setMode] = useState<LoopFormMode>(initialState?.mode ?? "report");
   const [approvalPolicy, setApprovalPolicy] = useState<LoopApprovalPolicy>(initialState?.approvalPolicy ?? "interactive");
   const [maxIterationsPerRun, setMaxIterationsPerRun] = useState(initialState?.maxIterationsPerRun ?? 8);
   const [maxTokensPerRun, setMaxTokensPerRun] = useState(initialState?.maxTokensPerRun ?? 120000);
@@ -472,7 +484,7 @@ export function LoopForm({
   const [maxEstimatedUsdPerRun, setMaxEstimatedUsdPerRun] = useState<number | undefined>(initialState?.maxEstimatedUsdPerRun);
   const [softThresholdRatio, setSoftThresholdRatio] = useState(initialState?.softThresholdRatio ?? 0.8);
   const [hardThresholdRatio, setHardThresholdRatio] = useState(initialState?.hardThresholdRatio ?? 1);
-  const [toolProfileId, setToolProfileId] = useState<LoopToolProfileId>(initialState?.toolProfileId ?? "loop_local_report");
+  const [toolProfileId, setToolProfileId] = useState<LoopFormToolProfileId>(initialState?.toolProfileId ?? "loop_local_report");
   const [taskPrompt, setTaskPrompt] = useState(initialState?.taskPrompt ?? "");
   const [instructions, setInstructions] = useState(initialState?.instructions ?? "");
   const [author, setAuthor] = useState(initialState?.author ?? "architect");
@@ -519,6 +531,7 @@ export function LoopForm({
       cronExpression,
       triggerOnPr,
       triggerCadenceMs,
+      templateId,
       runKind,
       mode,
       approvalPolicy,
@@ -545,6 +558,7 @@ export function LoopForm({
     cronExpression,
     triggerOnPr,
     triggerCadenceMs,
+    templateId,
     runKind,
     mode,
     approvalPolicy,
@@ -581,6 +595,7 @@ export function LoopForm({
       applyPresetState(preset, {
         setTitle,
         setDescription,
+        setTemplateId,
         setRunKind,
         setMode,
         setApprovalPolicy,
@@ -934,7 +949,7 @@ export function LoopForm({
                 <select
                   id="new-loop-tool-profile"
                   value={toolProfileId}
-                  onChange={(e) => setToolProfileId(e.target.value as LoopToolProfileId)}
+                  onChange={(e) => setToolProfileId(e.target.value as LoopFormToolProfileId)}
                   disabled={pending}
                   className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none"
                 >

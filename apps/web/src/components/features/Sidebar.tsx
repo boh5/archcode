@@ -230,7 +230,7 @@ function LoopItem({
         <div className="flex items-center gap-1.5 text-[11px] text-text-muted mt-px">
           <span className="font-mono">{loop.loopId.slice(0, 8)}</span>
           {scheduleLabel && <span className="truncate">{scheduleLabel}</span>}
-          {loop.config?.runKind && <span className="capitalize">{loop.config.runKind}</span>}
+          {loop.config?.templateId && <span className="capitalize">{loop.config.templateId.replaceAll("_", " ")}</span>}
         </div>
       </div>
     </div>
@@ -516,10 +516,9 @@ export function Sidebar() {
     return loopsList.filter((l) => {
       const id = toSearchable(l.loopId).toLowerCase();
       const status = toSearchable(l.status).toLowerCase();
-      const mode = toSearchable(l.config?.mode).toLowerCase();
-      const runKind = toSearchable(l.config?.runKind).toLowerCase();
+      const templateId = toSearchable(l.config?.templateId).toLowerCase();
       const schedule = toSearchable(l.config?.schedule?.kind).toLowerCase();
-      return id.includes(q) || status.includes(q) || mode.includes(q) || runKind.includes(q) || schedule.includes(q);
+      return id.includes(q) || status.includes(q) || templateId.includes(q) || schedule.includes(q);
     });
   }, [loops, loopsSearch]);
 

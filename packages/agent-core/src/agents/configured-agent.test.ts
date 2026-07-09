@@ -11,7 +11,7 @@ import { __setSessionsDirForTest } from "../store/sessions-dir";
 import { createRegistry } from "../tools/registry";
 import type { AnyToolDescriptor } from "../tools/types";
 import { DELEGATION_TOOLS, EXPLORER_READ_ONLY_TOOLS, MAX_SUB_AGENT_DEPTH } from "./constants";
-import { ConfiguredAgent } from "./configured-agent";
+import { ConfiguredAgent, UnknownExtraToolError } from "./configured-agent";
 import { exploreAgentDefinition, orchestratorAgentDefinition } from "./definitions";
 import type { AgentDefinition } from "./factory-types";
 import { setLlmAdapterForTest } from "../llm/adapter";
@@ -551,36 +551,43 @@ describe("ConfiguredAgent", () => {
     expect(callArgs.system).not.toContain("github_create_issue_comment");
   });
 
-  test("Loop PR-watch profile narrows prompt tools and adds explicit profile-only connector tools", async () => {
-    const streamFn = setupMockStreamText("profile tools ok");
-    const agent = createAgent({ definition: orchestratorAgentDefinition });
+  test("extraTools add registered tools without narrowing baseline prompt tools", async () => {
+    const streamFn = setupMockStreamText("extra tools ok");
+    const toolRegistry = createRegistry([
+      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+      makeTool("github_get_pull_request"),
+      makeTool("github_create_issue_comment"),
+    ]);
+    const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
 
-    await agent.run("profile run", {
+    await agent.run("extra tools run", {
       origin: {
         kind: "loop",
         loopId: crypto.randomUUID(),
         runId: "run-1",
         trigger: "manual",
-        mode: "report",
         approvalPolicy: "interactive",
-        toolProfileId: "loop_github_pr_watch",
       },
+      extraTools: ["github_get_pull_request", "github_create_issue_comment", "github_get_pull_request"],
     });
 
     const callArgs = streamFn.mock.calls[0]![0] as { system: string };
     expect(callArgs.system).toContain("- file_read");
+    expect(callArgs.system).toContain("- file_write");
+    expect(callArgs.system).toContain("- bash");
     expect(callArgs.system).toContain("- github_get_pull_request");
     expect(callArgs.system).toContain("- github_create_issue_comment");
-    expect(callArgs.system).not.toContain("- file_write");
-    expect(callArgs.system).not.toContain("- bash");
     expect(callArgs.system).not.toContain("github_rerun_workflow_run");
+    expect(callArgs.system.match(/- github_get_pull_request/g)).toHaveLength(1);
   });
 
-  test("Loop profile effective tools are enforced in tool execution context", async () => {
+  test("extraTools effective tools are enforced in tool execution context", async () => {
     setupToolCallStreamText("github_create_issue_comment");
     let capturedAllowedTools: string[] = [];
-    let capturedOriginProfileId: string | undefined;
-    const toolRegistry = makeToolRegistry();
+    let capturedOriginLoopId: string | undefined;
+    const toolRegistry = createRegistry([
+      ...orchestratorAgentDefinition.tools.tools.map(makeTool),
+    ]);
     toolRegistry.register({
       name: "github_create_issue_comment",
       description: "Create a GitHub issue comment placeholder",
@@ -588,30 +595,38 @@ describe("ConfiguredAgent", () => {
       traits: { readOnly: false, destructive: false, concurrencySafe: false },
       execute: (_input, ctx) => {
         capturedAllowedTools = [...ctx.allowedTools];
-        capturedOriginProfileId = ctx.origin?.toolProfileId;
+        capturedOriginLoopId = ctx.origin?.loopId;
         return "commented";
       },
     });
     const agent = createAgent({ definition: orchestratorAgentDefinition, toolRegistry });
+    const loopId = crypto.randomUUID();
 
     await agent.run("comment on PR", {
       maxSteps: 1,
       origin: {
         kind: "loop",
-        loopId: crypto.randomUUID(),
+        loopId,
         runId: "run-1",
         trigger: "manual",
-        mode: "report",
         approvalPolicy: "interactive",
-        toolProfileId: "loop_github_pr_watch",
       },
+      extraTools: ["github_create_issue_comment"],
     });
 
-    expect(capturedOriginProfileId).toBe("loop_github_pr_watch");
+    expect(capturedOriginLoopId).toBe(loopId);
     expect(capturedAllowedTools).toContain("file_read");
+    expect(capturedAllowedTools).toContain("file_write");
+    expect(capturedAllowedTools).toContain("bash");
     expect(capturedAllowedTools).toContain("github_create_issue_comment");
-    expect(capturedAllowedTools).not.toContain("file_write");
-    expect(capturedAllowedTools).not.toContain("bash");
+  });
+
+  test("unknown extraTools fail before model execution", async () => {
+    const streamFn = setupMockStreamText("should not run");
+    const agent = createAgent({ definition: orchestratorAgentDefinition });
+
+    await expect(agent.run("unknown extra", { extraTools: ["missing_extra_tool"] })).rejects.toThrow(UnknownExtraToolError);
+    expect(streamFn).not.toHaveBeenCalled();
   });
 
   test("skill metadata allowed_tools is prompt metadata only and cannot grant missing tools", async () => {

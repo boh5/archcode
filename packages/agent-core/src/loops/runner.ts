@@ -1,10 +1,12 @@
 import type { SessionFile } from "../store/helpers";
+import type { AgentName } from "../agents/factory-types";
 import type { ActiveSessionExecution, StartSessionExecutionInput } from "../execution";
 import type { GoalState } from "../goals/state";
 import type { ToolExecutionOrigin } from "../tools/types";
 import type { LoopSchedulerRunInput, LoopSchedulerRunResult, LoopSchedulerRunner } from "./scheduler";
 import type { LoopCleanupState, LoopGoalTemplate, LoopJobStatus, LoopRunReport, LoopRunReportStatus, LoopRunTrigger, LoopState, LoopWorktreeArtifact } from "./state";
 import { LoopConfigSchema, LoopGoalTemplateSchema, LoopStateManager } from "./state";
+import { getLoopTemplate } from "./templates";
 import { normalizeLoopCleanupPolicy } from "./cleanup";
 import { LoopBudgetLedger } from "./budget-ledger";
 import { CollisionLedger } from "./collision-ledger";
@@ -37,6 +39,7 @@ export interface LoopRunnerCreateSessionOptions {
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: "main";
+  readonly agentName?: AgentName;
   readonly title?: string;
 }
 
@@ -193,7 +196,7 @@ export class LoopRunner {
   }
 
   createSchedulerRunner(): LoopSchedulerRunner {
-    return async (input) => input.loop.config.runKind === "goal"
+    return async (input) => loopRunOptions(input.loop).runType === "goal"
       ? this.runScheduledGoalLoop(input)
       : this.runScheduledSessionLoop(input);
   }
@@ -347,6 +350,8 @@ export class LoopRunner {
         sessionId,
         userMessage: buildGoalLoopPrompt(input.loop, goal),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
+        agentName: loopRunOptions(input.loop).agentName,
+        extraTools: loopRunOptions(input.loop).extraTools,
         origin: loopOrigin(input.loop, input.trigger, input.runId),
       });
       await execution.promise;
@@ -403,6 +408,7 @@ export class LoopRunner {
     return await this.#runtime.createSession(workspaceRoot, {
       loopId: loop.loopId,
       sessionRole: "main",
+      agentName: loopRunOptions(loop).agentName,
       title: `Loop: ${loop.config.title}`,
     });
   }
@@ -425,6 +431,8 @@ export class LoopRunner {
         sessionId,
         userMessage: buildSessionLoopPrompt(input.loop),
         maxSteps: input.loop.config.limits.maxIterationsPerRun,
+        agentName: loopRunOptions(input.loop).agentName,
+        extraTools: loopRunOptions(input.loop).extraTools,
         origin: loopOrigin(input.loop, input.trigger, input.runId),
       });
       await execution.promise;
@@ -497,7 +505,6 @@ export class LoopRunner {
       collisionTargets: result.collisionTargets ?? runningReport.collisionTargets,
       collisionConflicts: result.collisionConflicts,
       integrationErrors: result.integrationErrors,
-      toolProfileId: loop.config.toolProfileId,
       blockedReason: result.blockedReason,
       worktreePath: result.worktreePath ?? runningReport.worktreePath,
       baseSha: result.baseSha ?? runningReport.baseSha,
@@ -517,7 +524,7 @@ export class LoopRunner {
     if (superseded !== undefined) return superseded;
     const worktreeManager = this.#worktreeManager;
     if (worktreeManager === undefined) return { workspaceRoot: this.#workspaceRoot };
-    if (!jobShouldUseWorktree(job)) return { workspaceRoot: this.#workspaceRoot };
+    if (input.loop.config.useWorktree !== true) return { workspaceRoot: this.#workspaceRoot };
 
     try {
       const baseSha = await this.#baseShaForJob(job);
@@ -655,7 +662,6 @@ export class LoopRunner {
       skippedReason: "Loop static collision targets conflict with an active run; skipped trigger.",
       collisionTargets: loop.config.collisionTargets,
       collisionConflicts: conflicts,
-      toolProfileId: loop.config.toolProfileId,
     };
     await this.#stateManager.appendRunReport(loop.loopId, report);
     return report;
@@ -716,15 +722,15 @@ export class LoopRunner {
 
   #assertSessionLoop(loop: LoopState): void {
     const config = LoopConfigSchema.parse(loop.config);
-    if (loop.config.runKind !== "session") {
-      throw new Error(`Loop ${loop.loopId} is configured for ${config.runKind} runs; session runner only handles session loops.`);
+    if (loopRunOptions(loop).runType !== "session") {
+      throw new Error(`Loop ${loop.loopId} is configured for ${config.templateId} runs; session runner only handles session loops.`);
     }
   }
 
   #assertGoalLoop(loop: LoopState): void {
     const config = LoopConfigSchema.parse(loop.config);
-    if (config.runKind !== "goal") {
-      throw new Error(`Loop ${loop.loopId} is configured for ${config.runKind} runs; goal runner only handles goal loops.`);
+    if (loopRunOptions(loop).runType !== "goal") {
+      throw new Error(`Loop ${loop.loopId} is configured for ${config.templateId} runs; goal runner only handles goal loops.`);
     }
     if (config.goalTemplate === undefined) {
       throw new Error(`Goal loop ${loop.loopId} requires an inline goalTemplate.`);
@@ -789,9 +795,16 @@ function loopOrigin(loop: LoopState, trigger: LoopRunTrigger, runId: string): To
     loopId: loop.loopId,
     runId,
     trigger,
-    mode: loop.config.mode,
     approvalPolicy: loop.config.approvalPolicy,
-    toolProfileId: loop.config.toolProfileId,
+  };
+}
+
+function loopRunOptions(loop: LoopState): { runType: "session" | "goal"; agentName: AgentName; extraTools: readonly string[] } {
+  const template = getLoopTemplate(loop.config.templateId);
+  return {
+    runType: template.run.type,
+    agentName: template.run.agent,
+    extraTools: template.extraTools,
   };
 }
 
@@ -823,10 +836,6 @@ async function resolveCanonicalHeadSha(workspaceRoot: string): Promise<string> {
 
 function jobClassForTrigger(trigger: LoopRunTrigger): "local" | "remote" {
   return trigger === "manual" || trigger === "interval" || trigger === "cron" ? "local" : "remote";
-}
-
-function jobShouldUseWorktree(job: NonNullable<LoopSchedulerRunInput["job"]>): boolean {
-  return job.baseSha !== undefined || job.resolvedHeadSha !== undefined || jobClassForTrigger(job.triggerKind) === "remote";
 }
 
 function jobStatusForCleanup(result: LoopRunnerFinishedResult): LoopJobStatus {

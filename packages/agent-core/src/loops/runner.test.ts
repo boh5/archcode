@@ -25,11 +25,10 @@ const RUN_DIR = join(TMP_DIR, `run-${crypto.randomUUID()}`);
 let nextWorkspaceId = 1;
 
 const sessionLoopConfig: LoopConfig = {
+  templateId: "maintain_fix",
   title: "Daily triage",
   description: "Review repository health",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 7 },
   taskPrompt: "Inspect status and summarize risks.",
@@ -43,11 +42,10 @@ const goalTemplate: LoopGoalTemplate = {
 };
 
 const goalLoopConfig: LoopConfig = {
+  templateId: "goal_runner",
   title: "Goal loop",
   description: "Create a Goal on every run",
   schedule: { kind: "manual" },
-  runKind: "goal",
-  mode: "act",
   approvalPolicy: "explicit_per_run",
   limits: { maxIterationsPerRun: 4 },
   goalTemplate,
@@ -79,6 +77,7 @@ describe("session loop runner", () => {
     expect(fixture.runtime.createSessionMock).toHaveBeenCalledWith(fixture.workspaceRoot, {
       loopId: loop.loopId,
       sessionRole: "main",
+      agentName: "build",
       title: "Loop: Daily triage",
     });
     expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -86,15 +85,15 @@ describe("session loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "session-1",
       maxSteps: 7,
+      agentName: "build",
+      extraTools: [],
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
     expect(executionInput?.origin).toMatchObject({
       kind: "loop",
       loopId: loop.loopId,
       trigger: "manual",
-      mode: "act",
       approvalPolicy: "interactive",
-      toolProfileId: undefined,
     });
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
     expect(executionInput?.userMessage).toContain("Task prompt:\nInspect status and summarize risks.");
@@ -109,24 +108,30 @@ describe("session loop runner", () => {
     expect(log[0]).toMatchObject({ status: "succeeded", sessionId: "session-1" });
   });
 
-  test("passes configured tool profile through Loop origin metadata", async () => {
+  test("passes PR Babysitter template extra tools and selected base agent", async () => {
     const fixture = await createFixture();
     const loop = await fixture.stateManager.create("project-a", {
       ...sessionLoopConfig,
-      toolProfileId: "loop_github_pr_watch",
+      templateId: "pr_babysitter",
     });
 
     const report = await fixture.runner.runSessionLoop(loop, "manual");
 
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
-    expect(report.toolProfileId).toBe("loop_github_pr_watch");
+    expect(report.status).toBe("succeeded");
+    expect(executionInput?.agentName).toBe("plan");
+    expect(executionInput?.extraTools).toEqual([
+      "github_get_pull_request",
+      "github_list_pull_requests",
+      "github_get_pull_request_checks",
+      "github_list_issue_comments",
+      "github_create_issue_comment",
+    ]);
     expect(executionInput?.origin).toMatchObject({
       kind: "loop",
       loopId: loop.loopId,
       trigger: "manual",
-      mode: "act",
       approvalPolicy: "interactive",
-      toolProfileId: "loop_github_pr_watch",
     });
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
   });
@@ -252,7 +257,7 @@ describe("session loop runner", () => {
 
   test("scheduler-compatible callback executes queued jobs in worktree workspace and returns artifact summary", async () => {
     const fixture = await createFixture({ worktreePath: "/tmp/archcode-loop-worktree" });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: true });
     const job = testJob(loop.loopId, { baseSha: "a".repeat(40), resolvedHeadSha: "a".repeat(40) });
 
     const result = await fixture.runner.createSchedulerRunner()({
@@ -292,7 +297,7 @@ describe("session loop runner", () => {
 
   test("scheduler-compatible callback preserves unchanged worktree when deletion is disabled by default", async () => {
     const fixture = await createFixture({ worktreePath: "/tmp/unchanged-preserved-worktree", worktreeHasChanges: false });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: true });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,
@@ -316,6 +321,7 @@ describe("session loop runner", () => {
     const fixture = await createFixture({ worktreePath: "/tmp/unchanged-cleaned-worktree", worktreeHasChanges: false });
     const loop = await fixture.stateManager.create("project-a", {
       ...sessionLoopConfig,
+      useWorktree: true,
       cleanupPolicy: { deleteUnchangedWorktrees: true },
     });
 
@@ -342,7 +348,7 @@ describe("session loop runner", () => {
       worktreePath: "/tmp/session-create-fail-worktree",
       createSessionError: new Error("create session failed"),
     });
-    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...sessionLoopConfig, useWorktree: true });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,
@@ -482,7 +488,7 @@ describe("session loop runner", () => {
 describe("goal loop runner", () => {
   test("goal loop creates fresh goal from copied inline template on every run", async () => {
     const fixture = await createFixture();
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
     const parsedLoopTemplate = loop.config.goalTemplate;
     if (parsedLoopTemplate === undefined) throw new Error("Expected inline goal template");
     const originalLoopTemplate = structuredClone(parsedLoopTemplate);
@@ -524,7 +530,7 @@ describe("goal loop runner", () => {
       ...goalLoopConfig,
       goalTemplateId: "existing-goal",
     };
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
     const malformedLoop = { ...loop, config: badConfig } as unknown as LoopState;
 
     expect(() => LoopConfigSchema.parse(badConfig)).toThrow();
@@ -536,7 +542,7 @@ describe("goal loop runner", () => {
 
   test("goal loop passes natural-language objective and acceptance criteria to Goal lifecycle", async () => {
     const fixture = await createFixture();
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
     const expectedTemplate = loop.config.goalTemplate;
     if (expectedTemplate === undefined) throw new Error("Expected inline goal template");
 
@@ -559,7 +565,7 @@ describe("goal loop runner", () => {
 
   test("goal loop starts the created Goal main session through runtime execution", async () => {
     const fixture = await createFixture();
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const report = await fixture.runner.runGoalLoop(loop, "manual");
 
@@ -575,15 +581,15 @@ describe("goal loop runner", () => {
       workspaceRoot: fixture.workspaceRoot,
       sessionId: "goal-session-1",
       maxSteps: 4,
+      agentName: "orchestrator",
+      extraTools: [],
     } satisfies Partial<StartSessionExecutionInput>));
     const executionInput = fixture.runtime.startSessionExecutionMock.mock.calls[0]?.[0];
     expect(executionInput?.origin).toMatchObject({
       kind: "loop",
       loopId: loop.loopId,
       trigger: "manual",
-      mode: "act",
       approvalPolicy: "explicit_per_run",
-      toolProfileId: undefined,
     });
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
     expect(executionInput?.userMessage).toContain("Run this ArchCode Goal from a Loop.");
@@ -604,7 +610,7 @@ describe("goal loop runner", () => {
     const fixture = await createFixture({
       sessionExecutions: [{ id: "run-1", startedAt: 100, status: "failed", endedAt: 150, durationMs: 50, error: "goal agent failed" }],
     });
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const report = await fixture.runner.runGoalLoop(loop, "manual");
 
@@ -619,7 +625,7 @@ describe("goal loop runner", () => {
 
   test("goal loop records failed report with goal id and error when GoalRunner fails", async () => {
     const fixture = await createFixture({ goalStartError: new Error("goal start failed") });
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const report = await fixture.runner.runGoalLoop(loop, "manual");
 
@@ -643,7 +649,7 @@ describe("goal loop runner", () => {
 
   test("scheduler-compatible callback starts goal loops without writing reports itself", async () => {
     const fixture = await createFixture();
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,
@@ -661,7 +667,7 @@ describe("goal loop runner", () => {
       worktreePath: "/tmp/goal-start-fail-worktree",
       goalStartError: new Error("goal start failed"),
     });
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,
@@ -693,7 +699,7 @@ describe("goal loop runner", () => {
       worktreePath,
       goalStartWithoutMainSession: true,
     });
-    const loop = await fixture.stateManager.create("project-a", goalLoopConfig);
+    const loop = await fixture.stateManager.create("project-a", { ...goalLoopConfig, useWorktree: true });
 
     const result = await fixture.runner.createSchedulerRunner()({
       loop,

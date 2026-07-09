@@ -200,8 +200,7 @@ function makeLoop(overrides: Partial<DashboardLoop> = {}): DashboardLoop {
     currentRun: makeLoopRun({ runId: "run-current", status: "running" }),
     lastRun: makeLoopRun({ runId: "run-last", status: "succeeded", endedAt: 1700000060000 }),
     nextRunAt: 1700000600000,
-    runKind: "session",
-    mode: "report",
+    templateId: "watch_report",
     projectSlug: "demo",
     projectName: "Demo Project",
     ...overrides,
@@ -332,8 +331,7 @@ describe("Dashboard", () => {
       currentRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-current-alpha", status: "running" }),
       lastRun: makeLoopRun({ loopId: "loop-active-1", runId: "run-last-alpha", status: "succeeded", endedAt: 1700000100000 }),
       nextRunAt: 1700000900000,
-      runKind: "goal",
-      mode: "act",
+      templateId: "goal_runner",
     });
     const ctx = await setupDashboard(createDashboardHandler({ loops: [loop] }));
 

@@ -23,7 +23,6 @@ import type {
   LoopJobSummary as ProtocolLoopJobSummary,
   LoopCollisionSnapshot as ProtocolLoopCollisionSnapshot,
   LoopLimits as ProtocolLoopLimits,
-  LoopMode as ProtocolLoopMode,
   LoopProjectConfig as ProtocolLoopProjectConfig,
   LoopPullRequestScope as ProtocolLoopPullRequestScope,
   LoopRunKind as ProtocolLoopRunKind,
@@ -34,7 +33,7 @@ import type {
   LoopScheduleSpec as ProtocolLoopScheduleSpec,
   LoopState as ProtocolLoopState,
   LoopStatus as ProtocolLoopStatus,
-  LoopToolProfileId as ProtocolLoopToolProfileId,
+  LoopTemplateId as ProtocolLoopTemplateId,
   LoopTriggerHealth as ProtocolLoopTriggerHealth,
   LoopTriggerSpec as ProtocolLoopTriggerSpec,
   LoopWorktreeArtifact as ProtocolLoopWorktreeArtifact,
@@ -107,7 +106,7 @@ export const LoopProjectConfigSchema = z.preprocess((value) => {
 })) satisfies z.ZodType<ProtocolLoopProjectConfig>;
 
 export const LoopRunKindSchema = z.enum(["session", "goal"]);
-export const LoopModeSchema = z.enum(["report", "act"]);
+export const LoopTemplateIdSchema = z.enum(["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"]);
 export const LoopApprovalPolicySchema = z.enum(["interactive", "explicit_per_run"]);
 
 const BudgetThresholdRatioSchema = z.number().min(0).max(1);
@@ -160,14 +159,6 @@ export const LoopRunReasonSchema = z.enum([
   "max_steps_reached",
   "scheduler_overlap",
 ]) satisfies z.ZodType<ProtocolLoopRunReason>;
-
-export const LoopToolProfileIdSchema = z.enum([
-  "loop_local_report",
-  "loop_local_maintenance",
-  "loop_github_pr_watch",
-  "loop_ci_watch",
-  "loop_goal_action",
-]) satisfies z.ZodType<ProtocolLoopToolProfileId>;
 
 export const CollisionTargetSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("pr"), owner: LoopIdentifierSchema, repo: LoopIdentifierSchema, number: z.number().int().positive() }),
@@ -325,21 +316,19 @@ export const LoopTriggerHealthSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolLoopTriggerHealth>;
 
 export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
+  templateId: LoopTemplateIdSchema,
   title: LoopTitleSchema,
   description: LoopTextSchema.optional(),
   schedule: LoopScheduleSpecSchema,
-  runKind: LoopRunKindSchema,
-  mode: LoopModeSchema,
   approvalPolicy: LoopApprovalPolicySchema,
   limits: LoopLimitsSchema,
   budget: LoopBudgetConfigSchema.optional(),
-  toolProfileId: LoopToolProfileIdSchema.optional(),
   collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
   taskPrompt: LoopTextSchema.optional(),
   instructions: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateSchema.optional(),
-  sourcePreset: LoopIdentifierSchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
+  useWorktree: z.boolean().optional(),
   cleanupPolicy: LoopCleanupPolicySchema.optional(),
 });
 
@@ -355,7 +344,6 @@ export const LoopRunReportSchema = z.strictObject({
   collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
   collisionConflicts: z.array(CollisionConflictSchema).max(100).optional(),
   integrationErrors: z.array(LoopIntegrationErrorSchema).max(100).optional(),
-  toolProfileId: LoopToolProfileIdSchema.optional(),
   sessionId: LoopIdentifierSchema.optional(),
   goalId: LoopIdentifierSchema.optional(),
   summary: LoopTextSchema.optional(),
@@ -415,12 +403,11 @@ export type LoopTriggerSpec = ProtocolLoopTriggerSpec;
 export type LoopCoordinatorConfig = ProtocolLoopCoordinatorConfig;
 export type LoopProjectConfig = ProtocolLoopProjectConfig;
 export type LoopRunKind = ProtocolLoopRunKind;
-export type LoopMode = ProtocolLoopMode;
+export type LoopTemplateId = ProtocolLoopTemplateId;
 export type LoopApprovalPolicy = ProtocolLoopApprovalPolicy;
 export type LoopBudgetConfig = ProtocolLoopBudgetConfig;
 export type LoopBudgetUsage = ProtocolLoopBudgetUsage;
 export type LoopRunReason = ProtocolLoopRunReason;
-export type LoopToolProfileId = ProtocolLoopToolProfileId;
 export type CollisionTarget = ProtocolCollisionTarget;
 export type CollisionLease = ProtocolCollisionLease;
 export type CollisionConflict = ProtocolCollisionConflict;
@@ -978,7 +965,7 @@ function clearJobHitlId(job: LoopJobSummary | undefined, hitlId: string): LoopJo
 
 function generateStateSummary(config: LoopConfig): string {
   const schedule = scheduleSummary(config.schedule);
-  return `${config.title} (${config.runKind}, ${config.mode}) scheduled ${schedule}.`;
+  return `${config.title} (${config.templateId}) scheduled ${schedule}.`;
 }
 
 function renderGeneratedStateMarkdown(state: LoopState): string {
@@ -991,8 +978,7 @@ function renderGeneratedStateMarkdown(state: LoopState): string {
     `- Project ID: ${state.projectId}`,
     `- Status: ${state.status}`,
     `- Schedule: ${schedule}`,
-    `- Run kind: ${state.config.runKind}`,
-    `- Mode: ${state.config.mode}`,
+    `- Template: ${state.config.templateId}`,
     `- Approval policy: ${state.config.approvalPolicy}`,
     `- Run count: ${state.runCount}`,
     `- State version: ${state.stateVersion}`,

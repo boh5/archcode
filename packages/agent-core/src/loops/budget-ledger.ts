@@ -202,7 +202,6 @@ export class LoopBudgetLedger {
       endedAt: this.#clock.now(),
       reason,
       budgetUsage: usage,
-      toolProfileId: loop.config.toolProfileId,
       ...(sessionId === undefined ? {} : { sessionId }),
       summary,
     };

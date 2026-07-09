@@ -9,10 +9,9 @@ import { FakeClock } from "./test-utils";
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "collision-ledger");
 
 const config: LoopConfig = {
+  templateId: "watch_report",
   title: "Collision loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
 };

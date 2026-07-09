@@ -73,6 +73,7 @@ export interface CreateRuntimeSessionOptions {
   readonly goalId?: string;
   readonly loopId?: string;
   readonly sessionRole?: SessionRole;
+  readonly agentName?: string;
   readonly title?: string;
 }
 

@@ -22,10 +22,9 @@ const TEST_SCOPE: PermissionApprovalScope = {
 };
 
 const LOOP_CONFIG: LoopConfig = {
+  templateId: "watch_report",
   title: "Project loop",
   schedule: { kind: "interval", everyMs: 60_000 },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 5 },
   taskPrompt: "Summarize local project state.",

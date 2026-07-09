@@ -36,10 +36,9 @@ describe("HITL aggregation", () => {
     await service.load(workspaceRoot);
 
     const loop = await loopState.create("archcode", {
+      templateId: "goal_runner",
       title: "Watch CI",
       schedule: { kind: "manual" },
-      runKind: "goal",
-      mode: "act",
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 1 },
     });
@@ -108,10 +107,9 @@ describe("HITL aggregation", () => {
     await service.load(workspaceRoot);
 
     const loop = await loopState.create("archcode", {
+      templateId: "goal_runner",
       title: "Watch CI",
       schedule: { kind: "manual" },
-      runKind: "goal",
-      mode: "act",
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 1 },
     });

@@ -27,7 +27,6 @@ const LOOP_ORIGIN: ToolExecutionOrigin = {
   kind: "loop",
   loopId: "loop-approval-guard",
   trigger: "interval",
-  mode: "act",
   approvalPolicy: "interactive",
 };
 

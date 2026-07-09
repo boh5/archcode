@@ -67,6 +67,7 @@ export interface StartSessionExecutionInput {
   readonly agentName?: string;
   readonly origin?: SessionExecutionOrigin | ToolExecutionOrigin;
   readonly maxSteps?: number;
+  readonly extraTools?: readonly string[];
 }
 
 interface PendingSessionExecution extends Omit<ActiveSessionExecution, "promise"> {
@@ -433,7 +434,7 @@ export class SessionExecutionManager {
 
   async #runExecution(input: StartSessionExecutionInput, execution: PendingSessionExecution): Promise<void> {
     try {
-      const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId);
+      const agent = await this.#config.sessionAgentManager.getOrCreate(input.workspaceRoot, input.sessionId, input.agentName);
       this.#eventBridge.attachSession(input.workspaceRoot, input.sessionId, agent.store);
       if (execution.abortController.signal.aborted) return;
 
@@ -447,6 +448,7 @@ export class SessionExecutionManager {
       await agent.run(input.userMessage, {
         abort: execution.abortController.signal,
         ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+        ...(input.extraTools === undefined ? {} : { extraTools: input.extraTools }),
         ...(loopOrigin === undefined ? {} : { origin: loopOrigin }),
       });
     } catch (error) {

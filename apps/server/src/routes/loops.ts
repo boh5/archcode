@@ -1,9 +1,7 @@
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { Hono } from "hono";
 import {
-  expandLoopPreset,
-  getUnsupportedLoopPresetReason,
-  isSupportedLoopPreset,
+  expandLoopTemplate,
   LoopActiveConflictError,
   LoopConfigSchema,
   LoopNotFoundError,
@@ -23,11 +21,8 @@ import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
 const CreateLoopBodySchema = z.strictObject({
-  config: LoopConfigSchema.optional(),
-  presetId: z.string().trim().min(1).max(200).optional(),
+  templateId: z.string().trim().min(1).max(200),
   author: z.string().trim().min(1).max(200).optional(),
-}).refine((body) => (body.config === undefined) !== (body.presetId === undefined), {
-  message: "Exactly one of config or presetId is required",
 });
 
 const PatchLoopBodySchema = z.strictObject({
@@ -252,20 +247,8 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 }
 
 function createConfigFromBody(body: CreateLoopBody): LoopConfig {
-  if (body.config !== undefined) return body.config;
-
-  const presetId = body.presetId;
-  if (presetId === undefined) throw new BadRequestError("Exactly one of config or presetId is required");
-
-  if (!isSupportedLoopPreset(presetId)) {
-    const reason = getUnsupportedLoopPresetReason(presetId);
-    throw new BadRequestError(reason === undefined
-      ? `Unsupported loop preset: ${presetId}`
-      : `Unsupported loop preset: ${presetId}. ${reason}`);
-  }
-
   try {
-    return expandLoopPreset(presetId);
+    return expandLoopTemplate(body.templateId);
   } catch (error) {
     if (error instanceof RangeError) throw new BadRequestError(error.message);
     throw error;

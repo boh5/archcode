@@ -21,10 +21,9 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "collision-tool-guard");
 const storeManager = new SessionStoreManager({ logger: silentLogger });
 
 const config: LoopConfig = {
+  templateId: "watch_report",
   title: "Guarded collision loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "act",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
 };
@@ -176,7 +175,7 @@ async function createFixture(options: { readonly failWriteExecution?: boolean; r
       projectContext,
       agentSkills: [],
       skillService: new SkillService({ builtinSkills: {} }),
-      origin: { kind: "loop", loopId, runId, trigger: "manual", mode: "act", approvalPolicy: "interactive" },
+      origin: { kind: "loop", loopId, runId, trigger: "manual", approvalPolicy: "interactive" },
     });
   }
 

@@ -17,10 +17,9 @@ import { LoopTriggerPoller, type LoopLocalGitReader } from "./triggers";
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-scheduler");
 
 const manualConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Manual loop",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8 },
   taskPrompt: "Summarize the project",

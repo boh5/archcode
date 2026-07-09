@@ -285,9 +285,7 @@ describe("SessionExecutionManager", () => {
       loopId: crypto.randomUUID(),
       runId: "run-1",
       trigger: "manual" as const,
-      mode: "act" as const,
       approvalPolicy: "interactive" as const,
-      toolProfileId: "loop_github_pr_watch" as const,
     };
 
     const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "loop-origin-session", userMessage: "work", origin });
@@ -295,6 +293,33 @@ describe("SessionExecutionManager", () => {
 
     expect(execution.origin).toBe("user_message");
     expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ origin }));
+  });
+
+  test("startExecution forwards extraTools to agent.run", async () => {
+    const agent = new MockAgent("extra-tools-session", Promise.resolve({ text: "done", steps: 1 }));
+    const { manager } = createManager({ "extra-tools-session": agent });
+
+    const execution = manager.startExecution({
+      slug: "project",
+      workspaceRoot,
+      sessionId: "extra-tools-session",
+      userMessage: "work",
+      extraTools: ["github_get_pull_request"],
+    });
+    await execution.promise;
+
+    expect(agent.runMock).toHaveBeenCalledWith("work", expect.objectContaining({ extraTools: ["github_get_pull_request"] }));
+  });
+
+  test("startExecution passes requested agentName into agent creation", async () => {
+    const agent = new MockAgent("plan-session", Promise.resolve({ text: "done", steps: 1 }));
+    const { manager, sessionAgentManager } = createManager({ "plan-session": agent });
+
+    const execution = manager.startExecution({ slug: "project", workspaceRoot, sessionId: "plan-session", userMessage: "work", agentName: "plan" });
+    await execution.promise;
+
+    expect(execution.agentName).toBe("plan");
+    expect(sessionAgentManager.getOrCreate).toHaveBeenCalledWith(workspaceRoot, "plan-session", "plan");
   });
 
   test("enforces concurrent session limit with ConcurrentSessionLimitError", () => {

@@ -65,9 +65,7 @@ const ToolExecutionOriginSchema: z.ZodType<ToolExecutionOrigin> = z.strictObject
     z.enum(["manual", "interval", "cron"]),
     z.enum(["on_commit", "on_pr", "on_ci_fail"]),
   ]),
-  mode: z.enum(["report", "act"]),
   approvalPolicy: z.enum(["interactive", "explicit_per_run"]),
-  toolProfileId: z.enum(["loop_local_report", "loop_local_maintenance", "loop_github_pr_watch", "loop_ci_watch", "loop_goal_action"]).optional(),
 });
 
 const HitlSourceSchema: z.ZodType<HitlSource> = z.discriminatedUnion("type", [

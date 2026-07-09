@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   LoopActiveConflictError,
+  expandLoopTemplate,
   ProjectContextResolver,
   ProjectRegistry,
   silentLogger,
@@ -16,11 +17,10 @@ import { createServerApp } from "../app";
 const tempRoot = resolve(import.meta.dir, "__test_tmp__", "loops-routes");
 
 const manualSessionLoopConfig: LoopConfig = {
+  templateId: "watch_report",
   title: "Manual session loop",
   description: "Run on demand",
   schedule: { kind: "manual" },
-  runKind: "session",
-  mode: "report",
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4 },
   taskPrompt: "Summarize local project health.",
@@ -57,10 +57,9 @@ const TEST_GITHUB_PR_SUBJECT_KEY = `pr:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}#
 const TEST_GITHUB_CI_SUBJECT_KEY = `ci:${TEST_GITHUB_OWNER}/${TEST_GITHUB_REPO}:ci:deadbeef`;
 
 const goalLoopConfig: LoopConfig = {
+  templateId: "goal_runner",
   title: "Goal loop",
   schedule: { kind: "manual" },
-  runKind: "goal",
-  mode: "act",
   approvalPolicy: "explicit_per_run",
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {
@@ -85,16 +84,16 @@ describe("loops routes", () => {
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config: manualSessionLoopConfig, author: "tester" }),
+      body: JSON.stringify({ templateId: "watch_report", author: "tester" }),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
 
     expect(createRes.status).toBe(201);
-    expect(createBody.loop).toMatchObject({ projectId: project.slug, status: "active", config: { title: "Manual session loop", schedule: { kind: "manual" } } });
+    expect(createBody.loop).toMatchObject({ projectId: project.slug, status: "active", config: { templateId: "watch_report", title: "Watch & Report", schedule: { kind: "manual" } } });
     expect(createBody.loop.nextRunAt).toBeUndefined();
     expect(createBody.loop.readinessScore ?? null).toBeNull();
-    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, normalizedManualSessionLoopConfig, "tester");
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expandLoopTemplate("watch_report"), "tester");
 
     const listRes = await app.request(`/api/projects/${project.slug}/loops`);
     const listBody = await listRes.json() as { loops: LoopState[] };
@@ -111,43 +110,41 @@ describe("loops routes", () => {
 
     const intervalRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config: intervalSessionLoopConfig }),
+      body: JSON.stringify({ templateId: "watch_report" }),
       headers: { "content-type": "application/json" },
     });
     const intervalBody = await intervalRes.json() as { loop: LoopState };
 
     expect(intervalRes.status).toBe(201);
-    expect(intervalBody.loop.config.schedule).toEqual({ kind: "interval", everyMs: 1_000 });
-    expect(intervalBody.loop.nextRunAt).toBeNumber();
+    expect(intervalBody.loop.config.templateId).toBe("watch_report");
+    expect(intervalBody.loop.nextRunAt).toBeUndefined();
     expect(intervalBody.loop.readinessScore ?? null).toBeNull();
 
     const presetRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ presetId: "daily_triage", author: "preset-user" }),
+      body: JSON.stringify({ templateId: "watch_report", author: "preset-user" }),
       headers: { "content-type": "application/json" },
     });
     const presetBody = await presetRes.json() as { loop: LoopState };
 
     expect(presetRes.status).toBe(201);
-    expect(presetBody.loop.config.sourcePreset).toBe("daily_triage");
-    expect(presetBody.loop.config.title).toBe("Daily Triage");
+    expect(presetBody.loop.config.templateId).toBe("watch_report");
+    expect(presetBody.loop.config.title).toBe("Watch & Report");
     expect(presetBody.loop.readinessScore ?? null).toBeNull();
 
     const prBabysitterRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ presetId: "pr_babysitter" }),
+      body: JSON.stringify({ templateId: "pr_babysitter" }),
       headers: { "content-type": "application/json" },
     });
     const prBabysitterBody = await prBabysitterRes.json() as { loop: LoopState };
     expect(prBabysitterRes.status).toBe(201);
     expect(prBabysitterBody.loop.config).toMatchObject({
-      sourcePreset: "pr_babysitter",
-      runKind: "session",
-      toolProfileId: "loop_github_pr_watch",
+      templateId: "pr_babysitter",
       title: "PR Babysitter",
     });
-    expect(prBabysitterBody.loop.config.description).toContain("PR watch/status/comment");
-    expect(prBabysitterBody.loop.config.taskPrompt).toContain("Draft a short issue comment only when a clear status update is useful");
+    expect(prBabysitterBody.loop.config.description).toContain("pull request status");
+    expect(prBabysitterBody.loop.config.taskPrompt).toContain("draft a short issue comment only when a clear status update is useful");
     expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("merge");
     expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("rebase");
     expect(prBabysitterBody.loop.readinessScore ?? null).toBeNull();
@@ -158,19 +155,24 @@ describe("loops routes", () => {
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config: cronSessionLoopConfig, author: "cron-user" }),
+      body: JSON.stringify({ templateId: "watch_report", author: "cron-user" }),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
 
     expect(createRes.status).toBe(201);
-    expect(createBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
-    expect(createBody.loop.generatedStateSummary).toContain("cron */15 * * * *");
+    const patchRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ config: cronSessionLoopConfig }),
+      headers: { "content-type": "application/json" },
+    });
+    const patchBody = await patchRes.json() as { loop: LoopState };
+
+    expect(patchRes.status).toBe(200);
+    expect(patchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+    expect(patchBody.loop.config.title).toBe("Cron session loop");
     expect(JSON.stringify(createBody.loop)).not.toContain("readinessScore");
-    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, {
-      ...cronSessionLoopConfig,
-      limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-    }, "cron-user");
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expandLoopTemplate("watch_report"), "cron-user");
 
     const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
     const readBody = await readRes.json() as { loop: LoopState };
@@ -187,15 +189,23 @@ describe("loops routes", () => {
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({ templateId: "pr_babysitter" }),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
 
     expect(createRes.status).toBe(201);
-    expect(createBody.loop.config.schedule).toEqual({ kind: "manual" });
-    expect(createBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
-    expect(createBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 });
+    const patchRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ config }),
+      headers: { "content-type": "application/json" },
+    });
+    const patchBody = await patchRes.json() as { loop: LoopState };
+
+    expect(patchRes.status).toBe(200);
+    expect(patchBody.loop.config.schedule).toEqual({ kind: "manual" });
+    expect(patchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
+    expect(patchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 });
 
     const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
     const readBody = await readRes.json() as { loop: LoopState };
@@ -211,16 +221,19 @@ describe("loops routes", () => {
         name: "invalid cron",
         body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "60 * * * *" } } },
         message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+        patch: true,
       },
       {
         name: "impossible cron",
         body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "0 0 30 2 *" } } },
         message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+        patch: true,
       },
       {
         name: "too-fast trigger cadence",
         body: { config: { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000, baseBranch: "main" }] } },
         message: "config.triggers.0.cadenceMs must be at least 30000",
+        patch: true,
       },
       {
         name: "zero maxConcurrent",
@@ -261,18 +274,14 @@ describe("loops routes", () => {
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config: goalLoopConfig }),
+      body: JSON.stringify({ templateId: "goal_runner" }),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
 
     expect(createRes.status).toBe(201);
-    expect(createBody.loop.config.runKind).toBe("goal");
-    expect(createBody.loop.config.goalTemplate).toMatchObject({
-      title: "Loop-created goal",
-      objective: "Execute this inline Goal template only.",
-      acceptanceCriteria: "Reviewer can decide DONE from loop-created Goal evidence.",
-    });
+    expect(createBody.loop.config.templateId).toBe("goal_runner");
+    expect(createBody.loop.config.goalTemplate).toBeDefined();
     expect(createBody.loop.config.goalTemplate).not.toHaveProperty("author");
     expect(createBody.loop.readinessScore ?? null).toBeNull();
 
@@ -416,7 +425,6 @@ describe("loops routes", () => {
     const { app, project, runtime, workspaceRoot } = await createTestApp("guardrail-status-snapshots");
     const loop = await createLoop(app, project.slug, {
       ...manualSessionLoopConfig,
-      toolProfileId: "loop_github_pr_watch",
       collisionTargets: [{ type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 }],
     });
     await runtime.seedLoopSnapshots(workspaceRoot, loop.loopId);
@@ -445,7 +453,6 @@ describe("loops routes", () => {
     const loop = await createLoop(app, project.slug, {
       ...manualSessionLoopConfig,
       title: "PR collision loop",
-      toolProfileId: "loop_github_pr_watch",
       collisionTargets: [{ type: "pr", owner: TEST_GITHUB_OWNER, repo: TEST_GITHUB_REPO, number: 42 }],
     });
     await runtime.seedCollisionRunHistory(workspaceRoot, loop.loopId);
@@ -458,7 +465,6 @@ describe("loops routes", () => {
       runId: "run-1",
       status: "skipped",
       reason: "collision_conflict",
-      toolProfileId: "loop_github_pr_watch",
       collisionConflicts: [expect.objectContaining({ targetKey: TEST_GITHUB_TARGET_KEY })],
     });
   });
@@ -601,7 +607,7 @@ describe("loops routes", () => {
     const stateRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}/state`);
     const stateBody = await stateRes.json() as { markdown: string; state: LoopState };
     expect(stateRes.status).toBe(200);
-    expect(stateBody.markdown).toContain("Manual session loop");
+    expect(stateBody.markdown).toContain("PR trigger session loop");
     expect(stateBody.state.loopId).toBe(loop.loopId);
     expect(stateBody.state.readinessScore ?? null).toBeNull();
 
@@ -614,11 +620,18 @@ describe("loops routes", () => {
 async function createLoop(app: ReturnType<typeof createServerApp>["app"], slug: string, config: LoopConfig): Promise<LoopState> {
   const res = await app.request(`/api/projects/${slug}/loops`, {
     method: "POST",
-    body: JSON.stringify({ config }),
+    body: JSON.stringify({ templateId: config.templateId }),
     headers: { "content-type": "application/json" },
   });
   expect(res.status).toBe(201);
-  return (await res.json() as { loop: LoopState }).loop;
+  const created = (await res.json() as { loop: LoopState }).loop;
+  const patchRes = await app.request(`/api/projects/${slug}/loops/${created.loopId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ config }),
+    headers: { "content-type": "application/json" },
+  });
+  expect(patchRes.status).toBe(200);
+  return (await patchRes.json() as { loop: LoopState }).loop;
 }
 
 function seededBudgetSnapshot(): LoopBudgetSnapshot {
@@ -778,7 +791,8 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
 
       runSequence += 1;
       const runId = `run-${runSequence}`;
-      const sessionId = loop.config.runKind === "goal" ? `goal-session-${runSequence}` : `session-${runSequence}`;
+      const isGoalLoop = loop.config.templateId === "goal_runner";
+      const sessionId = isGoalLoop ? `goal-session-${runSequence}` : `session-${runSequence}`;
       const startedAt = now;
       const runningReport: LoopRunReport = { runId, loopId, status: "running", trigger: "manual", startedAt, sessionId };
       activeRuns.set(loopId, { runId, sessionId });
@@ -806,7 +820,7 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         ...runningReport,
         status: "succeeded",
         endedAt: now,
-        ...(loop.config.runKind === "goal" ? { goalId: `goal-${runSequence}` } : {}),
+        ...(isGoalLoop ? { goalId: `goal-${runSequence}` } : {}),
         summary: `Loop ${loopId} completed in fake runtime.`,
       };
       try {
@@ -903,7 +917,6 @@ function createTestRuntime(projectRegistry: ProjectRegistry, options: { now?: nu
         skippedReason: "Loop static collision targets conflict with an active run; skipped trigger.",
         collisionTargets: [target],
         collisionConflicts: [{ targetKey: conflictingLease.targetKey, target, conflictingLease, detectedAt: now }],
-        toolProfileId: "loop_github_pr_watch",
       });
     },
     async seedPrTriggerRunHistory(workspaceRoot: string, loopId: string) {
