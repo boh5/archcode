@@ -17,7 +17,6 @@ import {
 } from "./goal-tools/helpers";
 
 const GoalTextSchema = z.string().trim().min(1);
-const GoalTitleSchema = GoalTextSchema.max(160);
 const GoalLongMarkdownSchema = GoalTextSchema.max(8_000);
 const GoalReceiptSummarySchema = GoalTextSchema.max(4_000);
 const GoalEvidenceSummarySchema = GoalTextSchema.max(1_000);
@@ -36,7 +35,6 @@ const GoalEvidenceRefSchema = z.strictObject({
 
 const GoalManageCreateInputSchema = z.strictObject({
   action: z.literal("create"),
-  title: GoalTitleSchema.describe("Human-readable Goal title."),
   objective: GoalLongMarkdownSchema.describe("Natural-language objective for the Goal."),
   acceptanceCriteria: GoalLongMarkdownSchema.describe("Natural-language acceptance criteria for Reviewer judgment."),
 });
@@ -113,7 +111,6 @@ type GoalManageInput = z.infer<typeof GoalManageInputSchema>;
 interface SimplifiedGoalStateManager {
   create(input: {
     projectId: string;
-    title: string;
     objective: string;
     acceptanceCriteria: string;
   }): Promise<GoalState>;
@@ -162,7 +159,6 @@ export const goalManageTool: AnyToolDescriptor = defineTool({
         case "create": {
           return formatGoalToolResult(await manager.create({
             projectId: ctx.projectContext.project.slug,
-            title: input.title,
             objective: input.objective,
             acceptanceCriteria: input.acceptanceCriteria,
           }));

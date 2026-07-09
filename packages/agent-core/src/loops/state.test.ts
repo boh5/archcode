@@ -25,8 +25,7 @@ const VALID_LOOP_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 const manualConfig: LoopConfig = {
   templateId: "watch_report",
-  title: "Daily triage",
-  description: "Summarize project status",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8 },
@@ -35,7 +34,6 @@ const manualConfig: LoopConfig = {
 
 const intervalConfig: LoopConfig = {
   ...manualConfig,
-  title: "Interval triage",
   schedule: { kind: "interval", everyMs: 60_000 },
 };
 
@@ -83,7 +81,7 @@ describe("Loop schemas", () => {
       stateVersion: 1,
     });
 
-    expect(state.readinessScore).toBeUndefined();
+    expect("readinessScore" in state).toBe(false);
     expect(() => LoopStateSchema.parse({ ...state, extra: true })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, goalTemplateId: "goal-1" })).toThrow();
     expect(() => LoopConfigSchema.parse({ ...manualConfig, tools: ["github_get_pull_request"] })).toThrow();
@@ -131,7 +129,7 @@ describe("Loop schemas", () => {
     expect(parsedConfig.limits).toEqual(parsedBudget);
   });
 
-  test("parses template-oriented loop state with minimal limits and keeps readiness score unsupported", () => {
+  test("parses template-oriented loop state with minimal limits and no readiness score", () => {
     const now = Date.now();
     const state = LoopStateSchema.parse({
       loopId: VALID_LOOP_ID,
@@ -149,7 +147,7 @@ describe("Loop schemas", () => {
       softThresholdRatio: 0.8,
       hardThresholdRatio: 1.0,
     });
-    expect(state.readinessScore).toBeUndefined();
+    expect("readinessScore" in state).toBe(false);
   });
 
   test("rejects maturity fields and non-null readiness score", () => {
@@ -327,33 +325,46 @@ describe("LoopStateManager", () => {
   test("creates loop state files and generated markdown", async () => {
     const manager = new LoopStateManager(TMP_DIR);
 
-    const created = await manager.create("project-a", manualConfig, "architect");
+    const created = await manager.create("project-a", manualConfig);
 
     const loopDir = join(TMP_DIR, ".archcode", "loops", created.loopId);
     expect(created).toMatchObject({
       projectId: "project-a",
-      config: { title: "Daily triage", schedule: { kind: "manual" } },
+      config: { title: null, schedule: { kind: "manual" } },
       status: "active",
       runCount: 0,
       stateVersion: 1,
     });
     expect(created.loopId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(created.nextRunAt).toBeUndefined();
-    expect(created.readinessScore).toBeUndefined();
+    expect("readinessScore" in created).toBe(false);
     expect(existsSync(join(loopDir, "state.json"))).toBe(true);
     expect(existsSync(join(loopDir, "state.md"))).toBe(true);
     expect(await manager.read(created.loopId)).toEqual(created);
 
     const markdown = await Bun.file(join(loopDir, "state.md")).text();
     expect(markdown).toContain("state.json is the source of truth");
-    expect(markdown).toContain("# Daily triage");
+    expect(markdown).toContain(`# Loop ${created.loopId}`);
+  });
+
+  test("create discards incoming title and setTitleIfEmpty writes generated metadata once", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", { ...manualConfig, title: "Old manual title" });
+
+    const titled = await manager.setTitleIfEmpty(created.loopId, "Generated loop title");
+    const skipped = await manager.setTitleIfEmpty(created.loopId, "Second loop title");
+
+    expect(created.config.title).toBeNull();
+    expect(titled?.config.title).toBe("Generated loop title");
+    expect(skipped).toBeUndefined();
+    expect((await manager.read(created.loopId)).config.title).toBe("Generated loop title");
   });
 
   test("list filters by project and sorts by loop id", async () => {
     const manager = new LoopStateManager(TMP_DIR);
-    const a1 = await manager.create("project-a", { ...manualConfig, title: "A1" });
-    const b1 = await manager.create("project-b", { ...manualConfig, title: "B1" });
-    const a2 = await manager.create("project-a", { ...manualConfig, title: "A2" });
+    const a1 = await manager.create("project-a", manualConfig);
+    const b1 = await manager.create("project-b", manualConfig);
+    const a2 = await manager.create("project-a", manualConfig);
 
     expect(new Set((await manager.list("project-a")).map((loop) => loop.loopId))).toEqual(new Set([a1.loopId, a2.loopId]));
     expect((await manager.list()).map((loop) => loop.loopId)).toEqual([a1.loopId, b1.loopId, a2.loopId].sort());
@@ -373,6 +384,21 @@ describe("LoopStateManager", () => {
     expect(updated.status).toBe("disabled");
     expect(updated.stateVersion).toBe(created.stateVersion + 1);
     expect((await manager.read(created.loopId)).generatedStateSummary).toBe("Disabled for maintenance.");
+  });
+
+  test("update preserves generated title when stale config update carries null title", async () => {
+    const manager = new LoopStateManager(TMP_DIR);
+    const created = await manager.create("project-a", manualConfig);
+    const staleConfig = created.config;
+
+    await manager.setTitleIfEmpty(created.loopId, "Generated loop title");
+    const updated = await manager.update(created.loopId, {
+      config: { ...staleConfig, taskPrompt: "Updated run instructions" },
+    });
+
+    expect(updated.config.title).toBe("Generated loop title");
+    expect(updated.config.taskPrompt).toBe("Updated run instructions");
+    expect((await manager.read(created.loopId)).config.title).toBe("Generated loop title");
   });
 
   test("appendRunReport appends JSONL and readRunLog returns newest reports deterministically", async () => {

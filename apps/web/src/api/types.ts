@@ -103,7 +103,7 @@ export type DashboardGoal = GoalState & {
 /** Dashboard loop summary with minimal list fields. */
 export interface DashboardLoop {
   loopId: string;
-  title: string;
+  title: string | null;
   status: LoopStatus;
   currentRun?: LoopRunReport;
   lastRun?: LoopRunReport;
@@ -122,31 +122,24 @@ export interface DashboardLoop {
  */
 export interface CreateLoopPayload {
   templateId: LoopTemplateId;
-  title: string;
-  description?: string;
   schedule: LoopScheduleSpec;
   approvalPolicy: LoopApprovalPolicy;
   budget?: LoopBudgetConfig;
   taskPrompt?: string;
-  instructions?: string;
-  goalTemplate?: LoopGoalTemplate;
+  goalTemplate?: Omit<LoopGoalTemplate, "title">;
   triggers?: LoopTriggerSpec[];
   useWorktree?: boolean;
-  author?: string;
 }
 
 /** Template-oriented update payload for `PATCH /api/projects/:slug/loops/:loopId`. */
 export interface UpdateLoopPayload {
   status?: LoopStatus;
   templateId?: LoopTemplateId;
-  title?: string;
-  description?: string;
   schedule?: LoopScheduleSpec;
   approvalPolicy?: LoopApprovalPolicy;
   budget?: LoopBudgetConfig;
   taskPrompt?: string;
-  instructions?: string;
-  goalTemplate?: LoopGoalTemplate;
+  goalTemplate?: Omit<LoopGoalTemplate, "title">;
   triggers?: LoopTriggerSpec[];
   useWorktree?: boolean;
 }

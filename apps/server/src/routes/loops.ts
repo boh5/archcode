@@ -29,7 +29,6 @@ import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
 const LoopTextSchema = z.string().trim().min(1).max(10_000);
-const LoopTitleSchema = z.string().trim().min(1).max(200);
 const LoopIdentifierSchema = z.string().trim().min(1).max(200);
 const TriggerCadenceMsSchema = z.number().int().min(30_000).default(60_000);
 const CronExpressionSchema = z.string().trim().refine((value) => value.split(/\s+/).length === 5, {
@@ -87,23 +86,18 @@ const LoopTriggerSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]) satisfies z.ZodType<LoopTriggerSpec>;
 
-const LoopGoalTemplateSchema = z.strictObject({
-  title: LoopTitleSchema,
+const LoopGoalTemplateBodySchema = z.strictObject({
   objective: LoopTextSchema,
   acceptanceCriteria: LoopTextSchema,
-}) satisfies z.ZodType<LoopGoalTemplate>;
+});
 
 const CreateLoopBodySchema = z.strictObject({
   templateId: LoopTemplateIdSchema,
-  author: z.string().trim().min(1).max(200).optional(),
-  title: LoopTitleSchema.optional(),
-  description: LoopTextSchema.optional(),
   schedule: LoopScheduleSpecSchema.optional(),
   approvalPolicy: LoopApprovalPolicySchema.optional(),
   limits: LoopLimitsSchema.optional(),
   taskPrompt: LoopTextSchema.optional(),
-  instructions: LoopTextSchema.optional(),
-  goalTemplate: LoopGoalTemplateSchema.optional(),
+  goalTemplate: LoopGoalTemplateBodySchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
   useWorktree: z.boolean().optional(),
 });
@@ -111,14 +105,11 @@ const CreateLoopBodySchema = z.strictObject({
 const PatchLoopBodySchema = z.strictObject({
   status: z.enum(["active", "paused", "disabled", "error"]).optional(),
   templateId: LoopTemplateIdSchema.optional(),
-  title: LoopTitleSchema.optional(),
-  description: LoopTextSchema.optional(),
   schedule: LoopScheduleSpecSchema.optional(),
   approvalPolicy: LoopApprovalPolicySchema.optional(),
   limits: LoopLimitsSchema.optional(),
   taskPrompt: LoopTextSchema.optional(),
-  instructions: LoopTextSchema.optional(),
-  goalTemplate: LoopGoalTemplateSchema.optional(),
+  goalTemplate: LoopGoalTemplateBodySchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
   useWorktree: z.boolean().optional(),
 });
@@ -130,29 +121,23 @@ const ActivateKillBodySchema = z.strictObject({
 
 type CreateLoopBody = z.infer<typeof CreateLoopBodySchema>;
 type PatchLoopBody = z.infer<typeof PatchLoopBodySchema>;
-type EditableLoopBody = Partial<Pick<CreateLoopBody,
-  | "templateId"
-  | "title"
-  | "description"
-  | "schedule"
-  | "approvalPolicy"
-  | "limits"
-  | "taskPrompt"
-  | "instructions"
-  | "goalTemplate"
-  | "triggers"
-  | "useWorktree"
->>;
-const LEGACY_COMPATIBILITY_SCORE_KEY = `${"readiness"}Score` satisfies keyof LoopState;
+type LoopGoalTemplateBody = z.infer<typeof LoopGoalTemplateBodySchema>;
+type EditableLoopBody = {
+  readonly templateId?: LoopTemplateId;
+  readonly schedule?: LoopScheduleSpec;
+  readonly approvalPolicy?: LoopApprovalPolicy;
+  readonly limits?: LoopLimits;
+  readonly taskPrompt?: string;
+  readonly goalTemplate?: LoopGoalTemplateBody;
+  readonly triggers?: LoopTriggerSpec[];
+  readonly useWorktree?: boolean;
+};
 const EDITABLE_LOOP_BODY_FIELDS = [
   "templateId",
-  "title",
-  "description",
   "schedule",
   "approvalPolicy",
   "limits",
   "taskPrompt",
-  "instructions",
   "goalTemplate",
   "triggers",
   "useWorktree",
@@ -178,7 +163,7 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     assertRouteLoopConfig(config);
 
     try {
-      const loop = await runtime.createLoop(project.workspaceRoot, config, body.author);
+      const loop = await runtime.createLoop(project.workspaceRoot, config);
       return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) }, 201);
     } catch (error) {
       throw mapLoopError(error);
@@ -381,9 +366,9 @@ function createConfigFromBody(body: CreateLoopBody): LoopConfig {
 function toLoopUpdates(body: PatchLoopBody, currentConfig: LoopConfig | undefined): LoopUpdateInput {
   const baseConfig = currentConfig === undefined
     ? undefined
-    : body.templateId === undefined
-      ? currentConfig
-      : expandLoopTemplate(body.templateId);
+      : body.templateId === undefined
+        ? currentConfig
+        : { ...expandLoopTemplate(body.templateId), title: currentConfig.title };
   return {
     ...(baseConfig === undefined ? {} : { config: applyEditableConfigFields(baseConfig, body) }),
     ...(body.status === undefined ? {} : { status: body.status }),
@@ -394,14 +379,11 @@ function applyEditableConfigFields(baseConfig: LoopConfig, body: EditableLoopBod
   const nextConfig: LoopConfig = {
     ...baseConfig,
     ...(body.templateId === undefined ? {} : { templateId: body.templateId }),
-    ...(body.title === undefined ? {} : { title: body.title }),
-    ...(body.description === undefined ? {} : { description: body.description }),
     ...(body.schedule === undefined ? {} : { schedule: body.schedule }),
     ...(body.approvalPolicy === undefined ? {} : { approvalPolicy: body.approvalPolicy }),
     ...(body.limits === undefined ? {} : { limits: body.limits }),
     ...(body.taskPrompt === undefined ? {} : { taskPrompt: body.taskPrompt }),
-    ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
-    ...(body.goalTemplate === undefined ? {} : { goalTemplate: body.goalTemplate }),
+    ...(body.goalTemplate === undefined ? {} : { goalTemplate: toLoopGoalTemplate(body.goalTemplate) }),
     ...(body.triggers === undefined ? {} : { triggers: body.triggers }),
     ...(body.useWorktree === undefined ? {} : { useWorktree: body.useWorktree }),
   };
@@ -414,6 +396,12 @@ function hasEditableLoopBodyFields(body: PatchLoopBody): boolean {
 }
 
 function assertRouteLoopConfig(config: LoopConfig): void {
+  if (config.templateId === "goal_runner" && config.goalTemplate === undefined) {
+    throw new BadRequestError("Request body is invalid", {
+      validationMessages: ["goalTemplate is required for goal_runner loops"],
+    });
+  }
+
   if (config.schedule.kind !== "cron") return;
 
   try {
@@ -426,12 +414,17 @@ function assertRouteLoopConfig(config: LoopConfig): void {
   }
 }
 
-function sanitizeLoopState(loop: LoopState, workspaceRoot: string): LoopState {
-  const { [LEGACY_COMPATIBILITY_SCORE_KEY]: _legacyCompatibilityScore, ...safeLoop } = loop;
-  void _legacyCompatibilityScore;
-
+function toLoopGoalTemplate(body: LoopGoalTemplateBody): LoopGoalTemplate {
   return {
-    ...safeLoop,
+    title: null,
+    objective: body.objective,
+    acceptanceCriteria: body.acceptanceCriteria,
+  };
+}
+
+function sanitizeLoopState(loop: LoopState, workspaceRoot: string): LoopState {
+  return {
+    ...loop,
     ...(loop.lastRun === undefined ? {} : { lastRun: sanitizeRunReport(loop.lastRun, workspaceRoot) }),
     ...(loop.currentRun === undefined ? {} : { currentRun: sanitizeRunReport(loop.currentRun, workspaceRoot) }),
     ...(loop.latestIntegrations === undefined ? {} : { latestIntegrations: sanitizeIntegrationSnapshot(loop.latestIntegrations) }),

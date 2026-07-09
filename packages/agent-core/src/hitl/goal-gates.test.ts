@@ -62,7 +62,6 @@ function createGate() {
 async function createRunningGoal() {
   const goal = await goalStateManager.create({
     projectId: "project-a",
-    title: "Ship HITL gates",
     objective: "Integrate HITL gates with simplified Goal state.",
     acceptanceCriteria: "HITL requests block Goals through pending ids and blockers only.",
     mainSessionId: "main-session-1",
@@ -78,7 +77,6 @@ describe("GoalApprovalGate", () => {
     const record = await gate.requestApproval({
       goalId: goal.id,
       projectSlug: goal.projectId,
-      goalTitle: goal.title,
       approvalPoint: "after_plan",
       summary: "Approve continuing the Goal.",
       resumeStatus: "running",
@@ -105,7 +103,7 @@ describe("GoalApprovalGate", () => {
     const goal = await createRunningGoal();
     const { gate } = createGate();
 
-    const record = await gate.requestReview({ goalId: goal.id, goalTitle: goal.title, projectSlug: goal.projectId });
+    const record = await gate.requestReview({ goalId: goal.id, projectSlug: goal.projectId });
 
     expect(record.source).toEqual({ type: "goal_review", goalId: goal.id });
     expect(await goalStateManager.read(goal.id)).toMatchObject({

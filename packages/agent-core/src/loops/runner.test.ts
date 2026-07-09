@@ -26,25 +26,22 @@ let nextWorkspaceId = 1;
 
 const sessionLoopConfig: LoopConfig = {
   templateId: "maintain_fix",
-  title: "Daily triage",
-  description: "Review repository health",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 7 },
   taskPrompt: "Inspect status and summarize risks.",
-  instructions: "Keep the report concise.",
 };
 
 const goalTemplate: LoopGoalTemplate = {
-  title: "Ship loop-created goal",
+  title: null,
   objective: "Build only the requested scope for the loop-created Goal.",
   acceptanceCriteria: "Reviewer can verify the change from session logs, diff, and ordinary verification output.",
 };
 
 const goalLoopConfig: LoopConfig = {
   templateId: "goal_runner",
-  title: "Goal loop",
-  description: "Create a Goal on every run",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "explicit_per_run",
   limits: { maxIterationsPerRun: 4 },
@@ -78,7 +75,6 @@ describe("session loop runner", () => {
       loopId: loop.loopId,
       sessionRole: "main",
       agentName: "build",
-      title: "Loop: Daily triage",
     });
     expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledWith(expect.objectContaining({
       slug: "project-a",
@@ -96,8 +92,8 @@ describe("session loop runner", () => {
       approvalPolicy: "interactive",
     });
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
-    expect(executionInput?.userMessage).toContain("Task prompt:\nInspect status and summarize risks.");
-    expect(executionInput?.userMessage).toContain("Instructions:\nKeep the report concise.");
+    expect(executionInput?.userMessage).toContain("Run instructions:\nInspect status and summarize risks.");
+    expect(executionInput?.userMessage).not.toContain("Instructions:");
 
     const state = await fixture.stateManager.read(loop.loopId);
     expect(state.currentRun).toBeUndefined();
@@ -106,6 +102,20 @@ describe("session loop runner", () => {
     const log = await fixture.stateManager.readRunLog(loop.loopId);
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({ status: "succeeded", sessionId: "session-1" });
+  });
+
+  test("does not pass generated Loop title metadata to the run session", async () => {
+    const fixture = await createFixture();
+    const loop = await fixture.stateManager.create("project-a", sessionLoopConfig);
+    await fixture.stateManager.setTitleIfEmpty(loop.loopId, "Generated loop title");
+
+    await fixture.runner.runSessionLoop(await fixture.stateManager.read(loop.loopId), "manual");
+
+    expect(fixture.runtime.createSessionMock).toHaveBeenCalledWith(fixture.workspaceRoot, {
+      loopId: loop.loopId,
+      sessionRole: "main",
+      agentName: "build",
+    });
   });
 
   test("passes PR Babysitter template extra tools and selected base agent", async () => {
@@ -286,7 +296,7 @@ describe("session loop runner", () => {
     expect(fixture.runtime.releaseSessionWorkspaceMock).toHaveBeenCalledWith("/tmp/archcode-loop-worktree", "session-1");
     expect(fixture.runtime.releaseSessionWorkspaceMock).toHaveBeenCalledTimes(1);
     expect(fixture.worktreeManager?.createMock).toHaveBeenCalledWith(expect.objectContaining({
-      loopSlug: "Daily triage",
+      loopSlug: `loop-${loop.loopId.slice(0, 8)}`,
       subjectSlug: job.subjectKey,
       jobId: job.jobId,
       baseSha: "a".repeat(40),
@@ -513,7 +523,7 @@ describe("goal loop runner", () => {
     expect(fixture.goalStateManager.createMock).toHaveBeenCalledTimes(2);
     expect(fixture.goalStateManager.createMock.mock.calls[1]?.[0]).toEqual({
       projectId: "project-a",
-      title: originalLoopTemplate.title,
+      title: null,
       objective: originalLoopTemplate.objective,
       acceptanceCriteria: originalLoopTemplate.acceptanceCriteria,
       loopId: loop.loopId,
@@ -551,14 +561,13 @@ describe("goal loop runner", () => {
     expect(report).toMatchObject({ status: "succeeded", goalId: "goal-1", sessionId: "goal-session-1" });
     expect(fixture.goalStateManager.createMock).toHaveBeenCalledWith({
       projectId: "project-a",
-      title: expectedTemplate.title,
+      title: null,
       objective: expectedTemplate.objective,
       acceptanceCriteria: expectedTemplate.acceptanceCriteria,
       loopId: loop.loopId,
     });
     expect(fixture.goalRunner.startMock).toHaveBeenCalledWith("goal-1", {
       loopId: loop.loopId,
-      sessionTitle: "Loop Goal: Goal loop",
       workspaceRoot: fixture.workspaceRoot,
     });
   });
@@ -573,7 +582,7 @@ describe("goal loop runner", () => {
       status: "succeeded",
       goalId: "goal-1",
       sessionId: "goal-session-1",
-      summary: `Goal goal-1 session goal-session-1 completed for loop "${goalLoopConfig.title}".`,
+      summary: `Goal goal-1 session goal-session-1 completed for loop ${loop.loopId}.`,
     });
     expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledTimes(1);
     expect(fixture.runtime.startSessionExecutionMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1060,7 +1069,7 @@ class FakeGoalStateManager {
   readonly goals = new Map<string, GoalState>();
   readonly createMock = mock(async (input: {
     projectId: string;
-    title: string;
+    title?: string | null;
     objective: string;
     acceptanceCriteria: string;
     loopId?: string;
@@ -1070,7 +1079,7 @@ class FakeGoalStateManager {
     const goal: GoalState = {
       id,
       projectId: input.projectId,
-      title: input.title,
+      title: input.title ?? null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",

@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { GlobalSSEResourceChangedEvent } from "@archcode/protocol";
+
 import type { McpManager } from "./mcp";
 import { setLlmAdapterForTest } from "./llm";
 import { createRuntime, type AgentRuntime } from "./runtime";
@@ -16,7 +18,7 @@ const tmpRoots: string[] = [];
 
 const intervalLoopConfig: LoopConfig = {
   templateId: "watch_report",
-  title: "Runtime interval loop",
+  title: null,
   schedule: { kind: "interval", everyMs: 100 },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4 },
@@ -25,18 +27,17 @@ const intervalLoopConfig: LoopConfig = {
 
 const manualLoopConfig: LoopConfig = {
   ...intervalLoopConfig,
-  title: "Runtime manual loop",
   schedule: { kind: "manual" },
 };
 
 const goalLoopConfig: LoopConfig = {
   templateId: "goal_runner",
-  title: "Runtime goal loop",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 3 },
   goalTemplate: {
-    title: "Runtime-created Goal",
+    title: null,
     objective: "Use runtime execution plumbing.",
     acceptanceCriteria: "Reviewer can decide DONE from the runtime execution result.",
   },
@@ -74,6 +75,82 @@ describe("AgentRuntime Loop wiring", () => {
     expect(summaries).toContainEqual(expect.objectContaining({ sessionId: session.sessionId, loopId }));
   });
 
+  test("queueGoalTitleGeneration stores async title metadata and publishes resource change", async () => {
+    const { generateText } = installLlmMocks("Generated Goal Title");
+    const fixture = await createRuntimeFixture();
+    const projectContext = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      objective: "Generate a concise title for this Goal.",
+      acceptanceCriteria: "The title is metadata and does not affect execution.",
+    });
+    const events: GlobalSSEResourceChangedEvent[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => events.push(event));
+
+    try {
+      fixture.runtime.queueGoalTitleGeneration?.(fixture.workspaceRoot, goal.id);
+      await waitFor(async () => (await projectContext.goalState.read(goal.id)).title === "Generated Goal Title");
+    } finally {
+      unsubscribe?.();
+    }
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "resource.changed",
+      projectSlug: projectContext.project.slug,
+      resourceType: "goal",
+      resourceId: goal.id,
+      reason: "title_generated",
+    });
+  });
+
+  test("queueGoalTitleGeneration skips existing title metadata without model call", async () => {
+    const { generateText } = installLlmMocks("Should Not Run");
+    const fixture = await createRuntimeFixture();
+    const projectContext = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const goal = await projectContext.goalState.create({
+      projectId: projectContext.project.slug,
+      objective: "Already has title metadata.",
+      acceptanceCriteria: "Existing title metadata is never overwritten.",
+    });
+    await projectContext.goalState.setTitleIfEmpty(goal.id, "Existing Title");
+    const events: GlobalSSEResourceChangedEvent[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => events.push(event));
+
+    try {
+      fixture.runtime.queueGoalTitleGeneration?.(fixture.workspaceRoot, goal.id);
+      await Bun.sleep(10);
+    } finally {
+      unsubscribe?.();
+    }
+
+    expect(generateText).not.toHaveBeenCalled();
+    expect((await projectContext.goalState.read(goal.id)).title).toBe("Existing Title");
+    expect(events).toEqual([]);
+  });
+
+  test("createLoop keeps title null when generated title normalizes empty", async () => {
+    const { generateText } = installLlmMocks("   ");
+    const fixture = await createRuntimeFixture();
+    const projectContext = await fixture.runtime.contextResolver.resolve(fixture.workspaceRoot);
+    const events: GlobalSSEResourceChangedEvent[] = [];
+    const unsubscribe = fixture.runtime.subscribeResourceChanges?.((event) => events.push(event));
+
+    let loopId = "";
+    try {
+      const loop = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
+      loopId = loop.loopId;
+      await waitFor(() => generateText.mock.calls.length > 0);
+      await Bun.sleep(10);
+    } finally {
+      unsubscribe?.();
+    }
+
+    expect((await projectContext.loopState.read(loopId)).config.title).toBeNull();
+    expect(events).toEqual([]);
+  });
+
   test("startLoopSchedulers schedules enabled active interval loops for registered projects only", async () => {
     const fixture = await createRuntimeFixture({ now: 1_000 });
     const registered = await fixture.runtime.projectRegistry.add({ workspaceRoot: fixture.workspaceRoot, name: "Registered" });
@@ -81,7 +158,7 @@ describe("AgentRuntime Loop wiring", () => {
 
     const activeLoop = await fixture.runtime.createLoop(fixture.workspaceRoot, intervalLoopConfig);
     const manualLoop = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
-    const pausedLoop = await fixture.runtime.createLoop(fixture.workspaceRoot, { ...intervalLoopConfig, title: "Paused loop" });
+    const pausedLoop = await fixture.runtime.createLoop(fixture.workspaceRoot, intervalLoopConfig);
     await fixture.runtime.pauseLoop(fixture.workspaceRoot, pausedLoop.loopId);
 
     const unregisteredRuntimeView = await fixture.runtime.contextResolver.resolve(unregisteredWorkspace);
@@ -136,8 +213,9 @@ describe("AgentRuntime Loop wiring", () => {
       goalId: report?.goalId,
       loopId: loop.loopId,
       sessionRole: "main",
-      title: "Loop Goal: Runtime goal loop",
     });
+    expect(persisted.title).not.toBe(`Loop Goal: ${loop.config.title}`);
+    expect(persisted.title).not.toBe(`Goal: ${loop.config.goalTemplate?.title}`);
     expect(persisted.executions).toEqual([expect.objectContaining({ status: "completed" })]);
   });
 
@@ -188,7 +266,7 @@ describe("AgentRuntime Loop wiring", () => {
   test("runtime global kill persists, blocks manual trigger, and clear preserves paused loops", async () => {
     const fixture = await createRuntimeFixture({ now: 1_000 });
     const active = await fixture.runtime.createLoop(fixture.workspaceRoot, manualLoopConfig);
-    const paused = await fixture.runtime.createLoop(fixture.workspaceRoot, { ...intervalLoopConfig, title: "Runtime paused loop" });
+    const paused = await fixture.runtime.createLoop(fixture.workspaceRoot, intervalLoopConfig);
     await fixture.runtime.pauseLoop(fixture.workspaceRoot, paused.loopId);
 
     const activated = await fixture.runtime.activateLoopGlobalKill(fixture.workspaceRoot, {
@@ -210,7 +288,8 @@ describe("AgentRuntime Loop wiring", () => {
   });
 });
 
-function installLlmMocks(): void {
+function installLlmMocks(generatedTitle = "Runtime goal loop"): { generateText: ReturnType<typeof mock> } {
+  const generateText = mock(async () => ({ text: generatedTitle }));
   setLlmAdapterForTest({
     streamText: mock(() => ({
       fullStream: (async function* () {
@@ -221,8 +300,9 @@ function installLlmMocks(): void {
       text: Promise.resolve("Goal loop execution complete."),
       toolCalls: Promise.resolve([]),
     })) as never,
-    generateText: mock(async () => ({ text: "Runtime goal loop" })) as never,
+    generateText: generateText as never,
   });
+  return { generateText };
 }
 
 async function createRuntimeFixture(options: { now?: number } = {}): Promise<{
@@ -289,6 +369,14 @@ async function captureAsyncError(action: () => Promise<unknown>): Promise<unknow
     return error;
   }
   throw new Error("Expected action to throw");
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, attempts = 40): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await predicate()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error("Timed out waiting for condition");
 }
 
 function makeConfig(): Record<string, unknown> {

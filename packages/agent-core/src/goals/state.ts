@@ -30,6 +30,7 @@ export const GoalStatusSchema = z.enum([
 
 export const GoalUuidSchema = z.uuid();
 export const GoalTitleSchema = z.string().trim().min(1).max(160);
+export const GoalNullableTitleSchema = GoalTitleSchema.nullable();
 export const GoalNaturalLanguageSchema = z.string().trim().min(1).max(8000);
 export const GoalEvidenceSummarySchema = z.string().trim().min(1).max(1000);
 export const GoalReviewSummarySchema = z.string().trim().min(1).max(4000);
@@ -82,7 +83,7 @@ export const GoalLastErrorSchema = z.strictObject({
 export const GoalStateSchema = z.strictObject({
   id: GoalUuidSchema,
   projectId: z.string().trim().min(1),
-  title: GoalTitleSchema,
+  title: GoalNullableTitleSchema,
   objective: GoalNaturalLanguageSchema,
   acceptanceCriteria: GoalNaturalLanguageSchema,
   status: GoalStatusSchema,
@@ -114,14 +115,13 @@ export type GoalBudgetSummary = ProtocolGoalBudgetSummary;
 
 export interface GoalCreateInput {
   readonly projectId: string;
-  readonly title: string;
   readonly objective: string;
   readonly acceptanceCriteria: string;
   readonly mainSessionId?: string;
   readonly loopId?: string;
 }
 
-export type GoalDraftPatch = Partial<Pick<GoalState, "title" | "objective" | "acceptanceCriteria" | "mainSessionId" | "loopId">>;
+export type GoalDraftPatch = Partial<Pick<GoalState, "objective" | "acceptanceCriteria" | "mainSessionId" | "loopId">>;
 
 export interface GoalReviewerAuthorization {
   readonly agentName?: string;
@@ -211,6 +211,7 @@ const ALLOWED_TRANSITIONS: Record<GoalStatus, readonly GoalStatus[]> = {
 };
 export class GoalStateManager {
   readonly #logger: Logger;
+  readonly #mutationLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly workspaceRoot: string,
@@ -224,7 +225,7 @@ export class GoalStateManager {
     const state = GoalStateSchema.parse({
       id: crypto.randomUUID(),
       projectId: input.projectId,
-      title: input.title,
+      title: null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
@@ -274,164 +275,200 @@ export class GoalStateManager {
   }
 
   async patchDraft(goalId: string, updates: GoalDraftPatch): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertMutableDraft(state);
-    return this.update(state, updates);
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertMutableDraft(state);
+      return this.update(state, updates);
+    });
+  }
+
+  async setTitleIfEmpty(goalId: string, title: string): Promise<GoalState | undefined> {
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      if (state.title !== null) return undefined;
+      return this.update(state, { title });
+    });
   }
 
   async start(goalId: string, input: { readonly mainSessionId?: string; readonly loopId?: string } = {}): Promise<GoalState> {
-    const state = await this.read(goalId);
-    const alreadyClaimedByMainSession = state.status === "running"
-      && input.mainSessionId !== undefined
-      && state.mainSessionId === input.mainSessionId
-      && (input.loopId === undefined || state.loopId === input.loopId);
-    if (alreadyClaimedByMainSession) return state;
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      const alreadyClaimedByMainSession = state.status === "running"
+        && input.mainSessionId !== undefined
+        && state.mainSessionId === input.mainSessionId
+        && (input.loopId === undefined || state.loopId === input.loopId);
+      if (alreadyClaimedByMainSession) return state;
 
-    this.assertTransition(state, "running");
-    return this.update(state, {
-      status: "running",
-      blocker: undefined,
-      review: undefined,
-      finalSummary: undefined,
-      completedAt: undefined,
-      cancelledAt: undefined,
-      startedAt: state.startedAt ?? new Date().toISOString(),
-      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
-      ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
+      this.assertTransition(state, "running");
+      return this.update(state, {
+        status: "running",
+        blocker: undefined,
+        review: undefined,
+        finalSummary: undefined,
+        completedAt: undefined,
+        cancelledAt: undefined,
+        startedAt: state.startedAt ?? new Date().toISOString(),
+        ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+        ...(input.loopId === undefined ? {} : { loopId: input.loopId }),
+      });
     });
   }
 
   async block(goalId: string, blocker: Omit<GoalBlocker, "createdAt"> & { readonly createdAt?: string }): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertTransition(state, "blocked");
-    const parsed = GoalBlockerSchema.parse({ ...blocker, createdAt: blocker.createdAt ?? new Date().toISOString() });
-    return this.update(state, {
-      status: "blocked",
-      blocker: parsed,
-      pendingHitlIds: parsed.hitlId === undefined ? state.pendingHitlIds : uniqueAppend(state.pendingHitlIds, parsed.hitlId),
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertTransition(state, "blocked");
+      const parsed = GoalBlockerSchema.parse({ ...blocker, createdAt: blocker.createdAt ?? new Date().toISOString() });
+      return this.update(state, {
+        status: "blocked",
+        blocker: parsed,
+        pendingHitlIds: parsed.hitlId === undefined ? state.pendingHitlIds : uniqueAppend(state.pendingHitlIds, parsed.hitlId),
+      });
     });
   }
 
   async clearBlocker(goalId: string, hitlId?: string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    if (state.status !== "blocked") throw new GoalTransitionError(goalId, state.status, "running");
-    const nextStatus = state.blocker?.resumeStatus ?? "running";
-    this.assertTransition(state, nextStatus);
-    return this.update(state, {
-      status: nextStatus,
-      blocker: undefined,
-      pendingHitlIds: hitlId === undefined ? state.pendingHitlIds : state.pendingHitlIds.filter((id) => id !== hitlId),
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      if (state.status !== "blocked") throw new GoalTransitionError(goalId, state.status, "running");
+      const nextStatus = state.blocker?.resumeStatus ?? "running";
+      this.assertTransition(state, nextStatus);
+      return this.update(state, {
+        status: nextStatus,
+        blocker: undefined,
+        pendingHitlIds: hitlId === undefined ? state.pendingHitlIds : state.pendingHitlIds.filter((id) => id !== hitlId),
+      });
     });
   }
 
   async beginReview(goalId: string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertTransition(state, "reviewing");
-    return this.update(state, { status: "reviewing", blocker: undefined });
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertTransition(state, "reviewing");
+      return this.update(state, { status: "reviewing", blocker: undefined });
+    });
   }
 
   async finalizeReview(goalId: string, input: GoalFinalizeReviewInput): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertReviewerAuthorized(state, input.authorization);
-    if (state.status !== "reviewing") throw new GoalReviewFinalizationError(goalId, `Goal must be reviewing, got ${state.status}`);
-    if (state.review !== undefined) throw new GoalReviewFinalizationError(goalId, "Goal review is already finalized");
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertReviewerAuthorized(state, input.authorization);
+      if (state.status !== "reviewing") throw new GoalReviewFinalizationError(goalId, `Goal must be reviewing, got ${state.status}`);
+      if (state.review !== undefined) throw new GoalReviewFinalizationError(goalId, "Goal review is already finalized");
 
-    const evidenceRefs = [...(input.evidenceRefs ?? [])];
-    if (input.verdict === "DONE" && evidenceRefs.length === 0) {
-      throw new GoalReviewFinalizationError(goalId, "DONE review requires at least one evidence ref");
-    }
-    if (input.verdict === "NOT_DONE" && input.summary.trim().length === 0) {
-      throw new GoalReviewFinalizationError(goalId, "NOT_DONE review requires a non-empty summary");
-    }
+      const evidenceRefs = [...(input.evidenceRefs ?? [])];
+      if (input.verdict === "DONE" && evidenceRefs.length === 0) {
+        throw new GoalReviewFinalizationError(goalId, "DONE review requires at least one evidence ref");
+      }
+      if (input.verdict === "NOT_DONE" && input.summary.trim().length === 0) {
+        throw new GoalReviewFinalizationError(goalId, "NOT_DONE review requires a non-empty summary");
+      }
 
-    const now = new Date().toISOString();
-    const review = GoalReviewReceiptSchema.parse({
-      verdict: input.verdict,
-      summary: input.summary,
-      evidenceRefs,
-      unresolvedItems: input.unresolvedItems,
-      reviewerSessionId: input.authorization.reviewerSessionId,
-      decidedAt: now,
-    });
-    const status = input.verdict === "DONE" ? "done" : "not_done";
-    this.assertTransition(state, status);
-    return this.update(state, {
-      status,
-      review,
-      ...(input.verdict === "DONE" ? { finalSummary: input.finalSummary ?? input.summary } : { lastFailureSummary: input.summary }),
-      completedAt: now,
+      const now = new Date().toISOString();
+      const review = GoalReviewReceiptSchema.parse({
+        verdict: input.verdict,
+        summary: input.summary,
+        evidenceRefs,
+        unresolvedItems: input.unresolvedItems,
+        reviewerSessionId: input.authorization.reviewerSessionId,
+        decidedAt: now,
+      });
+      const status = input.verdict === "DONE" ? "done" : "not_done";
+      this.assertTransition(state, status);
+      return this.update(state, {
+        status,
+        review,
+        ...(input.verdict === "DONE" ? { finalSummary: input.finalSummary ?? input.summary } : { lastFailureSummary: input.summary }),
+        completedAt: now,
+      });
     });
   }
 
   async retry(goalId: string, input: { readonly mainSessionId?: string } = {}): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertTransition(state, "running");
-    const now = new Date().toISOString();
-    return this.update(state, {
-      status: "running",
-      attempt: state.attempt + 1,
-      review: undefined,
-      finalSummary: undefined,
-      blocker: undefined,
-      completedAt: undefined,
-      cancelledAt: undefined,
-      startedAt: now,
-      ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertTransition(state, "running");
+      const now = new Date().toISOString();
+      return this.update(state, {
+        status: "running",
+        attempt: state.attempt + 1,
+        review: undefined,
+        finalSummary: undefined,
+        blocker: undefined,
+        completedAt: undefined,
+        cancelledAt: undefined,
+        startedAt: now,
+        ...(input.mainSessionId === undefined ? {} : { mainSessionId: input.mainSessionId }),
+      });
     });
   }
 
   async fail(goalId: string, error: Error | string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertTransition(state, "failed");
-    const normalized: NonNullable<GoalState["lastError"]> = normalizeError(error);
-    return this.update(state, {
-      status: "failed",
-      lastFailureSummary: normalized.message,
-      lastError: normalized,
-      completedAt: normalized.at,
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertTransition(state, "failed");
+      const normalized: NonNullable<GoalState["lastError"]> = normalizeError(error);
+      return this.update(state, {
+        status: "failed",
+        lastFailureSummary: normalized.message,
+        lastError: normalized,
+        completedAt: normalized.at,
+      });
     });
   }
 
   async cancel(goalId: string, reason?: string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertTransition(state, "cancelled");
-    const now = new Date().toISOString();
-    return this.update(state, {
-      status: "cancelled",
-      cancelledAt: now,
-      ...(reason === undefined ? {} : { lastFailureSummary: reason }),
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertTransition(state, "cancelled");
+      const now = new Date().toISOString();
+      return this.update(state, {
+        status: "cancelled",
+        cancelledAt: now,
+        ...(reason === undefined ? {} : { lastFailureSummary: reason }),
+      });
     });
   }
 
   async addChildSession(goalId: string, sessionId: string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertNotTerminal(state);
-    return this.update(state, { childSessionIds: uniqueAppend(state.childSessionIds, sessionId) });
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertNotTerminal(state);
+      return this.update(state, { childSessionIds: uniqueAppend(state.childSessionIds, sessionId) });
+    });
   }
 
   async setMainSession(goalId: string, sessionId: string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertNotTerminal(state);
-    return this.update(state, { mainSessionId: sessionId });
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertNotTerminal(state);
+      return this.update(state, { mainSessionId: sessionId });
+    });
   }
 
   async updateBudgetSummary(goalId: string, budget: GoalBudgetSummary): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertNotTerminal(state);
-    return this.update(state, { budget: GoalBudgetSummarySchema.parse(budget) });
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertNotTerminal(state);
+      return this.update(state, { budget: GoalBudgetSummarySchema.parse(budget) });
+    });
   }
 
   async updateLastError(goalId: string, error: Error | string): Promise<GoalState> {
-    const state = await this.read(goalId);
-    return this.update(state, { lastError: normalizeError(error) });
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      return this.update(state, { lastError: normalizeError(error) });
+    });
   }
 
   async recordHitlRef(goalId: string, input: { readonly hitlId: string; readonly approvalRef?: string }): Promise<GoalState> {
-    const state = await this.read(goalId);
-    this.assertNotTerminal(state);
-    return this.update(state, {
-      pendingHitlIds: uniqueAppend(state.pendingHitlIds, input.hitlId),
-      approvalRefs: input.approvalRef === undefined ? state.approvalRefs : uniqueAppend(state.approvalRefs, input.approvalRef),
+    return await this.withGoalMutation(goalId, async () => {
+      const state = await this.read(goalId);
+      this.assertNotTerminal(state);
+      return this.update(state, {
+        pendingHitlIds: uniqueAppend(state.pendingHitlIds, input.hitlId),
+        approvalRefs: input.approvalRef === undefined ? state.approvalRefs : uniqueAppend(state.approvalRefs, input.approvalRef),
+      });
     });
   }
 
@@ -466,6 +503,24 @@ export class GoalStateManager {
 
   private async write(state: GoalState): Promise<void> {
     await atomicWrite(await this.goalStatePath(state.id), `${JSON.stringify(GoalStateSchema.parse(state), null, 2)}\n`);
+  }
+
+  private async withGoalMutation<T>(goalId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.#mutationLocks.get(goalId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolveRelease) => {
+      release = resolveRelease;
+    });
+    const chained = previous.then(() => current, () => current);
+    this.#mutationLocks.set(goalId, chained);
+
+    await previous.catch(() => undefined);
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.#mutationLocks.get(goalId) === chained) this.#mutationLocks.delete(goalId);
+    }
   }
 
   private async goalStatePath(goalId: string): Promise<string> {

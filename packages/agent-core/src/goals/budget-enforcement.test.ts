@@ -92,7 +92,6 @@ describe("Goal budget enforcement", () => {
 async function createRunningGoal(budgetSummary: GoalBudgetSummary): Promise<GoalState> {
   const goal = await projectContext.goalState.create({
     projectId: "test-project",
-    title: "Budgeted Goal",
     objective: "Exercise budget enforcement.",
     acceptanceCriteria: "Budget enforcement updates Goal state only.",
     mainSessionId: "session-budget",

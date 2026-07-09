@@ -34,7 +34,6 @@ function createRunner(sessionIds = ["main-session-1", "retry-session-2"]): GoalR
 async function createDraft(runner: GoalRunner) {
   return runner.create({
     projectId: "project-a",
-    title: "Ship runner facade",
     objective: "Exercise the thin goal runner facade.",
     acceptanceCriteria: "Runner delegates to state manager and enforces reviewer finalization.",
   });
@@ -57,12 +56,13 @@ describe("GoalRunner", () => {
   test("creates, patches, and starts a goal with a main session", async () => {
     const runner = createRunner();
     const draft = await createDraft(runner);
-    const patched = await runner.patchDraft(draft.id, { title: "Patched runner goal" });
+    const patched = await runner.patchDraft(draft.id, { objective: "Exercise the patched goal runner facade." });
     const running = await runner.start(patched.id);
 
     expect(running).toMatchObject({
       status: "running",
-      title: "Patched runner goal",
+      title: null,
+      objective: "Exercise the patched goal runner facade.",
       mainSessionId: "main-session-1",
     });
     expect(await manager.read(draft.id)).toMatchObject({ status: "running", mainSessionId: "main-session-1" });
@@ -77,6 +77,20 @@ describe("GoalRunner", () => {
 
     expect(first.status).toBe("running");
     expect(second).toEqual(first);
+  });
+
+  test("does not pass generated Goal title metadata to the main session", async () => {
+    const createSession = mock(async () => "main-session-1");
+    const runner = new GoalRunner({ goalStateManager: manager, createSession });
+    const draft = await createDraft(runner);
+    await manager.setTitleIfEmpty(draft.id, "Generated goal title");
+
+    await runner.start(draft.id);
+
+    expect(createSession).toHaveBeenCalledWith({
+      goalId: draft.id,
+      sessionRole: "main",
+    });
   });
 
   test("requires createSession when no main session is available", async () => {

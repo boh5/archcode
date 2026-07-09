@@ -1,7 +1,7 @@
 import type { StoreApi } from "zustand/vanilla";
 import type { BackgroundTask, BackgroundTaskContext } from "../types";
 import type { SessionStoreState, TextPart } from "../../store/types";
-import { runLlmText } from "../../llm";
+import { generateTitle } from "../../title-generation";
 
 export function createTitleGenerationTask(
   store: StoreApi<SessionStoreState>,
@@ -24,14 +24,13 @@ export function createTitleGenerationTask(
       if (!text) return;
 
       try {
-        const result = await runLlmText({
-          model: ctx.modelInfo.model,
-          prompt: `Generate a concise session title (3-8 words) based on this user message: ${text}`,
+        const title = await generateTitle({
+          kind: "session",
+          text,
+          modelInfo: ctx.modelInfo,
           modelOptions: ctx.modelOptions,
         });
-        const title = result.text.trim().replace(/^["']|["']$/g, "").slice(0, 50);
-
-        store.getState().setTitle(title);
+        if (title !== null) store.getState().setTitle(title);
       } catch (err) {
         ctx.logger.warn("title.generation.failed", {
           error: err,

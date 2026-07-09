@@ -43,6 +43,7 @@ import type { Logger } from "../logger";
 import { silentLogger } from "../logger";
 
 const LoopTitleSchema = z.string().trim().min(1).max(200);
+const LoopNullableTitleSchema = LoopTitleSchema.nullable();
 const LoopTextSchema = z.string().trim().min(1).max(10_000);
 const LoopIdentifierSchema = z.string().trim().min(1).max(200);
 const TimestampMsSchema = z.number().int().nonnegative();
@@ -213,7 +214,7 @@ export const LoopIntegrationSnapshotSchema = z.strictObject({
 }) satisfies z.ZodType<ProtocolLoopIntegrationSnapshot>;
 
 export const LoopGoalTemplateSchema = z.strictObject({
-  title: LoopTitleSchema,
+  title: LoopNullableTitleSchema,
   objective: LoopTextSchema,
   acceptanceCriteria: LoopTextSchema,
 }) satisfies z.ZodType<ProtocolLoopGoalTemplate>;
@@ -317,15 +318,13 @@ export const LoopTriggerHealthSchema = z.strictObject({
 
 export const LoopConfigSchema: z.ZodType<ProtocolLoopConfig> = z.strictObject({
   templateId: LoopTemplateIdSchema,
-  title: LoopTitleSchema,
-  description: LoopTextSchema.optional(),
+  title: LoopNullableTitleSchema,
   schedule: LoopScheduleSpecSchema,
   approvalPolicy: LoopApprovalPolicySchema,
   limits: LoopLimitsSchema,
   budget: LoopBudgetConfigSchema.optional(),
   collisionTargets: z.array(CollisionTargetSchema).max(100).optional(),
   taskPrompt: LoopTextSchema.optional(),
-  instructions: LoopTextSchema.optional(),
   goalTemplate: LoopGoalTemplateSchema.optional(),
   triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
   useWorktree: z.boolean().optional(),
@@ -383,7 +382,6 @@ export const LoopStateSchema = z.strictObject({
   runCount: z.number().int().nonnegative(),
   stateVersion: z.number().int().positive(),
   generatedStateSummary: z.string().max(20_000).optional(),
-  readinessScore: z.null().optional(),
   latestBudget: LoopBudgetSnapshotSchema.optional(),
   latestCollisions: LoopCollisionSnapshotSchema.optional(),
   latestIntegrations: LoopIntegrationSnapshotSchema.optional(),
@@ -485,6 +483,7 @@ export class LoopRunLogError extends Error {
 
 export class LoopStateManager {
   readonly #logger: Logger;
+  readonly #mutationLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly workspaceRoot: string,
@@ -493,10 +492,9 @@ export class LoopStateManager {
     this.#logger = logger.child({ module: "loops.state" });
   }
 
-  async create(projectId: string, config: LoopConfig, author?: string): Promise<LoopState> {
-    void author;
+  async create(projectId: string, config: LoopConfig): Promise<LoopState> {
     const now = Date.now();
-    const parsedConfig = LoopConfigSchema.parse(config);
+    const parsedConfig = LoopConfigSchema.parse({ ...config, title: null });
     const state = LoopStateSchema.parse({
       loopId: crypto.randomUUID(),
       projectId,
@@ -567,160 +565,196 @@ export class LoopStateManager {
   }
 
   async update(loopId: string, updates: LoopUpdateInput): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const updated = this.nextState({
-      ...state,
-      ...updates,
-      config: updates.config ? LoopConfigSchema.parse(updates.config) : state.config,
-    });
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const config = updates.config === undefined
+        ? state.config
+        : mergeLoopConfigForUpdate(state.config, updates.config);
+      const updated = this.nextState({
+        ...state,
+        ...updates,
+        config,
+      });
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
+  }
+
+  async setTitleIfEmpty(loopId: string, title: string): Promise<LoopState | undefined> {
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      if (state.config.title !== null) return undefined;
+      const updated = this.nextState({
+        ...state,
+        config: LoopConfigSchema.parse({ ...state.config, title }),
+      });
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async pause(loopId: string): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const updated = this.nextState({
-      ...state,
-      status: "paused",
-      nextRunAt: undefined,
-    });
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const updated = this.nextState({
+        ...state,
+        status: "paused",
+        nextRunAt: undefined,
+      });
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async resume(loopId: string, now: number = Date.now()): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const updated = this.nextState({
-      ...state,
-      status: "active",
-      nextRunAt: nextRunAtFrom(state.config.schedule, now),
-    }, now);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const updated = this.nextState({
+        ...state,
+        status: "active",
+        nextRunAt: nextRunAtFrom(state.config.schedule, now),
+      }, now);
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async recordRunStart(loopId: string, reportStart: LoopRunReport): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const report = this.parseRunReport(loopId, reportStart);
-    const updated = this.nextState({
-      ...state,
-      currentRun: report,
-    }, report.startedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const report = this.parseRunReport(loopId, reportStart);
+      const updated = this.nextState({
+        ...state,
+        currentRun: report,
+      }, report.startedAt);
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async recordRunFinish(loopId: string, reportFinish: LoopRunReport): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const report = this.parseRunReport(loopId, reportFinish);
-    const finishedAt = report.endedAt ?? Date.now();
-    const updated = this.nextState({
-      ...state,
-      lastRun: report,
-      currentRun: state.currentRun?.runId === report.runId ? undefined : state.currentRun,
-      nextRunAt: state.status === "active" ? nextRunAtFrom(state.config.schedule, finishedAt) : undefined,
-      runCount: state.runCount + 1,
-      latestIntegrations: report.integrationErrors === undefined ? state.latestIntegrations : LoopIntegrationSnapshotSchema.parse({
-        errors: report.integrationErrors,
-        updatedAt: finishedAt,
-      }),
-    }, finishedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const report = this.parseRunReport(loopId, reportFinish);
+      const finishedAt = report.endedAt ?? Date.now();
+      const updated = this.nextState({
+        ...state,
+        lastRun: report,
+        currentRun: state.currentRun?.runId === report.runId ? undefined : state.currentRun,
+        nextRunAt: state.status === "active" ? nextRunAtFrom(state.config.schedule, finishedAt) : undefined,
+        runCount: state.runCount + 1,
+        latestIntegrations: report.integrationErrors === undefined ? state.latestIntegrations : LoopIntegrationSnapshotSchema.parse({
+          errors: report.integrationErrors,
+          updatedAt: finishedAt,
+        }),
+      }, finishedAt);
 
-    await this.appendRunReport(loopId, report);
-    await this.write(updated);
-    return updated;
+      await this.appendRunReport(loopId, report);
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async recordRunBlocked(loopId: string, reportBlocked: LoopRunReport): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const report = this.parseRunReport(loopId, reportBlocked);
-    if (report.status !== "needs_user") {
-      throw new LoopRunLogError(loopId, "Blocked Loop run reports must use needs_user status");
-    }
-    const blockedAt = report.endedAt ?? Date.now();
-    const updated = this.nextState({
-      ...state,
-      lastRun: report,
-      currentRun: report,
-      blockedByHitlIds: report.blockedByHitlIds,
-      attentionStatus: "waiting_for_human",
-      resumeCheckpoint: report.resumeCheckpoint,
-      currentJob: report.jobId !== undefined && state.currentJob?.jobId === report.jobId
-        ? {
-            ...state.currentJob,
-            status: "needs_user",
-            blockedReason: report.blockedReason,
-            blockedByHitlIds: report.blockedByHitlIds,
-            attentionStatus: "waiting_for_human",
-            resumeCheckpoint: report.resumeCheckpoint,
-          }
-        : state.currentJob,
-    }, blockedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const report = this.parseRunReport(loopId, reportBlocked);
+      if (report.status !== "needs_user") {
+        throw new LoopRunLogError(loopId, "Blocked Loop run reports must use needs_user status");
+      }
+      const blockedAt = report.endedAt ?? Date.now();
+      const updated = this.nextState({
+        ...state,
+        lastRun: report,
+        currentRun: report,
+        blockedByHitlIds: report.blockedByHitlIds,
+        attentionStatus: "waiting_for_human",
+        resumeCheckpoint: report.resumeCheckpoint,
+        currentJob: report.jobId !== undefined && state.currentJob?.jobId === report.jobId
+          ? {
+              ...state.currentJob,
+              status: "needs_user",
+              blockedReason: report.blockedReason,
+              blockedByHitlIds: report.blockedByHitlIds,
+              attentionStatus: "waiting_for_human",
+              resumeCheckpoint: report.resumeCheckpoint,
+            }
+          : state.currentJob,
+      }, blockedAt);
 
-    await this.appendRunReport(loopId, report);
-    await this.write(updated);
-    return updated;
+      await this.appendRunReport(loopId, report);
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async clearHitlBlocker(loopId: string, hitlId: string): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const blockedByHitlIds = state.blockedByHitlIds?.filter((id) => id !== hitlId);
-    const currentRun = state.currentRun?.resumeCheckpoint?.hitlId === hitlId
-      ? undefined
-      : clearReportHitlId(state.currentRun, hitlId);
-    const currentJob = state.currentJob?.resumeCheckpoint?.hitlId === hitlId
-      ? undefined
-      : clearJobHitlId(state.currentJob, hitlId);
-    const updated = this.nextState({
-      ...state,
-      currentRun,
-      currentJob,
-      blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
-      attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : state.attentionStatus,
-      resumeCheckpoint: state.resumeCheckpoint?.hitlId === hitlId ? undefined : state.resumeCheckpoint,
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const blockedByHitlIds = state.blockedByHitlIds?.filter((id) => id !== hitlId);
+      const currentRun = state.currentRun?.resumeCheckpoint?.hitlId === hitlId
+        ? undefined
+        : clearReportHitlId(state.currentRun, hitlId);
+      const currentJob = state.currentJob?.resumeCheckpoint?.hitlId === hitlId
+        ? undefined
+        : clearJobHitlId(state.currentJob, hitlId);
+      const updated = this.nextState({
+        ...state,
+        currentRun,
+        currentJob,
+        blockedByHitlIds: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? undefined : blockedByHitlIds,
+        attentionStatus: blockedByHitlIds === undefined || blockedByHitlIds.length === 0 ? "clear" : state.attentionStatus,
+        resumeCheckpoint: state.resumeCheckpoint?.hitlId === hitlId ? undefined : state.resumeCheckpoint,
+      });
+      await this.write(updated);
+      return updated;
     });
-    await this.write(updated);
-    return updated;
   }
 
   async updateBudgetSnapshot(loopId: string, snapshot: LoopBudgetSnapshot): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const parsed = LoopBudgetSnapshotSchema.parse(snapshot);
-    const updated = this.nextState({
-      ...state,
-      latestBudget: parsed,
-    }, parsed.updatedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const parsed = LoopBudgetSnapshotSchema.parse(snapshot);
+      const updated = this.nextState({
+        ...state,
+        latestBudget: parsed,
+      }, parsed.updatedAt);
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async updateCollisionSnapshot(loopId: string, snapshot: LoopCollisionSnapshot): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const parsed = LoopCollisionSnapshotSchema.parse(snapshot);
-    const updated = this.nextState({
-      ...state,
-      latestCollisions: parsed,
-    }, parsed.updatedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const parsed = LoopCollisionSnapshotSchema.parse(snapshot);
+      const updated = this.nextState({
+        ...state,
+        latestCollisions: parsed,
+      }, parsed.updatedAt);
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async updateIntegrationSnapshot(loopId: string, snapshot: LoopIntegrationSnapshot): Promise<LoopState> {
-    const state = await this.read(loopId);
-    const parsed = LoopIntegrationSnapshotSchema.parse(snapshot);
-    const updated = this.nextState({
-      ...state,
-      latestIntegrations: parsed,
-    }, parsed.updatedAt);
+    return await this.withLoopMutation(loopId, async () => {
+      const state = await this.read(loopId);
+      const parsed = LoopIntegrationSnapshotSchema.parse(snapshot);
+      const updated = this.nextState({
+        ...state,
+        latestIntegrations: parsed,
+      }, parsed.updatedAt);
 
-    await this.write(updated);
-    return updated;
+      await this.write(updated);
+      return updated;
+    });
   }
 
   async appendRunReport(loopId: string, report: LoopRunReport): Promise<LoopRunReport> {
@@ -796,6 +830,24 @@ export class LoopStateManager {
       updatedAt,
       stateVersion: state.stateVersion + 1,
     });
+  }
+
+  private async withLoopMutation<T>(loopId: string, action: () => Promise<T>): Promise<T> {
+    const previous = this.#mutationLocks.get(loopId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolveRelease) => {
+      release = resolveRelease;
+    });
+    const chained = previous.then(() => current, () => current);
+    this.#mutationLocks.set(loopId, chained);
+
+    await previous.catch(() => undefined);
+    try {
+      return await action();
+    } finally {
+      release();
+      if (this.#mutationLocks.get(loopId) === chained) this.#mutationLocks.delete(loopId);
+    }
   }
 
   private parseLoopState(loopId: string, content: string): LoopState {
@@ -931,6 +983,12 @@ function isContained(resolvedPath: string, root: string): boolean {
   return normalizedResolved === normalizedRoot || normalizedResolved.startsWith(`${normalizedRoot}/`);
 }
 
+function mergeLoopConfigForUpdate(current: LoopConfig, incoming: LoopConfig): LoopConfig {
+  const parsed = LoopConfigSchema.parse(incoming);
+  if (parsed.title !== null || current.title === null) return parsed;
+  return LoopConfigSchema.parse({ ...parsed, title: current.title });
+}
+
 function nextRunAtFrom(schedule: LoopScheduleSpec, now: number): number | undefined {
   if (schedule.kind === "cron") {
     try {
@@ -965,14 +1023,14 @@ function clearJobHitlId(job: LoopJobSummary | undefined, hitlId: string): LoopJo
 
 function generateStateSummary(config: LoopConfig): string {
   const schedule = scheduleSummary(config.schedule);
-  return `${config.title} (${config.templateId}) scheduled ${schedule}.`;
+  return `${config.templateId} loop scheduled ${schedule}.`;
 }
 
 function renderGeneratedStateMarkdown(state: LoopState): string {
   const schedule = scheduleSummary(state.config.schedule);
   const lines = [
     "<!-- Generated by ArchCode. Do not edit; state.json is the source of truth. -->",
-    `# ${state.config.title}`,
+    `# Loop ${state.loopId}`,
     "",
     `- Loop ID: ${state.loopId}`,
     `- Project ID: ${state.projectId}`,

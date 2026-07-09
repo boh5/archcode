@@ -32,14 +32,12 @@ class SimplifiedGoalStateManagerMock {
 
   async create(input: {
     projectId: string;
-    title: string;
     objective: string;
     acceptanceCriteria: string;
   }): Promise<GoalState> {
     this.calls.push({ method: "create", payload: input });
     return makeGoalState({
       projectId: input.projectId,
-      title: input.title,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
     });
@@ -217,7 +215,7 @@ function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
   return {
     id: overrides.id ?? "11111111-1111-4111-8111-111111111111",
     projectId: "test-project",
-    title: "Ship goal tools",
+    title: null,
     objective: "Simplify Goal tools.",
     acceptanceCriteria: "The simplified lifecycle is enforced.",
     status: "draft",
@@ -248,7 +246,7 @@ describe("goal_manage builtin tool", () => {
   it("accepts exactly the simplified action allowlist and rejects legacy fields", () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const validCases = [
-      { action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works" },
       { action: "start", goalId },
       { action: "block", goalId, kind: "approval", summary: "Waiting on approval", hitlId: "hitl-1", source: "test", resumeStatus: "running" },
       { action: "resume", goalId, hitlId: "hitl-1" },
@@ -265,6 +263,7 @@ describe("goal_manage builtin tool", () => {
 
     expect(GoalManageInputSchema.safeParse({ action: "lock", goalId }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "advance_phase", goalId, nextPhase: "build" }).success).toBe(false);
+    expect(GoalManageInputSchema.safeParse({ action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "create", title: "Goal", doneConditions: [], retryPolicy: {}, approvalPoints: [] }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId, outcome: "DONE", summary: "Verified", evidenceRefs: [validEvidenceRef()] }).success).toBe(false);
     expect(GoalManageInputSchema.safeParse({ action: "finalize_review", goalId, verdict: "DONE", summary: "Verified", evidenceRefs: [] }).success).toBe(false);
@@ -274,7 +273,7 @@ describe("goal_manage builtin tool", () => {
     const goalId = "11111111-1111-4111-8111-111111111111";
     const goalState = new SimplifiedGoalStateManagerMock();
     const inputs = [
-      { action: "create", title: "Goal", objective: "Do the thing", acceptanceCriteria: "It works" },
+      { action: "create", objective: "Do the thing", acceptanceCriteria: "It works" },
       { action: "start", goalId },
       { action: "block", goalId, kind: "permission", summary: "Need permission", source: "tool", resumeStatus: "reviewing" },
       { action: "resume", goalId, hitlId: "hitl-1" },
@@ -305,7 +304,6 @@ describe("goal_manage builtin tool", () => {
     const projectContext = makeProjectContext(manager, workspaceRoot);
     const created = await manager.create({
       projectId: "test-project",
-      title: "Claim ownership",
       objective: "Keep Goal ownership inside the state machine.",
       acceptanceCriteria: "Repeated starts are idempotent for the same main session and rejected for a different one.",
     });

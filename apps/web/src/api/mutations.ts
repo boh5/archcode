@@ -140,17 +140,15 @@ export function useCreateGoal() {
   return useMutation({
     mutationFn: async ({
       slug,
-      title,
       objective,
       acceptanceCriteria,
     }: {
       slug: string;
-      title: string;
       objective: string;
       acceptanceCriteria: string;
     }) => apiFetch<GoalState>(`/api/projects/${encodeURIComponent(slug)}/goals`, {
       method: "POST",
-      body: { title, objective, acceptanceCriteria },
+      body: { objective, acceptanceCriteria },
     }),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projectGoals(variables.slug) });
@@ -347,17 +345,13 @@ export function useCreateLoop() {
 
 export function buildCreateLoopRequestBody(payload: CreateLoopPayload): Record<string, unknown> {
   const body: Record<string, unknown> = { templateId: payload.templateId };
-  if (payload.title) body.title = payload.title;
-  if (payload.description) body.description = payload.description;
   if (payload.schedule) body.schedule = payload.schedule;
   if (payload.approvalPolicy) body.approvalPolicy = payload.approvalPolicy;
   if (payload.budget) body.limits = payload.budget;
   if (payload.taskPrompt) body.taskPrompt = payload.taskPrompt;
-  if (payload.instructions) body.instructions = payload.instructions;
   if (payload.goalTemplate) body.goalTemplate = payload.goalTemplate;
   if (payload.triggers && payload.triggers.length > 0) body.triggers = payload.triggers;
   if (payload.useWorktree === true) body.useWorktree = true;
-  if (payload.author) body.author = payload.author;
   return body;
 }
 
@@ -389,13 +383,10 @@ export function buildUpdateLoopRequestBody(payload: UpdateLoopPayload): Record<s
   const body: Record<string, unknown> = {};
   if (payload.status !== undefined) body.status = payload.status;
   if (payload.templateId !== undefined) body.templateId = payload.templateId;
-  if (payload.title !== undefined) body.title = payload.title;
-  if (payload.description !== undefined) body.description = payload.description;
   if (payload.schedule !== undefined) body.schedule = payload.schedule;
   if (payload.approvalPolicy !== undefined) body.approvalPolicy = payload.approvalPolicy;
   if (payload.budget !== undefined) body.limits = payload.budget;
   if (payload.taskPrompt !== undefined) body.taskPrompt = payload.taskPrompt;
-  if (payload.instructions !== undefined) body.instructions = payload.instructions;
   if (payload.goalTemplate !== undefined) body.goalTemplate = payload.goalTemplate;
   if (payload.triggers !== undefined) body.triggers = payload.triggers;
   if (payload.useWorktree !== undefined) body.useWorktree = payload.useWorktree;

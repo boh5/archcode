@@ -6,7 +6,7 @@ import {
   TOOL_GITHUB_LIST_PULL_REQUESTS,
 } from "@archcode/protocol";
 import type { AgentName } from "../agents/factory-types";
-import type { LoopConfig, LoopGoalTemplate } from "./state";
+import type { LoopConfig } from "./state";
 
 export const LOOP_TEMPLATE_IDS = [
   "watch_report",
@@ -28,11 +28,10 @@ export interface LoopTemplate {
   readonly description: string;
   readonly run: LoopTemplateRunConfig;
   readonly extraTools: readonly string[];
-  readonly defaults: Omit<LoopConfig, "templateId" | "title" | "description"> & {
-    readonly title: string;
-    readonly description: string;
-  };
+  readonly defaults: Omit<LoopConfig, "templateId" | "title">;
 }
+
+export type ExpandedLoopTemplate = LoopConfig;
 
 export const PR_BABYSITTER_EXTRA_TOOLS = [
   TOOL_GITHUB_GET_PULL_REQUEST,
@@ -52,8 +51,6 @@ const LOOP_TEMPLATES = {
     run: { type: "session", agent: "plan" },
     extraTools: [],
     defaults: {
-      title: "Watch & Report",
-      description: "Watch local project state and produce a concise report.",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
       limits: templateBudget(8, 120_000, 15, 2),
@@ -68,8 +65,6 @@ const LOOP_TEMPLATES = {
     run: { type: "session", agent: "build" },
     extraTools: [],
     defaults: {
-      title: "Maintain & Fix",
-      description: "Run a scoped maintenance pass and apply safe local fixes.",
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
       limits: templateBudget(16, 200_000, 30, 2),
@@ -84,8 +79,6 @@ const LOOP_TEMPLATES = {
     run: { type: "session", agent: "plan" },
     extraTools: PR_BABYSITTER_EXTRA_TOOLS,
     defaults: {
-      title: "PR Babysitter",
-      description: "Watch pull request status, checks, comments, and blockers.",
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
       limits: templateBudget(12, 160_000, 20, 4),
@@ -100,12 +93,9 @@ const LOOP_TEMPLATES = {
     run: { type: "goal", agent: "orchestrator" },
     extraTools: [],
     defaults: {
-      title: "Goal Runner",
-      description: "Run a recurring Goal from an inline goal template.",
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
       limits: templateBudget(20, 240_000, 45, 2),
-      goalTemplate: goalRunnerTemplate(),
     },
   },
 } as const satisfies Record<LoopTemplateId, LoopTemplate>;
@@ -121,17 +111,15 @@ export function getLoopTemplate(templateId: string): LoopTemplate {
   return LOOP_TEMPLATES[templateId];
 }
 
-export function expandLoopTemplate(templateId: string): LoopConfig {
+export function expandLoopTemplate(templateId: string): ExpandedLoopTemplate {
   const template = getLoopTemplate(templateId);
   return {
     templateId: template.id,
-    title: template.defaults.title,
-    description: template.defaults.description,
+    title: null,
     schedule: structuredClone(template.defaults.schedule),
     approvalPolicy: template.defaults.approvalPolicy,
     limits: structuredClone(template.defaults.limits),
     ...(template.defaults.taskPrompt === undefined ? {} : { taskPrompt: template.defaults.taskPrompt }),
-    ...(template.defaults.instructions === undefined ? {} : { instructions: template.defaults.instructions }),
     ...(template.defaults.goalTemplate === undefined ? {} : { goalTemplate: structuredClone(template.defaults.goalTemplate) }),
   };
 }
@@ -153,13 +141,5 @@ function templateBudget(
     maxRunsPerDay,
     softThresholdRatio: 0.8,
     hardThresholdRatio: 1.0,
-  };
-}
-
-function goalRunnerTemplate(): LoopGoalTemplate {
-  return {
-    title: "Recurring Goal",
-    objective: "Run the recurring Loop Goal from the configured objective and record evidence in ordinary session output.",
-    acceptanceCriteria: "Reviewer can determine DONE or NOT_DONE from session logs, diffs, tool results, and verification output.",
   };
 }

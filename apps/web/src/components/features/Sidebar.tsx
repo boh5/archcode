@@ -197,7 +197,7 @@ function LoopItem({
   isActive: boolean;
   onClick: () => void;
 }) {
-  const title = loop.config?.title?.trim() || `Loop ${loop.loopId.slice(0, 8)}`;
+  const title = loop.config.title || "Untitled";
   const schedule = loop.config?.schedule;
   const scheduleLabel = schedule
     ? schedule.kind === "manual"

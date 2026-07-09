@@ -114,9 +114,9 @@ async function requestBudgetApproval(
     source: { type: "goal_budget", goalId: goal.id, approvalPoint: BUDGET_APPROVAL_POINT },
     displayPayload: {
       title: "Approve Goal budget warning",
-      summary: `Goal "${goal.title}" is projected to cross its token budget warning before the next model call.`,
+      summary: `Goal ${goal.id} is projected to cross its token budget warning before the next model call.`,
       fields: [
-        { label: "Goal", value: goal.title },
+        { label: "Goal ID", value: goal.id },
         { label: "Used tokens", value: String(budget.usedTokens ?? 0) },
         { label: "Estimated next call tokens", value: String(estimatedNextCallTokens) },
         { label: "Maximum tokens", value: String(budget.maxTokens ?? "unset") },

@@ -14,6 +14,7 @@ import type {
   GlobalSSEHitlSnapshotEvent,
   GlobalSSEMcpStatusEvent,
   GlobalSSEResetEvent,
+  GlobalSSEResourceChangedEvent,
   SessionEventPayload,
 } from "@archcode/protocol";
 
@@ -39,6 +40,7 @@ export function parseSSEEvent(_event: string, data: string): GlobalSSEEvent | nu
       case "mcp_status":
       case "hitl.snapshot":
       case "hitl.event":
+      case "resource.changed":
         return parsed;
       default:
         return null;
@@ -156,7 +158,23 @@ export function handleSSEEvent(
       invalidateHitlRelatedQueries(deps, hitlEvent);
       break;
     }
+    case "resource.changed": {
+      invalidateResourceQueries(deps, parsed as GlobalSSEResourceChangedEvent);
+      break;
+    }
   }
+}
+
+function invalidateResourceQueries(deps: SSEEventHandlerDeps, event: GlobalSSEResourceChangedEvent): void {
+  if (event.resourceType === "goal") {
+    deps.invalidateQueries({ queryKey: queryKeys.goals });
+    deps.invalidateQueries({ queryKey: queryKeys.activeGoals });
+    deps.invalidateQueries({ queryKey: queryKeys.projectGoals(event.projectSlug) });
+    deps.invalidateQueries({ queryKey: queryKeys.goal(event.projectSlug, event.resourceId) });
+    return;
+  }
+
+  invalidateLoopQueries(deps, event.projectSlug, event.resourceId);
 }
 
 function invalidateHitlRelatedQueries(deps: SSEEventHandlerDeps, event: GlobalSSEHitlRealtimeEvent): void {

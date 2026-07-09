@@ -24,8 +24,7 @@ const HEAD_TWO = "2".repeat(40);
 
 const loopHardeningConfig: LoopConfig = {
   templateId: "maintain_fix",
-  title: "PR loop hardening",
-  description: "Exercise trigger polling, queue dispatch, worktree execution, and cleanup metadata.",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 4 },
@@ -81,7 +80,7 @@ describe("Loop hardening e2e", () => {
       killStateManager: new LoopKillStateManager(TMP_DIR, { clock }),
       triggerPoller: poller,
     });
-    const loop = await stateManager.create("project-a", loopHardeningConfig, "architect");
+    const loop = await stateManager.create("project-a", loopHardeningConfig);
 
     const firstPoll = await poller.pollLoop(loop.loopId);
     expect(firstPoll.enqueued).toHaveLength(1);
@@ -96,7 +95,7 @@ describe("Loop hardening e2e", () => {
     const schedulerStarted = scheduler.start("project-a");
     await waitFor(() => runtime.startSessionExecutionMock.mock.calls.length === 1);
     expect(worktreeManager.createMock.mock.calls[0]?.[0]).toMatchObject({
-      loopSlug: "PR loop hardening",
+      loopSlug: `loop-${loop.loopId.slice(0, 8)}`,
       subjectSlug: `pr:test-owner/test-repo#42:${HEAD_ONE}`,
       baseSha: HEAD_ONE,
       jobClass: "remote",

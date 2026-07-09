@@ -316,7 +316,6 @@ describe("web loop query contracts", () => {
         config: {
           templateId: "watch_report",
           title: "Test Loop",
-          description: "A test loop",
           schedule: { kind: "manual" },
           approvalPolicy: "interactive",
           limits: { maxIterationsPerRun: 10 },

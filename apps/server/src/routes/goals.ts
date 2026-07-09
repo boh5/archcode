@@ -17,17 +17,14 @@ const GoalStatusSchema = z.enum([
   "cancelled",
 ]) satisfies z.ZodType<GoalStatus>;
 
-const GoalTitleSchema = z.string().trim().min(1).max(160);
 const GoalNaturalLanguageSchema = z.string().trim().min(1).max(8_000);
 
 const CreateGoalBodySchema = z.strictObject({
-  title: GoalTitleSchema,
   objective: GoalNaturalLanguageSchema,
   acceptanceCriteria: GoalNaturalLanguageSchema,
 });
 
 const PatchGoalBodySchema = z.strictObject({
-  title: GoalTitleSchema.optional(),
   objective: GoalNaturalLanguageSchema.optional(),
   acceptanceCriteria: GoalNaturalLanguageSchema.optional(),
 });
@@ -46,7 +43,7 @@ interface GoalStateManagerForRoute {
   listGoals(projectId?: string): Promise<GoalState[]>;
   create(input: {
     readonly projectId: string;
-    readonly title: string;
+    readonly title?: string | null;
     readonly objective: string;
     readonly acceptanceCriteria: string;
   }): Promise<GoalState>;
@@ -87,10 +84,10 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
     try {
       const goal = await manager.create({
         projectId: project.slug,
-        title: body.title,
         objective: body.objective,
         acceptanceCriteria: body.acceptanceCriteria,
       });
+      runtime.queueGoalTitleGeneration?.(project.workspaceRoot, goal.id);
       return c.json(toPublicGoal(goal), 201);
     } catch (error) {
       throw mapGoalError(error);
@@ -189,7 +186,6 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
         const mainSessionId = activeReservedSessionId ?? body.mainSessionId ?? (await runtime.createSession(project.workspaceRoot, {
           goalId,
           sessionRole: "main",
-          title: goal.title,
         })).sessionId;
 
         const retried = goal.status === "running" ? goal : await manager.retry(goalId, { mainSessionId });
@@ -334,7 +330,6 @@ async function reserveGoalSession(
   const mainSessionId = goal.mainSessionId ?? body.mainSessionId ?? (await runtime.createSession(workspaceRoot, {
     goalId: goal.id,
     sessionRole: "main",
-    title: goal.title,
   })).sessionId;
 
   return await ensureReservedSessions(manager, goal, mainSessionId, body.childSessionIds);

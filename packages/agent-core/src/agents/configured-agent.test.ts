@@ -703,7 +703,6 @@ describe("ConfiguredAgent", () => {
     const goalState = new GoalStateManager(tmpRoot);
     const goal = await goalState.create({
       projectId: "project-a",
-      title: "Repair retry prompt",
       objective: "Retry from natural language Goal state.",
       acceptanceCriteria: "Reviewer can decide from natural language acceptance criteria.",
     });

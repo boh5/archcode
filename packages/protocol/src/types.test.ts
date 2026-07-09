@@ -787,14 +787,14 @@ describe("Loop types", () => {
 
   test("LoopGoalTemplate has only natural-language Goal fields", () => {
     const template: LoopGoalTemplate = {
-      title: "Implement feature",
+      title: null,
       objective: "Implement the feature according to the loop finding.",
       acceptanceCriteria: "The feature is implemented and reviewed against the finding.",
     };
 
     const parsed = serializeRoundTrip(template);
     expect(parsed).toEqual(template);
-    expect(parsed.title).toBe("Implement feature");
+    expect(parsed.title).toBeNull();
     expect(parsed.objective).toContain("feature");
     expect(parsed.acceptanceCriteria).toContain("reviewed");
   });
@@ -808,8 +808,7 @@ describe("Loop types", () => {
   test("LoopConfig serializes minimal manual session report loop", () => {
     const config: LoopConfig = {
       templateId: "watch_report",
-      title: "Daily Triage",
-      description: "Inspect git status and produce report",
+      title: null,
       schedule: { kind: "manual" },
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 10 },
@@ -827,12 +826,12 @@ describe("Loop types", () => {
   test("LoopConfig serializes interval goal loop with inline template", () => {
     const config: LoopConfig = {
       templateId: "goal_runner",
-      title: "Changelog Drafter",
+      title: null,
       schedule: { kind: "interval", everyMs: 3600000 },
       approvalPolicy: "interactive",
       limits: { maxIterationsPerRun: 5 },
       goalTemplate: {
-        title: "Draft changelog",
+        title: null,
         objective: "Draft a changelog from recent project changes.",
         acceptanceCriteria: "The changelog draft summarizes user-facing changes in natural language.",
       },
@@ -843,7 +842,7 @@ describe("Loop types", () => {
     expect(parsed.schedule).toEqual({ kind: "interval", everyMs: 3600000 });
     expect(parsed.templateId).toBe("goal_runner");
     expect(parsed.goalTemplate).toBeDefined();
-    expect(parsed.goalTemplate!.title).toBe("Draft changelog");
+    expect(parsed.goalTemplate!.title).toBeNull();
   });
 
   test("LoopConfig accepts cron, triggers, and cleanup policy", () => {
@@ -867,7 +866,7 @@ describe("Loop types", () => {
     expect(invalid).toBeDefined();
   });
 
-  test("LoopState serializes round-trip with no readinessScore", () => {
+  test("LoopState serializes round-trip without readinessScore", () => {
     const state: LoopState = {
       loopId: "loop-1",
       projectId: "my-project",
@@ -890,7 +889,7 @@ describe("Loop types", () => {
     expect(parsed.status).toBe("active");
     expect(parsed.runCount).toBe(0);
     expect(parsed.stateVersion).toBe(1);
-    expect(parsed.readinessScore).toBeUndefined();
+    expect("readinessScore" in parsed).toBe(false);
   });
 
   test("LoopState with lastRun and currentRun serializes", () => {

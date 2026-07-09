@@ -11,7 +11,6 @@ import type {
   LoopApprovalPolicy,
   LoopBudgetConfig,
   LoopConfig,
-  LoopGoalTemplate,
   LoopScheduleSpec,
   LoopState,
   LoopTemplateId,
@@ -124,8 +123,6 @@ function isPositiveInt(value: unknown): value is number {
 
 export interface LoopFormState {
   templateId: LoopTemplateId;
-  title: string;
-  description: string;
   scheduleKind: ScheduleKind;
   everyMs: number;
   cronExpression: string;
@@ -136,10 +133,7 @@ export interface LoopFormState {
   maxRunsPerDay: number;
   maxEstimatedUsdPerRun?: number;
   taskPrompt: string;
-  instructions: string;
-  author: string;
   useWorktree: boolean;
-  goalTitle: string;
   goalObjective: string;
   goalAcceptanceCriteria: string;
 }
@@ -168,10 +162,9 @@ function buildSchedule(state: LoopFormState): LoopScheduleSpec {
       : { kind: "manual" };
 }
 
-function buildGoalTemplate(state: LoopFormState): LoopGoalTemplate | undefined {
+function buildGoalTemplate(state: LoopFormState): CreateLoopPayload["goalTemplate"] | undefined {
   if (state.templateId !== "goal_runner") return undefined;
   return {
-    title: state.goalTitle.trim(),
     objective: state.goalObjective.trim(),
     acceptanceCriteria: state.goalAcceptanceCriteria.trim(),
   };
@@ -180,16 +173,12 @@ function buildGoalTemplate(state: LoopFormState): LoopGoalTemplate | undefined {
 export function buildCreatePayload(state: LoopFormState): CreateLoopPayload {
   const payload: CreateLoopPayload = {
     templateId: state.templateId,
-    title: state.title.trim(),
     schedule: buildSchedule(state),
     approvalPolicy: state.approvalPolicy,
     budget: buildBudgetConfig(state),
   };
 
-  if (isNonEmpty(state.description)) payload.description = state.description.trim();
   if (isNonEmpty(state.taskPrompt)) payload.taskPrompt = state.taskPrompt.trim();
-  if (isNonEmpty(state.instructions)) payload.instructions = state.instructions.trim();
-  if (isNonEmpty(state.author)) payload.author = state.author.trim();
 
   const goalTemplate = buildGoalTemplate(state);
   if (goalTemplate) payload.goalTemplate = goalTemplate;
@@ -204,15 +193,13 @@ export function buildLoopConfig(state: LoopFormState): LoopConfig {
   const budget = payload.budget ?? buildBudgetConfig(state);
   return {
     templateId: payload.templateId,
-    title: payload.title,
-    ...(payload.description ? { description: payload.description } : {}),
+    title: null,
     schedule: payload.schedule,
     approvalPolicy: payload.approvalPolicy,
     limits: budget,
     budget,
     ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
-    ...(payload.instructions ? { instructions: payload.instructions } : {}),
-    ...(payload.goalTemplate ? { goalTemplate: payload.goalTemplate } : {}),
+    ...(payload.goalTemplate ? { goalTemplate: { title: null, ...payload.goalTemplate } } : {}),
     ...(payload.useWorktree === true ? { useWorktree: true } : {}),
   };
 }
@@ -227,8 +214,6 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
   const goalTemplate = config.goalTemplate;
 
   return {
-    title: config.title,
-    description: config.description ?? "",
     scheduleKind,
     everyMs: config.schedule.kind === "interval" ? config.schedule.everyMs : 60000,
     cronExpression: config.schedule.kind === "cron" ? config.schedule.expression : "*/15 * * * *",
@@ -240,9 +225,7 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
     maxRunsPerDay: maxRunsPerDay ?? DEFAULT_BUDGET.maxRunsPerDay ?? 2,
     maxEstimatedUsdPerRun,
     taskPrompt: config.taskPrompt ?? "",
-    instructions: config.instructions ?? "",
     useWorktree: config.useWorktree === true,
-    goalTitle: goalTemplate?.title ?? "",
     goalObjective: goalTemplate?.objective ?? "",
     goalAcceptanceCriteria: goalTemplate?.acceptanceCriteria ?? "",
   };
@@ -251,8 +234,6 @@ function loopConfigToFormState(config: LoopConfig): Partial<LoopFormState> {
 function applyTemplate(
   template: LoopTemplateOption,
   setters: {
-    setTitle: (value: string) => void;
-    setDescription: (value: string) => void;
     setTemplateId: (value: LoopTemplateId) => void;
     setApprovalPolicy: (value: LoopApprovalPolicy) => void;
     setMaxIterationsPerRun: (value: number) => void;
@@ -261,13 +242,10 @@ function applyTemplate(
     setMaxRunsPerDay: (value: number) => void;
     setMaxEstimatedUsdPerRun: (value: number | undefined) => void;
     setTaskPrompt: (value: string) => void;
-    setGoalTitle: (value: string) => void;
     setGoalObjective: (value: string) => void;
     setGoalAcceptanceCriteria: (value: string) => void;
   },
 ): void {
-  setters.setTitle(template.label);
-  setters.setDescription(template.description);
   setters.setTemplateId(template.id);
   setters.setApprovalPolicy(template.defaultApprovalPolicy);
   setters.setMaxIterationsPerRun(template.defaultBudget.maxIterationsPerRun);
@@ -278,17 +256,8 @@ function applyTemplate(
   setters.setMaxRunsPerDay(template.defaultBudget.maxRunsPerDay ?? DEFAULT_BUDGET.maxRunsPerDay ?? 0);
   setters.setMaxEstimatedUsdPerRun(template.defaultBudget.maxEstimatedUsdPerRun);
   setters.setTaskPrompt(template.defaultTaskPrompt);
-  setters.setGoalTitle(template.id === "goal_runner" ? "Recurring Goal" : "");
-  setters.setGoalObjective(
-    template.id === "goal_runner"
-      ? "Run the recurring Loop Goal from the configured objective and record evidence in ordinary session output."
-      : "",
-  );
-  setters.setGoalAcceptanceCriteria(
-    template.id === "goal_runner"
-      ? "Reviewer can determine DONE or NOT_DONE from session logs, diffs, tool results, and verification output."
-      : "",
-  );
+  setters.setGoalObjective("");
+  setters.setGoalAcceptanceCriteria("");
 }
 
 export function CreateLoopForm({ slug, onCreated, onClose, initialState }: CreateLoopFormProps) {
@@ -339,8 +308,6 @@ export function LoopForm({
 }: LoopFormProps) {
   void formDescription;
 
-  const [title, setTitle] = useState(initialState?.title ?? "");
-  const [description, setDescription] = useState(initialState?.description ?? "");
   const [templateId, setTemplateId] = useState<LoopTemplateId>(initialState?.templateId ?? "watch_report");
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(initialState?.scheduleKind ?? "manual");
   const [everyMs, setEveryMs] = useState(initialState?.everyMs ?? 60000);
@@ -352,16 +319,12 @@ export function LoopForm({
   const [maxRunsPerDay, setMaxRunsPerDay] = useState(initialState?.maxRunsPerDay ?? 2);
   const [maxEstimatedUsdPerRun, setMaxEstimatedUsdPerRun] = useState<number | undefined>(initialState?.maxEstimatedUsdPerRun);
   const [taskPrompt, setTaskPrompt] = useState(initialState?.taskPrompt ?? "");
-  const [instructions, setInstructions] = useState(initialState?.instructions ?? "");
-  const [author, setAuthor] = useState(initialState?.author ?? "architect");
   const [useWorktree, setUseWorktree] = useState<boolean>(initialState?.useWorktree ?? false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const [goalTitle, setGoalTitle] = useState(initialState?.goalTitle ?? "");
   const [goalObjective, setGoalObjective] = useState(initialState?.goalObjective ?? "");
   const [goalAcceptanceCriteria, setGoalAcceptanceCriteria] = useState(initialState?.goalAcceptanceCriteria ?? "");
 
-  const trimmedTitle = title.trim();
   const intervalValid = scheduleKind !== "interval" || (Number.isInteger(everyMs) && everyMs >= MIN_INTERVAL_MS);
   const cronValid = scheduleKind !== "cron" || isFiveFieldCronExpression(cronExpression);
   const budgetValid =
@@ -371,24 +334,19 @@ export function LoopForm({
     isPositiveInt(maxRunsPerDay);
   const isGoalTemplate = templateId === "goal_runner";
   const taskPromptValid = isGoalTemplate || isNonEmpty(taskPrompt);
-  const goalTitleValid = !isGoalTemplate || isNonEmpty(goalTitle);
   const goalObjectiveValid = !isGoalTemplate || isNonEmpty(goalObjective);
   const goalAcceptanceValid = !isGoalTemplate || isNonEmpty(goalAcceptanceCriteria);
   const canSubmit =
-    isNonEmpty(trimmedTitle) &&
     intervalValid &&
     cronValid &&
     budgetValid &&
     taskPromptValid &&
-    goalTitleValid &&
     goalObjectiveValid &&
     goalAcceptanceValid &&
     !pending;
 
   const buildState = useCallback(
     (): LoopFormState => ({
-      title,
-      description,
       scheduleKind,
       everyMs,
       cronExpression,
@@ -400,16 +358,11 @@ export function LoopForm({
       maxRunsPerDay,
       maxEstimatedUsdPerRun,
       taskPrompt,
-      instructions,
-      author,
       useWorktree,
-      goalTitle,
       goalObjective,
       goalAcceptanceCriteria,
     }),
     [
-      title,
-      description,
       scheduleKind,
       everyMs,
       cronExpression,
@@ -421,10 +374,7 @@ export function LoopForm({
       maxRunsPerDay,
       maxEstimatedUsdPerRun,
       taskPrompt,
-      instructions,
-      author,
       useWorktree,
-      goalTitle,
       goalObjective,
       goalAcceptanceCriteria,
     ],
@@ -443,8 +393,6 @@ export function LoopForm({
     (template: LoopTemplateOption) => {
       if (pending) return;
       applyTemplate(template, {
-        setTitle,
-        setDescription,
         setTemplateId,
         setApprovalPolicy,
         setMaxIterationsPerRun,
@@ -453,7 +401,6 @@ export function LoopForm({
         setMaxRunsPerDay,
         setMaxEstimatedUsdPerRun,
         setTaskPrompt,
-        setGoalTitle,
         setGoalObjective,
         setGoalAcceptanceCriteria,
       });
@@ -503,43 +450,6 @@ export function LoopForm({
         )}
 
         <div>
-          <label
-            htmlFor="new-loop-title"
-            className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-          >
-            Title
-          </label>
-          <input
-            id="new-loop-title"
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Loop title"
-            className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-            autoFocus
-            disabled={pending}
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="new-loop-description"
-            className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-          >
-            Description <span className="text-text-muted">(optional)</span>
-          </label>
-          <input
-            id="new-loop-description"
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short description"
-            className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-            disabled={pending}
-          />
-        </div>
-
-        <div>
           <span className="mb-2 block text-[13px] font-medium text-text-secondary">
             Template
           </span>
@@ -553,6 +463,7 @@ export function LoopForm({
                   checked={templateId === template.id}
                   onChange={() => setTemplateId(template.id)}
                   disabled={pending}
+                  autoFocus={template.id === "watch_report"}
                   className="accent-accent"
                 />
                 <span>{template.label}</span>
@@ -771,42 +682,24 @@ export function LoopForm({
               htmlFor="new-loop-task-prompt"
               className="mb-1.5 block text-[13px] font-medium text-text-secondary"
             >
-              Task Prompt
+              Run instructions
             </label>
             <textarea
               id="new-loop-task-prompt"
               value={taskPrompt}
               onChange={(e) => setTaskPrompt(e.target.value)}
-              placeholder="Instructions for each session run"
+              placeholder="Describe what each Loop run should do."
               rows={3}
               disabled={pending}
               className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
             />
             {!taskPromptValid && (
               <p className="mt-1 text-[11px] text-error">
-                Template loops need a task prompt before submit.
+                Template loops need run instructions before submit.
               </p>
             )}
           </div>
         )}
-
-        <div>
-          <label
-            htmlFor="new-loop-instructions"
-            className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-          >
-            Instructions <span className="text-text-muted">(optional)</span>
-          </label>
-          <input
-            id="new-loop-instructions"
-            type="text"
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Extra run instructions"
-            className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-            disabled={pending}
-          />
-        </div>
 
         {isGoalTemplate && (
           <section className="rounded-sm border border-border-subtle p-3 space-y-4">
@@ -815,28 +708,8 @@ export function LoopForm({
             </div>
             <p className="text-[11px] text-text-muted">
               Each run creates a fresh Goal from these natural-language fields. The Reviewer judges completion against the acceptance criteria.
+              Goal titles are generated asynchronously after each Goal is created.
             </p>
-
-            <div>
-              <label
-                htmlFor="new-loop-goal-title"
-                className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-              >
-                Goal Title
-              </label>
-              <input
-                id="new-loop-goal-title"
-                type="text"
-                value={goalTitle}
-                onChange={(e) => setGoalTitle(e.target.value)}
-                placeholder="Goal title"
-                className="w-full rounded-sm border border-border-default bg-bg-base px-2 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-                disabled={pending}
-              />
-              {!goalTitleValid && (
-                <p className="mt-1 text-[11px] text-error">Goal loops need a Goal title before submit.</p>
-              )}
-            </div>
 
             <div>
               <label
@@ -881,23 +754,6 @@ export function LoopForm({
             </div>
           </section>
         )}
-
-        <div>
-          <label
-            htmlFor="new-loop-author"
-            className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-          >
-            Author
-          </label>
-          <input
-            id="new-loop-author"
-            type="text"
-            value={author}
-            onChange={(e) => setAuthor(e.target.value)}
-            disabled={pending}
-            className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary focus:border-accent focus:outline-none transition-colors duration-150"
-          />
-        </div>
 
         <section className="rounded-sm border border-border-subtle bg-bg-base">
           <button
@@ -1016,13 +872,10 @@ export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: Loop
           slug,
           loopId: loop.loopId,
           templateId: payload.templateId,
-          title: payload.title,
-          ...(payload.description ? { description: payload.description } : {}),
           schedule: payload.schedule,
           approvalPolicy: payload.approvalPolicy,
           budget: payload.budget,
           ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
-          ...(payload.instructions ? { instructions: payload.instructions } : {}),
           ...(payload.goalTemplate ? { goalTemplate: payload.goalTemplate } : {}),
           ...(loop.config.triggers ? { triggers: loop.config.triggers } : {}),
           useWorktree: payload.useWorktree === true,

@@ -156,7 +156,6 @@ describe("ResumeCoordinator", () => {
     const sessionHitl = await fixture.createSessionHitl();
     const goal = await fixture.goalState.create({
       projectId: "archcode",
-      title: "Goal waits for future adapter",
       objective: "Wait for a future Goal adapter.",
       acceptanceCriteria: "Claimed Goal HITL remains queued when no adapter exists.",
     });

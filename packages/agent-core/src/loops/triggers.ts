@@ -5,6 +5,8 @@ import type {
   GitHubReadCiFailuresForRefResult,
 } from "../integrations/github";
 import { IntegrationError, createGitHubConnector } from "../integrations/github";
+import { createProcessRunner } from "../process/runner";
+import type { ProcessRunner } from "../process/types";
 import { REDACTION_MARKER } from "../tools/security";
 import { canonicalTargetKey } from "./collision-ledger";
 import { LoopJobQueue, type EnqueueLoopJobResult } from "./job-queue";
@@ -50,6 +52,7 @@ export interface LoopTriggerPollerOptions {
   readonly github?: GitHubCiPollingConnectorApi;
   readonly repository?: LoopTriggerRepository;
   readonly localGit?: LoopLocalGitReader;
+  readonly processRunner?: ProcessRunner;
   readonly clock?: LoopTriggerPollerClock;
 }
 
@@ -81,7 +84,7 @@ export class LoopTriggerPoller {
     this.#pollState = options.pollState ?? new LoopPollStateManager({ workspaceRoot: options.workspaceRoot, clock: this.#clock });
     this.#github = options.github ?? createGitHubConnector();
     this.#repository = options.repository;
-    this.#localGit = options.localGit ?? new GitCliLocalGitReader(options.workspaceRoot);
+    this.#localGit = options.localGit ?? new GitCliLocalGitReader(options.workspaceRoot, options.processRunner);
   }
 
   async pollLoop(loopId: string): Promise<LoopTriggerPollResult> {
@@ -460,7 +463,14 @@ export function normalizePullRequestTriggerEvent(loopId: string, repo: LoopTrigg
 }
 
 class GitCliLocalGitReader implements LoopLocalGitReader {
-  constructor(private readonly workspaceRoot: string) {}
+  readonly #git: ProcessRunner;
+
+  constructor(
+    private readonly workspaceRoot: string,
+    processRunner: ProcessRunner = createProcessRunner(),
+  ) {
+    this.#git = processRunner;
+  }
 
   async readBranchHead(branch?: string): Promise<LocalBranchHead | undefined> {
     const visibleBranch = branch ?? await this.git(["branch", "--show-current"]);
@@ -472,14 +482,14 @@ class GitCliLocalGitReader implements LoopLocalGitReader {
   }
 
   private async git(args: readonly string[]): Promise<string | undefined> {
-    const proc = Bun.spawn(["git", ...args], {
+    const result = await this.#git.run({
+      argv: ["git", ...args],
       cwd: this.workspaceRoot,
-      stdout: "pipe",
-      stderr: "pipe",
+      env: { ...Bun.env, GIT_TERMINAL_PROMPT: "0" },
+      maxOutputBytes: 64 * 1024,
     });
-    const [exitCode, stdout] = await Promise.all([proc.exited, new Response(proc.stdout).text()]);
-    if (exitCode !== 0) return undefined;
-    const value = stdout.trim();
+    if (result.kind !== "success") return undefined;
+    const value = result.output.stdout.trim();
     return value === "" ? undefined : value;
   }
 }

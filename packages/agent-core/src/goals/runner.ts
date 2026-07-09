@@ -71,7 +71,7 @@ export class GoalRunner {
   async start(goalId: string, input: { readonly mainSessionId?: string; readonly loopId?: string; readonly sessionTitle?: string } = {}): Promise<GoalState> {
     return withGoalClaimLock(goalId, async () => {
       const current = await this.#goalStateManager.read(goalId);
-      const mainSessionId = input.mainSessionId ?? current.mainSessionId ?? await this.createMainSession(goalId, current.title, input);
+      const mainSessionId = input.mainSessionId ?? current.mainSessionId ?? await this.createMainSession(goalId, input);
       if (current.status === "running" && current.mainSessionId === mainSessionId) return current;
       return this.#goalStateManager.start(goalId, { mainSessionId, loopId: input.loopId });
     });
@@ -95,8 +95,8 @@ export class GoalRunner {
 
   async retry(goalId: string, input: { readonly mainSessionId?: string; readonly sessionTitle?: string } = {}): Promise<GoalState> {
     return withGoalClaimLock(goalId, async () => {
-      const current = await this.#goalStateManager.read(goalId);
-      const mainSessionId = input.mainSessionId ?? await this.createMainSession(goalId, current.title, input);
+      await this.#goalStateManager.read(goalId);
+      const mainSessionId = input.mainSessionId ?? await this.createMainSession(goalId, input);
       return this.#goalStateManager.retry(goalId, { mainSessionId });
     });
   }
@@ -127,7 +127,6 @@ export class GoalRunner {
 
   private async createMainSession(
     goalId: string,
-    title: string,
     input: { readonly loopId?: string; readonly sessionTitle?: string },
   ): Promise<string> {
     if (this.#createSession === undefined) throw new GoalRunnerError(goalId, "Goal runner cannot create a main session");
@@ -135,7 +134,7 @@ export class GoalRunner {
       goalId,
       loopId: input.loopId,
       sessionRole: "main",
-      title: input.sessionTitle ?? `Goal: ${title}`,
+      ...(input.sessionTitle === undefined ? {} : { title: input.sessionTitle }),
     });
   }
 }

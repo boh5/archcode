@@ -217,7 +217,7 @@ describe("LoopScheduler", () => {
     const singleSlotCoordinator = new LoopJobCoordinator({ queue: fixture.jobQueue, clock: fixture.clock, leaseTtlMs: 60_000, config: { maxConcurrent: 1 } });
     fixture.scheduler = fixture.createScheduler(undefined, singleSlotCoordinator);
     const loop = await fixture.manager.create("project-a", manualConfig);
-    const blocker = await fixture.manager.create("project-a", { ...manualConfig, title: "Blocking loop" });
+    const blocker = await fixture.manager.create("project-a", manualConfig);
     await fixture.manager.appendRunReport(loop.loopId, {
       runId: "old-run",
       loopId: loop.loopId,
@@ -269,7 +269,7 @@ describe("LoopScheduler", () => {
     const singleSlotCoordinator = new LoopJobCoordinator({ queue: fixture.jobQueue, clock: fixture.clock, leaseTtlMs: 60_000, config: { maxConcurrent: 1 } });
     fixture.scheduler = fixture.createScheduler(undefined, singleSlotCoordinator);
     const loop = await fixture.manager.create("project-a", manualConfig);
-    const blocker = await fixture.manager.create("project-a", { ...manualConfig, title: "Blocking loop" });
+    const blocker = await fixture.manager.create("project-a", manualConfig);
     await fixture.manager.appendRunReport(loop.loopId, {
       runId: "old-run",
       loopId: loop.loopId,
@@ -584,7 +584,7 @@ describe("LoopScheduler", () => {
   test("global kill persists, cancels active runs, and blocks manual and interval triggers until cleared", async () => {
     const fixture = await createFixture(0);
     const loop = await fixture.manager.create("project-a", intervalConfig);
-    const paused = await fixture.manager.create("project-a", { ...intervalConfig, title: "Paused interval" });
+    const paused = await fixture.manager.create("project-a", intervalConfig);
     await fixture.scheduler.pause(paused.loopId);
     await fixture.manager.recordRunStart(loop.loopId, {
       runId: "run-global-kill",
@@ -823,7 +823,7 @@ describe("LoopScheduler", () => {
   test("dynamic trigger collision target blocks run before runner starts", async () => {
     const fixture = await createFixture(0, { localHead: { repoId: "test-owner/test-repo", branch: "main", sha: "abc123" } });
     const loop = await fixture.manager.create("project-a", triggerConfig);
-    const other = await fixture.manager.create("project-a", { ...manualConfig, title: "Other loop" });
+    const other = await fixture.manager.create("project-a", manualConfig);
     await fixture.collisionLedger.acquire({
       target: { type: "branch", owner: "test-owner", repo: "test-repo", branch: "main" },
       loopId: other.loopId,

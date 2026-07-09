@@ -344,7 +344,6 @@ async function waitForSessionFile(runtime: AgentRuntime, workspaceRoot: string, 
 async function createGoal(manager: GoalStateManager, projectSlug: string, title: string, loopId?: string) {
   return await manager.create({
     projectId: projectSlug,
-    title,
     objective: `Exercise HITL route behavior for ${title}.`,
     acceptanceCriteria: "Reviewer can decide DONE from HITL route projections.",
     ...(loopId === undefined ? {} : { loopId }),

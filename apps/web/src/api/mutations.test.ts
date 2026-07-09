@@ -335,9 +335,9 @@ describe("web loop mutation URL contracts", () => {
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
       expect(body.templateId).toBe("watch_report");
-      expect(body.title).toBe("New Loop");
       expect(body.limits).toEqual(limits);
-      expect(body.author).toBe("user");
+      expect(body.title).toBeUndefined();
+      expect(body.author).toBeUndefined();
       expect(body.config).toBeUndefined();
       expect(body.presetId).toBeUndefined();
       expect(body.budget).toBeUndefined();
@@ -350,11 +350,9 @@ describe("web loop mutation URL contracts", () => {
       method: "POST",
       body: buildCreateLoopRequestBody({
         templateId: "watch_report",
-        title: "New Loop",
         schedule: { kind: "manual" },
         approvalPolicy: "interactive",
         budget: limits,
-        author: "user",
       }),
     });
 
@@ -367,7 +365,6 @@ describe("web loop mutation URL contracts", () => {
     const body = buildUpdateLoopRequestBody({
       status: "paused",
       templateId: "maintain_fix",
-      title: "Maintain Loop",
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
       budget: {
@@ -385,7 +382,6 @@ describe("web loop mutation URL contracts", () => {
     expect(body).toMatchObject({
       status: "paused",
       templateId: "maintain_fix",
-      title: "Maintain Loop",
       schedule: { kind: "manual" },
       approvalPolicy: "explicit_per_run",
       limits: expect.objectContaining({ maxIterationsPerRun: 12 }),
@@ -393,6 +389,7 @@ describe("web loop mutation URL contracts", () => {
       useWorktree: false,
     });
     expect(body.config).toBeUndefined();
+    expect(body.title).toBeUndefined();
     expect(body.presetId).toBeUndefined();
     expect(body.budget).toBeUndefined();
     expect(body.extraTools).toBeUndefined();

@@ -508,7 +508,7 @@ describe("Loop simplified target-model architecture guardrails", () => {
     }
   });
 
-  test("Loop runtime has no readiness maturity gates beyond nullable compatibility state", () => {
+  test("Loop runtime has no readiness maturity gates or compatibility state", () => {
     expectNoViolations(findTextViolations(loopProductionFiles, [
       /\bcalculateReadiness\b/,
       /\bpromoteLoop\b/,
@@ -517,12 +517,7 @@ describe("Loop simplified target-model architecture guardrails", () => {
       /\bnoiseRate\b/,
       /\breadiness\s*[:=]\s*(?:Math\.|Number\(|\d)/,
       /\breadinessScore\b/,
-    ], (file, source, pattern) => {
-      if (pattern.source !== "\\breadinessScore\\b") return false;
-      if (file === "packages/protocol/src/types.ts") return /readinessScore\?: null/.test(source);
-      if (file === "packages/agent-core/src/loops/state.ts") return /readinessScore:\s*z\.null\(\)\.optional\(\)/.test(source);
-      return false;
-    }));
+    ]));
   });
 
   test("Loop runner and scheduler do not bypass connector or GitHub API tool boundaries", () => {

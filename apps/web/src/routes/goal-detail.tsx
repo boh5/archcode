@@ -90,7 +90,7 @@ export function GoalDetailRoute() {
           Goals
         </button>
         <span className="text-text-muted">/</span>
-        <span className="font-semibold text-sm text-text-primary truncate">{goal.title}</span>
+        <span className="font-semibold text-sm text-text-primary truncate">{goal.title || "Untitled"}</span>
         <div className="flex items-center gap-2 ml-auto">
           {canRun && (
             <button

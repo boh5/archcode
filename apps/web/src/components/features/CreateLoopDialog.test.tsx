@@ -250,8 +250,6 @@ describe("CreateLoopDialog worktree", () => {
     // does not render until expanded. Verify the default via the payload builder.
     const payload = buildCreatePayload({
       templateId: "watch_report",
-      title: "Watch Loop",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -261,10 +259,7 @@ describe("CreateLoopDialog worktree", () => {
       maxWallClockMinutesPerRun: 15,
       maxRunsPerDay: 2,
       taskPrompt: "Run triage.",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
@@ -274,8 +269,6 @@ describe("CreateLoopDialog worktree", () => {
   test("buildCreatePayload omits useWorktree when false", () => {
     const payload = buildCreatePayload({
       templateId: "watch_report",
-      title: "Watch Loop",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -285,10 +278,7 @@ describe("CreateLoopDialog worktree", () => {
       maxWallClockMinutesPerRun: 15,
       maxRunsPerDay: 2,
       taskPrompt: "Run triage.",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
@@ -299,8 +289,6 @@ describe("CreateLoopDialog worktree", () => {
   test("buildCreatePayload sends useWorktree: true only when explicitly true", () => {
     const payload = buildCreatePayload({
       templateId: "maintain_fix",
-      title: "Maintain Loop",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -310,10 +298,7 @@ describe("CreateLoopDialog worktree", () => {
       maxWallClockMinutesPerRun: 30,
       maxRunsPerDay: 2,
       taskPrompt: "Fix one issue.",
-      instructions: "",
-      author: "architect",
       useWorktree: true,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
@@ -324,8 +309,6 @@ describe("CreateLoopDialog worktree", () => {
   test("buildCreatePayload never sends mode, toolProfileId, or extraTools", () => {
     const payload = buildCreatePayload({
       templateId: "pr_babysitter",
-      title: "PR Watch",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -335,10 +318,7 @@ describe("CreateLoopDialog worktree", () => {
       maxWallClockMinutesPerRun: 20,
       maxRunsPerDay: 4,
       taskPrompt: "Watch PRs.",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
@@ -360,17 +340,15 @@ describe("CreateLoopDialog Goal template", () => {
     }
   });
 
-  test("goal_runner template renders natural-language Goal template fields: title, objective, acceptance criteria", () => {
+  test("goal_runner template renders natural-language Goal objective and acceptance criteria", () => {
     const tree = render({
       templateId: "goal_runner",
-      goalTitle: "Triage Follow-up",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     });
     const copy = textContent(tree);
 
     expect(copy).toContain("Goal Template");
-    expect(copy).toContain("Goal Title");
     expect(copy).toContain("Goal Objective");
     expect(copy).toContain("Goal Acceptance Criteria");
   });
@@ -378,7 +356,6 @@ describe("CreateLoopDialog Goal template", () => {
   test("goal_runner template does not render old DoneCondition builder, retry policy, approval points, reviewerAgent, or author", () => {
     const tree = render({
       templateId: "goal_runner",
-      goalTitle: "Triage Follow-up",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     });
@@ -396,13 +373,12 @@ describe("CreateLoopDialog Goal template", () => {
     expect(copy).not.toContain("before_complete");
     expect(copy).not.toContain("Reviewer agent");
     expect(copy).not.toContain("Goal Author");
+    expect(copy).not.toContain("Goal Title");
   });
 
-  test("buildCreatePayload produces natural-language goalTemplate with title/objective/acceptanceCriteria only", () => {
+  test("buildCreatePayload produces natural-language goalTemplate without title", () => {
     const payload = buildCreatePayload({
       templateId: "goal_runner",
-      title: "Goal Loop",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -412,19 +388,16 @@ describe("CreateLoopDialog Goal template", () => {
       maxWallClockMinutesPerRun: 45,
       maxRunsPerDay: 2,
       taskPrompt: "",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "Inline Goal Title",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     });
 
     expect(payload.goalTemplate).toBeDefined();
     const gt = payload.goalTemplate!;
-    expect(gt.title).toBe("Inline Goal Title");
     expect(gt.objective).toBe("Investigate failing tests and propose fixes.");
     expect(gt.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
+    expect("title" in gt).toBe(false);
     expect("doneConditions" in gt).toBe(false);
     expect("retryPolicy" in gt).toBe(false);
     expect("approvalPoints" in gt).toBe(false);
@@ -437,8 +410,6 @@ describe("CreateLoopDialog Goal template", () => {
   test("buildCreatePayload non-goal template produces no goalTemplate", () => {
     const payload = buildCreatePayload({
       templateId: "watch_report",
-      title: "Session Loop",
-      description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -448,10 +419,7 @@ describe("CreateLoopDialog Goal template", () => {
       maxWallClockMinutesPerRun: 15,
       maxRunsPerDay: 2,
       taskPrompt: "Run triage.",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
@@ -462,8 +430,6 @@ describe("CreateLoopDialog Goal template", () => {
   test("buildLoopConfig still produces a valid LoopConfig for edit flows", () => {
     const config = buildLoopConfig({
       templateId: "watch_report",
-      title: "Session Loop",
-      description: "desc",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
@@ -473,16 +439,13 @@ describe("CreateLoopDialog Goal template", () => {
       maxWallClockMinutesPerRun: 15,
       maxRunsPerDay: 2,
       taskPrompt: "Run triage.",
-      instructions: "",
-      author: "architect",
       useWorktree: false,
-      goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
 
     expect(config.templateId).toBe("watch_report");
-    expect(config.title).toBe("Session Loop");
+    expect(config.title).toBeNull();
     expect(config.schedule.kind).toBe("manual");
     expect(config.approvalPolicy).toBe("interactive");
     expect("useWorktree" in config).toBe(false);

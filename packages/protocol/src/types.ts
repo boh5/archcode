@@ -496,6 +496,15 @@ export interface GlobalSSEHitlRealtimeEvent {
   projection: HitlProjection;
 }
 
+export interface GlobalSSEResourceChangedEvent {
+  type: "resource.changed";
+  projectSlug: string;
+  resourceType: "goal" | "loop";
+  resourceId: string;
+  reason: "title_generated";
+  createdAt: number;
+}
+
 export type GlobalSSEEvent =
   | GlobalSessionEventEnvelope
   | GlobalSSEHeartbeatEvent
@@ -504,7 +513,8 @@ export type GlobalSSEEvent =
   | GlobalSSEShutdownEvent
   | GlobalSSEMcpStatusEvent
   | GlobalSSEHitlSnapshotEvent
-  | GlobalSSEHitlRealtimeEvent;
+  | GlobalSSEHitlRealtimeEvent
+  | GlobalSSEResourceChangedEvent;
 
 export interface ShutdownEvent {
   type: "shutdown";
@@ -906,7 +916,7 @@ export interface GoalBudgetSummary {
 export interface GoalState {
   id: string;
   projectId: string;
-  title: string;
+  title: string | null;
   objective: string;
   acceptanceCriteria: string;
   status: GoalStatus;
@@ -1186,22 +1196,20 @@ export interface LoopIntegrationSnapshot {
 }
 
 export interface LoopGoalTemplate {
-  title: string;
+  title: string | null;
   objective: string;
   acceptanceCriteria: string;
 }
 
 export interface LoopConfig {
   templateId: LoopTemplateId;
-  title: string;
-  description?: string;
+  title: string | null;
   schedule: LoopScheduleSpec;
   approvalPolicy: LoopApprovalPolicy;
   limits: LoopLimits;
   budget?: LoopBudgetConfig;
   collisionTargets?: CollisionTarget[];
   taskPrompt?: string;
-  instructions?: string;
   goalTemplate?: LoopGoalTemplate;
   triggers?: LoopTriggerSpec[];
   useWorktree?: boolean;
@@ -1355,7 +1363,6 @@ export interface LoopState {
   runCount: number;
   stateVersion: number;
   generatedStateSummary?: string;
-  readinessScore?: null;
   latestBudget?: LoopBudgetSnapshot;
   latestCollisions?: LoopCollisionSnapshot;
   latestIntegrations?: LoopIntegrationSnapshot;

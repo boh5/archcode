@@ -131,14 +131,14 @@ describe("CreateGoalDialog", () => {
     }
   });
 
-  test("renders title, objective, and acceptance criteria fields with Create Draft submit", () => {
+  test("renders objective and acceptance criteria fields with async title copy", () => {
     const tree = render();
     const copy = textContent(tree);
 
     expect(copy).toContain("New Goal");
-    expect(copy).toContain("Title");
     expect(copy).toContain("Objective");
     expect(copy).toContain("Acceptance Criteria");
+    expect(copy).toContain("title is generated asynchronously");
     expect(copy).toContain("Create Draft");
   });
 
@@ -164,7 +164,7 @@ describe("CreateGoalDialog", () => {
     expect(copy).not.toContain("Author");
   });
 
-  test("Create Draft button is disabled when title is empty", () => {
+  test("Create Draft button is disabled when objective and acceptance criteria are empty", () => {
     const tree = render();
     const submitButton = findAll(
       tree,
@@ -173,7 +173,7 @@ describe("CreateGoalDialog", () => {
     expect(submitButton?.props?.disabled).toBe(true);
   });
 
-  test("has exactly three input fields: title, objective, acceptanceCriteria", () => {
+  test("has exactly two textareas: objective and acceptanceCriteria", () => {
     const tree = render();
     const inputs = findAll(tree, (el) => el.type === "input") as ElementLike[];
     const textareas = findAll(tree, (el) => el.type === "textarea") as ElementLike[];
@@ -182,9 +182,10 @@ describe("CreateGoalDialog", () => {
     const objectiveTextarea = textareas.find((i) => i.props?.id === "new-goal-objective");
     const acceptanceTextarea = textareas.find((i) => i.props?.id === "new-goal-acceptance-criteria");
 
-    expect(titleInput).toBeDefined();
+    expect(titleInput).toBeUndefined();
     expect(objectiveTextarea).toBeDefined();
     expect(acceptanceTextarea).toBeDefined();
+    expect(textareas).toHaveLength(2);
 
     // No old fields
     const reviewerInput = inputs.find((i) => i.props?.id === "new-goal-reviewer");

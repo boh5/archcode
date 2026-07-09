@@ -116,6 +116,7 @@ export function createServerApp(
 
   wireHitlRealtimeBridge(serverRuntime, globalEventBus);
   wireMcpStatusBridge(serverRuntime, globalEventBus);
+  wireResourceChangeBridge(serverRuntime, globalEventBus);
 
   return { app };
 }
@@ -240,4 +241,11 @@ function wireMcpStatusBridge(
       createdAt: Date.now(),
     });
   });
+}
+
+function wireResourceChangeBridge(
+  runtime: AgentRuntime,
+  bus: { emit(event: GlobalSSEEvent): void },
+): void {
+  runtime.subscribeResourceChanges?.((event) => bus.emit(event));
 }

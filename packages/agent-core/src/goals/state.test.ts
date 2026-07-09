@@ -60,7 +60,6 @@ function reviewerAuth(goalId: string) {
 async function createGoal(manager = new GoalStateManager(TMP_DIR)) {
   return manager.create({
     projectId: "project-a",
-    title: "Ship thin goal state",
     objective: "Replace workflow state with a natural language goal envelope.",
     acceptanceCriteria: "State transitions and reviewer finalization obey the simplified protocol.",
   });
@@ -146,7 +145,7 @@ describe("GoalStateManager", () => {
 
     expect(created).toMatchObject({
       projectId: "project-a",
-      title: "Ship thin goal state",
+      title: null,
       status: "draft",
       attempt: 1,
       pendingHitlIds: [],
@@ -173,12 +172,24 @@ describe("GoalStateManager", () => {
   test("patchDraft is limited to draft goals", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await createGoal(manager);
-    const patched = await manager.patchDraft(created.id, { title: "Patched", objective: "New objective" });
-    expect(patched.title).toBe("Patched");
+    const patched = await manager.patchDraft(created.id, { objective: "New objective" });
+    expect(patched.title).toBeNull();
     expect(patched.objective).toBe("New objective");
 
     await manager.start(created.id, { mainSessionId: "main-session" });
-    expect(await captureAsyncError(() => manager.patchDraft(created.id, { title: "Denied" }))).toBeInstanceOf(GoalStateError);
+    expect(await captureAsyncError(() => manager.patchDraft(created.id, { objective: "Denied" }))).toBeInstanceOf(GoalStateError);
+  });
+
+  test("setTitleIfEmpty writes generated metadata once", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const created = await createGoal(manager);
+
+    const titled = await manager.setTitleIfEmpty(created.id, "Generated title");
+    const skipped = await manager.setTitleIfEmpty(created.id, "Second title");
+
+    expect(titled?.title).toBe("Generated title");
+    expect(skipped).toBeUndefined();
+    expect((await manager.read(created.id)).title).toBe("Generated title");
   });
 
   test("allows exactly the simplified transition graph", async () => {

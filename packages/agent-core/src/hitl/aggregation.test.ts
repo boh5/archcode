@@ -143,7 +143,6 @@ describe("HITL aggregation", () => {
 async function createGoalOwnedByLoop(goalState: GoalStateManager, loopId: string): Promise<GoalState> {
   const goal = await goalState.create({
     projectId: "archcode",
-    title: "Loop child goal",
     objective: "Run the loop child goal.",
     acceptanceCriteria: "Reviewer can decide from loop run evidence.",
   });

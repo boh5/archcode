@@ -22,7 +22,7 @@ export interface LoopRunnerSessionRuntime {
 }
 
 export interface LoopRunnerGoalStateManager {
-  create(input: { projectId: string; title: string; objective: string; acceptanceCriteria: string; loopId?: string }): Promise<GoalState>;
+  create(input: { projectId: string; title?: string | null; objective: string; acceptanceCriteria: string; loopId?: string }): Promise<GoalState>;
 }
 
 export interface LoopRunnerGoalRuntime {
@@ -53,6 +53,7 @@ export interface LoopRunnerOptions {
   readonly now?: () => number;
   readonly collisionLedger?: CollisionLedger;
   readonly worktreeManager?: LoopRunnerWorktreeManager;
+  readonly queueGoalTitleGeneration?: (goalId: string) => void;
 }
 
 export interface LoopRunnerWorktreeManager {
@@ -120,6 +121,7 @@ export class LoopRunner {
   readonly #budgetLedger: LoopBudgetLedger;
   readonly #collisionLedger: CollisionLedger;
   readonly #worktreeManager?: LoopRunnerWorktreeManager;
+  readonly #queueGoalTitleGeneration?: (goalId: string) => void;
   readonly #activeLoops = new Map<string, { runId: string; sessionId?: string }>();
 
   constructor(options: LoopRunnerOptions) {
@@ -141,6 +143,7 @@ export class LoopRunner {
       clock: { now: this.#now },
     });
     this.#worktreeManager = options.worktreeManager;
+    this.#queueGoalTitleGeneration = options.queueGoalTitleGeneration;
   }
 
   async runSessionLoop(loopState: LoopState, trigger: LoopRunTrigger): Promise<LoopRunReport> {
@@ -295,15 +298,15 @@ export class LoopRunner {
     try {
       const draft = await goalStateManager.create({
         projectId: input.loop.projectId,
-        title: template.title,
+        title: null,
         objective: template.objective,
         acceptanceCriteria: template.acceptanceCriteria,
         loopId: input.loop.loopId,
       });
       goalId = draft.id;
+      this.#queueGoalTitleGeneration?.(draft.id);
       const started = await goalRunner.start(draft.id, {
         loopId: input.loop.loopId,
-        sessionTitle: `Loop Goal: ${input.loop.config.title}`,
         workspaceRoot: scope.workspaceRoot,
       });
       executionStarted = true;
@@ -360,7 +363,7 @@ export class LoopRunner {
         ...result,
         goalId: goal.id,
         summary: result.status === "succeeded"
-          ? `Goal ${goal.id} session ${sessionId} completed for loop "${input.loop.config.title}".`
+          ? `Goal ${goal.id} session ${sessionId} completed for loop ${input.loop.loopId}.`
           : result.summary,
       };
     } catch (error) {
@@ -409,7 +412,6 @@ export class LoopRunner {
       loopId: loop.loopId,
       sessionRole: "main",
       agentName: loopRunOptions(loop).agentName,
-      title: `Loop: ${loop.config.title}`,
     });
   }
 
@@ -466,7 +468,7 @@ export class LoopRunner {
         blockedReason: "needs_user",
         blockedByHitlIds: pendingUserInteraction.blockedByHitlIds,
         attentionStatus: "waiting_for_human",
-        skippedReason: `Session ${sessionId} is waiting for user input for loop "${loop.config.title}".`,
+        skippedReason: `Session ${sessionId} is waiting for user input for loop ${loop.loopId}.`,
         summary: `Session ${sessionId} is blocked waiting for user input.`,
       };
     }
@@ -475,7 +477,7 @@ export class LoopRunner {
       return {
         status: "succeeded",
         sessionId,
-        summary: `Session ${sessionId} completed for loop "${loop.config.title}".`,
+        summary: `Session ${sessionId} completed for loop ${loop.loopId}.`,
       };
     }
 
@@ -530,7 +532,7 @@ export class LoopRunner {
     try {
       const baseSha = await this.#baseShaForJob(job);
       const created = await worktreeManager.create({
-        loopSlug: input.loop.config.title,
+        loopSlug: `loop-${input.loop.loopId.slice(0, 8)}`,
         subjectSlug: job.subjectKey,
         jobId: job.jobId,
         baseSha,
@@ -767,10 +769,10 @@ function snapshotGoalTemplate(loop: LoopState): LoopGoalTemplate {
 
 function buildSessionLoopPrompt(loop: LoopState): string {
   const sections = [
-    `Loop task: ${loop.config.title}`,
-    loop.config.description ? `Description:\n${loop.config.description}` : undefined,
-    loop.config.taskPrompt ? `Task prompt:\n${loop.config.taskPrompt}` : undefined,
-    loop.config.instructions ? `Instructions:\n${loop.config.instructions}` : undefined,
+    "Run this ArchCode Loop session.",
+    `Loop ID: ${loop.loopId}`,
+    `Template: ${loop.config.templateId}`,
+    loop.config.taskPrompt ? `Run instructions:\n${loop.config.taskPrompt}` : undefined,
   ].filter((section): section is string => section !== undefined);
 
   return sections.join("\n\n");
@@ -780,11 +782,10 @@ function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
   return [
     "Run this ArchCode Goal from a Loop.",
     `Goal ID: ${goal.id}`,
-    `Goal title JSON: ${JSON.stringify(goal.title)}`,
     `Goal objective JSON: ${JSON.stringify(goal.objective)}`,
     `Goal acceptance criteria JSON: ${JSON.stringify(goal.acceptanceCriteria)}`,
     `Loop ID: ${loop.loopId}`,
-    `Loop title JSON: ${JSON.stringify(loop.config.title)}`,
+    `Loop template: ${loop.config.templateId}`,
     "Runtime has already started and claimed this Goal for the current main session.",
     "Work against the natural-language objective and acceptance criteria, use available tools and delegation as needed, and have Reviewer finalize the review receipt through goal_manage.finalize_review.",
   ].join("\n");

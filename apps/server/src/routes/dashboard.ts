@@ -58,7 +58,7 @@ type DashboardLoopRunSummary = Pick<LoopRunReport,
 
 type DashboardLoop = {
   loopId: string;
-  title: string;
+  title: string | null;
   status: LoopStatus;
   currentRun?: DashboardLoopRunSummary;
   lastRun?: DashboardLoopRunSummary;

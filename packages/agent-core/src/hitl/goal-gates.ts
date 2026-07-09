@@ -37,7 +37,6 @@ export class GoalApprovalGate {
   async requestApproval(input: {
     goalId: string;
     projectSlug: string;
-    goalTitle: string;
     approvalPoint: string;
     summary: string;
     resumeStatus?: "running" | "reviewing";
@@ -50,7 +49,7 @@ export class GoalApprovalGate {
         title: "Approve Goal continuation",
         summary: input.summary,
         fields: [
-          { label: "Goal", value: input.goalTitle },
+          { label: "Goal ID", value: input.goalId },
           { label: "Approval point", value: input.approvalPoint },
           { label: "Recommended option", value: "approved" },
         ],
@@ -73,10 +72,9 @@ export class GoalApprovalGate {
   async requestReview(input: {
     goalId: string;
     projectSlug: string;
-    goalTitle: string;
     summary?: string;
   }): Promise<HitlRecord> {
-    const summary = input.summary ?? `Reviewer outcome required for Goal "${input.goalTitle}".`;
+    const summary = input.summary ?? `Reviewer outcome required for Goal ${input.goalId}.`;
     const record = await this.#hitlService.create({
       owner: { projectSlug: input.projectSlug, ownerType: "goal", ownerId: input.goalId },
       blockingKey: `goal:${input.goalId}:review`,
@@ -84,7 +82,7 @@ export class GoalApprovalGate {
       displayPayload: {
         title: "Review Goal outcome",
         summary,
-        fields: [{ label: "Goal", value: input.goalTitle }],
+        fields: [{ label: "Goal ID", value: input.goalId }],
         redacted: true,
       },
     });

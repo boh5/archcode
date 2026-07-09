@@ -21,23 +21,19 @@ function isNonEmpty(value: unknown): value is string {
 export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalDialogProps) {
   const createGoal = useCreateGoal();
 
-  const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
 
   useEffect(() => {
     if (open) {
-      setTitle("");
       setObjective("");
       setAcceptanceCriteria("");
     }
   }, [open]);
 
-  const trimmedTitle = title.trim();
   const trimmedObjective = objective.trim();
   const trimmedAcceptanceCriteria = acceptanceCriteria.trim();
   const canSubmit =
-    isNonEmpty(trimmedTitle) &&
     isNonEmpty(trimmedObjective) &&
     isNonEmpty(trimmedAcceptanceCriteria) &&
     !createGoal.isPending;
@@ -50,7 +46,6 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
       createGoal.mutate(
         {
           slug,
-          title: trimmedTitle,
           objective: trimmedObjective,
           acceptanceCriteria: trimmedAcceptanceCriteria,
         },
@@ -65,7 +60,6 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
       canSubmit,
       createGoal,
       slug,
-      trimmedTitle,
       trimmedObjective,
       trimmedAcceptanceCriteria,
       onCreated,
@@ -94,30 +88,11 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
               New Goal
             </DialogTitle>
             <DialogDescription className="sr-only">
-              Create a goal with title, objective, and acceptance criteria
+              Create a goal with objective and acceptance criteria. The title is generated asynchronously.
             </DialogDescription>
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            <div>
-              <label
-                htmlFor="new-goal-title"
-                className="mb-1.5 block text-[13px] font-medium text-text-secondary"
-              >
-                Title
-              </label>
-              <input
-                id="new-goal-title"
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="What should the agent accomplish?"
-                className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150"
-                autoFocus
-                disabled={createGoal.isPending}
-              />
-            </div>
-
             <div>
               <label
                 htmlFor="new-goal-objective"
@@ -131,6 +106,7 @@ export function CreateGoalDialog({ open, onClose, slug, onCreated }: CreateGoalD
                 onChange={(e) => setObjective(e.target.value)}
                 placeholder="Describe the task objective in natural language."
                 rows={4}
+                autoFocus
                 disabled={createGoal.isPending}
                 className="w-full rounded-sm border border-border-default bg-bg-base px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none transition-colors duration-150 resize-y"
               />

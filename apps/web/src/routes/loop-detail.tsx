@@ -181,7 +181,7 @@ export function LoopDetailRoute() {
           Loops
         </Link>
         <span className="text-text-muted">/</span>
-        <span className="font-semibold text-sm text-text-primary truncate">{loop.config.title}</span>
+        <span className="font-semibold text-sm text-text-primary truncate">{loop.config.title || "Untitled"}</span>
         <div className="flex items-center gap-2 ml-auto">
           <button
             type="button"
@@ -1013,7 +1013,7 @@ function formatGoalTemplate(config: LoopConfig): string {
   const template = config.goalTemplate;
   if (!template) return "none";
 
-  return `${template.title}; objective: ${template.objective}; acceptance: ${template.acceptanceCriteria}`;
+  return `objective: ${template.objective}; acceptance: ${template.acceptanceCriteria}`;
 }
 
 function formatDateTime(value: number | undefined): string {

@@ -50,7 +50,6 @@ describe("Goal core integration", () => {
     const runner = createRunner();
     const draft = await runner.create({
       projectId: "project-a",
-      title: "Ship core integration",
       objective: "Persist a protocol-shaped goal from draft through review.",
       acceptanceCriteria: "Final state contains reviewer receipt and no auxiliary artifact files.",
     });
@@ -82,7 +81,6 @@ describe("Goal core integration", () => {
     const runner = createRunner();
     const draft = await runner.create({
       projectId: "project-a",
-      title: "Retry after review",
       objective: "Capture explicit retry semantics.",
       acceptanceCriteria: "Retry increments attempt and clears current review.",
     });

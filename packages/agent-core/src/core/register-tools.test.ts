@@ -217,7 +217,6 @@ describe("registerBuiltinTools", () => {
     const projectContext = makeProjectContext(workspaceRoot);
     const goal = await projectContext.goalState.create({
       projectId: projectContext.project.slug,
-      title: "Goal main tools",
       objective: "Verify Goal lifecycle does not govern unrelated tool execution.",
       acceptanceCriteria: "Agent/tool permissions decide ordinary tool availability.",
     });
@@ -249,7 +248,6 @@ describe("registerBuiltinTools", () => {
     const projectContext = makeProjectContext(workspaceRoot);
     const goal = await projectContext.goalState.create({
       projectId: projectContext.project.slug,
-      title: "Goal todo cleanup",
       objective: "Verify todo bookkeeping is independent from Goal lifecycle state.",
       acceptanceCriteria: "Todo updates continue to work while a Goal is reviewing and after it is done.",
     });

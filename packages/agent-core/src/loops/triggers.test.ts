@@ -10,6 +10,7 @@ import type {
   GitHubReadCiFailuresForRefResult,
   GitHubResponse,
 } from "../integrations/github";
+import type { ProcessRunner, ProcessRunnerInput, ProcessRunnerResult } from "../process/types";
 import { LoopJobQueue } from "./job-queue";
 import { LoopPollStateManager } from "./poll-state";
 import { LoopStateManager, type LoopConfig } from "./state";
@@ -20,7 +21,7 @@ const TMP_DIR = join(import.meta.dir, "__test_tmp__", "loop-triggers");
 
 const baseConfig: LoopConfig = {
   templateId: "watch_report",
-  title: "Trigger loop",
+  title: null,
   schedule: { kind: "manual" },
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 8 },
@@ -50,6 +51,29 @@ describe("LoopTriggerPoller", () => {
     expect(await queue.list()).toHaveLength(1);
     expect((await queue.list())[0]?.dedupeKey).toBe(`${loop.loopId}:on_commit:commit:test-owner/test-repo:main`);
     expect((await queue.list())[0]?.eventSummaries[0]?.payloadSha).toBe("abc123");
+  });
+
+  test("default local git reader uses ProcessRunner instead of direct spawn", async () => {
+    const calls: ProcessRunnerInput[] = [];
+    const git: ProcessRunner = {
+      run: async (input) => {
+        calls.push(input);
+        const stdout = input.argv.includes("--show-current") ? "main\n" : "abc123\n";
+        return successProcess(input, stdout);
+      },
+    };
+    const { poller, queue, stateManager } = makeHarness({ processRunner: git });
+    const loop = await stateManager.create("project-a", { ...baseConfig, triggers: [{ kind: "on_commit" }] });
+
+    const result = await poller.pollLoop(loop.loopId);
+
+    expect(result.enqueued).toHaveLength(1);
+    expect((await queue.list())[0]?.resolvedHeadSha).toBe("abc123");
+    expect(calls.map((call) => call.argv)).toEqual([
+      ["git", "branch", "--show-current"],
+      ["git", "rev-parse", "--verify", "HEAD"],
+    ]);
+    expect(calls.every((call) => call.cwd === TMP_DIR)).toBe(true);
   });
 
   test("coalesces a new branch SHA into the running on_commit branch job", async () => {
@@ -242,6 +266,7 @@ function makeHarness(options: {
   readonly github?: FakeGitHub;
   readonly localHead?: LocalBranchHead;
   readonly localGit?: LoopLocalGitReader;
+  readonly processRunner?: ProcessRunner;
   readonly now?: number;
 } = {}): {
   readonly clock: FakeClock;
@@ -254,9 +279,10 @@ function makeHarness(options: {
   const stateManager = new LoopStateManager(TMP_DIR);
   const queue = new LoopJobQueue({ workspaceRoot: TMP_DIR, clock });
   const pollState = new LoopPollStateManager({ workspaceRoot: TMP_DIR, clock });
-  const localGit: LoopLocalGitReader = options.localGit ?? {
-    readBranchHead: async (branch) => options.localHead === undefined ? undefined : { ...options.localHead, branch: branch ?? options.localHead.branch },
-  };
+  const localGit: LoopLocalGitReader | undefined = options.localGit
+    ?? (options.localHead === undefined
+      ? undefined
+      : { readBranchHead: async (branch) => ({ ...options.localHead!, branch: branch ?? options.localHead!.branch }) });
   const poller = new LoopTriggerPoller({
     workspaceRoot: TMP_DIR,
     stateManager,
@@ -264,7 +290,8 @@ function makeHarness(options: {
     pollState,
     github: (options.github ?? new FakeGitHub()) as unknown as GitHubCiPollingConnectorApi,
     repository: { owner: "test-owner", repo: "test-repo", defaultBranch: "main" },
-    localGit,
+    ...(localGit === undefined ? {} : { localGit }),
+    processRunner: options.processRunner,
     clock,
   });
   return { clock, stateManager, queue, pollState, poller };
@@ -332,5 +359,25 @@ function makeCiFailure(overrides: Partial<GitHubCiFailureSubject> = {}): GitHubC
     dedupeKey: "test-owner/test-repo:abc123:ci/build",
     sourceSummaries: [],
     ...overrides,
+  };
+}
+
+function successProcess(input: ProcessRunnerInput, stdout: string): ProcessRunnerResult {
+  return {
+    kind: "success",
+    argv: input.argv,
+    cwd: input.cwd,
+    startedAt: 1,
+    finishedAt: 2,
+    durationMs: 1,
+    exitCode: 0,
+    output: {
+      stdout,
+      stderr: "",
+      combined: stdout,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      combinedTruncated: false,
+    },
   };
 }

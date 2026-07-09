@@ -58,7 +58,6 @@ function createCoordinator(hitlService: HitlService): ResumeCoordinator {
 async function createGoal(status: Extract<GoalState["status"], "running" | "reviewing"> = "running"): Promise<GoalState> {
   const goal = await manager.create({
     projectId: "project-a",
-    title: "Ship HITL integration",
     objective: "Resume simplified Goal blockers from HITL records.",
     acceptanceCriteria: "Approved HITL clears blockers; denied and cancelled responses reach deterministic terminal states.",
     mainSessionId: "main-session-1",

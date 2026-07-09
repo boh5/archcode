@@ -197,8 +197,8 @@ describe("ProjectContextResolver", () => {
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
 
-    const loopA = await contextA.loopState.create(contextA.project.slug, { ...LOOP_CONFIG, title: "Loop A" });
-    const loopB = await contextB.loopState.create(contextB.project.slug, { ...LOOP_CONFIG, title: "Loop B" });
+    const loopA = await contextA.loopState.create(contextA.project.slug, LOOP_CONFIG);
+    const loopB = await contextB.loopState.create(contextB.project.slug, LOOP_CONFIG);
 
     expect((await contextA.loopState.list(contextA.project.slug)).map((loop) => loop.loopId)).toEqual([loopA.loopId]);
     expect((await contextB.loopState.list(contextB.project.slug)).map((loop) => loop.loopId)).toEqual([loopB.loopId]);
@@ -221,8 +221,8 @@ describe("ProjectContextResolver", () => {
     const contextA = await resolver.resolve(workspaceA);
     const contextB = await resolver.resolve(workspaceB);
 
-    const goalA = await contextA.goalState.create({ projectId: contextA.project.slug, title: "Goal A", objective: "A objective", acceptanceCriteria: "A criteria" });
-    const goalB = await contextB.goalState.create({ projectId: contextB.project.slug, title: "Goal B", objective: "B objective", acceptanceCriteria: "B criteria" });
+    const goalA = await contextA.goalState.create({ projectId: contextA.project.slug, objective: "A objective", acceptanceCriteria: "A criteria" });
+    const goalB = await contextB.goalState.create({ projectId: contextB.project.slug, objective: "B objective", acceptanceCriteria: "B criteria" });
 
     expect((await contextA.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalA.id]);
     expect((await contextB.goalState.listGoals()).map((goal) => goal.id)).toEqual([goalB.id]);
@@ -236,7 +236,7 @@ describe("ProjectContextResolver", () => {
     const sessions = new SessionStoreManager({ logger: silentLogger });
     const resolver = new ProjectContextResolver({ sessionStoreManager: sessions });
     const first = await resolver.resolve(workspace);
-    const goal = await first.goalState.create({ projectId: first.project.slug, title: "Needs approval", objective: "Get approval", acceptanceCriteria: "HITL persists" });
+    const goal = await first.goalState.create({ projectId: first.project.slug, objective: "Get approval", acceptanceCriteria: "HITL persists" });
 
     const created = await first.hitl.create({
       owner: { projectSlug: first.project.slug, ownerType: "goal", ownerId: goal.id },

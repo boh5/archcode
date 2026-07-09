@@ -79,11 +79,11 @@ class FakeGoalStateManager {
     return [...this.#goals.values()].filter((goal) => projectId === undefined || goal.projectId === projectId);
   }
 
-  async create(input: { readonly projectId: string; readonly title: string; readonly objective: string; readonly acceptanceCriteria: string }): Promise<GoalState> {
+  async create(input: { readonly projectId: string; readonly title?: string | null; readonly objective: string; readonly acceptanceCriteria: string }): Promise<GoalState> {
     const goal: GoalState = {
       id: crypto.randomUUID(),
       projectId: input.projectId,
-      title: input.title,
+      title: input.title ?? null,
       objective: input.objective,
       acceptanceCriteria: input.acceptanceCriteria,
       status: "draft",
@@ -109,7 +109,7 @@ class FakeGoalStateManager {
     return goal;
   }
 
-  async patchDraft(goalId: string, updates: Partial<Pick<GoalState, "title" | "objective" | "acceptanceCriteria">>): Promise<GoalState> {
+  async patchDraft(goalId: string, updates: Partial<Pick<GoalState, "objective" | "acceptanceCriteria">>): Promise<GoalState> {
     const goal = await this.read(goalId);
     if (goal.status !== "draft") {
       throw new FakeGoalStateError(`Goal ${goalId} is ${goal.status}; patch is only allowed while draft`);
@@ -243,6 +243,7 @@ function createRuntime(project: ProjectInfo, manager: FakeGoalStateManager): Rou
       startedAt: Date.now(),
     })),
     isSessionExecutionRunning: mock(() => false),
+    queueGoalTitleGeneration: mock(() => undefined),
   };
   return runtime as unknown as RouteRuntime;
 }
@@ -264,13 +265,12 @@ async function createFixture(testName: string): Promise<RuntimeFixture> {
   return { app, manager, project, runtime };
 }
 
-async function postGoal(app: Hono, slug: string, title = "Simplify Goal API"): Promise<GoalState> {
+async function postGoal(app: Hono, slug: string): Promise<GoalState> {
   const res = await app.request(`/api/projects/${slug}/goals`, {
     method: "POST",
     body: JSON.stringify({
-      title,
       objective: "Expose a natural-language Goal contract from the server.",
-      acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
+      acceptanceCriteria: "The API accepts objective and acceptance criteria only.",
     }),
     headers: { "content-type": "application/json" },
   });
@@ -287,7 +287,7 @@ function lastStartedUserMessage(runtime: RouteRuntime): string {
 }
 
 function expectSimplifiedGoalShape(goal: Record<string, unknown>): void {
-  expect(goal.title).toBeString();
+  expect(goal.title === null || typeof goal.title === "string").toBe(true);
   expect(goal.objective).toBeString();
   expect(goal.acceptanceCriteria).toBeString();
   expect(goal).not.toHaveProperty("doneConditions");
@@ -304,7 +304,7 @@ function expectPromptUsesNaturalLanguageOnly(message: string): void {
   expect(message).toContain("Objective:");
   expect(message).toContain("Expose a natural-language Goal contract from the server.");
   expect(message).toContain("Acceptance criteria:");
-  expect(message).toContain("The API accepts title, objective, and acceptance criteria only.");
+  expect(message).toContain("The API accepts objective and acceptance criteria only.");
   expect(message).not.toContain("DoneCondition");
   expect(message).not.toContain("Done Conditions");
   expect(message).not.toContain("doneConditions");
@@ -331,15 +331,15 @@ describe("goals routes", () => {
   });
 
   test("POST create accepts only the simplified natural-language contract", async () => {
-    const { app, project } = await createFixture("create-simplified");
+    const { app, project, runtime } = await createFixture("create-simplified");
 
     const goal = await postGoal(app, project.slug);
 
     expect(goal).toMatchObject({
       projectId: project.slug,
-      title: "Simplify Goal API",
+      title: null,
       objective: "Expose a natural-language Goal contract from the server.",
-      acceptanceCriteria: "The API accepts title, objective, and acceptance criteria only.",
+      acceptanceCriteria: "The API accepts objective and acceptance criteria only.",
       status: "draft",
       attempt: 1,
       pendingHitlIds: [],
@@ -347,6 +347,7 @@ describe("goals routes", () => {
       childSessionIds: [],
     });
     expectSimplifiedGoalShape(goal as unknown as Record<string, unknown>);
+    expect(runtime.queueGoalTitleGeneration).toHaveBeenCalledWith(project.workspaceRoot, goal.id);
   });
 
   test("POST create rejects old structured Goal payload fields with 400", async () => {
@@ -373,14 +374,13 @@ describe("goals routes", () => {
     expect(await res.json()).toMatchObject({ error: { code: "BAD_REQUEST", message: "Request body is invalid" } });
   });
 
-  test("PATCH edits draft title objective and acceptanceCriteria only", async () => {
+  test("PATCH edits draft objective and acceptanceCriteria only", async () => {
     const { app, project } = await createFixture("patch-draft");
     const created = await postGoal(app, project.slug);
 
     const patchRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
       method: "PATCH",
       body: JSON.stringify({
-        title: "Updated title",
         objective: "Updated objective.",
         acceptanceCriteria: "Updated natural-language acceptance criteria.",
       }),
@@ -390,7 +390,7 @@ describe("goals routes", () => {
 
     expect(patchRes.status).toBe(200);
     expect(patched).toMatchObject({
-      title: "Updated title",
+      title: null,
       objective: "Updated objective.",
       acceptanceCriteria: "Updated natural-language acceptance criteria.",
     });
@@ -403,13 +403,13 @@ describe("goals routes", () => {
 
     const oldFieldRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ doneConditions: [] }),
+      body: JSON.stringify({ title: "Old manual title", doneConditions: [] }),
       headers: { "content-type": "application/json" },
     });
     await manager.setStatus(created.id, "running");
     const runningPatchRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ title: "Too late" }),
+      body: JSON.stringify({ objective: "Too late." }),
       headers: { "content-type": "application/json" },
     });
 
@@ -423,7 +423,7 @@ describe("goals routes", () => {
 
   test("POST run starts a draft Goal and sends objective plus acceptanceCriteria only", async () => {
     const { app, manager, project, runtime } = await createFixture("run-simplified");
-    const created = await postGoal(app, project.slug, "Run simplified Goal");
+    const created = await postGoal(app, project.slug);
 
     const runRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/run`, {
       method: "POST",
@@ -458,7 +458,6 @@ describe("goals routes", () => {
     expect(runtime.createSession).toHaveBeenCalledWith(project.workspaceRoot, {
       goalId: created.id,
       sessionRole: "main",
-      title: created.title,
     });
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
     expectPromptDoesNotRequestRedundantGoalClaim(lastStartedUserMessage(runtime));
@@ -525,7 +524,7 @@ describe("goals routes", () => {
 
   test("POST retry restarts not_done Goal and sends objective plus acceptanceCriteria only", async () => {
     const { app, manager, project, runtime } = await createFixture("retry-simplified");
-    const created = await postGoal(app, project.slug, "Retry simplified Goal");
+    const created = await postGoal(app, project.slug);
     await manager.setReview(created.id);
 
     const retryRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}/retry`, {

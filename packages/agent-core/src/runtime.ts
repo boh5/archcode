@@ -1,7 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defaultAgentDefinitions } from "./agents";
+import { resolveAgentModel } from "./agents/model-resolver";
 import { SessionAgentManager } from "./agents/session-agent-manager";
+import { BackgroundTaskManager } from "./background/manager";
 import type { SlashCommandResult } from "./commands/types";
 import { loadConfig } from "./config/load";
 import { configureDefaultLspClientPoolLogger } from "./lsp/client-pool";
@@ -29,6 +31,7 @@ import type { CompressionOriginalRangeResult } from "./compression";
 import type {
   GlobalSSEEvent,
   GlobalSSEHitlRealtimeEvent,
+  GlobalSSEResourceChangedEvent,
   McpServerStatus,
   SessionTreeResponse,
 } from "@archcode/protocol";
@@ -56,6 +59,8 @@ import { Logger, createConsoleLogger } from "./logger";
 import { SessionStoreManager } from "./store/session-store-manager";
 import { redactString } from "./tools/security";
 import type { SessionRole } from "./store/types";
+import { generateTitle } from "./title-generation";
+import type { GoalState } from "./goals/state";
 
 const DEFAULT_CONFIG_PATH = CONFIG_FILE_NAME;
 
@@ -104,6 +109,9 @@ export interface AgentRuntime {
   recoverHitlResumes(workspaceRoot: string): Promise<ResumeRecoverySummary | undefined>;
   listPendingHitlEvents(): Promise<GlobalSSEEvent[]>;
   subscribeHitlEvents(listener: (event: GlobalSSEHitlRealtimeEvent) => void): () => void;
+  subscribeResourceChanges?(listener: (event: GlobalSSEResourceChangedEvent) => void): () => void;
+  queueGoalTitleGeneration?(workspaceRoot: string, goalId: string): void;
+  queueLoopTitleGeneration?(workspaceRoot: string, loopId: string): void;
   subscribeMcpStatusChanges(listener: (serverName: string, status: McpServerStatus) => void): () => void;
   getMcpServerStatuses(): Map<string, McpServerStatus>;
   createSession(workspaceRoot: string, options?: CreateRuntimeSessionOptions): Promise<SessionFile>;
@@ -125,7 +133,7 @@ export interface AgentRuntime {
   dispatchCommand(workspaceRoot: string, sessionId: string, name: string, args?: string): Promise<SlashCommandResult | null>;
   listLoops(workspaceRoot: string): Promise<LoopState[]>;
   readLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
-  createLoop(workspaceRoot: string, config: LoopConfig, author?: string): Promise<LoopState>;
+  createLoop(workspaceRoot: string, config: LoopConfig): Promise<LoopState>;
   updateLoop(workspaceRoot: string, loopId: string, updates: LoopUpdateInput): Promise<LoopState>;
   pauseLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
   resumeLoop(workspaceRoot: string, loopId: string): Promise<LoopState>;
@@ -210,8 +218,13 @@ export async function createRuntime(
     const projectRegistry = new ProjectRegistry({ homeDir: options.projectRegistryHomeDir, logger: logger.child({ module: "projects.registry" }) });
     const sessionStoreManager = new SessionStoreManager({ logger });
     const hitlListeners = new Set<(event: GlobalSSEHitlRealtimeEvent) => void>();
+    const resourceChangeListeners = new Set<(event: GlobalSSEResourceChangedEvent) => void>();
+    const resourceTitleTasks = new BackgroundTaskManager({ logger: runtimeLogger.child({ module: "title-generation.resources" }) });
     const publishHitlEvent = (event: GlobalSSEHitlRealtimeEvent): void => {
       for (const listener of hitlListeners) listener(event);
+    };
+    const publishResourceChanged = (event: GlobalSSEResourceChangedEvent): void => {
+      for (const listener of resourceChangeListeners) listener(event);
     };
     const hitl = new HitlService({ sessions: sessionStoreManager, realtimePublisher: publishHitlEvent });
     let contextResolver!: ProjectContextResolver;
@@ -352,7 +365,53 @@ export async function createRuntime(
         projectSlug: projectContext.project.slug,
         ...(collisionLedger === undefined ? {} : { collisionLedger }),
         worktreeManager: new LoopWorktreeManager({ canonicalRoot: workspaceRoot }),
+        queueGoalTitleGeneration: (goalId) => queueGoalTitleGeneration(workspaceRoot, goalId),
       });
+    }
+
+    function queueGoalTitleGeneration(workspaceRoot: string, goalId: string): void {
+      resourceTitleTasks.dispatch(scopedKey(workspaceRoot, `goal-title:${goalId}`), async () => {
+        const projectContext = await contextResolver.resolve(workspaceRoot);
+        const goal = await projectContext.goalState.read(goalId);
+        if (goal.title !== null) return;
+        const title = await generateResourceTitle("goal", goalTitleSource(goal));
+        if (title === null) return;
+        const updated = await projectContext.goalState.setTitleIfEmpty(goal.id, title);
+        if (updated === undefined) return;
+        publishResourceChanged({
+          type: "resource.changed",
+          projectSlug: projectContext.project.slug,
+          resourceType: "goal",
+          resourceId: goal.id,
+          reason: "title_generated",
+          createdAt: Date.now(),
+        });
+      });
+    }
+
+    function queueLoopTitleGeneration(workspaceRoot: string, loopId: string): void {
+      resourceTitleTasks.dispatch(scopedKey(workspaceRoot, `loop-title:${loopId}`), async () => {
+        const projectContext = await contextResolver.resolve(workspaceRoot);
+        const loop = await projectContext.loopState.read(loopId);
+        if (loop.config.title !== null) return;
+        const title = await generateResourceTitle("loop", loopTitleSource(loop));
+        if (title === null) return;
+        const updated = await projectContext.loopState.setTitleIfEmpty(loop.loopId, title);
+        if (updated === undefined) return;
+        publishResourceChanged({
+          type: "resource.changed",
+          projectSlug: projectContext.project.slug,
+          resourceType: "loop",
+          resourceId: loop.loopId,
+          reason: "title_generated",
+          createdAt: Date.now(),
+        });
+      });
+    }
+
+    async function generateResourceTitle(kind: "goal" | "loop", text: string): Promise<string | null> {
+      const { modelInfo, options: modelOptions } = resolveAgentModel("orchestrator", config, providerRegistry);
+      return await generateTitle({ kind, text, modelInfo, modelOptions });
     }
 
     async function getLoopScheduler(workspaceRoot: string): Promise<LoopScheduler> {
@@ -422,9 +481,10 @@ export async function createRuntime(
       return await (await contextResolver.resolve(workspaceRoot)).loopState.read(loopId);
     }
 
-    async function createLoop(workspaceRoot: string, config: LoopConfig, author?: string): Promise<LoopState> {
+    async function createLoop(workspaceRoot: string, config: LoopConfig): Promise<LoopState> {
       const projectContext = await contextResolver.resolve(workspaceRoot);
-      const loop = await projectContext.loopState.create(projectContext.project.slug, config, author);
+      const loop = await projectContext.loopState.create(projectContext.project.slug, config);
+      queueLoopTitleGeneration(workspaceRoot, loop.loopId);
       await scheduleLoopIfStarted(workspaceRoot, loop.loopId);
       return loop;
     }
@@ -575,6 +635,14 @@ export async function createRuntime(
           hitlListeners.delete(listener);
         };
       },
+      subscribeResourceChanges: (listener) => {
+        resourceChangeListeners.add(listener);
+        return () => {
+          resourceChangeListeners.delete(listener);
+        };
+      },
+      queueGoalTitleGeneration,
+      queueLoopTitleGeneration,
       subscribeMcpStatusChanges: (listener) => mcpManager.onStatusChange(listener),
       getMcpServerStatuses: () => mcpManager.getStatus(),
       createSession: (workspaceRoot, createOptions) => sessionStoreManager.createSessionFile(workspaceRoot, createOptions),
@@ -677,6 +745,25 @@ function sanitizeIntegrationSnapshot(snapshot: LoopIntegrationSnapshot): LoopInt
       message: redactString(error.message),
     })),
   };
+}
+
+function goalTitleSource(goal: GoalState): string {
+  return [
+    "Objective:",
+    goal.objective,
+    "Acceptance criteria:",
+    goal.acceptanceCriteria,
+  ].join("\n");
+}
+
+function loopTitleSource(loop: LoopState): string {
+  const goalTemplate = loop.config.goalTemplate;
+  return [
+    `Template: ${loop.config.templateId}`,
+    loop.config.taskPrompt === undefined ? undefined : `Run instructions:\n${loop.config.taskPrompt}`,
+    goalTemplate === undefined ? undefined : `Goal objective:\n${goalTemplate.objective}`,
+    goalTemplate === undefined ? undefined : `Goal acceptance criteria:\n${goalTemplate.acceptanceCriteria}`,
+  ].filter((section): section is string => section !== undefined).join("\n\n");
 }
 
 async function resolveWorkspaceRoot(options: AgentRuntimeOptions): Promise<string> {

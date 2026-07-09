@@ -142,7 +142,6 @@ function makeLoop(overrides: Partial<LoopState> = {}): LoopState {
     config: {
       templateId: "goal_runner",
       title: "Daily Triage Loop",
-      description: "Checks local project health",
       schedule: { kind: "interval", everyMs: 60000 },
       approvalPolicy: "explicit_per_run",
       limits: {
@@ -506,7 +505,9 @@ describe("LoopDetailRoute", () => {
       expect(settingsSection.textContent).toContain("task prompt");
       expect(settingsSection.textContent).toContain("Review failing tests and summarize concrete next steps.");
       expect(settingsSection.textContent).toContain("goal template");
-      expect(settingsSection.textContent).toContain("Triage Follow-up Goal");
+      expect(settingsSection.textContent).toContain("objective: Investigate failing tests and propose fixes.");
+      expect(settingsSection.textContent).toContain("acceptance: Reviewer can decide DONE from logs and diff.");
+      expect(settingsSection.textContent).not.toContain("Triage Follow-up Goal");
 
       const recentSection = container.querySelector('[data-testid="loop-recent-results-section"]')!;
       expect(recentSection.textContent).toContain("Failed");

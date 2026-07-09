@@ -207,7 +207,7 @@ function LoopListItem({ loop }: { loop: LoopState }) {
           to={`/projects/${slug}/loops/${loop.loopId}`}
           className="block text-[13px] font-medium text-text-primary truncate hover:text-accent transition-colors duration-150"
         >
-          {loop.config.title}
+          {loop.config.title || "Untitled"}
         </Link>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
           <span>schedule: {formatSchedule(loop)}</span>

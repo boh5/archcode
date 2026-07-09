@@ -374,7 +374,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "watch_report",
-        title: "Manual Session",
         scheduleKind: "manual",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
@@ -432,7 +431,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "watch_report",
-        title: "Interval Session",
         scheduleKind: "interval",
         everyMs: 60000,
         approvalPolicy: "interactive",
@@ -491,7 +489,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "watch_report",
-        title: "Cron Session",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
         approvalPolicy: "interactive",
@@ -538,7 +535,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "watch_report",
-        title: "Invalid Cron",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * * *",
         approvalPolicy: "interactive",
@@ -582,7 +578,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "pr_babysitter",
-        title: "PR Watch",
         scheduleKind: "manual",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
@@ -623,7 +618,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "pr_babysitter",
-        title: "Bad Cron",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * * *",
         approvalPolicy: "interactive",
@@ -657,7 +651,6 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "watch_report",
-        title: "Selector Check",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
         approvalPolicy: "interactive",
@@ -718,14 +711,12 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "goal_runner",
-        title: "Goal Loop",
         scheduleKind: "manual",
         approvalPolicy: "explicit_per_run",
         maxIterationsPerRun: 4,
         maxTokensPerRun: 160000,
         maxWallClockMinutesPerRun: 20,
         maxRunsPerDay: 3,
-        goalTitle: "Inline Goal Title",
         goalObjective: "Investigate failing tests and propose fixes.",
         goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
       });

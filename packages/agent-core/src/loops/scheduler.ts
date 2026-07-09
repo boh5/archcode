@@ -206,7 +206,7 @@ export class LoopScheduler {
       triggerKind: "manual",
       subjectKey: `manual:${loop.loopId}`,
       eventSummary: {
-        summary: `Manual trigger requested for loop "${loop.config.title}"`,
+        summary: `Manual trigger requested for loop ${loop.loopId}`,
         source: "loop-scheduler-manual",
       },
     });
@@ -297,7 +297,7 @@ export class LoopScheduler {
         triggerKind: "interval",
         subjectKey: `interval:${loop.loopId}`,
         eventSummary: {
-          summary: `Queued overlapping interval trigger for loop "${loop.config.title}"`,
+          summary: `Queued overlapping interval trigger for loop ${loop.loopId}`,
           source: "loop-scheduler-interval",
         },
       });
@@ -329,7 +329,7 @@ export class LoopScheduler {
       triggerKind: "interval",
       subjectKey: `interval:${loop.loopId}`,
       eventSummary: {
-        summary: `Queued interval trigger for loop "${loop.config.title}"`,
+        summary: `Queued interval trigger for loop ${loop.loopId}`,
         source: "loop-scheduler-interval",
       },
     });
@@ -807,10 +807,10 @@ export class LoopScheduler {
       blockingKey: `loop:${loop.loopId}:run:${runningReport.runId}:approval:explicit_per_run`,
       source: { type: "loop_approval", loopId: loop.loopId, approvalPoint: "explicit_per_run" },
       displayPayload: {
-        title: `Approve loop run: ${loop.config.title}`,
+        title: "Approve loop run",
         summary: `Loop ${loop.loopId} is waiting for approval before running ${runningReport.trigger}.`,
         fields: [
-          { label: "Loop", value: loop.config.title },
+          { label: "Loop ID", value: loop.loopId },
           { label: "Trigger", value: runningReport.trigger },
           { label: "Job", value: job.jobId },
         ],
@@ -837,10 +837,10 @@ export class LoopScheduler {
       blockingKey: `loop:${loop.loopId}:run:${runningReport.runId}:blocker:${result.blockedReason ?? "needs_user"}`,
       source: { type: "loop_blocker", loopId: loop.loopId, runId: runningReport.runId, reason: result.blockedReason ?? "needs_user" },
       displayPayload: {
-        title: `Loop blocked: ${loop.config.title}`,
+        title: "Loop blocked",
         summary: result.summary ?? result.skippedReason ?? "Loop run needs human input before continuing.",
         fields: [
-          { label: "Loop", value: loop.config.title },
+          { label: "Loop ID", value: loop.loopId },
           { label: "Run", value: runningReport.runId },
           ...(result.sessionId === undefined ? [] : [{ label: "Session", value: result.sessionId }]),
         ],

@@ -145,7 +145,7 @@ function LoopRow({ loop }: { loop: DashboardLoop }) {
             href={`/projects/${loop.projectSlug}/loops/${loop.loopId}`}
             className="text-[13px] font-medium text-text-primary truncate hover:text-accent transition-colors duration-150"
           >
-            {loop.title}
+            {loop.title || "Untitled"}
           </a>
           <span className="text-[11px] text-text-muted shrink-0">{loop.projectName}</span>
         </div>
@@ -174,7 +174,7 @@ function GoalRow({ goal }: { goal: DashboardGoal }) {
     <div className="flex items-center gap-3 bg-bg-surface border border-border-default rounded-md px-3.5 py-2.5 hover:border-border-strong transition-colors duration-150">
       <div className="flex flex-col min-w-0 flex-1 gap-0.5">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-text-primary truncate">{goal.title}</span>
+          <span className="text-[13px] font-medium text-text-primary truncate">{goal.title || "Untitled"}</span>
           <span className="text-[11px] text-text-muted shrink-0">{goal.projectName}</span>
         </div>
         <div className="flex items-center gap-1.5">

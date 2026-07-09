@@ -148,7 +148,7 @@ function GoalListItem({ goal, onClick }: { goal: GoalState; onClick: () => void 
     >
       <div className="flex-1 min-w-0">
         <div className="text-[13px] font-medium text-text-primary truncate">
-          {goal.title}
+          {goal.title || "Untitled"}
         </div>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
           <span className="font-mono">{goal.id.slice(0, 8)}</span>
