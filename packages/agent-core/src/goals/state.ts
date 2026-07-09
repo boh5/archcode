@@ -281,6 +281,12 @@ export class GoalStateManager {
 
   async start(goalId: string, input: { readonly mainSessionId?: string; readonly loopId?: string } = {}): Promise<GoalState> {
     const state = await this.read(goalId);
+    const alreadyClaimedByMainSession = state.status === "running"
+      && input.mainSessionId !== undefined
+      && state.mainSessionId === input.mainSessionId
+      && (input.loopId === undefined || state.loopId === input.loopId);
+    if (alreadyClaimedByMainSession) return state;
+
     this.assertTransition(state, "running");
     return this.update(state, {
       status: "running",

@@ -313,6 +313,13 @@ function expectPromptUsesNaturalLanguageOnly(message: string): void {
   expect(message).not.toContain("typecheck_pass");
 }
 
+function expectPromptDoesNotRequestRedundantGoalClaim(message: string): void {
+  expect(message).toContain("Runtime has already started and claimed");
+  expect(message).not.toContain("Your first action must be calling goal_manage");
+  expect(message).not.toContain("goal_manage with action:\"start\"");
+  expect(message).not.toContain("goal_manage with action:\"retry\"");
+}
+
 describe("goals routes", () => {
   beforeEach(async () => {
     await rm(tempRoot, { recursive: true, force: true });
@@ -435,6 +442,7 @@ describe("goals routes", () => {
       userMessage: expect.stringContaining(`Goal ID: ${created.id}`),
     });
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
+    expectPromptDoesNotRequestRedundantGoalClaim(lastStartedUserMessage(runtime));
     expect(await manager.read(created.id)).toMatchObject({ status: "running", mainSessionId: providedMainSessionId });
   });
 
@@ -453,6 +461,7 @@ describe("goals routes", () => {
       title: created.title,
     });
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
+    expectPromptDoesNotRequestRedundantGoalClaim(lastStartedUserMessage(runtime));
   });
 
   test("POST run rejects terminal and non-runnable statuses", async () => {
@@ -531,9 +540,10 @@ describe("goals routes", () => {
     expect(retried.review).toBeUndefined();
     expect(runtime.startSessionExecution).toHaveBeenLastCalledWith(expect.objectContaining({
       sessionId: retrySessionId,
-      userMessage: expect.stringContaining("goal_manage with action:\"retry\""),
+      userMessage: expect.stringContaining("Runtime has already started and claimed this retry"),
     }));
     expectPromptUsesNaturalLanguageOnly(lastStartedUserMessage(runtime));
+    expectPromptDoesNotRequestRedundantGoalClaim(lastStartedUserMessage(runtime));
   });
 
   test("POST retry rejects active reserved session mismatch", async () => {

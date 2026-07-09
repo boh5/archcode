@@ -254,7 +254,8 @@ function buildGoalRunUserMessage(goal: GoalState): string {
     goal.objective,
     "Acceptance criteria:",
     goal.acceptanceCriteria,
-    "Your first action must be calling goal_manage with action:\"start\" and this Goal ID before doing implementation work.",
+    "Runtime has already started and claimed this Goal for the current main session.",
+    "Do not call goal_manage.start again; continue with the Goal work, delegate as needed, and hand off to Reviewer when ready.",
   ].join("\n");
 }
 
@@ -266,7 +267,8 @@ function buildGoalRetryUserMessage(goal: GoalState): string {
     goal.objective,
     "Acceptance criteria:",
     goal.acceptanceCriteria,
-    "Your first action must be calling goal_manage with action:\"retry\" and this Goal ID before doing implementation work.",
+    "Runtime has already started and claimed this retry for the current main session.",
+    "Do not call goal_manage.retry again; continue with the required fixes, delegate as needed, and hand off to Reviewer when ready.",
   ].join("\n");
 }
 

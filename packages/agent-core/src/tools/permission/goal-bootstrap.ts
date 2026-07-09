@@ -2,6 +2,7 @@ import {
   TOOL_ASK_USER,
   TOOL_AST_GREP_SEARCH,
   TOOL_BACKGROUND_OUTPUT,
+  TOOL_DELEGATE,
   TOOL_FILE_READ,
   TOOL_GIT_DIFF,
   TOOL_GIT_STATUS,
@@ -37,6 +38,8 @@ const SAFE_BOOTSTRAP_TOOLS = new Set<string>([
   TOOL_VIEW_TOOL_OUTPUT,
 ]);
 
+const REVIEWING_GOAL_MANAGE_ACTIONS = new Set<string>(["block", "cancel"]);
+
 export function createGoalBootstrapPermission(): ToolPermission {
   return async (input: unknown, ctx: ToolExecutionContext): Promise<PermissionDecision> => {
     const state = ctx.store.getState();
@@ -44,6 +47,14 @@ export function createGoalBootstrapPermission(): ToolPermission {
 
     const goal = await ctx.projectContext.goalState.read(state.goalId);
     if (goal.status === "running") return { outcome: "allow" };
+    if (goal.status === "reviewing" && goal.mainSessionId === state.sessionId) {
+      if (ctx.toolName === TOOL_DELEGATE && getDelegateAgentType(input) === "reviewer") {
+        return { outcome: "allow" };
+      }
+      if (ctx.toolName === TOOL_GOAL_MANAGE && REVIEWING_GOAL_MANAGE_ACTIONS.has(getGoalManageAction(input) ?? "")) {
+        return { outcome: "allow" };
+      }
+    }
     if (SAFE_BOOTSTRAP_TOOLS.has(ctx.toolName)) return { outcome: "allow" };
 
     const expectedAction = goal.status === "failed" || goal.status === "not_done" ? "retry" : "start";
@@ -63,6 +74,12 @@ export function createGoalBootstrapPermission(): ToolPermission {
       source: "tool-guard",
     };
   };
+}
+
+function getDelegateAgentType(input: unknown): string | undefined {
+  if (!input || typeof input !== "object" || !("agent_type" in input)) return undefined;
+  const agentType = (input as { agent_type?: unknown }).agent_type;
+  return typeof agentType === "string" ? agentType : undefined;
 }
 
 function getGoalManageAction(input: unknown): string | undefined {

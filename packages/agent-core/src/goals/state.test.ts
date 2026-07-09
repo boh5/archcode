@@ -215,6 +215,17 @@ describe("GoalStateManager", () => {
     expect((await manager.cancel(cancelled.id, "not needed")).status).toBe("cancelled");
   });
 
+  test("start is idempotent when the same main session already claimed a running goal", async () => {
+    const manager = new GoalStateManager(TMP_DIR);
+    const created = await createGoal(manager);
+
+    const first = await manager.start(created.id, { mainSessionId: "main-session" });
+    const second = await manager.start(created.id, { mainSessionId: "main-session" });
+
+    expect(second).toEqual(first);
+    expect(await captureAsyncError(() => manager.start(created.id, { mainSessionId: "different-main-session" }))).toBeInstanceOf(GoalTransitionError);
+  });
+
   test("rejects forbidden transitions", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const created = await createGoal(manager);
