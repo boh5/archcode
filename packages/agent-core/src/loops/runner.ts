@@ -523,8 +523,9 @@ export class LoopRunner {
     const superseded = this.#skippedIfSuperseded(input);
     if (superseded !== undefined) return superseded;
     const worktreeManager = this.#worktreeManager;
+    const useWorktree = input.loop.config.useWorktree === true;
     if (worktreeManager === undefined) return { workspaceRoot: this.#workspaceRoot };
-    if (input.loop.config.useWorktree !== true) return { workspaceRoot: this.#workspaceRoot };
+    if (!useWorktree) return { workspaceRoot: this.#workspaceRoot };
 
     try {
       const baseSha = await this.#baseShaForJob(job);
