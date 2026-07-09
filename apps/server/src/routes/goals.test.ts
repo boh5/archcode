@@ -49,13 +49,6 @@ class FakeGoalTransitionError extends Error {
   }
 }
 
-class FakeGoalUnsupportedStateError extends Error {
-  constructor(goalId: string, unsupportedKeys: string[]) {
-    super(`Unsupported legacy goal state for ${goalId}: ${unsupportedKeys.join(", ")}`);
-    this.name = "GoalUnsupportedStateError";
-  }
-}
-
 class FakeGoalReviewerAuthorizationError extends Error {
   constructor(public readonly goalId: string, message: string) {
     super(message);
@@ -603,19 +596,6 @@ describe("goals routes", () => {
     expect(readRes.status).toBe(200);
     expect(readGoal.id).toBe(created.id);
     expectSimplifiedGoalShape(readGoal as unknown as Record<string, unknown>);
-  });
-
-  test("GET read maps unsupported legacy Goal state to deterministic bad request", async () => {
-    const { app, manager, project } = await createFixture("unsupported-legacy-state");
-    const created = await postGoal(app, project.slug);
-    manager.failNextRead(new FakeGoalUnsupportedStateError(created.id, ["doneConditions", "artifacts"]));
-
-    const readRes = await app.request(`/api/projects/${project.slug}/goals/${created.id}`);
-
-    expect(readRes.status).toBe(400);
-    expect(await readRes.json()).toEqual({
-      error: { code: "BAD_REQUEST", message: `Unsupported legacy goal state for ${created.id}: doneConditions, artifacts` },
-    });
   });
 
   test("GET read maps reviewer lifecycle errors to the existing conflict shape", async () => {

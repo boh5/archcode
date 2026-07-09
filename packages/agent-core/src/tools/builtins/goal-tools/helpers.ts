@@ -8,7 +8,6 @@ import {
   GoalReviewerAuthorizationError,
   GoalStateError,
   GoalTransitionError,
-  GoalUnsupportedStateError,
 } from "../../../goals/state";
 import { createToolErrorResult } from "../../errors";
 import type { ToolErrorKind } from "../../errors";
@@ -101,7 +100,7 @@ export function goalToolErrorResult(
   if (error instanceof GoalReviewerAuthorizationError) {
     return goalError("permission-denied", error.code, error.message);
   }
-  if (error instanceof GoalStateError || error instanceof GoalTransitionError || error instanceof GoalReviewFinalizationError || error instanceof GoalUnsupportedStateError) {
+  if (error instanceof GoalStateError || error instanceof GoalTransitionError || error instanceof GoalReviewFinalizationError) {
     return goalWorkspaceError(options.stateErrorCode ?? "GOAL_INVALID_TRANSITION", error.message);
   }
   if (error instanceof Error && error.name === "GoalRunnerError") {

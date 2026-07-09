@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PROJECT_STATE_DIR_NAME, type GoalState } from "@archcode/protocol";
 
 import { GoalRunner } from "./runner";
-import { GoalStateManager, GoalUnsupportedStateError } from "./state";
+import { GoalStateError, GoalStateManager } from "./state";
 
 const TMP_ROOT = join(import.meta.dir, "__test_tmp__", "goal-integration");
 
@@ -133,6 +133,6 @@ describe("Goal core integration", () => {
       updatedAt: new Date().toISOString(),
     }, null, 2)}\n`);
 
-    await expect(manager.read(goalId)).rejects.toBeInstanceOf(GoalUnsupportedStateError);
+    await expect(manager.read(goalId)).rejects.toBeInstanceOf(GoalStateError);
   });
 });

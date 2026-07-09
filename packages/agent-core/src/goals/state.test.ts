@@ -15,7 +15,6 @@ import {
   GoalStateManager,
   GoalStateSchema,
   GoalTransitionError,
-  GoalUnsupportedStateError,
 } from "./state";
 
 const TMP_DIR = join(import.meta.dir, "__test_tmp__", "goal-state");
@@ -307,33 +306,37 @@ describe("GoalStateManager", () => {
     expect(budgeted.budget).toMatchObject({ status: "warning", usedTokens: 50, maxTokens: 100 });
   });
 
-  test("rejects old persisted schema with a named unsupported error", async () => {
+  test("rejects old persisted schema through strict state validation", async () => {
     const manager = new GoalStateManager(TMP_DIR);
     const goalId = VALID_UUID;
     const goalDir = join(TMP_DIR, PROJECT_STATE_DIR_NAME, "goals", goalId);
+    const now = new Date().toISOString();
     await mkdir(goalDir, { recursive: true });
     const oldState: Record<string, unknown> = {
       id: goalId,
       projectId: "project-a",
       title: "Old state",
+      objective: "Old objective",
+      acceptanceCriteria: "Old acceptance criteria",
       status: "running",
+      attempt: 1,
+      pendingHitlIds: [],
+      approvalRefs: [],
+      childSessionIds: [],
       [`done${"Conditions"}`]: [],
       [`arti${"facts"}`]: [],
       [`ph${"ase"}`]: "plan",
       [`retry${"Policy"}`]: { maxRetries: 1 },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
     await Bun.write(join(goalDir, "goal.json"), `${JSON.stringify(oldState, null, 2)}\n`);
 
     const error = await captureAsyncError(() => manager.read(goalId));
-    expect(error).toBeInstanceOf(GoalUnsupportedStateError);
-    expect((error as GoalUnsupportedStateError).unsupportedKeys).toEqual(expect.arrayContaining([
-      `done${"Conditions"}`,
-      `arti${"facts"}`,
-      `ph${"ase"}`,
-      `retry${"Policy"}`,
-    ]));
+    expect(error).toBeInstanceOf(GoalStateError);
+    if (!(error instanceof GoalStateError)) throw new Error("Expected GoalStateError");
+    expect(error.message).toBe(`Goal state validation failed for ${goalId}`);
+    expect(String(error.cause)).toContain(`done${"Conditions"}`);
   });
 
   test("path validation and list filtering stay strict", async () => {

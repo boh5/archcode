@@ -477,7 +477,6 @@ function mapGoalError(error: unknown): Error {
   if (
     hasErrorName(error, "GoalPathError")
     || hasErrorName(error, "GoalInvalidIdError")
-    || hasErrorName(error, "GoalUnsupportedStateError")
   ) {
     return new BadRequestError(error.message);
   }

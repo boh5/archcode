@@ -164,16 +164,6 @@ export class GoalStateError extends Error {
   }
 }
 
-export class GoalUnsupportedStateError extends Error {
-  constructor(
-    public readonly goalId: string,
-    public readonly unsupportedKeys: string[],
-  ) {
-    super(`Unsupported legacy goal state for ${goalId}: ${unsupportedKeys.join(", ")}`);
-    this.name = "GoalUnsupportedStateError";
-  }
-}
-
 export class GoalNotFoundError extends Error {
   constructor(public readonly goalId: string) {
     super(`Goal not found: ${goalId}`);
@@ -219,20 +209,6 @@ const ALLOWED_TRANSITIONS: Record<GoalStatus, readonly GoalStatus[]> = {
   done: [],
   cancelled: [],
 };
-const LEGACY_KEYS = [
-  "done" + "Conditions",
-  "done" + "Results",
-  "arti" + "facts",
-  "ph" + "ase",
-  "retry" + "Policy",
-  "retry" + "State",
-  "approval" + "Points",
-  "review" + "Report",
-  "repair" + "Context",
-  "resume" + "Checkpoint",
-  "token" + "Budget",
-] as const;
-
 export class GoalStateManager {
   readonly #logger: Logger;
 
@@ -507,8 +483,6 @@ export class GoalStateManager {
       throw new GoalStateError(goalId, `Invalid goal JSON for ${goalId}`, error);
     }
 
-    const unsupportedKeys = detectLegacyKeys(parsed);
-    if (unsupportedKeys.length > 0) throw new GoalUnsupportedStateError(goalId, unsupportedKeys);
     const result = GoalStateSchema.safeParse(parsed);
     if (!result.success) throw new GoalStateError(goalId, `Goal state validation failed for ${goalId}`, result.error);
     return result.data;
@@ -544,12 +518,6 @@ export class GoalStateManager {
   private isMissingDirectoryError(error: unknown): boolean {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
-}
-
-function detectLegacyKeys(value: unknown): string[] {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
-  const keys = new Set(Object.keys(value));
-  return LEGACY_KEYS.filter((key) => keys.has(key));
 }
 
 function normalizeError(error: Error | string): NonNullable<GoalState["lastError"]> {
