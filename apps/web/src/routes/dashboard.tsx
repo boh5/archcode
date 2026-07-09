@@ -1,7 +1,7 @@
 import { Target, Loader2, CircleDot, RotateCcw } from "lucide-react";
 import { useActiveGoals, useActiveLoops, useDashboardHitl } from "../api/queries";
 import { HitlInbox } from "../components/features/HitlCard";
-import type { DashboardGoal, DashboardLoop, GoalStatus, LoopRunReport, LoopStatus } from "../api/types";
+import type { DashboardGoal, DashboardLoop, GoalStatus, LoopRunReportStatus } from "../api/types";
 
 const STATUS_BADGE: Record<GoalStatus, string> = {
   draft: "bg-bg-active text-text-secondary",
@@ -14,12 +14,38 @@ const STATUS_BADGE: Record<GoalStatus, string> = {
   cancelled: "bg-bg-active text-text-tertiary",
 };
 
-const LOOP_STATUS_BADGE: Record<LoopStatus, string> = {
-  active: "bg-success-muted text-success",
-  paused: "bg-warning-muted text-warning",
-  disabled: "bg-bg-active text-text-muted",
-  error: "bg-error-muted text-error",
+type PrimaryLoopState = "Running" | "Awaiting Input" | "Completed" | "Failed";
+
+const PRIMARY_LOOP_STATE_BADGE: Record<PrimaryLoopState, string> = {
+  "Running": "bg-success-muted text-success",
+  "Awaiting Input": "bg-warning-muted text-warning",
+  "Completed": "bg-accent-muted text-accent",
+  "Failed": "bg-error-muted text-error",
 };
+
+function mapRunStatusToPrimary(status: LoopRunReportStatus): PrimaryLoopState {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "succeeded":
+      return "Completed";
+    case "failed":
+    case "budget_exceeded":
+      return "Failed";
+    case "needs_user":
+      return "Awaiting Input";
+    default:
+      return "Completed";
+  }
+}
+
+function mapDashboardLoopToPrimary(loop: DashboardLoop): PrimaryLoopState {
+  if (loop.currentRun?.status === "running") return "Running";
+  if (loop.currentRun?.status === "needs_user") return "Awaiting Input";
+  if (loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") return "Failed";
+  if (loop.lastRun?.status === "succeeded") return "Completed";
+  return loop.status === "active" ? "Running" : "Completed";
+}
 
 export function Dashboard() {
   const { data: goals, isLoading: goalsLoading } = useActiveGoals();
@@ -107,9 +133,9 @@ export function Dashboard() {
 }
 
 function LoopRow({ loop }: { loop: DashboardLoop }) {
-  const current = formatDashboardRun(loop.currentRun);
-  const last = formatDashboardRun(loop.lastRun);
+  const last = loop.lastRun ? mapRunStatusToPrimary(loop.lastRun.status) : "none";
   const next = formatDashboardDate(loop.nextRunAt);
+  const primaryState = mapDashboardLoopToPrimary(loop);
 
   return (
     <div className="flex items-center gap-3 bg-bg-surface border border-border-default rounded-md px-3.5 py-2.5 hover:border-border-strong transition-colors duration-150">
@@ -124,11 +150,12 @@ function LoopRow({ loop }: { loop: DashboardLoop }) {
           <span className="text-[11px] text-text-muted shrink-0">{loop.projectName}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${LOOP_STATUS_BADGE[loop.status] ?? "bg-bg-active text-text-secondary"}`}>
-            {loop.status}
+          <span
+            data-testid="dashboard-loop-primary-state"
+            className={`text-[10.5px] px-1.5 py-[1px] rounded font-medium ${PRIMARY_LOOP_STATE_BADGE[primaryState]}`}
+          >
+            {primaryState}
           </span>
-          <span className="text-[10.5px] text-text-tertiary">{loop.templateId}</span>
-          <span className="text-[10.5px] text-text-tertiary">current: {current}</span>
           <span className="text-[10.5px] text-text-tertiary">last: {last}</span>
           <span className="text-[10.5px] text-text-tertiary">next: {next}</span>
         </div>
@@ -137,14 +164,9 @@ function LoopRow({ loop }: { loop: DashboardLoop }) {
   );
 }
 
-function formatDashboardRun(run: LoopRunReport | undefined): string {
-  if (!run) return "none";
-  return `${run.status} ${run.runId}`;
-}
-
 function formatDashboardDate(value: number | undefined): string {
   if (value === undefined || value === null) return "none";
-  return new Date(value).toISOString();
+  return new Date(value).toLocaleString();
 }
 
 function GoalRow({ goal }: { goal: DashboardGoal }) {

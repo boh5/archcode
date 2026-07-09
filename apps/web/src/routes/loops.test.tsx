@@ -173,19 +173,6 @@ function submitCreateLoopForm(container: Element): void {
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 }
 
-function expectRatioInputsNativelyValid(container: Element, soft: string, hard: string): void {
-  const softInput = container.querySelector("#new-loop-soft-ratio") as HTMLInputElement | null;
-  const hardInput = container.querySelector("#new-loop-hard-ratio") as HTMLInputElement | null;
-  if (!softInput || !hardInput) throw new Error("Missing ratio inputs");
-
-  expect(softInput.step).toBe("0.01");
-  expect(hardInput.step).toBe("0.01");
-  expect(softInput.value).toBe(soft);
-  expect(hardInput.value).toBe(hard);
-  expect(softInput.checkValidity()).toBe(true);
-  expect(hardInput.checkValidity()).toBe(true);
-}
-
 // ─── Tests ───
 
 describe("LoopsRoute", () => {
@@ -198,7 +185,7 @@ describe("LoopsRoute", () => {
     mock.restore();
   });
 
-  test("renders loop list with title, status, schedule, runKind, mode, last run, and next run", async () => {
+  test("renders loop list with title, primary state, schedule, last run, and next run; hides internals", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -290,18 +277,30 @@ describe("LoopsRoute", () => {
         expect(container.textContent).toContain("Manual Goal Loop");
       });
 
-      expect(container.textContent).toContain("active");
-      expect(container.textContent).toContain("paused");
       expect(container.textContent).toContain("cron UTC */15 * * * *");
       expect(container.textContent).toContain("manual");
       expect(container.textContent).toContain("template: watch_report");
       expect(container.textContent).toContain("template: goal_runner");
-      expect(container.textContent).toContain("succeeded");
+      expect(container.textContent).toContain("Completed");
+      expect(container.textContent).toContain("Awaiting Input");
       expect(container.textContent).toContain("next:");
-      expect(container.querySelector('[data-testid="loop-trigger-health"]')?.textContent).toContain("on_pr healthy 60000ms");
-      expect(container.textContent).toContain("job-1 blocked on_pr blocked needs-review");
-      expect(container.textContent).toContain("queued: 1");
-      expect(container.textContent).toContain("cleanup: auto_paused");
+
+      const primaryStates = container.querySelectorAll('[data-testid="loop-primary-state"]');
+      expect(primaryStates.length).toBe(2);
+
+      const lowerText = (container.textContent ?? "").toLowerCase();
+      expect(lowerText).not.toContain("trigger health");
+      expect(lowerText).not.toContain("queue:");
+      expect(lowerText).not.toContain("cleanup");
+      expect(lowerText).not.toContain("dedupekey");
+      expect(lowerText).not.toContain("subjectkey");
+      expect(lowerText).not.toContain("branchkey");
+      expect(lowerText).not.toContain("runkind");
+      expect(lowerText).not.toContain("toolprofileid");
+      expect(lowerText).not.toContain("job-1");
+      expect(lowerText).not.toContain("job-2");
+      expect(lowerText).not.toContain("needs-review");
+      expect(lowerText).not.toContain("auto_paused");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -377,23 +376,17 @@ describe("LoopsRoute", () => {
         templateId: "watch_report",
         title: "Manual Session",
         scheduleKind: "manual",
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_local_report",
         taskPrompt: "Summarize local project health.",
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
-      expectRatioInputsNativelyValid(container, "0.8", "1");
 
       await act(async () => {
         submitCreateLoopForm(container);
@@ -442,23 +435,17 @@ describe("LoopsRoute", () => {
         title: "Interval Session",
         scheduleKind: "interval",
         everyMs: 60000,
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_local_report",
         taskPrompt: "Draft the interval report.",
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
-      expectRatioInputsNativelyValid(container, "0.8", "1");
 
       await act(async () => {
         submitCreateLoopForm(container);
@@ -507,16 +494,11 @@ describe("LoopsRoute", () => {
         title: "Cron Session",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_local_report",
         taskPrompt: "Draft the cron report.",
       });
 
@@ -559,16 +541,11 @@ describe("LoopsRoute", () => {
         title: "Invalid Cron",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * * *",
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_local_report",
         taskPrompt: "Summarize local project health.",
       });
 
@@ -584,7 +561,7 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("creates manual schedule with separate on_pr trigger payload", async () => {
+  test("creates pr_babysitter loop from template selection", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -605,25 +582,17 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "pr_babysitter",
-        title: "Manual PR Watch",
+        title: "PR Watch",
         scheduleKind: "manual",
-        triggerOnPr: true,
-        triggerCadenceMs: 60000,
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_github_pr_watch",
         taskPrompt: "Watch pull requests.",
       });
 
-      expect((container.querySelector('[data-testid="loop-trigger-on-pr"]') as HTMLInputElement | null)?.checked).toBe(true);
-      expect((container.querySelector('[data-testid="loop-trigger-cadence-ms"]') as HTMLInputElement | null)?.value).toBe("60000");
+      expect(container.textContent).toContain("PR Babysitter");
       await act(async () => {
         submitCreateLoopForm(container);
       });
@@ -643,7 +612,7 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("invalid on_pr cadence shows exact validation text and disables submit", async () => {
+  test("invalid cron expression shows exact validation text and disables submit", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -654,24 +623,18 @@ describe("LoopsRoute", () => {
     try {
       await renderCreateLoopForm(reactRoot, queryClient, "demo", () => {}, {
         templateId: "pr_babysitter",
-        title: "Bad Cadence",
-        scheduleKind: "manual",
-        triggerOnPr: true,
-        triggerCadenceMs: 29000,
-        runKind: "session",
-        mode: "report",
+        title: "Bad Cron",
+        scheduleKind: "cron",
+        cronExpression: "*/15 * * * * *",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_github_pr_watch",
         taskPrompt: "Watch pull requests.",
       });
 
-      expect(container.textContent).toContain("Cadence must be at least 30000 ms");
+      expect(container.textContent).toContain("Cron must be a 5-field UTC expression");
       const submitButton = container.querySelector('[data-testid="loop-create-submit"]') as HTMLButtonElement;
       expect(submitButton.disabled).toBe(true);
     } finally {
@@ -697,39 +660,30 @@ describe("LoopsRoute", () => {
         title: "Selector Check",
         scheduleKind: "cron",
         cronExpression: "*/15 * * * *",
-        triggerOnPr: true,
-        triggerCadenceMs: 60000,
-        runKind: "session",
-        mode: "report",
         approvalPolicy: "interactive",
         maxIterationsPerRun: 8,
         maxTokensPerRun: 120000,
         maxWallClockMinutesPerRun: 15,
         maxRunsPerDay: 2,
-        softThresholdRatio: 0.8,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_local_report",
         taskPrompt: "Summarize local project health.",
       });
 
       for (const testId of [
         "loop-schedule-kind",
         "loop-cron-expression",
-        "loop-trigger-on-pr",
-        "loop-trigger-cadence-ms",
-        "loop-max-concurrent",
         "loop-create-submit",
       ]) {
         expect(container.querySelector(`[data-testid="${testId}"]`)).not.toBeNull();
       }
-      const maxConcurrent = container.querySelector('[data-testid="loop-max-concurrent"]') as HTMLInputElement;
-      expect(maxConcurrent.disabled).toBe(true);
       const lowerText = (container.textContent ?? "").toLowerCase();
       expect(lowerText).not.toContain("readiness");
       expect(lowerText).not.toContain("custom pattern");
       expect(lowerText).not.toContain("auto approve");
       expect(lowerText).not.toContain("auto-approval");
       expect(lowerText).not.toContain("projectconfig");
+      expect(lowerText).not.toContain("runkind");
+      expect(lowerText).not.toContain("toolprofileid");
+      expect(lowerText).not.toContain("mode");
     } finally {
       await act(async () => {
         reactRoot.unmount();
@@ -766,16 +720,11 @@ describe("LoopsRoute", () => {
         templateId: "goal_runner",
         title: "Goal Loop",
         scheduleKind: "manual",
-        runKind: "goal",
-        mode: "act",
         approvalPolicy: "explicit_per_run",
         maxIterationsPerRun: 4,
         maxTokensPerRun: 160000,
         maxWallClockMinutesPerRun: 20,
         maxRunsPerDay: 3,
-        softThresholdRatio: 0.75,
-        hardThresholdRatio: 1,
-        toolProfileId: "loop_goal_action",
         goalTitle: "Inline Goal Title",
         goalObjective: "Investigate failing tests and propose fixes.",
         goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -784,7 +733,6 @@ describe("LoopsRoute", () => {
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
-      expectRatioInputsNativelyValid(container, "0.75", "1");
 
       await act(async () => {
         submitCreateLoopForm(container);
@@ -805,7 +753,7 @@ describe("LoopsRoute", () => {
     }
   });
 
-  test("preset quick starts can be selected and submit editable config with budget and tool profile", async () => {
+  test("template quick starts can be selected and submit with templateId only", async () => {
     const dom = installDom();
     const container = document.getElementById("root");
     if (!container) throw new Error("Missing test root");
@@ -835,47 +783,27 @@ describe("LoopsRoute", () => {
         expect(container.textContent).toContain("Quick Starts");
       });
 
-      const dailyTriageButton = container.querySelector('button[aria-label="Preset Daily Triage"]') as HTMLButtonElement;
-      expect(dailyTriageButton).not.toBeNull();
-      expect(dailyTriageButton.disabled).toBe(false);
+      const quickStartButtons = Array.from(container.querySelectorAll('button[aria-label^="Template "]'));
+      expect(quickStartButtons.length).toBe(4);
 
-      const changelogButton = container.querySelector('button[aria-label="Preset Changelog Drafter"]') as HTMLButtonElement;
-      expect(changelogButton).not.toBeNull();
-      expect(changelogButton.disabled).toBe(false);
-
-      const prBabysitterButton = container.querySelector('button[aria-label="Preset PR Babysitter"]') as HTMLButtonElement;
-      expect(prBabysitterButton).not.toBeNull();
-      expect(prBabysitterButton.disabled).toBe(false);
-
-      const ciSweeperButton = container.querySelector('button[aria-label="Preset CI Sweeper"]') as HTMLButtonElement;
-      expect(ciSweeperButton).not.toBeNull();
-      expect(ciSweeperButton.disabled).toBe(false);
-
-      const dependencySweeperButton = container.querySelector('button[aria-label="Preset Dependency Sweeper"]') as HTMLButtonElement;
-      expect(dependencySweeperButton).not.toBeNull();
-      expect(dependencySweeperButton.disabled).toBe(false);
-
-      const postMergeButton = container.querySelector('button[aria-label="Preset Post-Land Cleanup"]') as HTMLButtonElement;
-      expect(postMergeButton).not.toBeNull();
-      expect(postMergeButton.disabled).toBe(false);
-
-      const issueTriageButton = container.querySelector('button[aria-label="Preset Issue Triage"]') as HTMLButtonElement;
-      expect(issueTriageButton).not.toBeNull();
-      expect(issueTriageButton.disabled).toBe(false);
+      const prBabysitterButton = quickStartButtons.find((b) =>
+        b.getAttribute("aria-label")?.includes("PR Babysitter"),
+      ) as HTMLButtonElement | undefined;
+      expect(prBabysitterButton).toBeDefined();
+      expect(prBabysitterButton!.disabled).toBe(false);
 
       await act(async () => {
-        prBabysitterButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+        prBabysitterButton!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       });
 
       await waitFor(() => {
         expect(container.textContent).toContain("GitHub.com integration with an env token");
-        expect(container.textContent).toContain("PR Babysitter does not merge, rebase, approve, or force-push");
+        expect(container.textContent).toContain("does not merge, rebase, approve, or force-push");
       });
 
       const submitButton = container.querySelector('button[type="submit"]') as HTMLButtonElement;
       expect(submitButton).not.toBeNull();
       expect(submitButton.disabled).toBe(false);
-      expectRatioInputsNativelyValid(container, "0.8", "1");
 
       await act(async () => {
         submitCreateLoopForm(container);

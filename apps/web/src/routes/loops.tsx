@@ -3,14 +3,67 @@ import { Link, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { useLoops } from "../api/queries";
 import { CreateLoopDialog } from "../components/features/CreateLoopDialog";
-import type { LoopJobSummary, LoopState, LoopStatus, LoopTriggerHealth } from "../api/types";
+import type { LoopState, LoopRunReportStatus } from "../api/types";
 
-const STATUS_BADGE_CLASS: Record<LoopStatus, string> = {
-  active: "bg-success-muted text-success",
-  paused: "bg-warning-muted text-warning",
-  disabled: "bg-bg-active text-text-muted",
-  error: "bg-error-muted text-error",
+// Four primary user-facing states for Loop primary surfaces.
+type PrimaryLoopState = "Running" | "Awaiting Input" | "Completed" | "Failed";
+
+const PRIMARY_STATE_BADGE_CLASS: Record<PrimaryLoopState, string> = {
+  "Running": "bg-success-muted text-success",
+  "Awaiting Input": "bg-warning-muted text-warning",
+  "Completed": "bg-accent-muted text-accent",
+  "Failed": "bg-error-muted text-error",
 };
+
+function mapRunStatusToPrimary(status: LoopRunReportStatus): PrimaryLoopState {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "succeeded":
+      return "Completed";
+    case "failed":
+    case "budget_exceeded":
+      return "Failed";
+    case "needs_user":
+      return "Awaiting Input";
+    default:
+      // skipped, cancelled → finished without failure
+      return "Completed";
+  }
+}
+
+function mapToPrimaryState(loop: LoopState): PrimaryLoopState {
+  const currentJob = loop.currentJob;
+  const currentRun = loop.currentRun;
+
+  // Awaiting Input: blocked or needs user attention
+  if (
+    currentJob?.status === "blocked" ||
+    currentJob?.status === "needs_user" ||
+    currentRun?.status === "needs_user"
+  ) {
+    return "Awaiting Input";
+  }
+
+  // Running: active current run or job
+  if (currentRun?.status === "running" || currentJob?.status === "running") {
+    return "Running";
+  }
+
+  // Failed: loop error or last run failed
+  if (loop.status === "error" || loop.lastRun?.status === "failed" || loop.lastRun?.status === "budget_exceeded") {
+    return "Failed";
+  }
+
+  // Completed: last run succeeded
+  if (loop.lastRun?.status === "succeeded") {
+    return "Completed";
+  }
+
+  // Default: active with no run history → Running (ready/idle)
+  // Paused/disabled with no run history → Completed (idle)
+  return loop.status === "active" ? "Running" : "Completed";
+}
 
 export function LoopsRoute() {
   const { slug = "" } = useParams<{ slug: string }>();
@@ -132,26 +185,10 @@ function formatSchedule(loop: LoopState): string {
   return `cron UTC ${schedule.expression}`;
 }
 
-function formatTriggerHealth(health: LoopTriggerHealth[] | undefined): string {
-  if (!health || health.length === 0) return "none";
-  return health.map((item) => `${item.triggerKind} ${item.status}${item.cadenceMs !== undefined ? ` ${item.cadenceMs}ms` : ""}`).join("; ");
-}
-
-function formatJob(job: LoopJobSummary | undefined): string {
-  if (!job) return "none";
-  return `${job.jobId} ${job.status} ${job.triggerKind}${job.blockedReason ? ` blocked ${job.blockedReason}` : ""}`;
-}
-
-function formatQueue(loop: LoopState): string {
-  const queued = loop.queuedJobs?.length ?? 0;
-  return `current: ${formatJob(loop.currentJob)}; queued: ${queued}`;
-}
-
 function formatLastRun(loop: LoopState): string {
   if (!loop.lastRun) return "none";
-  const status = loop.lastRun.status;
   const time = new Date(loop.lastRun.startedAt).toLocaleString();
-  return `${status} ${time}`;
+  return `${mapRunStatusToPrimary(loop.lastRun.status)} ${time}`;
 }
 
 function formatNextRun(loop: LoopState): string | null {
@@ -162,6 +199,7 @@ function formatNextRun(loop: LoopState): string | null {
 function LoopListItem({ loop }: { loop: LoopState }) {
   const { slug = "" } = useParams<{ slug: string }>();
   const nextRun = formatNextRun(loop);
+  const primaryState = mapToPrimaryState(loop);
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
       <div className="flex-1 min-w-0">
@@ -172,7 +210,6 @@ function LoopListItem({ loop }: { loop: LoopState }) {
           {loop.config.title}
         </Link>
         <div className="flex items-center gap-2 mt-1 text-[11px] text-text-muted">
-          <span className="font-mono">{loop.loopId.slice(0, 8)}</span>
           <span>schedule: {formatSchedule(loop)}</span>
           <span>template: {loop.config.templateId}</span>
         </div>
@@ -180,15 +217,13 @@ function LoopListItem({ loop }: { loop: LoopState }) {
           <span>last run: {formatLastRun(loop)}</span>
           {nextRun && <span>next: {nextRun}</span>}
         </div>
-        <div className="flex flex-wrap items-center gap-2 mt-0.5 text-[11px] text-text-muted">
-          <span data-testid="loop-trigger-health">trigger health: {formatTriggerHealth(loop.triggerHealth)}</span>
-          <span>queue: {formatQueue(loop)}</span>
-          {loop.cleanupState && <span>cleanup: {loop.cleanupState}</span>}
-        </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${STATUS_BADGE_CLASS[loop.status]}`}>
-          {loop.status}
+        <span
+          data-testid="loop-primary-state"
+          className={`text-[11px] px-2 py-0.5 rounded-sm font-medium ${PRIMARY_STATE_BADGE_CLASS[primaryState]}`}
+        >
+          {primaryState}
         </span>
       </div>
     </div>

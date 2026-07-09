@@ -322,7 +322,7 @@ describe("Dashboard", () => {
     }
   });
 
-  test("active loops section renders row current last next fields and detail link without forbidden UI", async () => {
+  test("active loops section renders primary state, last result, next run, and detail link without forbidden UI", async () => {
     const loop = makeLoop({
       loopId: "loop-active-1",
       title: "Nightly Loop Sweep",
@@ -344,12 +344,9 @@ describe("Dashboard", () => {
         const text = loopsSection?.textContent ?? "";
         expect(text).toContain("Nightly Loop Sweep");
         expect(text).toContain("Alpha Project");
-        expect(text).toContain("active");
-        expect(text).toContain("goal");
-        expect(text).toContain("act");
-        expect(text).toContain("current: running run-current-alpha");
-        expect(text).toContain("last: succeeded run-last-alpha");
-        expect(text).toContain("next: 2023-11-14T22:28:20.000Z");
+        expect(text).toContain("Running");
+        expect(text).toContain("last: Completed");
+        expect(text).toContain("next:");
       });
 
       const detailLink = ctx.container.querySelector('a[href="/projects/alpha/loops/loop-active-1"]');
@@ -359,6 +356,16 @@ describe("Dashboard", () => {
       expect(lowerText).not.toContain("readiness");
       expect(lowerText).not.toContain("budget");
       expect(lowerText).not.toContain("cron");
+      expect(lowerText).not.toContain("runkind");
+      expect(lowerText).not.toContain("toolprofileid");
+      expect(lowerText).not.toContain("trigger health");
+      expect(lowerText).not.toContain("queue:");
+      expect(lowerText).not.toContain("cleanup");
+      expect(lowerText).not.toContain("dedupekey");
+      expect(lowerText).not.toContain("subjectkey");
+      expect(lowerText).not.toContain("branchkey");
+      expect(lowerText).not.toContain("run-current-alpha");
+      expect(lowerText).not.toContain("run-last-alpha");
     } finally {
       await cleanupDashboard(ctx);
     }
