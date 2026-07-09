@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, normalize, relative, resolve } from "node:path";
 
-import { LOOP_PROFILE_ONLY_CONNECTOR_TOOLS } from "../loops/tool-profiles";
-
 const srcRoot = resolve(import.meta.dir, "..");
 const packageRoot = resolve(srcRoot, "..");
 const projectRoot = resolve(packageRoot, "../..");
@@ -11,13 +9,80 @@ const loopSourceRoot = join(projectRoot, "packages/agent-core/src/loops");
 const toolSourceRoot = join(projectRoot, "packages/agent-core/src/tools");
 const integrationSourceRoot = join(projectRoot, "packages/agent-core/src/integrations");
 const protocolTypesFile = join(projectRoot, "packages/protocol/src/types.ts");
+const protocolReduceFile = join(projectRoot, "packages/protocol/src/reduce.ts");
 const loopStateFile = join(loopSourceRoot, "state.ts");
+const loopTemplatesFile = join(loopSourceRoot, "templates.ts");
+const loopPresetsFile = join(loopSourceRoot, "presets.ts");
+const loopToolProfilesFile = join(loopSourceRoot, "tool-profiles.ts");
 const loopRunnerFile = join(loopSourceRoot, "runner.ts");
 const loopSchedulerFile = join(loopSourceRoot, "scheduler.ts");
-const loopWorktreeManagerFile = join(loopSourceRoot, "worktree-manager.ts");
-const loopJobQueueFile = join(loopSourceRoot, "job-queue.ts");
-const loopCoordinatorFile = join(loopSourceRoot, "coordinator.ts");
-const loopCleanupFile = join(loopSourceRoot, "cleanup.ts");
+const configuredAgentFile = join(projectRoot, "packages/agent-core/src/agents/configured-agent.ts");
+const registerToolsFile = join(projectRoot, "packages/agent-core/src/core/register-tools.ts");
+const toolRegistryFile = join(projectRoot, "packages/agent-core/src/tools/registry.ts");
+const serverLoopsRouteFile = join(projectRoot, "apps/server/src/routes/loops.ts");
+const serverDashboardRouteFile = join(projectRoot, "apps/server/src/routes/dashboard.ts");
+const webCreateLoopDialogFile = join(projectRoot, "apps/web/src/components/features/CreateLoopDialog.tsx");
+const webLoopsRouteFile = join(projectRoot, "apps/web/src/routes/loops.tsx");
+const webLoopDetailRouteFile = join(projectRoot, "apps/web/src/routes/loop-detail.tsx");
+const webDashboardRouteFile = join(projectRoot, "apps/web/src/routes/dashboard.tsx");
+
+const supportedTemplateIds = ["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"] as const;
+const removedTemplateIds = [
+  "daily_triage",
+  "changelog_drafter",
+  "ci_sweeper",
+  "dependency_sweeper",
+  "post_merge_cleanup",
+  "issue_triage",
+] as const;
+const removedTemplateLabels = [
+  "Daily Triage",
+  "Changelog Drafter",
+  "CI Sweeper",
+  "Dependency Sweeper",
+  "Post-Land Cleanup",
+  "Issue Triage",
+] as const;
+const removedProfileIds = [
+  "loop_local_report",
+  "loop_local_maintenance",
+  "loop_github_pr_watch",
+  "loop_ci_watch",
+  "loop_goal_action",
+] as const;
+const replacementProfileIds = [
+  "loop_watch_report",
+  "loop_maintain_fix",
+  "loop_pr_babysitter",
+  "loop_goal_runner",
+] as const;
+const forbiddenSelectorNames = ["mode", "capability", "behavior", "toolMode", "toolSet"] as const;
+const forbiddenOrdinaryInputFields = [
+  "extraTools",
+  "mode",
+  "toolProfileId",
+  "config",
+  "presetId",
+  "collisionTargets",
+  "cleanupPolicy",
+] as const;
+const primaryUiForbiddenLabels = [
+  "runKind",
+  "run kind",
+  "mode",
+  "toolProfileId",
+  "tool profile",
+  "extraTools",
+  "collisionTargets",
+  "collision targets",
+  "cleanupPolicy",
+  "cleanup policy",
+  "trigger health",
+  "queue:",
+  "dedupeKey",
+  "subjectKey",
+  "branchKey",
+] as const;
 
 type Violation = {
   file: string;
@@ -26,12 +91,28 @@ type Violation = {
 
 const loopProductionFiles = [
   ...findTsFiles(loopSourceRoot),
+  ...findTsFiles(join(projectRoot, "packages/agent-core/src/agents")).filter((file) => file.endsWith("configured-agent.ts") || file.endsWith("types.ts")),
+  ...findTsFiles(join(projectRoot, "packages/agent-core/src/execution")).filter((file) => file.endsWith("session-execution-manager.ts")),
+  registerToolsFile,
+  toolRegistryFile,
   ...findTsFiles(join(projectRoot, "apps/server/src/routes")).filter((file) => /(?:loops|dashboard)\.ts$/.test(file)),
   ...findTsFiles(join(projectRoot, "apps/web/src/api")),
   ...findTsFiles(join(projectRoot, "apps/web/src/routes")).filter((file) => /(?:loops|loop-detail|dashboard)\.tsx$/.test(file)),
-  join(projectRoot, "apps/web/src/components/features/CreateLoopDialog.tsx"),
+  webCreateLoopDialogFile,
   protocolTypesFile,
-  join(projectRoot, "packages/protocol/src/reduce.ts"),
+  protocolReduceFile,
+].filter((file) => existsSync(file));
+
+const loopContractFiles = [
+  loopStateFile,
+  loopTemplatesFile,
+  protocolTypesFile,
+  serverLoopsRouteFile,
+  serverDashboardRouteFile,
+  webCreateLoopDialogFile,
+  webLoopsRouteFile,
+  webLoopDetailRouteFile,
+  webDashboardRouteFile,
 ].filter((file) => existsSync(file));
 
 const loopRunnerBoundaryFiles = [loopRunnerFile, loopSchedulerFile].filter((file) => existsSync(file));
@@ -81,7 +162,31 @@ function readProductionSource(filePath: string): string {
   return stripComments(readFileSync(filePath, "utf8"));
 }
 
-function findTextViolations(files: string[], patterns: RegExp[], allow: (file: string, source: string, pattern: RegExp) => boolean = () => false): Violation[] {
+function readProductionSourceIfExists(filePath: string): string {
+  return existsSync(filePath) ? readProductionSource(filePath) : "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function literalPatterns(values: readonly string[]): RegExp[] {
+  return values.map((value) => new RegExp(escapeRegExp(value)));
+}
+
+function fieldOrStringPatterns(fields: readonly string[]): RegExp[] {
+  return fields.flatMap((field) => [
+    new RegExp(`\\b${escapeRegExp(field)}\\??\\s*:`),
+    new RegExp(`\\.${escapeRegExp(field)}\\b`),
+    new RegExp(`["']${escapeRegExp(field)}["']`),
+  ]);
+}
+
+function findTextViolations(
+  files: string[],
+  patterns: RegExp[],
+  allow: (file: string, source: string, pattern: RegExp) => boolean = () => false,
+): Violation[] {
   const violations: Violation[] = [];
   for (const file of files) {
     const source = readProductionSource(file);
@@ -97,7 +202,7 @@ function findTextViolations(files: string[], patterns: RegExp[], allow: (file: s
 
 function expectNoViolations(violations: Violation[]): void {
   const message = violations.map(({ file, pattern }) => `${file} -> ${pattern}`).join("\n");
-  expect(violations, message).toEqual([]);
+  expect(violations, message || "expected no architecture violations").toEqual([]);
 }
 
 function sourceSection(filePath: string, start: string, end: string): string {
@@ -107,6 +212,69 @@ function sourceSection(filePath: string, start: string, end: string): string {
   const endIndex = source.indexOf(end, startIndex);
   if (endIndex < 0) throw new Error(`Missing section end "${end}" in ${relativeFile(filePath)}`);
   return source.slice(startIndex, endIndex);
+}
+
+function sourceFromMarker(filePath: string, start: string): string {
+  const source = readProductionSource(filePath);
+  const startIndex = source.indexOf(start);
+  if (startIndex < 0) throw new Error(`Missing section start "${start}" in ${relativeFile(filePath)}`);
+  return source.slice(startIndex);
+}
+
+function extractStringArrayAfterName(source: string, name: string): string[] {
+  const nameIndex = source.indexOf(name);
+  if (nameIndex < 0) return [];
+  const openBracket = source.indexOf("[", nameIndex);
+  if (openBracket < 0) return [];
+
+  let depth = 0;
+  let quote: '"' | "'" | "`" | undefined;
+  let escaped = false;
+  for (let index = openBracket; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote !== undefined) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "[") depth += 1;
+    if (char !== "]") continue;
+
+    depth -= 1;
+    if (depth === 0) {
+      const arraySource = source.slice(openBracket, index + 1);
+      return [...arraySource.matchAll(/["']([a-z][a-z0-9_]*?)["']/g)].map((match) => match[1]).filter((value): value is string => value !== undefined);
+    }
+  }
+
+  return [];
+}
+
+function extractDeclaredTemplateIds(source: string): string[] {
+  for (const name of ["SUPPORTED_LOOP_TEMPLATE_IDS", "LOOP_TEMPLATE_IDS", "LOOP_TEMPLATES"] as const) {
+    const ids = extractStringArrayAfterName(source, name);
+    if (ids.length > 0) return [...new Set(ids)].sort();
+  }
+
+  return [...new Set([...source.matchAll(/\b(?:templateId|id)\s*:\s*["']([a-z][a-z0-9_]*?)["']/g)]
+    .map((match) => match[1])
+    .filter((value): value is string => value !== undefined))].sort();
+}
+
+function primarySourceBeforeAdvancedDebug(filePath: string): string {
+  const source = readProductionSource(filePath);
+  const debugIndex = source.search(/Advanced Debug|advanced debug/i);
+  return debugIndex < 0 ? source : source.slice(0, debugIndex);
 }
 
 function extractDefineToolObjectBlocks(source: string): string[] {
@@ -163,7 +331,7 @@ function extractDefineToolObjectBlocks(source: string): string[] {
 
 function findConnectorMutatingToolDescriptorViolations(files: string[]): Violation[] {
   const violations: Violation[] = [];
-  const connectorNamePattern = /name\s*:\s*(?:["'](?:github|github_actions|actions)_|LOOP_GITHUB_|LOOP_ACTIONS_)/i;
+  const connectorNamePattern = /name\s*:\s*(?:["'](?:github|github_actions|actions)_|TOOL_GITHUB_|TOOL_GITHUB_ACTIONS_)/i;
   const mutatingNamePattern = /CREATE|UPDATE|DELETE|RERUN|CANCEL|MERGE|APPROVE|LABEL|ASSIGN|CLOSE|REOPEN|PUSH|REBASE|create|update|delete|rerun|cancel|merge|approve|label|assign|close|reopen|push|rebase/;
 
   for (const file of files) {
@@ -183,68 +351,161 @@ function findConnectorMutatingToolDescriptorViolations(files: string[]): Violati
   return violations;
 }
 
-describe("Loop hardening architecture guardrails", () => {
-  test("Loop surface explicitly includes confirmed scheduling, queue, worktree, and cleanup contracts", () => {
-    const loopStateSource = readProductionSource(loopStateFile);
-    const protocolSource = readProductionSource(protocolTypesFile);
+describe("Loop simplified target-model architecture guardrails", () => {
+  test("Loop templates are exactly the four simplified template ids", () => {
+    expect(existsSync(loopTemplatesFile), "Loop templates must live in packages/agent-core/src/loops/templates.ts").toBe(true);
 
-    expect(loopStateSource).toMatch(/z\.literal\(["']cron["']\)/);
-    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_commit["']\)/);
-    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_pr["']\)/);
-    expect(loopStateSource).toMatch(/kind:\s*z\.literal\(["']on_ci_fail["']\)/);
-    expect(loopStateSource).toMatch(/triggers:\s*z\.array\(LoopTriggerSpecSchema\)\.max\(50\)\.optional\(\)/);
-
-    expect(loopStateSource).toContain("export const LoopCoordinatorConfigSchema");
-    expect(loopStateSource).toMatch(/maxConcurrent:\s*z\.number\(\)\.int\(\)\.positive\(\)\.default\(2\)/);
-    expect(loopStateSource).toContain("export const LoopProjectConfigSchema");
-    expect(loopStateSource).toContain("export const LoopJobSummarySchema");
-    expect(loopStateSource).toMatch(/currentJob:\s*LoopJobSummarySchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/queuedJobs:\s*z\.array\(LoopJobSummarySchema\)\.max\(100\)\.optional\(\)/);
-    expect(loopStateSource).toMatch(/triggerKind:\s*z\.enum\(\[[^\]]*["']manual["'][^\]]*["']interval["'][^\]]*["']cron["'][^\]]*["']on_commit["'][^\]]*["']on_pr["'][^\]]*["']on_ci_fail["'][^\]]*\]\)/s);
-
-    expect(loopStateSource).toContain("export const LoopCleanupPolicySchema");
-    expect(loopStateSource).toMatch(/cleanupPolicy:\s*LoopCleanupPolicySchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/cleanupState:\s*LoopCleanupStateSchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/["']cleanup_candidate["']/);
-    expect(loopStateSource).toMatch(/["']auto_paused["']/);
-    expect(loopStateSource).toMatch(/["']cleanup_failed["']/);
-    expect(loopStateSource).toMatch(/["']expired_needs_review["']/);
-
-    expect(protocolSource).toMatch(/\| \{ kind: ["']cron["']; expression: string \}/);
-    expect(protocolSource).toMatch(/triggers\?:\s*LoopTriggerSpec\[\]/);
-    expect(protocolSource).toMatch(/interface LoopCoordinatorConfig \{\s*maxConcurrent: number;/);
-    expect(protocolSource).toMatch(/currentJob\?:\s*LoopJobSummary/);
-    expect(protocolSource).toMatch(/queuedJobs\?:\s*LoopJobSummary\[\]/);
-    expect(protocolSource).toMatch(/worktreePath\?:\s*string/);
-    expect(protocolSource).toMatch(/cleanupPolicy\?:\s*LoopCleanupPolicy/);
-    expect(protocolSource).toMatch(/cleanupState\?:\s*LoopCleanupState/);
-
-    expect(existsSync(loopWorktreeManagerFile)).toBe(true);
-    expect(existsSync(loopJobQueueFile)).toBe(true);
-    expect(existsSync(loopCoordinatorFile)).toBe(true);
-    expect(existsSync(loopCleanupFile)).toBe(true);
+    const templateSource = readProductionSourceIfExists(loopTemplatesFile);
+    const declaredIds = extractDeclaredTemplateIds(templateSource);
+    expect(declaredIds).toEqual([...supportedTemplateIds].sort());
+    for (const templateId of supportedTemplateIds) {
+      expect(templateSource).toContain(templateId);
+    }
   });
 
-  test("Loop integration surface keeps budget, PR collision, integration, and profile metadata first-class", () => {
+  test("removed template ids are not exposed as valid template or create-dialog options", () => {
+    const positiveTemplateSurfaces = [
+      loopTemplatesFile,
+      loopPresetsFile,
+      protocolTypesFile,
+      serverLoopsRouteFile,
+      webCreateLoopDialogFile,
+    ].filter((file) => existsSync(file));
+
+    expectNoViolations(findTextViolations(positiveTemplateSurfaces, literalPatterns(removedTemplateIds)));
+    expectNoViolations(findTextViolations([webCreateLoopDialogFile].filter((file) => existsSync(file)), literalPatterns(removedTemplateLabels)));
+  });
+
+  test("removed and replacement Loop tool profile ids are absent from production surfaces", () => {
+    expectNoViolations(findTextViolations(loopProductionFiles, literalPatterns(removedProfileIds)));
+    expectNoViolations(findTextViolations(loopProductionFiles, literalPatterns(replacementProfileIds)));
+    expect(existsSync(loopToolProfilesFile), "Loop tool profiles must be deleted or fully disconnected from production").toBe(false);
+  });
+
+  test("Loop config, templates, protocol, and runtime expose no mode-like selector", () => {
+    expectNoViolations(findTextViolations(loopContractFiles, fieldOrStringPatterns(forbiddenSelectorNames)));
+    expectNoViolations(findTextViolations([loopRunnerFile, loopSchedulerFile, configuredAgentFile, toolRegistryFile].filter((file) => existsSync(file)), [
+      /origin\.mode\b/,
+      /origin\?\.mode\b/,
+      /\.mode\b/,
+      /["']mode["']/,
+      /\bLoopMode\b/,
+    ]));
+  });
+
+  test("ordinary create and update schemas reject removed raw inputs and user supplied extraTools", () => {
+    const createSchemaSource = sourceSection(serverLoopsRouteFile, "const CreateLoopBodySchema", "const PatchLoopBodySchema");
+    const patchSchemaSource = sourceSection(serverLoopsRouteFile, "const PatchLoopBodySchema", "const ActivateKillBodySchema");
+
+    expect(createSchemaSource).toMatch(/z\.strictObject\s*\(/);
+    expect(createSchemaSource).toMatch(/\btemplateId\??\s*:/);
+    for (const field of forbiddenOrdinaryInputFields) {
+      const fieldPattern = new RegExp(`\\b${escapeRegExp(field)}\\??\\s*:`);
+      expect(createSchemaSource, `${field} must not be an accepted create-loop field`).not.toMatch(fieldPattern);
+    }
+
+    expect(patchSchemaSource).toMatch(/z\.strictObject\s*\(/);
+    for (const field of forbiddenOrdinaryInputFields) {
+      const fieldPattern = new RegExp(`\\b${escapeRegExp(field)}\\??\\s*:`);
+      expect(patchSchemaSource, `${field} must not be an accepted update-loop field`).not.toMatch(fieldPattern);
+    }
+  });
+
+  test("template-owned extraTools stay internal and public schemas cannot accept them", () => {
+    const templateSource = readProductionSourceIfExists(loopTemplatesFile);
+    const protocolSource = readProductionSource(protocolTypesFile);
+    const serverCreateSchemaSource = sourceSection(serverLoopsRouteFile, "const CreateLoopBodySchema", "const PatchLoopBodySchema");
+    const serverPatchSchemaSource = sourceSection(serverLoopsRouteFile, "const PatchLoopBodySchema", "const ActivateKillBodySchema");
+    const webCreateSource = readProductionSource(webCreateLoopDialogFile);
+
+    expect(templateSource).toMatch(/\bextraTools\s*:/);
+    expect(templateSource).toMatch(/\bPR_BABYSITTER_EXTRA_TOOLS\b/);
+    expect(protocolSource).not.toMatch(/^\s*extraTools\??:\s*(?:readonly\s+)?string\[\]/m);
+    expect(serverCreateSchemaSource).not.toMatch(/\bextraTools\??\s*:/);
+    expect(serverPatchSchemaSource).not.toMatch(/\bextraTools\??\s*:/);
+    expect(webCreateSource).not.toMatch(/\bextraTools\b/);
+  });
+
+  test("ConfiguredAgent tool selection is explicit extraTools merge, not Loop-origin profile filtering", () => {
+    const configuredAgentSource = readProductionSource(configuredAgentFile);
+    const toolResolutionSource = sourceFromMarker(configuredAgentFile, "resolveEffectiveTools");
+
+    expect(configuredAgentSource).not.toMatch(/resolveLoopToolProfile/);
+    expect(configuredAgentSource).not.toMatch(/origin\.toolProfileId\b|origin\?\.toolProfileId\b/);
+    expect(configuredAgentSource).not.toMatch(/origin\.mode\b|origin\?\.mode\b/);
+    expect(toolResolutionSource).not.toMatch(/origin\?\.kind\s*!==\s*["']loop["']|origin\?\.kind\s*===\s*["']loop["']|origin\.kind\s*===\s*["']loop["']/);
+    expect(toolResolutionSource).not.toMatch(/\btoolProfileId\b/);
+    expect(toolResolutionSource).toMatch(/\bextraTools\b/);
+  });
+
+  test("origin remains metadata, not a mode/profile selector for runtime permissions or tool selection", () => {
+    const runtimeOriginFiles = [configuredAgentFile, toolRegistryFile, loopRunnerFile, loopSchedulerFile].filter((file) => existsSync(file));
+
+    expectNoViolations(findTextViolations(runtimeOriginFiles, [
+      /origin\.toolProfileId\b/,
+      /origin\?\.toolProfileId\b/,
+      /origin\.mode\b/,
+      /origin\?\.mode\b/,
+      /origin\?\.kind\s*===\s*["']loop["']\s*&&\s*origin\.mode/,
+      /origin\.kind\s*===\s*["']loop["']\s*&&\s*origin\.mode/,
+    ]));
+  });
+
+  test("default tool registry does not install the removed tool-level Loop collision guard", () => {
+    const registerToolsSource = readProductionSource(registerToolsFile);
+
+    expect(registerToolsSource).not.toMatch(/createLoopCollisionToolPermission/);
+    expect(registerToolsSource).not.toMatch(/createLoopCollisionToolReleaseHook/);
+    expect(registerToolsSource).not.toMatch(/collision-tool-guard/);
+    expect(registerToolsSource).not.toMatch(/globalPermissions\.push\([^)]*LoopCollision/i);
+    expect(registerToolsSource).not.toMatch(/globalHooks\.after\.push\([^)]*LoopCollision/i);
+  });
+
+  test("Loop worktree isolation is manual-only through useWorktree", () => {
     const loopStateSource = readProductionSource(loopStateFile);
     const protocolSource = readProductionSource(protocolTypesFile);
+    const runnerSource = readProductionSource(loopRunnerFile);
 
-    expect(loopStateSource).toContain("export const LoopBudgetConfigSchema");
-    expect(loopStateSource).toMatch(/budget:\s*LoopBudgetConfigSchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/limits:\s*LoopLimitsSchema/);
-    expect(loopStateSource).toMatch(/toolProfileId:\s*LoopToolProfileIdSchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/collisionTargets:\s*z\.array\(CollisionTargetSchema\)/);
-    expect(loopStateSource).toMatch(/type:\s*z\.literal\(["']pr["']\)/);
-    expect(loopStateSource).toMatch(/integrationId:\s*z\.enum\(\[["']github["'],\s*["']github_actions["']\]\)/);
-    expect(loopStateSource).toMatch(/latestBudget:\s*LoopBudgetSnapshotSchema\.optional\(\)/);
-    expect(loopStateSource).toMatch(/latestIntegrations:\s*LoopIntegrationSnapshotSchema\.optional\(\)/);
+    expect(loopStateSource).toMatch(/\buseWorktree\s*:/);
+    expect(protocolSource).toMatch(/\buseWorktree\??:\s*boolean/);
+    expect(runnerSource).toMatch(/useWorktree\s*={2,3}\s*true/);
+    expectNoViolations(findTextViolations(loopProductionFiles, [
+      /\bworktreeMode\b/,
+      /\bworktreePolicy\b/,
+      /\bautoWorktree\b/,
+      /\binfer(?:red)?Worktree\b/i,
+      /\bshouldUseWorktree\b[\s\S]{0,200}\b(?:trigger|schedule|sha|dirty|remote|template)\b/i,
+      /\b(?:trigger|schedule|sha|dirty|remote|template)\b[\s\S]{0,200}\bshouldUseWorktree\b/i,
+    ]));
+  });
 
-    expect(protocolSource).toMatch(/budget\?:\s*LoopBudgetConfig/);
-    expect(protocolSource).toMatch(/toolProfileId\?:\s*LoopToolProfileId/);
-    expect(protocolSource).toMatch(/collisionTargets\?:\s*CollisionTarget\[\]/);
-    expect(protocolSource).toMatch(/\{\s*type:\s*["']pr["'];\s*owner:\s*string;\s*repo:\s*string;\s*number:\s*number\s*\}/);
-    expect(protocolSource).toMatch(/integrationErrors\?:\s*LoopIntegrationError\[\]/);
-    expect(protocolSource).toMatch(/latestIntegrations\?:\s*LoopIntegrationSnapshot/);
+  test("Loop primary UI surfaces do not expose raw internals or Automation wording", () => {
+    const userFacingLoopFiles = [
+      webCreateLoopDialogFile,
+      webLoopsRouteFile,
+      webLoopDetailRouteFile,
+      webDashboardRouteFile,
+      serverLoopsRouteFile,
+      serverDashboardRouteFile,
+    ].filter((file) => existsSync(file));
+    expectNoViolations(findTextViolations(userFacingLoopFiles, [/\bAutomation\b/, /\bAutomations\b/]));
+
+    const createSource = readProductionSource(webCreateLoopDialogFile);
+    expectNoViolations(findTextViolations([webCreateLoopDialogFile], [
+      ...literalPatterns(removedTemplateIds),
+      ...literalPatterns(removedTemplateLabels),
+      ...fieldOrStringPatterns(["runKind", "mode", "toolProfileId", "extraTools", "collisionTargets", "cleanupPolicy"]),
+    ]));
+    for (const templateId of supportedTemplateIds) {
+      expect(createSource).toContain(templateId);
+    }
+
+    for (const file of [webLoopsRouteFile, webDashboardRouteFile, webLoopDetailRouteFile]) {
+      const primarySource = primarySourceBeforeAdvancedDebug(file);
+      for (const label of primaryUiForbiddenLabels) {
+        expect(primarySource, `${relativeFile(file)} exposes ${label} before Advanced Debug`).not.toContain(label);
+      }
+    }
   });
 
   test("Loop runtime has no readiness maturity gates beyond nullable compatibility state", () => {
@@ -280,19 +541,7 @@ describe("Loop hardening architecture guardrails", () => {
     ]));
   });
 
-  test("Loop config schema and protocol types do not accept raw per-loop tool arrays", () => {
-    const stateConfigSchema = sourceSection(loopStateFile, "export const LoopConfigSchema", "export const LoopStateSchema");
-    const protocolLoopConfig = sourceSection(protocolTypesFile, "export interface LoopConfig", "export type LoopRunReportStatus");
-
-    expect(stateConfigSchema).not.toMatch(/\btools\s*:/);
-    expect(stateConfigSchema).not.toMatch(/\ballowedTools\s*:/);
-    expect(stateConfigSchema).not.toMatch(/z\.array\(\s*z\.string\(\)/);
-    expect(protocolLoopConfig).not.toMatch(/^\s*tools\??:\s*(?:readonly\s+)?string\[\]/m);
-    expect(protocolLoopConfig).not.toMatch(/^\s*allowedTools\??:\s*(?:readonly\s+)?string\[\]/m);
-  });
-
   test("future mutating connector tool descriptors must be effectful and permission-gated", () => {
-    expect(LOOP_PROFILE_ONLY_CONNECTOR_TOOLS.length).toBeGreaterThan(0);
     expectNoViolations(findConnectorMutatingToolDescriptorViolations(connectorDescriptorFiles));
   });
 
