@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { LoopConfig, LoopState } from "../../api/types";
+import type { CreateLoopPayload, LoopConfig, LoopState } from "../../api/types";
 
 interface ElementLike {
   type?: unknown;
@@ -44,6 +44,7 @@ function findAll(
 
 type CreateLoopFormComponent = typeof import("./CreateLoopDialog").CreateLoopForm;
 type LoopFormComponent = typeof import("./CreateLoopDialog").LoopForm;
+type BuildCreatePayloadFunction = typeof import("./CreateLoopDialog").buildCreatePayload;
 type BuildLoopConfigFunction = typeof import("./CreateLoopDialog").buildLoopConfig;
 
 const Fragment = Symbol.for("react.fragment");
@@ -57,7 +58,7 @@ const onCreated = mock((_loopId: string) => {});
 const onClose = mock(() => {});
 const createMutate = mock(
   (
-    _args: { slug: string; config: LoopConfig; author?: string },
+    _args: { slug: string } & CreateLoopPayload,
     _options?: { onSuccess?: (response: { loop: LoopState }) => void },
   ) => {},
 );
@@ -110,11 +111,13 @@ mock.module("../../api/mutations", () => ({
 
 let CreateLoopForm: CreateLoopFormComponent;
 let LoopForm: LoopFormComponent;
+let buildCreatePayload: BuildCreatePayloadFunction;
 let buildLoopConfig: BuildLoopConfigFunction;
 
 const imported = await import("./CreateLoopDialog");
 CreateLoopForm = imported.CreateLoopForm;
 LoopForm = imported.LoopForm;
+buildCreatePayload = imported.buildCreatePayload;
 buildLoopConfig = imported.buildLoopConfig;
 
 function render(initialState?: Record<string, unknown>): unknown {
@@ -127,10 +130,226 @@ function render(initialState?: Record<string, unknown>): unknown {
     pending: createPending,
     error: createError,
     onClose,
-    onSubmitConfig: mock((_config: LoopConfig, _author?: string) => {}),
+    onSubmitPayload: mock((_payload: CreateLoopPayload) => {}),
     initialState,
+    showQuickStarts: true,
   });
 }
+
+const REMOVED_TEMPLATE_LABELS = [
+  "Daily Triage",
+  "Changelog Drafter",
+  "CI Sweeper",
+  "Dependency Sweeper",
+  "Post-Land Cleanup",
+  "Issue Triage",
+];
+
+const FORBIDDEN_INTERNAL_TEXT = [
+  "runKind",
+  "toolProfileId",
+  "extraTools",
+  "collisionTargets",
+  "cleanupPolicy",
+  "Automation",
+  "softThresholdRatio",
+  "hardThresholdRatio",
+  "soft ratio",
+  "hard ratio",
+  "cadenceMs",
+  "on_pr",
+  "on_commit",
+  "on_ci_fail",
+  "dedupeKey",
+  "subjectKey",
+  "branchKey",
+  "triggerHealth",
+  "maxConcurrent",
+];
+
+describe("CreateLoopDialog templates", () => {
+  beforeEach(() => {
+    createPending = false;
+    createError = null;
+    for (const fn of [onCreated, onClose, createMutate, useState, useCallback, useEffect, useMemo]) {
+      fn.mockClear();
+    }
+  });
+
+  test("renders exactly the four allowed template labels", () => {
+    const tree = render();
+    const copy = textContent(tree);
+
+    expect(copy).toContain("Watch & Report");
+    expect(copy).toContain("Maintain & Fix");
+    expect(copy).toContain("PR Babysitter");
+    expect(copy).toContain("Goal Runner");
+  });
+
+  test("does not render removed template labels", () => {
+    const tree = render();
+    const copy = textContent(tree);
+
+    for (const label of REMOVED_TEMPLATE_LABELS) {
+      expect(copy).not.toContain(label);
+    }
+  });
+
+  test("does not render forbidden internal plumbing text", () => {
+    const tree = render();
+    const copy = textContent(tree);
+
+    for (const text of FORBIDDEN_INTERNAL_TEXT) {
+      expect(copy).not.toContain(text);
+    }
+  });
+
+  test("template radio inputs offer exactly four template ids", () => {
+    const tree = render();
+    const radios = findAll(tree, (el) => {
+      const props = el.props ?? {};
+      return props.type === "radio" && props.name === "loop-template";
+    });
+    const values = radios.map((el) => String(el.props?.value ?? "")).sort();
+    expect(values).toEqual(["goal_runner", "maintain_fix", "pr_babysitter", "watch_report"]);
+  });
+
+  test("quick start buttons offer exactly four template labels", () => {
+    const tree = render();
+    const buttons = findAll(tree, (el) => {
+      const props = el.props ?? {};
+      return el.type === "button" && typeof props["aria-label"] === "string" && String(props["aria-label"]).startsWith("Template ");
+    });
+    const labels = buttons.map((el) => String(el.props?.["aria-label"] ?? "")).sort();
+    expect(labels).toEqual([
+      "Template Goal Runner",
+      "Template Maintain & Fix",
+      "Template PR Babysitter",
+      "Template Watch & Report",
+    ]);
+  });
+});
+
+describe("CreateLoopDialog worktree", () => {
+  beforeEach(() => {
+    createPending = false;
+    createError = null;
+    for (const fn of [onCreated, onClose, createMutate, useState, useCallback, useEffect, useMemo]) {
+      fn.mockClear();
+    }
+  });
+
+  test("useWorktree defaults to false (unchecked) and Advanced toggle is present", () => {
+    const tree = render();
+    const copy = textContent(tree);
+
+    // Advanced section is collapsed by default; the toggle is present.
+    expect(copy).toContain("Advanced");
+
+    // The worktree checkbox is inside the collapsed Advanced section, so it
+    // does not render until expanded. Verify the default via the payload builder.
+    const payload = buildCreatePayload({
+      templateId: "watch_report",
+      title: "Watch Loop",
+      description: "",
+      scheduleKind: "manual",
+      everyMs: 60000,
+      cronExpression: "*/15 * * * *",
+      approvalPolicy: "interactive",
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120000,
+      maxWallClockMinutesPerRun: 15,
+      maxRunsPerDay: 2,
+      taskPrompt: "Run triage.",
+      instructions: "",
+      author: "architect",
+      useWorktree: false,
+      goalTitle: "",
+      goalObjective: "",
+      goalAcceptanceCriteria: "",
+    });
+    expect("useWorktree" in payload).toBe(false);
+  });
+
+  test("buildCreatePayload omits useWorktree when false", () => {
+    const payload = buildCreatePayload({
+      templateId: "watch_report",
+      title: "Watch Loop",
+      description: "",
+      scheduleKind: "manual",
+      everyMs: 60000,
+      cronExpression: "*/15 * * * *",
+      approvalPolicy: "interactive",
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120000,
+      maxWallClockMinutesPerRun: 15,
+      maxRunsPerDay: 2,
+      taskPrompt: "Run triage.",
+      instructions: "",
+      author: "architect",
+      useWorktree: false,
+      goalTitle: "",
+      goalObjective: "",
+      goalAcceptanceCriteria: "",
+    });
+
+    expect("useWorktree" in payload).toBe(false);
+  });
+
+  test("buildCreatePayload sends useWorktree: true only when explicitly true", () => {
+    const payload = buildCreatePayload({
+      templateId: "maintain_fix",
+      title: "Maintain Loop",
+      description: "",
+      scheduleKind: "manual",
+      everyMs: 60000,
+      cronExpression: "*/15 * * * *",
+      approvalPolicy: "explicit_per_run",
+      maxIterationsPerRun: 16,
+      maxTokensPerRun: 200000,
+      maxWallClockMinutesPerRun: 30,
+      maxRunsPerDay: 2,
+      taskPrompt: "Fix one issue.",
+      instructions: "",
+      author: "architect",
+      useWorktree: true,
+      goalTitle: "",
+      goalObjective: "",
+      goalAcceptanceCriteria: "",
+    });
+
+    expect(payload.useWorktree).toBe(true);
+  });
+
+  test("buildCreatePayload never sends mode, toolProfileId, or extraTools", () => {
+    const payload = buildCreatePayload({
+      templateId: "pr_babysitter",
+      title: "PR Watch",
+      description: "",
+      scheduleKind: "manual",
+      everyMs: 60000,
+      cronExpression: "*/15 * * * *",
+      approvalPolicy: "interactive",
+      maxIterationsPerRun: 12,
+      maxTokensPerRun: 160000,
+      maxWallClockMinutesPerRun: 20,
+      maxRunsPerDay: 4,
+      taskPrompt: "Watch PRs.",
+      instructions: "",
+      author: "architect",
+      useWorktree: false,
+      goalTitle: "",
+      goalObjective: "",
+      goalAcceptanceCriteria: "",
+    });
+
+    expect("mode" in payload).toBe(false);
+    expect("toolProfileId" in payload).toBe(false);
+    expect("extraTools" in payload).toBe(false);
+    expect("collisionTargets" in payload).toBe(false);
+    expect("cleanupPolicy" in payload).toBe(false);
+  });
+});
 
 describe("CreateLoopDialog Goal template", () => {
   beforeEach(() => {
@@ -141,9 +360,9 @@ describe("CreateLoopDialog Goal template", () => {
     }
   });
 
-  test("goal runKind renders natural-language Goal template fields: title, objective, acceptance criteria", () => {
+  test("goal_runner template renders natural-language Goal template fields: title, objective, acceptance criteria", () => {
     const tree = render({
-      runKind: "goal",
+      templateId: "goal_runner",
       goalTitle: "Triage Follow-up",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -156,9 +375,9 @@ describe("CreateLoopDialog Goal template", () => {
     expect(copy).toContain("Goal Acceptance Criteria");
   });
 
-  test("goal runKind does not render old DoneCondition builder, retry policy, approval points, reviewerAgent, or author", () => {
+  test("goal_runner template does not render old DoneCondition builder, retry policy, approval points, reviewerAgent, or author", () => {
     const tree = render({
-      runKind: "goal",
+      templateId: "goal_runner",
       goalTitle: "Triage Follow-up",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
@@ -179,36 +398,30 @@ describe("CreateLoopDialog Goal template", () => {
     expect(copy).not.toContain("Goal Author");
   });
 
-  test("buildLoopConfig produces natural-language goalTemplate with title/objective/acceptanceCriteria only", () => {
-    const config = buildLoopConfig({
+  test("buildCreatePayload produces natural-language goalTemplate with title/objective/acceptanceCriteria only", () => {
+    const payload = buildCreatePayload({
       templateId: "goal_runner",
       title: "Goal Loop",
       description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
-      triggerOnPr: false,
-      triggerCadenceMs: 60000,
-      runKind: "goal",
-      mode: "act",
       approvalPolicy: "explicit_per_run",
-      maxIterationsPerRun: 4,
-      maxTokensPerRun: 160000,
-      maxWallClockMinutesPerRun: 20,
-      maxRunsPerDay: 3,
-      softThresholdRatio: 0.75,
-      hardThresholdRatio: 1,
-      toolProfileId: "loop_goal_action",
+      maxIterationsPerRun: 20,
+      maxTokensPerRun: 240000,
+      maxWallClockMinutesPerRun: 45,
+      maxRunsPerDay: 2,
       taskPrompt: "",
       instructions: "",
       author: "architect",
+      useWorktree: false,
       goalTitle: "Inline Goal Title",
       goalObjective: "Investigate failing tests and propose fixes.",
       goalAcceptanceCriteria: "Reviewer can decide DONE from logs and diff.",
     });
 
-    expect(config.goalTemplate).toBeDefined();
-    const gt = config.goalTemplate!;
+    expect(payload.goalTemplate).toBeDefined();
+    const gt = payload.goalTemplate!;
     expect(gt.title).toBe("Inline Goal Title");
     expect(gt.objective).toBe("Investigate failing tests and propose fixes.");
     expect(gt.acceptanceCriteria).toBe("Reviewer can decide DONE from logs and diff.");
@@ -221,34 +434,57 @@ describe("CreateLoopDialog Goal template", () => {
     expect("instructions" in gt).toBe(false);
   });
 
-  test("buildLoopConfig session runKind produces no goalTemplate", () => {
-    const config = buildLoopConfig({
+  test("buildCreatePayload non-goal template produces no goalTemplate", () => {
+    const payload = buildCreatePayload({
       templateId: "watch_report",
       title: "Session Loop",
       description: "",
       scheduleKind: "manual",
       everyMs: 60000,
       cronExpression: "*/15 * * * *",
-      triggerOnPr: false,
-      triggerCadenceMs: 60000,
-      runKind: "session",
-      mode: "report",
       approvalPolicy: "interactive",
-      maxIterationsPerRun: 4,
-      maxTokensPerRun: 160000,
-      maxWallClockMinutesPerRun: 20,
-      maxRunsPerDay: 3,
-      softThresholdRatio: 0.75,
-      hardThresholdRatio: 1,
-      toolProfileId: "loop_local_report",
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120000,
+      maxWallClockMinutesPerRun: 15,
+      maxRunsPerDay: 2,
       taskPrompt: "Run triage.",
       instructions: "",
       author: "architect",
+      useWorktree: false,
       goalTitle: "",
       goalObjective: "",
       goalAcceptanceCriteria: "",
     });
 
-    expect(config.goalTemplate).toBeUndefined();
+    expect(payload.goalTemplate).toBeUndefined();
+  });
+
+  test("buildLoopConfig still produces a valid LoopConfig for edit flows", () => {
+    const config = buildLoopConfig({
+      templateId: "watch_report",
+      title: "Session Loop",
+      description: "desc",
+      scheduleKind: "manual",
+      everyMs: 60000,
+      cronExpression: "*/15 * * * *",
+      approvalPolicy: "interactive",
+      maxIterationsPerRun: 8,
+      maxTokensPerRun: 120000,
+      maxWallClockMinutesPerRun: 15,
+      maxRunsPerDay: 2,
+      taskPrompt: "Run triage.",
+      instructions: "",
+      author: "architect",
+      useWorktree: false,
+      goalTitle: "",
+      goalObjective: "",
+      goalAcceptanceCriteria: "",
+    });
+
+    expect(config.templateId).toBe("watch_report");
+    expect(config.title).toBe("Session Loop");
+    expect(config.schedule.kind).toBe("manual");
+    expect(config.approvalPolicy).toBe("interactive");
+    expect("useWorktree" in config).toBe(false);
   });
 });

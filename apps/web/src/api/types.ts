@@ -65,7 +65,19 @@ export type {
 // Server augments GoalState/HITL records with project metadata and exposes
 // redacted displayPayload (never raw payload) for HITL items.
 
-import type { GoalState, HitlProjection, LoopRunReport, LoopState, LoopStatus, LoopTemplateId } from "@archcode/protocol";
+import type {
+  GoalState,
+  HitlProjection,
+  LoopApprovalPolicy,
+  LoopBudgetConfig,
+  LoopGoalTemplate,
+  LoopRunReport,
+  LoopScheduleSpec,
+  LoopState,
+  LoopStatus,
+  LoopTemplateId,
+  LoopTriggerSpec,
+} from "@archcode/protocol";
 
 // ─── Unified HITL API types ───
 
@@ -99,6 +111,27 @@ export interface DashboardLoop {
   templateId: LoopTemplateId;
   projectSlug: string;
   projectName: string;
+}
+
+/**
+ * Minimal template-oriented create payload for `POST /api/projects/:slug/loops`.
+ * The server maps `templateId` to the internal Loop template. This payload never
+ * sends `mode`, `toolProfileId`, `extraTools`, `collisionTargets`, or
+ * `cleanupPolicy`. `useWorktree` is the only manual worktree opt-in.
+ */
+export interface CreateLoopPayload {
+  templateId: LoopTemplateId;
+  title: string;
+  description?: string;
+  schedule: LoopScheduleSpec;
+  approvalPolicy: LoopApprovalPolicy;
+  budget?: LoopBudgetConfig;
+  taskPrompt?: string;
+  instructions?: string;
+  goalTemplate?: LoopGoalTemplate;
+  triggers?: LoopTriggerSpec[];
+  useWorktree?: boolean;
+  author?: string;
 }
 
 /** Response of GET /api/projects/:slug/loops/:loopId/state. */

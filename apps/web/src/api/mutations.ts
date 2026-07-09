@@ -4,6 +4,7 @@ import { queryKeys } from "./queries";
 import type {
   CancelCurrentRunResponse,
   ApiCommandResult,
+  CreateLoopPayload,
   GoalState,
   LoopConfig,
   LoopKillState,
@@ -329,15 +330,21 @@ export function invalidateLoopAfterPauseResume(
 export function useCreateLoop() {
   const queryClient = useQueryClient();
 
-  type CreateLoopVariables = { slug: string; templateId: LoopConfig["templateId"]; author?: string };
-
   return useMutation({
-    mutationFn: async ({
-      slug,
-      templateId,
-      author,
-    }: CreateLoopVariables) => {
-      const body = { templateId, ...(author ? { author } : {}) };
+    mutationFn: async (variables: { slug: string } & CreateLoopPayload) => {
+      const { slug, ...payload } = variables;
+      const body: Record<string, unknown> = { templateId: payload.templateId };
+      if (payload.title) body.title = payload.title;
+      if (payload.description) body.description = payload.description;
+      if (payload.schedule) body.schedule = payload.schedule;
+      if (payload.approvalPolicy) body.approvalPolicy = payload.approvalPolicy;
+      if (payload.budget) body.budget = payload.budget;
+      if (payload.taskPrompt) body.taskPrompt = payload.taskPrompt;
+      if (payload.instructions) body.instructions = payload.instructions;
+      if (payload.goalTemplate) body.goalTemplate = payload.goalTemplate;
+      if (payload.triggers && payload.triggers.length > 0) body.triggers = payload.triggers;
+      if (payload.useWorktree === true) body.useWorktree = true;
+      if (payload.author) body.author = payload.author;
       return apiFetch<{ loop: LoopState }>(`/api/projects/${encodeURIComponent(slug)}/loops`, {
         method: "POST",
         body,
