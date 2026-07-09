@@ -27,6 +27,7 @@ import {
   TOOL_GOAL_MANAGE,
   TOOL_ASK_USER,
   TOOL_BASH,
+  TOOL_TODO_WRITE,
   TOOL_GITHUB_CREATE_ISSUE_COMMENT,
   TOOL_GITHUB_GET_PULL_REQUEST,
   TOOL_GITHUB_GET_PULL_REQUEST_CHECKS,
@@ -61,17 +62,21 @@ function makeContext(
 ): ToolExecutionContext {
   const input = overrides.input ?? {};
   const projectContext = overrides.projectContext ?? makeProjectContext(workspaceRoot);
-  return createToolExecutionContext({ store: storeManager.create(`register-tools-${crypto.randomUUID()}`), storeManager, toolName,
-  toolCallId: `${toolName}-call`,
-  input,
-  step: 0,
-  abort: new AbortController().signal,
-  startedAt: 0,
-  allowedTools: new Set(allowedTools),
-  agentSkills: [],
-  skillService: testSkillService,
-  projectContext,
-  ...overrides, });
+  return createToolExecutionContext({
+    store: storeManager.create(`register-tools-${crypto.randomUUID()}`),
+    storeManager,
+    toolName,
+    toolCallId: `${toolName}-call`,
+    input,
+    step: 0,
+    abort: new AbortController().signal,
+    startedAt: 0,
+    allowedTools: new Set(allowedTools),
+    agentSkills: [],
+    skillService: testSkillService,
+    projectContext,
+    ...overrides,
+  });
 }
 
 function makeProjectContext(workspaceRoot: string): ProjectContext {
@@ -149,6 +154,14 @@ describe("registerBuiltinTools", () => {
     ]);
   });
 
+  it("registers only Loop lifecycle policies as global permissions", () => {
+    const registry = new ToolRegistry();
+
+    registerBuiltinTools(registry, silentLogger);
+
+    expect(registry.globalPermissions).toHaveLength(2);
+  });
+
   it("registers GitHub connector-backed tools without adding them to builtin descriptor groups", () => {
     const registry = new ToolRegistry();
 
@@ -182,9 +195,9 @@ describe("registerBuiltinTools", () => {
     expect(registry.get("workflow_propose_interactions")).toBeUndefined();
     expect(registry.get("workflow_request_interactions")).toBeUndefined();
     expect(registry.get("workflow_task_check")).toBeUndefined();
-      expect(registry.get("artifact_read")).toBeUndefined();
-      expect(registry.get("artifact_write")).toBeUndefined();
-    });
+    expect(registry.get("artifact_read")).toBeUndefined();
+    expect(registry.get("artifact_write")).toBeUndefined();
+  });
 
   it("registers only the active Goal tool surface", () => {
     const registry = new ToolRegistry();
@@ -198,117 +211,100 @@ describe("registerBuiltinTools", () => {
     }
   });
 
-  it("blocks effectful tools in Goal main sessions until the Goal is claimed", async () => {
-    const workspaceRoot = await createTmpRoot("goal-bootstrap-guard");
+  it("does not gate ordinary tools based on Goal lifecycle state", async () => {
+    const workspaceRoot = await createTmpRoot("goal-main-tools");
     const projectContext = makeProjectContext(workspaceRoot);
     const goal = await projectContext.goalState.create({
       projectId: projectContext.project.slug,
-      title: "Bootstrap guard",
-      objective: "Verify bootstrap guard.",
-      acceptanceCriteria: "Effectful tools stay blocked until the Goal is claimed.",
+      title: "Goal main tools",
+      objective: "Verify Goal lifecycle does not govern unrelated tool execution.",
+      acceptanceCriteria: "Agent/tool permissions decide ordinary tool availability.",
     });
-    const store = storeManager.create("goal-bootstrap-main-session", workspaceRoot);
+    const store = storeManager.create("goal-main-tools-session", workspaceRoot);
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
     const bashInput = { description: "Print cwd", command: "pwd" };
 
-    const denied = await registry.execute(
-      { toolName: TOOL_BASH, toolCallId: "bash-before-claim", input: bashInput },
+    const result = await registry.execute(
+      { toolName: TOOL_BASH, toolCallId: "bash-in-goal-main-session", input: bashInput },
       makeContext(TOOL_BASH, [TOOL_BASH], workspaceRoot, {
         store,
         projectContext,
         input: bashInput,
-        toolCallId: "bash-before-claim",
-      }),
-    );
-    const claimed = await registry.execute(
-      { toolName: TOOL_GOAL_MANAGE, toolCallId: "goal-manage-start", input: { action: "start", goalId: goal.id } },
-      makeContext(TOOL_GOAL_MANAGE, [TOOL_GOAL_MANAGE], workspaceRoot, {
-        store,
-        projectContext,
-        input: { action: "start", goalId: goal.id },
-        toolCallId: "goal-manage-start",
-      }),
-    );
-    const allowed = await registry.execute(
-      { toolName: TOOL_BASH, toolCallId: "bash-after-claim", input: bashInput },
-      makeContext(TOOL_BASH, [TOOL_BASH], workspaceRoot, {
-        store,
-        projectContext,
-        input: bashInput,
-        toolCallId: "bash-after-claim",
+        toolCallId: "bash-in-goal-main-session",
       }),
     );
 
-    expect(denied.isError).toBe(true);
-    expect(denied.meta?.permissionErrorCode).toBe("GOAL_BOOTSTRAP_TOOL_DENIED");
-    expect(claimed.isError).toBe(false);
-    expect(allowed.isError).toBe(false);
-    expect(allowed.output).toContain("EXIT_CODE: 0");
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain("EXIT_CODE: 0");
+    const unchangedGoal = await projectContext.goalState.read(goal.id);
+    expect(unchangedGoal.status).toBe("draft");
   });
 
-  it("does not broadly allow every goal_manage action during Goal bootstrap", async () => {
-    const workspaceRoot = await createTmpRoot("goal-bootstrap-narrow");
+  it("allows todo_write cleanup while a Goal is reviewing or done", async () => {
+    const workspaceRoot = await createTmpRoot("goal-todo-cleanup");
     const projectContext = makeProjectContext(workspaceRoot);
     const goal = await projectContext.goalState.create({
       projectId: projectContext.project.slug,
-      title: "Bootstrap guard narrow",
-      objective: "Verify bootstrap guard narrow allowlist.",
-      acceptanceCriteria: "Only the expected bootstrap action is allowed.",
+      title: "Goal todo cleanup",
+      objective: "Verify todo bookkeeping is independent from Goal lifecycle state.",
+      acceptanceCriteria: "Todo updates continue to work while a Goal is reviewing and after it is done.",
     });
-    const store = storeManager.create("goal-bootstrap-narrow-session", workspaceRoot);
+    const store = storeManager.create("goal-todo-cleanup-session", workspaceRoot);
     store.getState().setGoalId(goal.id);
     store.getState().setSessionRole("main");
+    await projectContext.goalState.start(goal.id, { mainSessionId: store.getState().sessionId });
+    await projectContext.goalState.beginReview(goal.id);
     const registry = new ToolRegistry();
     registerBuiltinTools(registry, silentLogger);
+    const reviewingTodoInput = {
+      todos: [{ id: "reviewing-cleanup", content: "Record review cleanup", status: "completed" as const }],
+    };
 
-    const blockInput = { action: "block", goalId: goal.id, kind: "permission", summary: "Not the bootstrap action" };
-    const denied = await registry.execute(
-      { toolName: TOOL_GOAL_MANAGE, toolCallId: "goal-manage-block-before-claim", input: blockInput },
-      makeContext(TOOL_GOAL_MANAGE, [TOOL_GOAL_MANAGE], workspaceRoot, {
+    const duringReview = await registry.execute(
+      { toolName: TOOL_TODO_WRITE, toolCallId: "todo-during-review", input: reviewingTodoInput },
+      makeContext(TOOL_TODO_WRITE, [TOOL_TODO_WRITE], workspaceRoot, {
         store,
         projectContext,
-        input: blockInput,
-        toolCallId: "goal-manage-block-before-claim",
+        input: reviewingTodoInput,
+        toolCallId: "todo-during-review",
+      }),
+    );
+    await projectContext.goalState.finalizeReview(goal.id, {
+      verdict: "DONE",
+      summary: "Verified todo cleanup after review.",
+      evidenceRefs: [{ kind: "test_output", ref: "register-tools.test.ts", summary: "Todo cleanup regression passed." }],
+      authorization: {
+        agentName: "reviewer",
+        sessionRole: "review",
+        sessionGoalId: goal.id,
+        reviewerSessionId: "review-session",
+      },
+    });
+    const doneTodoInput = {
+      todos: [{ id: "done-cleanup", content: "Record terminal cleanup", status: "completed" as const }],
+    };
+    const afterDone = await registry.execute(
+      { toolName: TOOL_TODO_WRITE, toolCallId: "todo-after-done", input: doneTodoInput },
+      makeContext(TOOL_TODO_WRITE, [TOOL_TODO_WRITE], workspaceRoot, {
+        store,
+        projectContext,
+        input: doneTodoInput,
+        toolCallId: "todo-after-done",
       }),
     );
 
-    expect(denied.isError).toBe(true);
-    expect(denied.meta?.permissionErrorCode).toBe("GOAL_BOOTSTRAP_TOOL_DENIED");
-  });
-
-  it("allows goal_manage.retry as the failed-Goal bootstrap action", async () => {
-    const workspaceRoot = await createTmpRoot("goal-bootstrap-retry");
-    const projectContext = makeProjectContext(workspaceRoot);
-    const goal = await projectContext.goalState.create({
-      projectId: projectContext.project.slug,
-      title: "Bootstrap guard retry",
-      objective: "Verify retry bootstrap guard.",
-      acceptanceCriteria: "Retry is allowed for failed Goals.",
-    });
-    await projectContext.goalState.start(goal.id, { mainSessionId: "previous-main-session" });
-    await projectContext.goalState.fail(goal.id, "Previous attempt failed");
-    const store = storeManager.create("goal-bootstrap-retry-session", workspaceRoot);
-    store.getState().setGoalId(goal.id);
-    store.getState().setSessionRole("main");
-    const registry = new ToolRegistry();
-    registerBuiltinTools(registry, silentLogger);
-
-    const retried = await registry.execute(
-      { toolName: TOOL_GOAL_MANAGE, toolCallId: "goal-manage-retry-bootstrap", input: { action: "retry", goalId: goal.id } },
-      makeContext(TOOL_GOAL_MANAGE, [TOOL_GOAL_MANAGE], workspaceRoot, {
-        store,
-        projectContext,
-        input: { action: "retry", goalId: goal.id },
-        toolCallId: "goal-manage-retry-bootstrap",
-      }),
-    );
-
-    expect(retried.isError).toBe(false);
-    expect(retried.output).toContain('"status": "running"');
-    expect(retried.output).toContain('"attempt": 2');
+    expect(duringReview.isError).toBe(false);
+    expect(duringReview.output).toContain("Todos updated");
+    expect(afterDone.isError).toBe(false);
+    expect(afterDone.output).toContain("Todos updated");
+    expect(store.getState().todos).toEqual([
+      { id: "done-cleanup", content: "Record terminal cleanup", status: "completed" },
+    ]);
+    const terminalGoal = await projectContext.goalState.read(goal.id);
+    expect(terminalGoal.status).toBe("done");
   });
 
   it("treats old Goal executable names as unknown tools", async () => {
@@ -666,7 +662,7 @@ describe("registerBuiltinTools", () => {
       expect(tool!.name).toBe("ask_user");
     });
 
-  it("no human_check tool is registered because HITL uses ask_user", () => {
+    it("no human_check tool is registered because HITL uses ask_user", () => {
       const registry = new ToolRegistry();
       registerBuiltinTools(registry, silentLogger);
 

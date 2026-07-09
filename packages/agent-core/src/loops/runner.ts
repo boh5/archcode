@@ -771,15 +771,15 @@ function buildSessionLoopPrompt(loop: LoopState): string {
 
 function buildGoalLoopPrompt(loop: LoopState, goal: GoalState): string {
   return [
-    "Bootstrap an ArchCode Goal run.",
+    "Run this ArchCode Goal from a Loop.",
     `Goal ID: ${goal.id}`,
     `Goal title JSON: ${JSON.stringify(goal.title)}`,
     `Goal objective JSON: ${JSON.stringify(goal.objective)}`,
     `Goal acceptance criteria JSON: ${JSON.stringify(goal.acceptanceCriteria)}`,
     `Loop ID: ${loop.loopId}`,
     `Loop title JSON: ${JSON.stringify(loop.config.title)}`,
-    "Your first action must be calling goal_manage with action=\"start\" for this Goal ID. Do not edit files, delegate, advance phases, or record Done evidence until goal_manage.start succeeds.",
-    "After goal_manage.start succeeds, load the Goal state, work against the natural-language objective and acceptance criteria, use Plan/Build/Reviewer delegation, and have Reviewer finalize the review receipt through goal_manage.finalize_review.",
+    "Runtime has already started and claimed this Goal for the current main session.",
+    "Work against the natural-language objective and acceptance criteria, use available tools and delegation as needed, and have Reviewer finalize the review receipt through goal_manage.finalize_review.",
   ].join("\n");
 }
 

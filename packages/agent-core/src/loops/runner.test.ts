@@ -586,12 +586,14 @@ describe("goal loop runner", () => {
       toolProfileId: undefined,
     });
     expect(loopRunId(executionInput)).toEqual(expect.any(String));
-    expect(executionInput?.userMessage).toContain("Bootstrap an ArchCode Goal run.");
+    expect(executionInput?.userMessage).toContain("Run this ArchCode Goal from a Loop.");
     expect(executionInput?.userMessage).toContain("Goal ID: goal-1");
     expect(executionInput?.userMessage).toContain("Goal objective JSON");
     expect(executionInput?.userMessage).toContain("Goal acceptance criteria JSON");
     expect(executionInput?.userMessage).toContain(`Loop ID: ${loop.loopId}`);
-    expect(executionInput?.userMessage).toContain("Your first action must be calling goal_manage with action=\"start\" for this Goal ID.");
+    expect(executionInput?.userMessage).toContain("Runtime has already started and claimed this Goal for the current main session.");
+    expect(executionInput?.userMessage).not.toContain("Your first action must be calling goal_manage");
+    expect(executionInput?.userMessage).not.toContain("Do not edit files, delegate");
     expect(executionInput?.userMessage).toContain("goal_manage.finalize_review");
 
     const state = await fixture.stateManager.read(loop.loopId);

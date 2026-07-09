@@ -7,7 +7,6 @@ import {
   createOutputTruncator,
   createRedactionHook,
 } from "../tools/hooks";
-import { createGoalBootstrapPermission } from "../tools/permission";
 import { createLoopBudgetToolPermission } from "../loops/budget-tool-guard";
 import { createLoopCollisionToolPermission, createLoopCollisionToolReleaseHook } from "../loops/collision-tool-guard";
 import { createMemoryReadTool } from "../tools/builtins/memory-read";
@@ -29,7 +28,6 @@ export function registerBuiltinTools(
 
   registry.registerAll(createGitHubToolDescriptors());
 
-  registry.globalPermissions.push(createGoalBootstrapPermission());
   registry.globalPermissions.push(createLoopCollisionToolPermission());
   registry.globalPermissions.push(createLoopBudgetToolPermission());
 

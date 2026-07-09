@@ -156,7 +156,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
           });
         } catch (error) {
           if (hasErrorName(error, "AgentRunningError")) return withSessions;
-          await markGoalRunBootstrapFailure(manager, goalId, error);
+          await markGoalRunStartFailure(manager, goalId, error);
           throw error;
         }
         return withSessions;
@@ -205,7 +205,7 @@ export function createGoalsRoutes(runtime: AgentRuntime): Hono {
           });
         } catch (error) {
           if (hasErrorName(error, "AgentRunningError")) return withSessions;
-          await markGoalRunBootstrapFailure(manager, goalId, error);
+          await markGoalRunStartFailure(manager, goalId, error);
           throw error;
         }
         return withSessions;
@@ -365,14 +365,14 @@ async function goalStateFor(runtime: AgentRuntime, workspaceRoot: string): Promi
   return context.goalState as unknown as GoalStateManagerForRoute;
 }
 
-async function markGoalRunBootstrapFailure(
+async function markGoalRunStartFailure(
   manager: GoalStateManagerForRoute,
   goalId: string,
   error: unknown,
 ): Promise<void> {
   if (manager.fail === undefined) return;
   try {
-    await manager.fail(goalId, new Error(`Goal run bootstrap could not start: ${errorMessage(error)}`));
+    await manager.fail(goalId, new Error(`Goal run could not start: ${errorMessage(error)}`));
   } catch {
     // Best-effort annotation: preserve the original execution-start error.
   }

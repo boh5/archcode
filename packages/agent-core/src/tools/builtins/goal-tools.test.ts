@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StoreApi } from "zustand";
 
@@ -135,20 +136,27 @@ function reviewStore(goalId: string, overrides: Partial<SessionStoreState> = {})
   });
 }
 
-function makeProjectContext(goalState: SimplifiedGoalStateManagerMock = new SimplifiedGoalStateManagerMock()): ProjectContext {
+afterAll(async () => {
+  await rm(TMP_DIR, { recursive: true, force: true });
+});
+
+function makeProjectContext(
+  goalState: SimplifiedGoalStateManagerMock | GoalStateManager = new SimplifiedGoalStateManagerMock(),
+  workspaceRoot = TMP_DIR,
+): ProjectContext {
   return {
     project: {
       slug: "test-project",
       name: "Test Project",
-      workspaceRoot: TMP_DIR,
+      workspaceRoot,
       addedAt: new Date().toISOString(),
     },
     goalState: goalState as unknown as GoalStateManager,
-    loopState: new LoopStateManager(TMP_DIR),
+    loopState: new LoopStateManager(workspaceRoot),
     hitl: new HitlService(),
     memory: new MemoryFileManager({
-      project: join(TMP_DIR, ".archcode", "memory"),
-      user: join(TMP_DIR, ".archcode", "user-memory"),
+      project: join(workspaceRoot, ".archcode", "memory"),
+      user: join(workspaceRoot, ".archcode", "user-memory"),
     }),
     approvals: new ProjectApprovalManager(silentLogger),
   };
@@ -199,6 +207,10 @@ async function execute(
   const projectContext = makeProjectContext(goalState);
   const output = await goalManageTool.execute(parsed.data, makeCtx(parsed.data, options.store ?? mainStore(), projectContext));
   return { goalState, result: typeof output === "string" ? { output, isError: false } : output };
+}
+
+function normalizeOutput(output: string | ToolExecutionResult): ToolExecutionResult {
+  return typeof output === "string" ? { output, isError: false } : output;
 }
 
 function makeGoalState(overrides: Partial<GoalState> = {}): GoalState {
@@ -285,6 +297,33 @@ describe("goal_manage builtin tool", () => {
       "retry",
       "cancel",
     ]);
+  });
+
+  it("enforces start claim ownership through the Goal state manager", async () => {
+    const workspaceRoot = join(TMP_DIR, `state-${crypto.randomUUID()}`);
+    const manager = new GoalStateManager(workspaceRoot);
+    const projectContext = makeProjectContext(manager, workspaceRoot);
+    const created = await manager.create({
+      projectId: "test-project",
+      title: "Claim ownership",
+      objective: "Keep Goal ownership inside the state machine.",
+      acceptanceCriteria: "Repeated starts are idempotent for the same main session and rejected for a different one.",
+    });
+    const input = { action: "start", goalId: created.id } as const;
+
+    const first = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a" }), projectContext)));
+    const second = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-a" }), projectContext)));
+    const conflicting = normalizeOutput(await goalManageTool.execute(input, makeCtx(input, mainStore({ sessionId: "main-session-b" }), projectContext)));
+
+    expect(first.isError).toBe(false);
+    expect(JSON.parse(first.output) as GoalState).toMatchObject({ status: "running", mainSessionId: "main-session-a" });
+    expect(second.isError).toBe(false);
+    expect(JSON.parse(second.output) as GoalState).toMatchObject({ status: "running", mainSessionId: "main-session-a" });
+    expect(conflicting.isError).toBe(true);
+    expect(conflicting.output).toContain("GOAL_INVALID_TRANSITION");
+    expect(conflicting.output).toContain("Invalid goal transition running -> running");
+    const persisted = await manager.read(created.id);
+    expect(persisted).toMatchObject({ status: "running", mainSessionId: "main-session-a" });
   });
 
   it("denies lifecycle actions for Reviewer sessions", async () => {

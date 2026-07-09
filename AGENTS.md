@@ -100,7 +100,7 @@ packages/agent-core/src/
 ├── tools/permission/           # Permission handling (15 files for tool access control)
 ├── tools/security/             # Secret detection patterns + bash classifier
 ├── tools/riipgrep/             # Ripgrep wrapper for search tools
-├── core/                       # register-tools.ts: wires base + memory + Goal + GitHub tools, Goal/Loop guards, global after-hooks
+├── core/                       # register-tools.ts: wires base + memory + Goal + GitHub tools, Loop guards, global after-hooks
 ├── store/                      # Zustand vanilla store: createSessionStore, StreamEvent reducer, ModelMessage projection, persist/load
 ├── background/                 # BackgroundTaskManager (fire-and-forget, dedup) + tasks: title-generation, memory-extraction, memory-consolidation
 ├── commands/                   # CommandRegistry + /compact command
@@ -178,7 +178,7 @@ Delegation: delegate tool → AgentFactory → ConfiguredAgent child (filtered t
 
 **Tool execution pipeline:**
 ```
-partitionToolCalls → global permissions (Goal bootstrap, Loop collision, Loop budget)
+partitionToolCalls → global permissions (Loop collision, Loop budget)
   → tool guards (workspace, read-snapshot, sensitive-file, bash-classifier)
   → before hooks → execute → after hooks (edit-error-recovery)
   → global after (Loop collision release → redact → truncate → audit → logger)
@@ -331,7 +331,7 @@ beforeModelBuild (auto-compact) → toModelMessages → beforeModelCall (auto-in
 
 (✅ = readOnly, ❌ = not readOnly, ✅destructive = only destructive tool)
 
-**Global permissions/hooks**: Goal bootstrap guard, Loop collision guard, and Loop budget guard run before tool execution. Global after-hooks run **Loop collision release → redact → truncate → audit → logger**.
+**Global permissions/hooks**: Loop collision guard and Loop budget guard run before tool execution. Global after-hooks run **Loop collision release → redact → truncate → audit → logger**.
 
 **Core API**: `defineTool()` → `ToolDescriptor`. `ToolTraits: { readOnly, destructive, concurrencySafe }`. `partitionToolCalls()` groups concurrent-safe calls into parallel batches. Guards return `{ outcome: "allow" | "deny" | "ask" }`.
 
