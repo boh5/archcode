@@ -117,7 +117,8 @@ export interface DashboardLoop {
  * Minimal template-oriented create payload for `POST /api/projects/:slug/loops`.
  * The server maps `templateId` to the internal Loop template. This payload never
  * sends `mode`, `toolProfileId`, `extraTools`, `collisionTargets`, or
- * `cleanupPolicy`. `useWorktree` is the only manual worktree opt-in.
+ * `cleanupPolicy`. The mutation layer maps UI `budget` to the server `limits`
+ * field. `useWorktree` is the only manual worktree opt-in.
  */
 export interface CreateLoopPayload {
   templateId: LoopTemplateId;
@@ -132,6 +133,22 @@ export interface CreateLoopPayload {
   triggers?: LoopTriggerSpec[];
   useWorktree?: boolean;
   author?: string;
+}
+
+/** Template-oriented update payload for `PATCH /api/projects/:slug/loops/:loopId`. */
+export interface UpdateLoopPayload {
+  status?: LoopStatus;
+  templateId?: LoopTemplateId;
+  title?: string;
+  description?: string;
+  schedule?: LoopScheduleSpec;
+  approvalPolicy?: LoopApprovalPolicy;
+  budget?: LoopBudgetConfig;
+  taskPrompt?: string;
+  instructions?: string;
+  goalTemplate?: LoopGoalTemplate;
+  triggers?: LoopTriggerSpec[];
+  useWorktree?: boolean;
 }
 
 /** Response of GET /api/projects/:slug/loops/:loopId/state. */

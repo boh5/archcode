@@ -6,12 +6,12 @@ import type {
   ApiCommandResult,
   CreateLoopPayload,
   GoalState,
-  LoopConfig,
   LoopKillState,
   LoopRunReport,
   LoopState,
   Project,
   Session,
+  UpdateLoopPayload,
 } from "./types";
 
 export function useUpdateProjectName() {
@@ -333,18 +333,7 @@ export function useCreateLoop() {
   return useMutation({
     mutationFn: async (variables: { slug: string } & CreateLoopPayload) => {
       const { slug, ...payload } = variables;
-      const body: Record<string, unknown> = { templateId: payload.templateId };
-      if (payload.title) body.title = payload.title;
-      if (payload.description) body.description = payload.description;
-      if (payload.schedule) body.schedule = payload.schedule;
-      if (payload.approvalPolicy) body.approvalPolicy = payload.approvalPolicy;
-      if (payload.budget) body.budget = payload.budget;
-      if (payload.taskPrompt) body.taskPrompt = payload.taskPrompt;
-      if (payload.instructions) body.instructions = payload.instructions;
-      if (payload.goalTemplate) body.goalTemplate = payload.goalTemplate;
-      if (payload.triggers && payload.triggers.length > 0) body.triggers = payload.triggers;
-      if (payload.useWorktree === true) body.useWorktree = true;
-      if (payload.author) body.author = payload.author;
+      const body = buildCreateLoopRequestBody(payload);
       return apiFetch<{ loop: LoopState }>(`/api/projects/${encodeURIComponent(slug)}/loops`, {
         method: "POST",
         body,
@@ -356,6 +345,22 @@ export function useCreateLoop() {
   });
 }
 
+export function buildCreateLoopRequestBody(payload: CreateLoopPayload): Record<string, unknown> {
+  const body: Record<string, unknown> = { templateId: payload.templateId };
+  if (payload.title) body.title = payload.title;
+  if (payload.description) body.description = payload.description;
+  if (payload.schedule) body.schedule = payload.schedule;
+  if (payload.approvalPolicy) body.approvalPolicy = payload.approvalPolicy;
+  if (payload.budget) body.limits = payload.budget;
+  if (payload.taskPrompt) body.taskPrompt = payload.taskPrompt;
+  if (payload.instructions) body.instructions = payload.instructions;
+  if (payload.goalTemplate) body.goalTemplate = payload.goalTemplate;
+  if (payload.triggers && payload.triggers.length > 0) body.triggers = payload.triggers;
+  if (payload.useWorktree === true) body.useWorktree = true;
+  if (payload.author) body.author = payload.author;
+  return body;
+}
+
 export function useUpdateLoop() {
   const queryClient = useQueryClient();
 
@@ -363,17 +368,12 @@ export function useUpdateLoop() {
     mutationFn: async ({
       slug,
       loopId,
-      config,
-      status,
+      ...payload
     }: {
       slug: string;
       loopId: string;
-      config?: LoopConfig;
-      status?: "active" | "paused" | "disabled" | "error";
-    }) => {
-      const body: Record<string, unknown> = {};
-      if (config !== undefined) body.config = config;
-      if (status !== undefined) body.status = status;
+    } & UpdateLoopPayload) => {
+      const body = buildUpdateLoopRequestBody(payload);
       return apiFetch<{ loop: LoopState }>(
         `/api/projects/${encodeURIComponent(slug)}/loops/${encodeURIComponent(loopId)}`,
         { method: "PATCH", body },
@@ -383,6 +383,23 @@ export function useUpdateLoop() {
       await invalidateLoopAfterUpdate(queryClient, variables.slug, variables.loopId);
     },
   });
+}
+
+export function buildUpdateLoopRequestBody(payload: UpdateLoopPayload): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (payload.status !== undefined) body.status = payload.status;
+  if (payload.templateId !== undefined) body.templateId = payload.templateId;
+  if (payload.title !== undefined) body.title = payload.title;
+  if (payload.description !== undefined) body.description = payload.description;
+  if (payload.schedule !== undefined) body.schedule = payload.schedule;
+  if (payload.approvalPolicy !== undefined) body.approvalPolicy = payload.approvalPolicy;
+  if (payload.budget !== undefined) body.limits = payload.budget;
+  if (payload.taskPrompt !== undefined) body.taskPrompt = payload.taskPrompt;
+  if (payload.instructions !== undefined) body.instructions = payload.instructions;
+  if (payload.goalTemplate !== undefined) body.goalTemplate = payload.goalTemplate;
+  if (payload.triggers !== undefined) body.triggers = payload.triggers;
+  if (payload.useWorktree !== undefined) body.useWorktree = payload.useWorktree;
+  return body;
 }
 
 export function useTriggerLoop() {

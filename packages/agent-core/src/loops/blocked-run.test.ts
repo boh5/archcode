@@ -22,6 +22,7 @@ const sessionLoopConfig: LoopConfig = {
   approvalPolicy: "interactive",
   limits: { maxIterationsPerRun: 3 },
   taskPrompt: "Run safely unless user input is needed.",
+  useWorktree: true,
 };
 
 beforeEach(async () => {

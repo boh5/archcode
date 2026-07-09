@@ -1011,9 +1011,22 @@ export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: Loop
 
   const handleSubmitPayload = useCallback(
     (payload: CreateLoopPayload) => {
-      const config = buildLoopConfigFromPayload(payload, loop.config);
       updateLoop.mutate(
-        { slug, loopId: loop.loopId, config },
+        {
+          slug,
+          loopId: loop.loopId,
+          templateId: payload.templateId,
+          title: payload.title,
+          ...(payload.description ? { description: payload.description } : {}),
+          schedule: payload.schedule,
+          approvalPolicy: payload.approvalPolicy,
+          budget: payload.budget,
+          ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
+          ...(payload.instructions ? { instructions: payload.instructions } : {}),
+          ...(payload.goalTemplate ? { goalTemplate: payload.goalTemplate } : {}),
+          ...(loop.config.triggers ? { triggers: loop.config.triggers } : {}),
+          useWorktree: payload.useWorktree === true,
+        },
         { onSuccess: () => onClose?.() },
       );
     },
@@ -1034,23 +1047,4 @@ export function EditLoopForm({ slug, loop, onClose }: { slug: string; loop: Loop
       initialState={initialState}
     />
   );
-}
-
-function buildLoopConfigFromPayload(payload: CreateLoopPayload, base: LoopConfig): LoopConfig {
-  const baseBudget = base.budget ?? ("softThresholdRatio" in base.limits ? base.limits : undefined);
-  const budget = payload.budget ?? baseBudget ?? DEFAULT_BUDGET;
-  return {
-    templateId: payload.templateId,
-    title: payload.title,
-    ...(payload.description ? { description: payload.description } : {}),
-    schedule: payload.schedule,
-    approvalPolicy: payload.approvalPolicy,
-    limits: budget,
-    budget,
-    ...(payload.taskPrompt ? { taskPrompt: payload.taskPrompt } : {}),
-    ...(payload.instructions ? { instructions: payload.instructions } : {}),
-    ...(payload.goalTemplate ? { goalTemplate: payload.goalTemplate } : {}),
-    ...(payload.useWorktree === true ? { useWorktree: true } : {}),
-    ...(base.triggers ? { triggers: base.triggers } : {}),
-  };
 }

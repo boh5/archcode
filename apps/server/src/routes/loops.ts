@@ -110,6 +110,7 @@ const CreateLoopBodySchema = z.strictObject({
 
 const PatchLoopBodySchema = z.strictObject({
   status: z.enum(["active", "paused", "disabled", "error"]).optional(),
+  templateId: LoopTemplateIdSchema.optional(),
   title: LoopTitleSchema.optional(),
   description: LoopTextSchema.optional(),
   schedule: LoopScheduleSpecSchema.optional(),
@@ -129,9 +130,22 @@ const ActivateKillBodySchema = z.strictObject({
 
 type CreateLoopBody = z.infer<typeof CreateLoopBodySchema>;
 type PatchLoopBody = z.infer<typeof PatchLoopBodySchema>;
-type EditableLoopBody = Omit<CreateLoopBody, "templateId" | "author">;
+type EditableLoopBody = Partial<Pick<CreateLoopBody,
+  | "templateId"
+  | "title"
+  | "description"
+  | "schedule"
+  | "approvalPolicy"
+  | "limits"
+  | "taskPrompt"
+  | "instructions"
+  | "goalTemplate"
+  | "triggers"
+  | "useWorktree"
+>>;
 const LEGACY_COMPATIBILITY_SCORE_KEY = `${"readiness"}Score` satisfies keyof LoopState;
 const EDITABLE_LOOP_BODY_FIELDS = [
+  "templateId",
   "title",
   "description",
   "schedule",
@@ -365,8 +379,13 @@ function createConfigFromBody(body: CreateLoopBody): LoopConfig {
 }
 
 function toLoopUpdates(body: PatchLoopBody, currentConfig: LoopConfig | undefined): LoopUpdateInput {
+  const baseConfig = currentConfig === undefined
+    ? undefined
+    : body.templateId === undefined
+      ? currentConfig
+      : expandLoopTemplate(body.templateId);
   return {
-    ...(currentConfig === undefined ? {} : { config: applyEditableConfigFields(currentConfig, body) }),
+    ...(baseConfig === undefined ? {} : { config: applyEditableConfigFields(baseConfig, body) }),
     ...(body.status === undefined ? {} : { status: body.status }),
   };
 }
@@ -374,6 +393,7 @@ function toLoopUpdates(body: PatchLoopBody, currentConfig: LoopConfig | undefine
 function applyEditableConfigFields(baseConfig: LoopConfig, body: EditableLoopBody): LoopConfig {
   const nextConfig: LoopConfig = {
     ...baseConfig,
+    ...(body.templateId === undefined ? {} : { templateId: body.templateId }),
     ...(body.title === undefined ? {} : { title: body.title }),
     ...(body.description === undefined ? {} : { description: body.description }),
     ...(body.schedule === undefined ? {} : { schedule: body.schedule }),

@@ -319,59 +319,83 @@ describe("web loop mutation invalidation helpers", () => {
 });
 
 describe("web loop mutation URL contracts", () => {
-  test("createLoop posts to /api/projects/:slug/loops with config body", async () => {
+  test("createLoop posts to /api/projects/:slug/loops with template-oriented body", async () => {
+    const { buildCreateLoopRequestBody } = await import("./mutations");
+    const limits = {
+      maxIterationsPerRun: 10,
+      maxTokensPerRun: 120000,
+      maxWallClockMsPerRun: 900000,
+      maxRunsPerDay: 2,
+      softThresholdRatio: 0.8,
+      hardThresholdRatio: 1,
+    };
     globalThis.document = { cookie: "" } as Document;
     const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops`);
       expect(init?.method).toBe("POST");
       const body = JSON.parse(String(init?.body ?? "{}"));
-      expect(body.config).toBeDefined();
-      expect(body.config.title).toBe("New Loop");
+      expect(body.templateId).toBe("watch_report");
+      expect(body.title).toBe("New Loop");
+      expect(body.limits).toEqual(limits);
       expect(body.author).toBe("user");
+      expect(body.config).toBeUndefined();
       expect(body.presetId).toBeUndefined();
+      expect(body.budget).toBeUndefined();
+      expect(body.extraTools).toBeUndefined();
       return jsonResponse({ loop: { loopId: "loop-new", status: "active" } }, { status: 201 });
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops`, {
       method: "POST",
-      body: {
-        config: {
-          title: "New Loop",
-          schedule: { kind: "manual" },
-          runKind: "session",
-          mode: "report",
-          approvalPolicy: "interactive",
-          limits: { maxIterationsPerRun: 10 },
-        },
+      body: buildCreateLoopRequestBody({
+        templateId: "watch_report",
+        title: "New Loop",
+        schedule: { kind: "manual" },
+        approvalPolicy: "interactive",
+        budget: limits,
         author: "user",
-      },
+      }),
     });
 
     expect(result).toMatchObject({ loop: { loopId: "loop-new" } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("createLoop with presetId does not include goalTemplateId", async () => {
-    globalThis.document = { cookie: "" } as Document;
-    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe(`/api/projects/${TEST_PROJECT_SLUG}/loops`);
-      expect(init?.method).toBe("POST");
-      const body = JSON.parse(String(init?.body ?? "{}"));
-      expect(body.presetId).toBe("daily_triage");
-      expect(body.config).toBeUndefined();
-      expect(body.goalTemplateId).toBeUndefined();
-      return jsonResponse({ loop: { loopId: "loop-new", status: "active" } }, { status: 201 });
+  test("updateLoop request body is flat and never sends raw config", async () => {
+    const { buildUpdateLoopRequestBody } = await import("./mutations");
+    const body = buildUpdateLoopRequestBody({
+      status: "paused",
+      templateId: "maintain_fix",
+      title: "Maintain Loop",
+      schedule: { kind: "manual" },
+      approvalPolicy: "explicit_per_run",
+      budget: {
+        maxIterationsPerRun: 12,
+        maxTokensPerRun: 160000,
+        maxWallClockMsPerRun: 1200000,
+        maxRunsPerDay: 2,
+        softThresholdRatio: 0.8,
+        hardThresholdRatio: 1,
+      },
+      triggers: [],
+      useWorktree: false,
     });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    const result = await apiFetch(`/api/projects/${TEST_PROJECT_SLUG}/loops`, {
-      method: "POST",
-      body: { presetId: "daily_triage" },
+    expect(body).toMatchObject({
+      status: "paused",
+      templateId: "maintain_fix",
+      title: "Maintain Loop",
+      schedule: { kind: "manual" },
+      approvalPolicy: "explicit_per_run",
+      limits: expect.objectContaining({ maxIterationsPerRun: 12 }),
+      triggers: [],
+      useWorktree: false,
     });
-
-    expect(result).toMatchObject({ loop: { loopId: "loop-new" } });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body.config).toBeUndefined();
+    expect(body.presetId).toBeUndefined();
+    expect(body.budget).toBeUndefined();
+    expect(body.extraTools).toBeUndefined();
   });
 
   test("loop trigger mutation calls POST /api/projects/:slug/loops/:loopId/trigger", async () => {

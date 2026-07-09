@@ -172,6 +172,7 @@ describe("loops routes", () => {
     const patchRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
       method: "PATCH",
       body: JSON.stringify({
+        templateId: "maintain_fix",
         title: "PR trigger session loop",
         schedule: { kind: "manual" },
         triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
@@ -181,6 +182,7 @@ describe("loops routes", () => {
     const patchBody = await patchRes.json() as { loop: LoopState };
 
     expect(patchRes.status).toBe(200);
+    expect(patchBody.loop.config.templateId).toBe("maintain_fix");
     expect(patchBody.loop.config.schedule).toEqual({ kind: "manual" });
     expect(patchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
     expect(patchBody.loop.config).not.toHaveProperty("cleanupPolicy");
@@ -584,6 +586,7 @@ describe("loops routes", () => {
     for (const internalPatch of [
       { config: manualSessionLoopConfig },
       { presetId: "daily_triage" },
+      { templateId: "daily_triage" },
       { mode: "fix" },
       { toolProfileId: "loop_local_report" },
       { extraTools: ["bash"] },

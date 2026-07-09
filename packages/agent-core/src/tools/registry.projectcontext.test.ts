@@ -10,7 +10,7 @@ import { silentLogger } from "../logger";
 import { ProjectApprovalManager } from "./permission";
 import type { PermissionApprovalScope } from "./permission";
 import { createRegistry } from "./registry";
-import { createToolExecutionContext, type ToolConfirmationRequest, type ToolDescriptor, type ToolExecutionContext, type ToolExecutionOrigin } from "./types";
+import { createToolExecutionContext, type ToolDescriptor, type ToolExecutionContext, type ToolExecutionOrigin } from "./types";
 import { z } from "zod";
 import { createTestProjectContext } from "./test-project-context";
 
@@ -130,31 +130,26 @@ describe("ToolRegistry projectContext approval flow", () => {
     expect(confirmPermission).not.toHaveBeenCalled();
   });
 
-  test("loop act-mode effectful tools do not silently inherit project approve_always", async () => {
+  test("loop metadata origin still reuses project approvals for effectful tools", async () => {
     const registry = createRegistry([createSensitiveDescriptor()]);
-    const projectContext = await createProjectContext("loop-act-guard");
+    const projectContext = await createProjectContext("loop-metadata-approval");
     await projectContext.approvals.addApproval(APPROVAL_SCOPE, {
       display: "Trust ctx sensitive tool",
       reason: "Existing project-level approval",
     });
-    let confirmationRequest: ToolConfirmationRequest | undefined;
-    const confirmPermission = mock(async (request: ToolConfirmationRequest) => {
-      confirmationRequest = request;
-      return "approve_once" as const;
-    });
+    const confirmPermission = mock(async () => "deny" as const);
 
     const result = await registry.execute(
-      { toolName: "ctx_sensitive_tool", toolCallId: "loop-act", input: {} },
-      { ...createContext(projectContext), toolCallId: "loop-act", confirmPermission, origin: LOOP_ORIGIN },
+      { toolName: "ctx_sensitive_tool", toolCallId: "loop-metadata", input: {} },
+      { ...createContext(projectContext), toolCallId: "loop-metadata", confirmPermission, origin: LOOP_ORIGIN },
     );
 
     expect(result.isError).toBe(false);
     expect(result.output).toBe("executed");
-    expect(confirmPermission).toHaveBeenCalledTimes(1);
-    expect(confirmationRequest?.origin).toEqual(LOOP_ORIGIN);
+    expect(confirmPermission).not.toHaveBeenCalled();
   });
 
-  test("loop act-mode read-only tools can still use matching project approvals", async () => {
+  test("loop metadata origin read-only tools can still use matching project approvals", async () => {
     const registry = createRegistry([createSensitiveDescriptor({ readOnly: true, destructive: false, concurrencySafe: true })]);
     const projectContext = await createProjectContext("loop-readonly-regression");
     await projectContext.approvals.addApproval(APPROVAL_SCOPE, {

@@ -31,6 +31,7 @@ const loopHardeningConfig: LoopConfig = {
   limits: { maxIterationsPerRun: 4 },
   taskPrompt: "Review the observed PR and write a concise artifact summary.",
   triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
+  useWorktree: true,
   cleanupPolicy: { enabled: true, action: "mark", deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
 };
 

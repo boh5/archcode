@@ -137,7 +137,6 @@ describe("Session HITL resume", () => {
       loopId: crypto.randomUUID(),
       runId: "run-1",
       trigger: "manual" as const,
-      mode: "act" as const,
       approvalPolicy: "interactive" as const,
     };
 
