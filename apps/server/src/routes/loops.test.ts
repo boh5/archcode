@@ -26,21 +26,10 @@ const manualSessionLoopConfig: LoopConfig = {
   taskPrompt: "Summarize local project health.",
 };
 
-const normalizedManualSessionLoopConfig: LoopConfig = {
-  ...manualSessionLoopConfig,
-  limits: { maxIterationsPerRun: 4, softThresholdRatio: 0.8, hardThresholdRatio: 1 },
-};
-
 const intervalSessionLoopConfig: LoopConfig = {
   ...manualSessionLoopConfig,
   title: "Interval session loop",
   schedule: { kind: "interval", everyMs: 1_000 },
-};
-
-const cronSessionLoopConfig: LoopConfig = {
-  ...manualSessionLoopConfig,
-  title: "Cron session loop",
-  schedule: { kind: "cron", expression: "*/15 * * * *" },
 };
 
 const prTriggerSessionLoopConfig: LoopConfig = {
@@ -105,32 +94,30 @@ describe("loops routes", () => {
     expect(await readRes.json()).toEqual({ loop: createBody.loop });
   });
 
-  test("creates interval session loops and supported presets at create time only", async () => {
-    const { app, project } = await createTestApp("interval-and-preset", { now: 10_000 });
+  test("creates all supported templates through minimal template bodies", async () => {
+    const { app, project } = await createTestApp("supported-template-create", { now: 10_000 });
+    const expectedTitles = {
+      watch_report: "Watch & Report",
+      maintain_fix: "Maintain & Fix",
+      pr_babysitter: "PR Babysitter",
+      goal_runner: "Goal Runner",
+    } as const;
 
-    const intervalRes = await app.request(`/api/projects/${project.slug}/loops`, {
-      method: "POST",
-      body: JSON.stringify({ templateId: "watch_report" }),
-      headers: { "content-type": "application/json" },
-    });
-    const intervalBody = await intervalRes.json() as { loop: LoopState };
+    for (const templateId of ["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"] as const) {
+      const res = await app.request(`/api/projects/${project.slug}/loops`, {
+        method: "POST",
+        body: JSON.stringify({ templateId }),
+        headers: { "content-type": "application/json" },
+      });
+      const body = await res.json() as { loop: LoopState };
 
-    expect(intervalRes.status).toBe(201);
-    expect(intervalBody.loop.config.templateId).toBe("watch_report");
-    expect(intervalBody.loop.nextRunAt).toBeUndefined();
-    expect(intervalBody.loop.readinessScore ?? null).toBeNull();
-
-    const presetRes = await app.request(`/api/projects/${project.slug}/loops`, {
-      method: "POST",
-      body: JSON.stringify({ templateId: "watch_report", author: "preset-user" }),
-      headers: { "content-type": "application/json" },
-    });
-    const presetBody = await presetRes.json() as { loop: LoopState };
-
-    expect(presetRes.status).toBe(201);
-    expect(presetBody.loop.config.templateId).toBe("watch_report");
-    expect(presetBody.loop.config.title).toBe("Watch & Report");
-    expect(presetBody.loop.readinessScore ?? null).toBeNull();
+      expect(res.status).toBe(201);
+      expect(body.loop.config.templateId).toBe(templateId);
+      expect(body.loop.config.title).toBe(expectedTitles[templateId]);
+      expect(body.loop.config.useWorktree ?? false).toBe(false);
+      expect(body.loop.nextRunAt).toBeUndefined();
+      expect(body.loop.readinessScore ?? null).toBeNull();
+    }
 
     const prBabysitterRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
@@ -139,15 +126,10 @@ describe("loops routes", () => {
     });
     const prBabysitterBody = await prBabysitterRes.json() as { loop: LoopState };
     expect(prBabysitterRes.status).toBe(201);
-    expect(prBabysitterBody.loop.config).toMatchObject({
-      templateId: "pr_babysitter",
-      title: "PR Babysitter",
-    });
     expect(prBabysitterBody.loop.config.description).toContain("pull request status");
     expect(prBabysitterBody.loop.config.taskPrompt).toContain("draft a short issue comment only when a clear status update is useful");
     expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("merge");
     expect(prBabysitterBody.loop.config.taskPrompt?.toLowerCase()).not.toContain("rebase");
-    expect(prBabysitterBody.loop.readinessScore ?? null).toBeNull();
   });
 
   test("creates cron loops and persists UTC cron metadata", async () => {
@@ -155,24 +137,20 @@ describe("loops routes", () => {
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ templateId: "watch_report", author: "cron-user" }),
+      body: JSON.stringify({ templateId: "watch_report", author: "cron-user", title: "Cron session loop", schedule: { kind: "cron", expression: "*/15 * * * *" } }),
       headers: { "content-type": "application/json" },
     });
     const createBody = await createRes.json() as { loop: LoopState };
 
     expect(createRes.status).toBe(201);
-    const patchRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ config: cronSessionLoopConfig }),
-      headers: { "content-type": "application/json" },
-    });
-    const patchBody = await patchRes.json() as { loop: LoopState };
-
-    expect(patchRes.status).toBe(200);
-    expect(patchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
-    expect(patchBody.loop.config.title).toBe("Cron session loop");
+    expect(createBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
+    expect(createBody.loop.config.title).toBe("Cron session loop");
     expect(JSON.stringify(createBody.loop)).not.toContain("readinessScore");
-    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expandLoopTemplate("watch_report"), "cron-user");
+    expect(runtime.createLoop).toHaveBeenCalledWith(project.workspaceRoot, expect.objectContaining({
+      ...expandLoopTemplate("watch_report"),
+      title: "Cron session loop",
+      schedule: { kind: "cron", expression: "*/15 * * * *" },
+    }), "cron-user");
 
     const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
     const readBody = await readRes.json() as { loop: LoopState };
@@ -180,12 +158,8 @@ describe("loops routes", () => {
     expect(readBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
   });
 
-  test("creates manual loops with PR triggers and cleanup policy separate from schedule", async () => {
+  test("patches simple trigger fields and rejects cleanup policy as ordinary input", async () => {
     const { app, project } = await createTestApp("manual-pr-trigger-create");
-    const config: LoopConfig = {
-      ...prTriggerSessionLoopConfig,
-      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 },
-    };
 
     const createRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
@@ -197,7 +171,11 @@ describe("loops routes", () => {
     expect(createRes.status).toBe(201);
     const patchRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
       method: "PATCH",
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({
+        title: "PR trigger session loop",
+        schedule: { kind: "manual" },
+        triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
+      }),
       headers: { "content-type": "application/json" },
     });
     const patchBody = await patchRes.json() as { loop: LoopState };
@@ -205,7 +183,14 @@ describe("loops routes", () => {
     expect(patchRes.status).toBe(200);
     expect(patchBody.loop.config.schedule).toEqual({ kind: "manual" });
     expect(patchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
-    expect(patchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 });
+    expect(patchBody.loop.config).not.toHaveProperty("cleanupPolicy");
+
+    const cleanupPolicyRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true, maxPreservedWorktrees: 3 } }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(cleanupPolicyRes.status).toBe(400);
 
     const readRes = await app.request(`/api/projects/${project.slug}/loops/${createBody.loop.loopId}`);
     const readBody = await readRes.json() as { loop: LoopState };
@@ -219,20 +204,20 @@ describe("loops routes", () => {
     const cases: Array<{ name: string; body: unknown; message: string; patch?: boolean }> = [
       {
         name: "invalid cron",
-        body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "60 * * * *" } } },
-        message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+        body: { schedule: { kind: "cron", expression: "60 * * * *" } },
+        message: "schedule.expression must be a valid 5-field UTC cron expression",
         patch: true,
       },
       {
         name: "impossible cron",
-        body: { config: { ...manualSessionLoopConfig, schedule: { kind: "cron", expression: "0 0 30 2 *" } } },
-        message: "config.schedule.expression must be a valid 5-field UTC cron expression",
+        body: { schedule: { kind: "cron", expression: "0 0 30 2 *" } },
+        message: "schedule.expression must be a valid 5-field UTC cron expression",
         patch: true,
       },
       {
         name: "too-fast trigger cadence",
-        body: { config: { ...manualSessionLoopConfig, triggers: [{ kind: "on_pr", cadenceMs: 29_000, baseBranch: "main" }] } },
-        message: "config.triggers.0.cadenceMs must be at least 30000",
+        body: { triggers: [{ kind: "on_pr", cadenceMs: 29_000, baseBranch: "main" }] },
+        message: "triggers.0.cadenceMs must be at least 30000",
         patch: true,
       },
       {
@@ -287,7 +272,7 @@ describe("loops routes", () => {
 
     const invalidRes = await app.request(`/api/projects/${project.slug}/loops`, {
       method: "POST",
-      body: JSON.stringify({ config: { ...goalLoopConfig, goalTemplateId: "existing-goal" } }),
+      body: JSON.stringify({ templateId: "goal_runner", goalTemplateId: "existing-goal" }),
       headers: { "content-type": "application/json" },
     });
     expect(invalidRes.status).toBe(400);
@@ -315,14 +300,23 @@ describe("loops routes", () => {
     runtime.releaseActiveRun();
     expect((await (await firstTrigger).json() as { report: LoopRunReport }).report).toMatchObject({ runId: "run-1", sessionId: "session-1", status: "succeeded" });
 
-    for (const config of [
-      { ...manualSessionLoopConfig, schedule: { kind: "event", event: "pull_request" } },
-      { ...manualSessionLoopConfig, autoApprove: true },
-      { ...manualSessionLoopConfig, customPatternPath: ".archcode/loops/patterns.ts" },
+    for (const body of [
+      { config: manualSessionLoopConfig },
+      { presetId: "daily_triage" },
+      { templateId: "daily_triage" },
+      { templateId: "watch_report", mode: "fix" },
+      { templateId: "watch_report", toolProfileId: "loop_local_report" },
+      { templateId: "pr_babysitter", extraTools: ["bash"] },
+      { templateId: "watch_report", collisionTargets: [{ type: "file", path: "README.md" }] },
+      { templateId: "watch_report", cleanupPolicy: { deleteUnchangedWorktrees: true } },
+      { templateId: "watch_report", run: { agent: "build", type: "goal" } },
+      { templateId: "watch_report", schedule: { kind: "event", event: "pull_request" } },
+      { templateId: "watch_report", autoApprove: true },
+      { templateId: "watch_report", customPatternPath: ".archcode/loops/patterns.ts" },
     ]) {
       const res = await app.request(`/api/projects/${project.slug}/loops`, {
         method: "POST",
-        body: JSON.stringify({ config }),
+        body: JSON.stringify(body),
         headers: { "content-type": "application/json" },
       });
       expect(res.status).toBe(400);
@@ -572,23 +566,34 @@ describe("loops routes", () => {
     expect(patchRes.status).toBe(200);
     expect(await patchRes.json()).toMatchObject({ loop: { loopId: loop.loopId, status: "paused" } });
 
-    const triggerPatchConfig: LoopConfig = {
-      ...prTriggerSessionLoopConfig,
-      schedule: { kind: "cron", expression: "*/15 * * * *" },
-      cleanupPolicy: { deleteUnchangedWorktrees: true, preserveChangedArtifacts: true },
-    };
     const triggerPatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
       method: "PATCH",
-      body: JSON.stringify({ config: triggerPatchConfig }),
+      body: JSON.stringify({
+        title: "PR trigger session loop",
+        schedule: { kind: "cron", expression: "*/15 * * * *" },
+        triggers: [{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }],
+      }),
       headers: { "content-type": "application/json" },
     });
     const triggerPatchBody = await triggerPatchRes.json() as { loop: LoopState };
     expect(triggerPatchRes.status).toBe(200);
     expect(triggerPatchBody.loop.config.schedule).toEqual({ kind: "cron", expression: "*/15 * * * *" });
     expect(triggerPatchBody.loop.config.triggers).toEqual([{ kind: "on_pr", cadenceMs: 60_000, baseBranch: "main" }]);
-    expect(triggerPatchBody.loop.config.cleanupPolicy).toEqual({ deleteUnchangedWorktrees: true, preserveChangedArtifacts: true });
+    expect(triggerPatchBody.loop.config).not.toHaveProperty("cleanupPolicy");
 
-    for (const internalPatch of [{ nextRunAt: 123_456 }, { generatedStateSummary: "server generated only" }, { runCount: 99 }]) {
+    for (const internalPatch of [
+      { config: manualSessionLoopConfig },
+      { presetId: "daily_triage" },
+      { mode: "fix" },
+      { toolProfileId: "loop_local_report" },
+      { extraTools: ["bash"] },
+      { collisionTargets: [{ type: "file", path: "README.md" }] },
+      { cleanupPolicy: { deleteUnchangedWorktrees: true } },
+      { run: { agent: "build", type: "goal" } },
+      { nextRunAt: 123_456 },
+      { generatedStateSummary: "server generated only" },
+      { runCount: 99 },
+    ]) {
       const internalPatchRes = await app.request(`/api/projects/${project.slug}/loops/${loop.loopId}`, {
         method: "PATCH",
         body: JSON.stringify(internalPatch),
@@ -620,18 +625,27 @@ describe("loops routes", () => {
 async function createLoop(app: ReturnType<typeof createServerApp>["app"], slug: string, config: LoopConfig): Promise<LoopState> {
   const res = await app.request(`/api/projects/${slug}/loops`, {
     method: "POST",
-    body: JSON.stringify({ templateId: config.templateId }),
+    body: JSON.stringify(createLoopBodyFromConfig(config)),
     headers: { "content-type": "application/json" },
   });
   expect(res.status).toBe(201);
-  const created = (await res.json() as { loop: LoopState }).loop;
-  const patchRes = await app.request(`/api/projects/${slug}/loops/${created.loopId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ config }),
-    headers: { "content-type": "application/json" },
-  });
-  expect(patchRes.status).toBe(200);
-  return (await patchRes.json() as { loop: LoopState }).loop;
+  return (await res.json() as { loop: LoopState }).loop;
+}
+
+function createLoopBodyFromConfig(config: LoopConfig): Record<string, unknown> {
+  return {
+    templateId: config.templateId,
+    title: config.title,
+    ...(config.description === undefined ? {} : { description: config.description }),
+    schedule: config.schedule,
+    approvalPolicy: config.approvalPolicy,
+    limits: config.limits,
+    ...(config.taskPrompt === undefined ? {} : { taskPrompt: config.taskPrompt }),
+    ...(config.instructions === undefined ? {} : { instructions: config.instructions }),
+    ...(config.goalTemplate === undefined ? {} : { goalTemplate: config.goalTemplate }),
+    ...(config.triggers === undefined ? {} : { triggers: config.triggers }),
+    ...(config.useWorktree === undefined ? {} : { useWorktree: config.useWorktree }),
+  };
 }
 
 function seededBudgetSnapshot(): LoopBudgetSnapshot {

@@ -46,12 +46,22 @@ type DashboardProjectError = {
   message: string;
 };
 
+type DashboardLoopRunSummary = Pick<LoopRunReport,
+  | "runId"
+  | "status"
+  | "startedAt"
+  | "endedAt"
+  | "reason"
+  | "summary"
+  | "error"
+>;
+
 type DashboardLoop = {
   loopId: string;
   title: string;
   status: LoopStatus;
-  currentRun?: LoopRunReport;
-  lastRun?: LoopRunReport;
+  currentRun?: DashboardLoopRunSummary;
+  lastRun?: DashboardLoopRunSummary;
   nextRunAt?: number;
   templateId: LoopTemplateId;
   projectSlug: string;
@@ -100,8 +110,8 @@ export function createDashboardRoutes(runtime: AgentRuntime): Hono {
               loopId: loop.loopId,
               title: loop.config.title,
               status: loop.status,
-              currentRun: loop.currentRun,
-              lastRun: loop.lastRun,
+              ...(loop.currentRun === undefined ? {} : { currentRun: toDashboardLoopRunSummary(loop.currentRun) }),
+              ...(loop.lastRun === undefined ? {} : { lastRun: toDashboardLoopRunSummary(loop.lastRun) }),
               nextRunAt: loop.nextRunAt,
               templateId: loop.config.templateId,
               projectSlug: project.slug,
@@ -156,6 +166,18 @@ function withProject(goal: GoalState, project: ProjectInfo): DashboardGoal {
     ...goal,
     projectSlug: project.slug,
     projectName: project.name,
+  };
+}
+
+function toDashboardLoopRunSummary(run: LoopRunReport): DashboardLoopRunSummary {
+  return {
+    runId: run.runId,
+    status: run.status,
+    startedAt: run.startedAt,
+    ...(run.endedAt === undefined ? {} : { endedAt: run.endedAt }),
+    ...(run.reason === undefined ? {} : { reason: run.reason }),
+    ...(run.summary === undefined ? {} : { summary: run.summary }),
+    ...(run.error === undefined ? {} : { error: run.error }),
   };
 }
 

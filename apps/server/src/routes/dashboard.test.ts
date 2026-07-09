@@ -187,7 +187,7 @@ describe("dashboard routes", () => {
     }));
   });
 
-  test("GET /api/loops still exposes existing dashboard loop summary shape", async () => {
+  test("GET /api/loops exposes simplified summaries without raw scheduler internals", async () => {
     const { app, projects, runtime } = await createFixture("loop-smoke");
     const loop: LoopState = {
       loopId: crypto.randomUUID(),
@@ -204,11 +204,64 @@ describe("dashboard routes", () => {
       updatedAt: Date.now(),
       runCount: 0,
       stateVersion: 1,
+      currentRun: {
+        runId: "run-current",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "needs_user",
+        trigger: "on_pr",
+        startedAt: 1_000,
+        jobId: "job-current",
+        triggerKind: "on_pr",
+        subjectKey: "pr:owner/repo#42",
+        dedupeKey: "loop:on_pr:pr:owner/repo#42",
+        branchKey: "github:owner/repo:main",
+        cleanupState: "preserved",
+        blockedReason: "waiting for approval",
+      },
+      lastRun: {
+        runId: "run-last",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "succeeded",
+        trigger: "cron",
+        startedAt: 500,
+        endedAt: 750,
+        summary: "Loop completed.",
+        jobId: "job-last",
+        subjectKey: "branch:main",
+        dedupeKey: "loop:cron:main",
+        cleanupState: "cleaned",
+      },
+      currentJob: {
+        jobId: "job-current",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "blocked",
+        triggerKind: "on_pr",
+        subjectKey: "pr:owner/repo#42",
+        dedupeKey: "loop:on_pr:pr:owner/repo#42",
+        branchKey: "github:owner/repo:main",
+        queuedAt: 1_000,
+        attempts: 1,
+        cleanupState: "preserved",
+      },
+      queuedJobs: [{
+        jobId: "job-queued",
+        loopId: "00000000-0000-4000-8000-000000000001",
+        status: "queued",
+        triggerKind: "on_ci_fail",
+        subjectKey: "ci:owner/repo:deadbeef",
+        dedupeKey: "loop:on_ci_fail:ci:owner/repo:deadbeef",
+        queuedAt: 1_100,
+        attempts: 0,
+        cleanupState: "expired_needs_review",
+      }],
+      triggerHealth: [{ triggerKind: "on_pr", status: "blocked", cadenceMs: 60_000, lastCheckedAt: 1_200 }],
+      cleanupState: "cleanup_candidate",
     };
     (runtime.listLoops as ReturnType<typeof mock>).mockImplementation(async (workspaceRoot: string) => workspaceRoot === projects[0].workspaceRoot ? [loop] : []);
 
     const res = await app.request("/api/loops?status=active");
     const body = await res.json() as { loops: Array<Record<string, unknown>> };
+    const serialized = JSON.stringify(body);
 
     expect(res.status).toBe(200);
     expect(body.loops).toContainEqual(expect.objectContaining({
@@ -219,6 +272,24 @@ describe("dashboard routes", () => {
       projectSlug: projects[0].slug,
       projectName: projects[0].name,
     }));
+    expect(body.loops[0]?.currentRun).toEqual({ runId: "run-current", status: "needs_user", startedAt: 1_000 });
+    expect(body.loops[0]?.lastRun).toEqual({ runId: "run-last", status: "succeeded", startedAt: 500, endedAt: 750, summary: "Loop completed." });
     expect(body.loops[0]).not.toHaveProperty("config");
+    expect(body.loops[0]).not.toHaveProperty("currentJob");
+    expect(body.loops[0]).not.toHaveProperty("queuedJobs");
+    expect(body.loops[0]).not.toHaveProperty("triggerHealth");
+    expect(body.loops[0]).not.toHaveProperty("cleanupState");
+    expect(serialized).not.toContain("runKind");
+    expect(serialized).not.toContain("mode");
+    expect(serialized).not.toContain("currentJob");
+    expect(serialized).not.toContain("queuedJobs");
+    expect(serialized).not.toContain("triggerHealth");
+    expect(serialized).not.toContain("cleanupState");
+    expect(serialized).not.toContain("job-current");
+    expect(serialized).not.toContain("job-queued");
+    expect(serialized).not.toContain("subjectKey");
+    expect(serialized).not.toContain("dedupeKey");
+    expect(serialized).not.toContain("branchKey");
+    expect(serialized).not.toContain("pr:owner/repo#42");
   });
 });

@@ -3,7 +3,6 @@ import { Hono } from "hono";
 import {
   expandLoopTemplate,
   LoopActiveConflictError,
-  LoopConfigSchema,
   LoopNotFoundError,
   LoopRunLogError,
   LoopStateError,
@@ -15,19 +14,112 @@ import {
   type LoopState,
   type LoopUpdateInput,
 } from "@archcode/agent-core";
-import type { LoopIntegrationSnapshot, LoopJobSummary } from "@archcode/protocol";
+import type {
+  LoopApprovalPolicy,
+  LoopGoalTemplate,
+  LoopIntegrationSnapshot,
+  LoopJobSummary,
+  LoopLimits,
+  LoopScheduleSpec,
+  LoopTemplateId,
+  LoopTriggerSpec,
+} from "@archcode/protocol";
 import { z } from "zod/v4";
 import { BadRequestError, ServerError } from "../errors";
 import { resolveProject } from "../resolve";
 
+const LoopTextSchema = z.string().trim().min(1).max(10_000);
+const LoopTitleSchema = z.string().trim().min(1).max(200);
+const LoopIdentifierSchema = z.string().trim().min(1).max(200);
+const TriggerCadenceMsSchema = z.number().int().min(30_000).default(60_000);
+const CronExpressionSchema = z.string().trim().refine((value) => value.split(/\s+/).length === 5, {
+  message: "Cron expressions must use exactly 5 UTC fields",
+});
+
+const LoopTemplateIdSchema = z.enum(["watch_report", "maintain_fix", "pr_babysitter", "goal_runner"]) satisfies z.ZodType<LoopTemplateId>;
+const LoopApprovalPolicySchema = z.enum(["interactive", "explicit_per_run"]) satisfies z.ZodType<LoopApprovalPolicy>;
+const LoopScheduleSpecSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("manual") }),
+  z.strictObject({ kind: z.literal("interval"), everyMs: z.number().int().positive() }),
+  z.strictObject({ kind: z.literal("cron"), expression: CronExpressionSchema }),
+]) satisfies z.ZodType<LoopScheduleSpec>;
+
+const BudgetThresholdRatioSchema = z.number().min(0).max(1);
+const LoopLimitsSchema = z.preprocess((value) => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    ...record,
+    softThresholdRatio: record.softThresholdRatio ?? 0.8,
+    hardThresholdRatio: record.hardThresholdRatio ?? 1.0,
+  };
+}, z.strictObject({
+  maxIterationsPerRun: z.number().int().positive(),
+  maxTokensPerRun: z.number().int().positive().optional(),
+  maxEstimatedUsdPerRun: z.number().positive().optional(),
+  maxWallClockMsPerRun: z.number().int().positive().optional(),
+  maxRunsPerDay: z.number().int().positive().optional(),
+  softThresholdRatio: BudgetThresholdRatioSchema,
+  hardThresholdRatio: BudgetThresholdRatioSchema,
+})) satisfies z.ZodType<LoopLimits>;
+
+const LoopPullRequestScopeSchema = z.enum(["open", "authored", "assigned", "review_requested"]);
+const LoopTriggerSpecSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("on_commit"),
+    branch: LoopIdentifierSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("on_pr"),
+    branch: LoopIdentifierSchema.optional(),
+    baseBranch: LoopIdentifierSchema.optional(),
+    prScope: LoopPullRequestScopeSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("on_ci_fail"),
+    branch: LoopIdentifierSchema.optional(),
+    baseBranch: LoopIdentifierSchema.optional(),
+    checkName: LoopIdentifierSchema.optional(),
+    workflowName: LoopIdentifierSchema.optional(),
+    cadenceMs: TriggerCadenceMsSchema,
+  }),
+]) satisfies z.ZodType<LoopTriggerSpec>;
+
+const LoopGoalTemplateSchema = z.strictObject({
+  title: LoopTitleSchema,
+  objective: LoopTextSchema,
+  acceptanceCriteria: LoopTextSchema,
+}) satisfies z.ZodType<LoopGoalTemplate>;
+
 const CreateLoopBodySchema = z.strictObject({
-  templateId: z.string().trim().min(1).max(200),
+  templateId: LoopTemplateIdSchema,
   author: z.string().trim().min(1).max(200).optional(),
+  title: LoopTitleSchema.optional(),
+  description: LoopTextSchema.optional(),
+  schedule: LoopScheduleSpecSchema.optional(),
+  approvalPolicy: LoopApprovalPolicySchema.optional(),
+  limits: LoopLimitsSchema.optional(),
+  taskPrompt: LoopTextSchema.optional(),
+  instructions: LoopTextSchema.optional(),
+  goalTemplate: LoopGoalTemplateSchema.optional(),
+  triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
+  useWorktree: z.boolean().optional(),
 });
 
 const PatchLoopBodySchema = z.strictObject({
-  config: LoopConfigSchema.optional(),
   status: z.enum(["active", "paused", "disabled", "error"]).optional(),
+  title: LoopTitleSchema.optional(),
+  description: LoopTextSchema.optional(),
+  schedule: LoopScheduleSpecSchema.optional(),
+  approvalPolicy: LoopApprovalPolicySchema.optional(),
+  limits: LoopLimitsSchema.optional(),
+  taskPrompt: LoopTextSchema.optional(),
+  instructions: LoopTextSchema.optional(),
+  goalTemplate: LoopGoalTemplateSchema.optional(),
+  triggers: z.array(LoopTriggerSpecSchema).max(50).optional(),
+  useWorktree: z.boolean().optional(),
 });
 
 const ActivateKillBodySchema = z.strictObject({
@@ -37,7 +129,20 @@ const ActivateKillBodySchema = z.strictObject({
 
 type CreateLoopBody = z.infer<typeof CreateLoopBodySchema>;
 type PatchLoopBody = z.infer<typeof PatchLoopBodySchema>;
+type EditableLoopBody = Omit<CreateLoopBody, "templateId" | "author">;
 const LEGACY_COMPATIBILITY_SCORE_KEY = `${"readiness"}Score` satisfies keyof LoopState;
+const EDITABLE_LOOP_BODY_FIELDS = [
+  "title",
+  "description",
+  "schedule",
+  "approvalPolicy",
+  "limits",
+  "taskPrompt",
+  "instructions",
+  "goalTemplate",
+  "triggers",
+  "useWorktree",
+] as const satisfies readonly (keyof EditableLoopBody)[];
 
 export function createLoopsRoutes(runtime: AgentRuntime): Hono {
   const app = new Hono();
@@ -116,10 +221,14 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
     if (Object.keys(body).length === 0) {
       throw new BadRequestError("At least one patch field is required");
     }
-    if (body.config !== undefined) assertRouteLoopConfig(body.config);
 
     try {
-      const loop = await runtime.updateLoop(project.workspaceRoot, loopId, toLoopUpdates(body));
+      const currentConfig = hasEditableLoopBodyFields(body)
+        ? (await runtime.readLoop(project.workspaceRoot, loopId)).config
+        : undefined;
+      const updates = toLoopUpdates(body, currentConfig);
+      if (updates.config !== undefined) assertRouteLoopConfig(updates.config);
+      const loop = await runtime.updateLoop(project.workspaceRoot, loopId, updates);
       return c.json({ loop: sanitizeLoopState(loop, project.workspaceRoot) });
     } catch (error) {
       throw mapLoopError(error);
@@ -248,18 +357,40 @@ export function createLoopsRoutes(runtime: AgentRuntime): Hono {
 
 function createConfigFromBody(body: CreateLoopBody): LoopConfig {
   try {
-    return expandLoopTemplate(body.templateId);
+    return applyEditableConfigFields(expandLoopTemplate(body.templateId), body);
   } catch (error) {
     if (error instanceof RangeError) throw new BadRequestError(error.message);
     throw error;
   }
 }
 
-function toLoopUpdates(body: PatchLoopBody): LoopUpdateInput {
+function toLoopUpdates(body: PatchLoopBody, currentConfig: LoopConfig | undefined): LoopUpdateInput {
   return {
-    ...(body.config === undefined ? {} : { config: body.config }),
+    ...(currentConfig === undefined ? {} : { config: applyEditableConfigFields(currentConfig, body) }),
     ...(body.status === undefined ? {} : { status: body.status }),
   };
+}
+
+function applyEditableConfigFields(baseConfig: LoopConfig, body: EditableLoopBody): LoopConfig {
+  const nextConfig: LoopConfig = {
+    ...baseConfig,
+    ...(body.title === undefined ? {} : { title: body.title }),
+    ...(body.description === undefined ? {} : { description: body.description }),
+    ...(body.schedule === undefined ? {} : { schedule: body.schedule }),
+    ...(body.approvalPolicy === undefined ? {} : { approvalPolicy: body.approvalPolicy }),
+    ...(body.limits === undefined ? {} : { limits: body.limits }),
+    ...(body.taskPrompt === undefined ? {} : { taskPrompt: body.taskPrompt }),
+    ...(body.instructions === undefined ? {} : { instructions: body.instructions }),
+    ...(body.goalTemplate === undefined ? {} : { goalTemplate: body.goalTemplate }),
+    ...(body.triggers === undefined ? {} : { triggers: body.triggers }),
+    ...(body.useWorktree === undefined ? {} : { useWorktree: body.useWorktree }),
+  };
+  assertRouteLoopConfig(nextConfig);
+  return nextConfig;
+}
+
+function hasEditableLoopBodyFields(body: PatchLoopBody): boolean {
+  return EDITABLE_LOOP_BODY_FIELDS.some((field) => body[field] !== undefined);
 }
 
 function assertRouteLoopConfig(config: LoopConfig): void {
@@ -270,7 +401,7 @@ function assertRouteLoopConfig(config: LoopConfig): void {
     if (next === null) throw new Error("Cron expression has no future occurrence");
   } catch {
     throw new BadRequestError("Request body is invalid", {
-      validationMessages: ["config.schedule.expression must be a valid 5-field UTC cron expression"],
+      validationMessages: ["schedule.expression must be a valid 5-field UTC cron expression"],
     });
   }
 }
@@ -459,8 +590,8 @@ function validationDetails(error: z.ZodError): unknown {
 function stableValidationMessages(error: z.ZodError): string[] {
   return error.issues.map((issue) => {
     const path = issue.path.join(".");
-    if (path.endsWith("config.schedule.expression")) return "config.schedule.expression must be a valid 5-field UTC cron expression";
-    if (path.includes("config.triggers") && path.endsWith("cadenceMs")) return `${path} must be at least 30000`;
+    if (path.endsWith("schedule.expression")) return "schedule.expression must be a valid 5-field UTC cron expression";
+    if (path.includes("triggers") && path.endsWith("cadenceMs")) return `${path} must be at least 30000`;
     if (path === "projectConfig.coordinator.maxConcurrent") return "projectConfig.coordinator.maxConcurrent must be greater than 0";
     return issue.message;
   });
