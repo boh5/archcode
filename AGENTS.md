@@ -1,6 +1,6 @@
 ## Project
 
-ArchCode — **You architect. AI codes.** Programming is splitting into architecting intent and writing code. ArchCode is the workbench where the architect hands the blueprint to AI for execution. Long-running coding agent with Hono server + React Web UI. Six-agent delegation architecture (Orchestrator + Plan/Build/Reviewer core agents, with Explore/Librarian support) with Goal/HITL/Loop primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
+ArchCode — **Not just a coding agent. An always-on workbench for AI engineering.** ArchCode is a self-hosted workbench for long-running AI coding work: users deploy it on a local machine or remote server, add projects, start goals, and let agents plan, build, review, and wait for approval around the clock. It runs as a Hono server + React Web UI rather than a one-off CLI, with a six-agent delegation architecture (Orchestrator + Plan/Build/Reviewer core agents, with Explore/Librarian support), Goal/HITL/Loop primitives, structured tool execution, LSP integration, persistent memory, and context compaction.
 
 ## Monorepo Structure
 
